@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<title>Реестр сертификатов сотрудников</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --text: #1c2733;
+    --muted: #5b6b7d;
+    --accent: #c39a5b;
+    --accent-dark: #a97f45;
+    --panel-bg: #fff;
+    --panel-border: #dde3ea;
+    --hint-bg: #f4f7fb;
+    --hint-border: #c9d3de;
+    --th-bg: #f1f4f8;
+    --row-border: #e6eaf0;
+    --row-hover: #f7f9fc;
+    --expired-bg: #fbeaea;
+    --expired-hover: #f8dcdc;
+    --soon-bg: #fbf1de;
+    --soon-hover: #f8e7c4;
+    --input-border: #cfd8e2;
+    --shadow: rgba(20,40,63,0.08);
+  }
+
+  * { box-sizing: border-box; }
+  html { height: 100%; }
+  body {
+    font-family: "Segoe UI", Arial, sans-serif;
+    margin: 0;
+    color: var(--text);
+    background: var(--bg);
+    position: relative;
+    height: 100%;
+    overflow: hidden;
+  }
+  /* Мягкое размытое пятно на фоне — просто декоративная глубина, без картинок */
+  body::before {
+    content: "";
+    position: fixed;
+    top: -20%;
+    right: -10%;
+    width: 60vw;
+    height: 60vw;
+    max-width: 800px;
+    max-height: 800px;
+    background: radial-gradient(circle, var(--accent) 0%, transparent 70%);
+    opacity: 0.10;
+    filter: blur(60px);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  main {
+    position: relative; z-index: 1; max-width: 1200px; margin: 14px auto 0; padding: 0 16px 16px;
+    box-sizing: border-box; height: calc(100vh - 14px);
+    display: flex; flex-direction: column;
+  }
+
+  .toolbar-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 14px;
+    margin-bottom: 14px; flex-wrap: wrap; flex-shrink: 0;
+  }
+  .search-wrap-cv { display: flex; align-items: center; gap: 10px; }
+  #searchInput {
+    width: 300px; max-width: 60vw; padding: 8px 12px; font-size: 13.5px;
+    border: 1px solid var(--input-border); border-radius: 8px;
+    background: var(--panel-bg); color: var(--text);
+  }
+  #searchInput:focus { outline: none; border-color: var(--accent); }
+  #resultCount { font-size: 12.5px; color: var(--muted); white-space: nowrap; }
+  #fileInput { display: none; }
+  .add-cert-wrap { display: flex; align-items: center; gap: 10px; }
+  .dnd-hint { font-size: 12px; color: var(--muted); }
+  .add-cert-btn {
+    padding: 8px 16px; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap;
+    border: 1px solid var(--accent-dark); background: var(--panel-bg); color: var(--accent-dark); border-radius: 8px;
+    transition: background 0.15s, color 0.15s;
+  }
+  .add-cert-btn:hover { background: var(--accent-dark); color: #fff; }
+
+  #status {
+    position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%);
+    z-index: 50; padding: 9px 18px; border-radius: 10px; font-size: 13px; font-weight: 500;
+    box-shadow: 0 6px 20px rgba(20,40,63,0.18); pointer-events: none;
+  }
+  #status:empty { display: none; }
+  #status.error { background: #fbeaea; color: #a83a3a; }
+  #status.ok { background: #e6f4ea; color: #2f7a45; }
+
+  .table-wrap {
+    border: 1px solid var(--panel-border); border-radius: 10px;
+    overflow-x: hidden; overflow-y: scroll; flex: 1; min-height: 0;
+    scrollbar-gutter: stable;
+  }
+  .table-wrap table { padding-right: 6px; }
+  th:last-child, td:last-child { padding-right: 20px; }
+  table { width: 100%; border-collapse: collapse; background: var(--panel-bg); }
+  th, td { padding: 11px 14px; border-bottom: 1px solid var(--row-border); text-align: left; font-size: 14px; }
+  th { position: sticky; top: 0; z-index: 2; background: var(--th-bg); font-weight: 600; color: var(--muted); font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.4px; }
+  th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+  th.sortable:hover { color: var(--text); }
+  .sort-arrow { font-size: 10px; opacity: 0.7; margin-left: 4px; color: var(--accent-dark); }
+  tbody tr:last-child td { border-bottom: none; }
+
+  tr.expired { background: var(--expired-bg); }
+  tr.expired:hover { background: var(--expired-hover); }
+  tr.soon { background: var(--soon-bg); }
+  tr.soon:hover { background: var(--soon-hover); }
+  tr:not(.expired):not(.soon):hover { background: var(--row-hover); }
+
+  .del-btn { background: none; border: none; color: #d13c3c; cursor: pointer; font-size: 13px; }
+  .del-btn:hover { text-decoration: underline; }
+
+  #dropOverlay {
+    display: none; position: fixed; inset: 0; z-index: 999;
+    background: rgba(15, 22, 32, 0.92); color: #fff;
+    align-items: center; justify-content: center; text-align: center;
+    font-size: 28px; font-family: Georgia, serif;
+    border: 6px dashed var(--accent); box-sizing: border-box;
+  }
+  #dropOverlay.active { display: flex; }
+</style>
+</head>
+<body>
+
+<main>
+  <div class="toolbar-row">
+    <div class="search-wrap-cv">
+      <input type="text" id="searchInput" placeholder="Поиск по ФИО или идентификатору..." />
+      <span id="resultCount"></span>
+    </div>
+    <div class="add-cert-wrap">
+      <span class="dnd-hint">или перетащите файл на страницу</span>
+      <button class="add-cert-btn" id="pickFilesBtn" type="button">+ Добавить сертификат</button>
+      <input type="file" id="fileInput" multiple accept=".cer,.pem,.crt,.der" />
+    </div>
+  </div>
+  <div id="status"></div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th class="sortable" data-key="full_name">ФИО<span class="sort-arrow"></span></th>
+          <th class="sortable" data-key="identifier">Идентификатор<span class="sort-arrow"></span></th>
+          <th class="sortable" data-key="valid_from">Действителен с<span class="sort-arrow"></span></th>
+          <th class="sortable" data-key="valid_to">Действителен до<span class="sort-arrow"></span></th>
+          <th class="sortable" data-key="valid_to">Осталось дней<span class="sort-arrow"></span></th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="certTable"></tbody>
+    </table>
+  </div>
+</main>
+
+<div id="dropOverlay">Отпустите файл, чтобы загрузить</div>
+
+<script>
+const statusEl = document.getElementById('status');
+
+let statusHideTimer = null;
+function showStatus(text, cls) {
+  clearTimeout(statusHideTimer);
+  statusEl.textContent = text;
+  statusEl.className = cls || '';
+  if (cls === 'ok' || cls === 'error') {
+    statusHideTimer = setTimeout(() => { statusEl.textContent = ''; statusEl.className = ''; }, 5000);
+  }
+}
+const tableBody = document.getElementById('certTable');
+const fileInput = document.getElementById('fileInput');
+const pickFilesBtn = document.getElementById('pickFilesBtn');
+const dropOverlay = document.getElementById('dropOverlay');
+const searchInput = document.getElementById('searchInput');
+const resultCount = document.getElementById('resultCount');
+const sortableHeaders = document.querySelectorAll('th.sortable');
+
+let certificates = [];
+let dragCounter = 0;
+let sortKey = 'full_name';
+let sortDir = 'asc';
+
+// ---------- Загрузка файлов (перетаскивание в любое место страницы) ----------
+pickFilesBtn.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', () => {
+  if (fileInput.files.length) uploadFiles(fileInput.files);
+});
+
+document.addEventListener('dragenter', (e) => {
+  e.preventDefault();
+  dragCounter++;
+  dropOverlay.classList.add('active');
+});
+document.addEventListener('dragover', (e) => e.preventDefault());
+document.addEventListener('dragleave', (e) => {
+  e.preventDefault();
+  dragCounter--;
+  if (dragCounter <= 0) {
+    dragCounter = 0;
+    dropOverlay.classList.remove('active');
+  }
+});
+document.addEventListener('drop', (e) => {
+  e.preventDefault();
+  dragCounter = 0;
+  dropOverlay.classList.remove('active');
+  if (e.dataTransfer.files.length) uploadFiles(e.dataTransfer.files);
+});
+
+async function uploadFiles(files) {
+  const formData = new FormData();
+  for (const f of files) formData.append('certificates', f);
+
+  showStatus('Загрузка...', '');
+
+  try {
+    const resp = await fetch('api/upload', { method: 'POST', body: formData });
+    if (resp.status === 401) { window.location.href = 'login'; return; }
+    const data = await resp.json();
+
+    if (!resp.ok) {
+      showStatus('Ошибка загрузки: ' + (data.error || 'неизвестная ошибка'), 'error');
+    } else if (data.errors && data.errors.length) {
+      showStatus(`Загружено: ${data.inserted}. Ошибки: ${data.errors.map(e => e.file + ' — ' + e.error).join('; ')}`, 'error');
+    } else {
+      showStatus(`Успешно загружено сертификатов: ${data.inserted}`, 'ok');
+    }
+    loadCertificates();
+  } catch (err) {
+    showStatus('Ошибка загрузки: ' + err.message, 'error');
+  }
+  fileInput.value = '';
+}
+
+// ---------- Отображение ----------
+function formatDate(iso) {
+  const d = new Date(iso);
+  return d.toLocaleDateString('ru-RU');
+}
+
+function daysLeft(validTo) {
+  const now = new Date();
+  const to = new Date(validTo);
+  return Math.ceil((to - now) / (1000 * 60 * 60 * 24));
+}
+
+function rowClass(days) {
+  if (days < 0) return 'expired';
+  if (days < 30) return 'soon';
+  return '';
+}
+
+function daysLeftLabel(days) {
+  if (days < 0) return `истёк ${Math.abs(days)} дн. назад`;
+  if (days === 0) return 'истекает сегодня';
+  return `${days} дн.`;
+}
+
+// ---------- Сортировка по клику на заголовок ----------
+sortableHeaders.forEach((th) => {
+  th.addEventListener('click', () => {
+    const key = th.dataset.key;
+    if (sortKey === key) {
+      sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+    } else {
+      sortKey = key;
+      sortDir = 'asc';
+    }
+    updateSortArrows();
+    renderTable();
+  });
+});
+
+function updateSortArrows() {
+  sortableHeaders.forEach((th) => {
+    const arrow = th.querySelector('.sort-arrow');
+    if (th.dataset.key === sortKey) {
+      arrow.textContent = sortDir === 'asc' ? '▲' : '▼';
+    } else {
+      arrow.textContent = '';
+    }
+  });
+}
+
+function sortCertificates(list) {
+  const sorted = list.slice();
+  const dir = sortDir === 'asc' ? 1 : -1;
+
+  sorted.sort((a, b) => {
+    if (sortKey === 'full_name' || sortKey === 'identifier') {
+      return dir * String(a[sortKey]).localeCompare(String(b[sortKey]), 'ru');
+    }
+    return dir * (new Date(a[sortKey]) - new Date(b[sortKey]));
+  });
+  return sorted;
+}
+
+// ---------- Поиск ----------
+function filterCertificates(list) {
+  const q = searchInput.value.trim().toLowerCase();
+  if (!q) return list;
+  return list.filter(
+    (c) => c.full_name.toLowerCase().includes(q) || String(c.identifier).toLowerCase().includes(q)
+  );
+}
+searchInput.addEventListener('input', renderTable);
+
+function renderTable() {
+  const filtered = filterCertificates(certificates);
+  const sorted = sortCertificates(filtered);
+  tableBody.innerHTML = '';
+
+  for (const c of sorted) {
+    const days = daysLeft(c.valid_to);
+    const tr = document.createElement('tr');
+    tr.className = rowClass(days);
+    tr.innerHTML = `
+      <td>${escapeHtml(c.full_name)}</td>
+      <td>${escapeHtml(c.identifier)}</td>
+      <td>${formatDate(c.valid_from)}</td>
+      <td>${formatDate(c.valid_to)}</td>
+      <td>${daysLeftLabel(days)}</td>
+      <td><button class="del-btn" data-id="${c.id}" data-name="${escapeHtml(c.full_name)}">удалить</button></td>
+    `;
+    tableBody.appendChild(tr);
+  }
+
+  resultCount.textContent = sorted.length === certificates.length
+    ? `Всего: ${certificates.length}`
+    : `Найдено: ${sorted.length} из ${certificates.length}`;
+
+  tableBody.querySelectorAll('.del-btn').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const confirmed = confirm(`Удалить сертификат сотрудника «${btn.dataset.name}»? Это действие необратимо.`);
+      if (!confirmed) return;
+      const resp = await fetch('api/certificates/' + btn.dataset.id, { method: 'DELETE' });
+      if (resp.status === 401) { window.location.href = 'login'; return; }
+      loadCertificates();
+    });
+  });
+}
+
+async function loadCertificates() {
+  const resp = await fetch('api/certificates');
+  if (resp.status === 401) { window.location.href = 'login'; return; }
+  certificates = await resp.json();
+  updateSortArrows();
+  renderTable();
+}
+
+function escapeHtml(str) {
+  if (str === null || str === undefined) return '';
+  return String(str).replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[c]));
+}
+
+loadCertificates();
+</script>
+</body>
+</html>

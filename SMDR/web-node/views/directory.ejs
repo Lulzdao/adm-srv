@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="ru"><head><meta charset="utf-8"><title>Справочник</title>
+<link rel="stylesheet" href="style.css"></head><body>
+<div class="container">
+<h1>Справочник добавочных</h1>
+<table class="dir-table">
+<tr><th>Добавочный</th><th>ФИО</th><th></th></tr>
+<% exts.forEach(ext => { %>
+<tr>
+  <form method="post" action="directory">
+    <td class="ext-cell"><%= ext %><input type="hidden" name="ext" value="<%= ext %>"></td>
+    <td><input type="text" name="fio" value="<%= map[ext] || '' %>" placeholder="Фамилия Имя"></td>
+    <td><button type="submit">Сохранить</button></td>
+  </form>
+</tr>
+<% }) %>
+</table>
+</div>
+</body></html>

@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="ru"><head><meta charset="utf-8"><title>Статистика</title>
+<link rel="stylesheet" href="style.css">
+<script src="vendor/chart.umd.js"></script>
+</head><body>
+<div class="container">
+
+<div class="cards">
+  <div class="card total"><div class="num"><%= total %></div><div class="label">Всего</div></div>
+  <div class="card out"><div class="num"><%= outCount %></div><div class="label">Исходящие</div></div>
+  <div class="card in"><div class="num"><%= inCount %></div><div class="label">Входящие</div></div>
+  <div class="card internal"><div class="num"><%= intCount %></div><div class="label">Внутренние</div></div>
+</div>
+
+<h1 style="margin-top:30px">Звонки по дням</h1>
+<canvas id="dailyChart" height="50"></canvas>
+<h1 style="margin-top:30px">Минуты разговоров по дням</h1>
+<canvas id="minutesChart" height="50"></canvas>
+
+<h1 style="margin-top:30px">Сводка</h1>
+<form class="filters" id="tableFilterForm">
+  <div><label>Дата от</label><input type="date" name="date_from"></div>
+  <div><label>Дата до</label><input type="date" name="date_to"></div>
+  <div><button type="submit">Фильтр</button></div>
+  <div><a href="#" class="btn-reset" id="tableReset">Сброс</a></div>
+</form>
+<table>
+<thead>
+<tr>
+  <th class="sortable" data-sort="ext">Внутренний</th>
+  <th class="sortable" data-sort="fio">Сотрудник</th>
+  <th class="sortable" data-sort="total">Всего</th>
+  <th class="sortable" data-sort="outgoing">Исходящие</th>
+  <th class="sortable" data-sort="incoming">Входящие</th>
+  <th class="sortable" data-sort="internal">Внутренние</th>
+  <th class="sortable" data-sort="outgoingSeconds">Минуты исходящих</th>
+</tr>
+</thead>
+<tbody id="summaryBody"></tbody>
+</table>
+</div>
+
+<script>
+fetch('api/stats/daily').then(r => r.json()).then(data => {
+  const days = [...new Set(data.map(d => d.day))].sort();
+  const dirs = ['outgoing', 'incoming', 'internal'];
+  const colors = { outgoing: '#2563eb', incoming: '#16a34a', internal: '#9333ea' };
+  const datasets = dirs.map(dir => ({
+    label: dir === 'outgoing' ? 'Исходящие' : dir === 'incoming' ? 'Входящие' : 'Внутренние',
+    data: days.map(day => (data.find(d => d.day === day && d.direction === dir) || {}).cnt || 0),
+    backgroundColor: colors[dir]
+  }));
+  new Chart(document.getElementById('dailyChart'), {
+    type: 'bar',
+    data: { labels: days, datasets },
+    options: {
+      responsive: true,
+      scales: { x: { stacked: true }, y: { stacked: true, title: { display: true, text: 'звонки' } } }
+    }
+  });
+});
+fetch('api/stats/daily-minutes').then(r => r.json()).then(data => {
+  const days = [...new Set(data.map(d => d.day))].sort();
+  const dirs = ['outgoing', 'incoming'];
+  const colors = { outgoing: '#2563eb', incoming: '#16a34a' };
+  const datasets = dirs.map(dir => ({
+    label: dir === 'outgoing' ? 'Исходящие' : 'Входящие',
+    data: days.map(day => (data.find(d => d.day === day && d.direction === dir) || {}).minutes || 0),
+    backgroundColor: colors[dir]
+  }));
+  new Chart(document.getElementById('minutesChart'), {
+    type: 'bar',
+    data: { labels: days, datasets },
+    options: {
+      responsive: true,
+      scales: { x: { stacked: true }, y: { stacked: true, title: { display: true, text: 'минуты' } } }
+    }
+  });
+});
+function formatMinutes(sec) {
+  const m = Math.round(sec / 60);
+  return `${m} мин`;
+}
+
+let summaryData = [];
+let sortField = 'outgoingSeconds';
+let sortDir = 'desc';
+
+function renderSummary() {
+  const sorted = [...summaryData].sort((a, b) => {
+    let av = a[sortField], bv = b[sortField];
+    if (sortField === 'ext' || sortField === 'fio') {
+      av = (av || '').toString().toLowerCase();
+      bv = (bv || '').toString().toLowerCase();
+      return sortDir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av);
+    }
+    av = av || 0; bv = bv || 0;
+    return sortDir === 'asc' ? av - bv : bv - av;
+  });
+
+  document.getElementById('summaryBody').innerHTML = sorted.map(row => `
+    <tr>
+      <td>${row.ext}</td>
+      <td>${row.fio || '—'}</td>
+      <td>${row.total}</td>
+      <td>${row.outgoing}</td>
+      <td>${row.incoming}</td>
+      <td>${row.internal}</td>
+      <td>${formatMinutes(row.outgoingSeconds)}</td>
+    </tr>`).join('');
+
+  document.querySelectorAll('th.sortable').forEach(th => {
+    th.classList.remove('sort-asc', 'sort-desc');
+    if (th.dataset.sort === sortField) th.classList.add(sortDir === 'asc' ? 'sort-asc' : 'sort-desc');
+  });
+}
+
+document.querySelectorAll('th.sortable').forEach(th => {
+  th.addEventListener('click', () => {
+    const field = th.dataset.sort;
+    if (sortField === field) {
+      sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+    } else {
+      sortField = field;
+      sortDir = field === 'ext' || field === 'fio' ? 'asc' : 'desc';
+    }
+    renderSummary();
+  });
+});
+
+function loadSummary() {
+  const params = new URLSearchParams(new FormData(document.getElementById('tableFilterForm')));
+  fetch('api/stats/table?' + params.toString()).then(r => r.json()).then(data => {
+    summaryData = data;
+    sortField = 'outgoingSeconds';
+    sortDir = 'desc';
+    renderSummary();
+  });
+}
+
+document.getElementById('tableFilterForm').addEventListener('submit', function(e) {
+  e.preventDefault();
+  loadSummary();
+});
+document.getElementById('tableReset').addEventListener('click', function(e) {
+  e.preventDefault();
+  document.getElementById('tableFilterForm').reset();
+  loadSummary();
+});
+
+loadSummary();
+
+</script>
+</body></html>
