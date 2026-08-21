@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="ru"><head><meta charset="utf-8"><title>Журнал звонков</title>
+<link rel="stylesheet" href="style.css"></head>
+<body class="dashboard-page">
+<div class="container">
+
+<form class="filters" id="filterForm" method="get">
+  <div><label>Дата от</label><input type="date" name="date_from" value="<%= date_from %>"></div>
+  <div><label>Дата до</label><input type="date" name="date_to" value="<%= date_to %>"></div>
+  <div><label>Время от</label><input type="time" name="time_from" value="<%= time_from %>"></div>
+  <div><label>Время до</label><input type="time" name="time_to" value="<%= time_to %>"></div>
+  <div><label>Направление</label>
+    <select name="direction">
+      <option value="">Все</option>
+      <option value="outgoing" <%= direction==='outgoing'?'selected':'' %>>Исходящие</option>
+      <option value="incoming" <%= direction==='incoming'?'selected':'' %>>Входящие</option>
+      <option value="internal" <%= direction==='internal'?'selected':'' %>>Внутренние</option>
+    </select>
+  </div>
+  <div><label>Поиск</label><input type="text" name="search" value="<%= search %>" placeholder="номер / ФИО / добавочный"></div>
+  <input type="hidden" name="page" id="pageInput" value="<%= page %>">
+  <div><button type="submit">Фильтр</button></div>
+  <div><a href="." class="btn-reset">Сброс</a></div>
+</form>
+
+<div class="pagination">
+  <div class="pagination-controls">
+    <% if (prevUrl) { %><a href="<%= prevUrl %>" class="page-btn">← Назад</a>
+    <% } else { %><span class="page-btn disabled">← Назад</span><% } %>
+    <span class="page-info" id="pageInfo">Страница <%= page %> из <%= totalPages %> · всего <%= filteredTotal %> звонков</span>
+    <% if (nextUrl) { %><a href="<%= nextUrl %>" class="page-btn">Вперёд →</a>
+    <% } else { %><span class="page-btn disabled">Вперёд →</span><% } %>
+  </div>
+  <div class="refresh-status">
+    <label><input type="checkbox" id="autoRefresh" checked> Автообновление</label>
+    <span id="lastUpdate"></span>
+  </div>
+</div>
+
+<div class="table-wrap">
+  <table id="callsTable">
+  <thead>
+  <tr>
+    <th>Дата</th><th>Время</th><th>Внутренний</th><th>Направление</th><th>Детали</th>
+    <th>Длительность</th><th>Ожидание</th><th>Сотрудник</th>
+  </tr>
+  </thead>
+  <tbody id="callsBody">
+  <%- include('_rows', { rows }) %>
+  </tbody>
+  </table>
+</div>
+
+</div>
+
+<script>
+function directionCell(row) {
+  if (row.direction === 'incoming') return (row.caller || '') + ' → ' + (row.did || '');
+  if (row.direction === 'internal') return '→ ' + (row.internal_to || '');
+  if (row.direction === 'outgoing') return row.number || '';
+  return '<span class="muted">не распознано</span>';
+}
+function badgeCell(row) {
+  if (row.direction === 'incoming' && row.status === 'NA') return '<span class="badge missed">Пропущенный</span>';
+  if (row.direction === 'outgoing') return '<span class="badge outgoing">Исходящий</span>';
+  if (row.direction === 'incoming') return '<span class="badge incoming">Входящий</span>';
+  if (row.direction === 'internal') return '<span class="badge internal">Внутренний</span>';
+  return '<span class="badge unknown">?</span>';
+}
+function renderRows(rows) {
+  return rows.map(function(row) {
+    return '<tr>' +
+      '<td>' + (row.call_date || '—') + '</td>' +
+      '<td>' + (row.call_time || '—') + '</td>' +
+      '<td>' + (row.ext || '—') + '</td>' +
+      '<td>' + badgeCell(row) + '</td>' +
+      '<td>' + directionCell(row) + '</td>' +
+      '<td>' + (row.duration || '—') + '</td>' +
+      '<td>' + (row.ring || '—') + '</td>' +
+      '<td>' + (row.fio || '—') + '</td>' +
+    '</tr>';
+  }).join('');
+}
+
+async function refreshData() {
+  const params = new URLSearchParams(new FormData(document.getElementById('filterForm')));
+  let data;
+  try {
+    const res = await fetch('api/calls?' + params.toString());
+    if (!res.ok) return;
+    data = await res.json();
+  } catch (e) {
+    return;
+  }
+  document.getElementById('callsBody').innerHTML = renderRows(data.rows);
+  document.getElementById('pageInfo').textContent =
+  'Страница ' + data.page + ' из ' + data.totalPages + ' · всего ' + data.filteredTotal + ' звонков';
+  document.getElementById('lastUpdate').textContent = 'обновлено ' + new Date().toLocaleTimeString('ru-RU');
+}
+
+let refreshTimer = null;
+function startAutoRefresh() { refreshTimer = setInterval(refreshData, 5000); }
+function stopAutoRefresh() { clearInterval(refreshTimer); }
+document.getElementById('filterForm').addEventListener('submit', function() {
+  document.getElementById('pageInput').value = 1; // при новом фильтре начинаем с первой страницы
+});
+document.getElementById('autoRefresh').addEventListener('change', function(e) {
+  if (e.target.checked) startAutoRefresh(); else stopAutoRefresh();
+});
+
+startAutoRefresh();
+</script>
+</body></html>

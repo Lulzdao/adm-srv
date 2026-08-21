@@ -1,0 +1,23 @@
+<% rows.forEach(row => { %>
+<tr>
+  <td><%= row.call_date || '—' %></td>
+  <td><%= row.call_time || '—' %></td>
+  <td><%= row.ext || '—' %></td>
+  <td>
+    <% if (row.direction === 'incoming' && row.status === 'NA') { %><span class="badge missed">Пропущенный</span>
+    <% } else if (row.direction === 'outgoing') { %><span class="badge outgoing">Исходящий</span>
+    <% } else if (row.direction === 'incoming') { %><span class="badge incoming">Входящий</span>
+    <% } else if (row.direction === 'internal') { %><span class="badge internal">Внутренний</span>
+    <% } else { %><span class="badge unknown">?</span><% } %>
+  </td>
+  <td>
+    <% if (row.direction === 'incoming') { %><%= row.caller %> → <%= row.did %>
+    <% } else if (row.direction === 'internal') { %>→ <%= row.internal_to %>
+    <% } else if (row.direction === 'outgoing') { %><%= row.number %>
+    <% } else { %><span class="muted">не распознано</span><% } %>
+  </td>
+  <td><%= row.duration || '—' %></td>
+  <td><%= row.ring || '—' %></td>
+  <td><%= row.fio || '—' %></td>
+</tr>
+<% }) %>

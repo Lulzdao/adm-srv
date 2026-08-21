@@ -1,0 +1,14 @@
+node_modules/
+
+# Секреты — только .env.example коммитится в репозиторий
+.env
+
+# Рантайм-данные (базы SQLite, логи, загруженные файлы) — не часть исходников
+*.db
+*.db-shm
+*.db-wal
+*.log
+helpdesk-backend/uploads/*
+!helpdesk-backend/uploads/.gitkeep
+helpdesk-backend/data/*
+!helpdesk-backend/data/.gitkeep

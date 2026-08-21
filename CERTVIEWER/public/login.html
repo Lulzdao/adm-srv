@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<title>Вход — Реестр сертификатов</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: "Segoe UI", Arial, sans-serif;
+    margin: 0;
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, #1e3a5f, #0f1f33);
+    position: relative;
+    overflow: hidden;
+  }
+  body::before {
+    content: "";
+    position: absolute;
+    top: -15%;
+    right: -10%;
+    width: 55vw;
+    height: 55vw;
+    max-width: 700px;
+    max-height: 700px;
+    background: radial-gradient(circle, #c39a5b 0%, transparent 70%);
+    opacity: 0.16;
+    filter: blur(60px);
+  }
+
+  .box {
+    position: relative;
+    z-index: 1;
+    background: #fff;
+    border-radius: 14px;
+    padding: 40px 34px 32px;
+    width: 320px;
+    box-shadow: 0 20px 50px rgba(0,0,0,0.35);
+  }
+  .seal {
+    display: flex; justify-content: center; margin-bottom: 14px; color: #a97f45;
+  }
+  .box h1 {
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 18px; font-weight: 600; margin: 0 0 4px; color: #1e3a5f; text-align: center;
+  }
+  .box .subtitle {
+    text-align: center; font-size: 11px; color: #8a97a8; letter-spacing: 1px;
+    text-transform: uppercase; margin-bottom: 22px;
+  }
+  label { display: block; font-size: 13px; color: #444; margin: 12px 0 4px; }
+  input {
+    width: 100%; padding: 10px 12px; font-size: 14px;
+    border: 1px solid #ccd4dd; border-radius: 7px;
+  }
+  input:focus { outline: none; border-color: #c39a5b; }
+  button {
+    width: 100%; margin-top: 22px; padding: 11px; background: #1e3a5f; color: #fff;
+    border: none; border-radius: 7px; font-size: 14px; cursor: pointer;
+    transition: background 0.15s;
+  }
+  button:hover { background: #16304d; }
+  #error { color: #d13c3c; font-size: 13px; margin-top: 12px; min-height: 18px; text-align: center; }
+</style>
+</head>
+<body>
+  <div class="box">
+    <div class="seal">
+      <svg width="34" height="34" viewBox="0 0 24 24" fill="none">
+        <circle cx="12" cy="12" r="9.5" stroke="currentColor" stroke-width="1.4"/>
+        <path d="M8 12.2l2.6 2.6L16.2 9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </div>
+    <h1>Реестр сертификатов сотрудников</h1>
+    <div class="subtitle">Вход в систему</div>
+    <form id="loginForm">
+      <label for="username">Логин</label>
+      <input type="text" id="username" name="username" autocomplete="username" required autofocus />
+      <label for="password">Пароль</label>
+      <input type="password" id="password" name="password" autocomplete="current-password" required />
+      <button type="submit">Войти</button>
+      <div id="error"></div>
+    </form>
+  </div>
+
+<script>
+const form = document.getElementById('loginForm');
+const errorEl = document.getElementById('error');
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  errorEl.textContent = '';
+  const username = document.getElementById('username').value;
+  const password = document.getElementById('password').value;
+
+  try {
+    const resp = await fetch('login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    if (resp.ok) {
+      window.location.href = './';
+    } else {
+      const data = await resp.json().catch(() => ({}));
+      errorEl.textContent = data.error || 'Не удалось войти';
+    }
+  } catch (err) {
+    errorEl.textContent = 'Ошибка соединения: ' + err.message;
+  }
+});
+</script>
+</body>
+</html>
