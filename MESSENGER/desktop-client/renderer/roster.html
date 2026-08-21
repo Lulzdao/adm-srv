@@ -1,0 +1,848 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Мессенджер</title>
+<link rel="stylesheet" href="theme.css">
+<style>
+  /* chat.html/broadcast.html задают это у себя, а здесь этого объявления не было — из-за чего body
+     не был flex-контейнером, #app/#auth ниже с их "flex: 1" ни на что не опирались (не было
+     flex-родителя) и фактически росли по контенту без предела, а не в границах окна. Из-за этого
+     #profilePanel/#list при уменьшении окна не получали свою настоящую (сжатую) высоту, и их
+     overflow-y:auto было нечему включать — контент просто обрезался снизу без скролла. */
+  body { display: flex; flex-direction: column; }
+
+  /* ---- Логин ---- */
+  #auth { flex: 1; display: flex; flex-direction: column; justify-content: center; padding: 26px; gap: 8px; }
+  #authForm { display: flex; flex-direction: column; gap: 8px; }
+  #authLogo { display: block; height: 110px; width: auto; margin: 0 auto 12px; }
+  #auth h1 { font-size: 22px; margin: 0 0 4px; text-align: center; font-weight: 800; letter-spacing: .3px; }
+  #auth .auth-subtitle { font-size: 12px; margin: 0 0 16px; text-align: center; color: var(--muted); }
+  #auth input { -webkit-app-region: no-drag; width: 100%; padding: 10px 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 9px; color: var(--text); font-size: 13px; }
+  #auth input:focus { outline: none; border-color: var(--accent); }
+  #auth button.primary { -webkit-app-region: no-drag; margin-top: 8px; padding: 11px; border: none; border-radius: 9px; background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff; font-weight: 700; cursor: pointer; font-size: 13px; }
+  #auth .switch { -webkit-app-region: no-drag; text-align: center; color: var(--muted); cursor: pointer; margin-top: 6px; }
+  #auth .switch:hover { color: var(--text); }
+  #auth .err { color: var(--danger); text-align: center; min-height: 16px; font-size: 12px; }
+
+  /* ---- Заголовок ---- */
+  .wintitlebar .title { font-weight: 600; font-size: 12px; letter-spacing: .3px; display: flex; align-items: center; gap: 6px; flex-shrink: 0; -webkit-app-region: drag; }
+  .wintitlebar .title .brand-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+
+  /* ---- Ростер ---- */
+  /* position:relative — чтобы #profilePanel ниже мог накладываться поверх списка абсолютным
+     позиционированием (как #historyPanel в окне чата/рассылок), а не толкать его через
+     max-height/flex-grow: та схема давала лёгкий рывок ближе к концу анимации, когда список под
+     панелью наконец получал display:none и высвобождал место, которое двум flex-элементам до этого
+     приходилось делить. */
+  #app { display: none; flex: 1; flex-direction: column; min-height: 0; position: relative; }
+  #app.active { display: flex; }
+
+  /* me-bar/searchBar занимают ОДНУ и ту же ячейку грида (наложены друг на друга) — это даёт честный
+     кроссфейд между ними без "прыжка" высоты, который был бы неизбежен, если бы оба по очереди
+     занимали место в обычном потоке (46px то появлялись, то исчезали бы независимо друг от друга). */
+  #topSlot { display: grid; flex-shrink: 0; }
+  #me-bar, #searchBar { grid-area: 1 / 1; -webkit-app-region: no-drag; display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--panel); min-height: 46px; transition: opacity .15s ease; }
+  #me-bar { cursor: pointer; }
+  #me-bar:hover { background: var(--panel-2); }
+  #me-bar.open { background: var(--panel-2); }
+  #me-bar.searching { opacity: 0; pointer-events: none; }
+  /* Шестерёнка вместо стрелки — крутится (не просто разворачивается) при открытии/закрытии панели
+     настроек, см. #me-bar.open ниже. */
+  #me-bar .gear { margin-left: auto; color: var(--muted); display: flex; flex-shrink: 0; transform: rotate(0deg); transition: transform .35s cubic-bezier(.4, 0, .2, 1), color .15s; }
+  #me-bar.open .gear { transform: rotate(180deg); color: var(--text); }
+  .avatar { width: 26px; height: 26px; border-radius: 50%; background: linear-gradient(135deg, var(--accent), #8f6ee8); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 10.5px; font-weight: 700; flex-shrink: 0; position: relative; }
+  .avatar .dot { position: absolute; right: -2px; bottom: -2px; border: 2px solid var(--panel); -webkit-app-region: no-drag; }
+  /* flex:1 + nowrap/ellipsis — гарантирует, что #topSlot всегда ровно 46px высотой (для top:46px у
+     #profilePanel ниже), даже если отображаемое имя очень длинное: без этого строка могла бы
+     перенестись на вторую строку и увеличить высоту шапки. */
+  #me-bar .name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600; font-size: 12.5px; }
+  #me-bar .dot { margin-right: -2px; }
+
+  #searchBar { opacity: 0; pointer-events: none; }
+  #searchBar.active { opacity: 1; pointer-events: auto; }
+  #searchBar svg { color: var(--muted); flex-shrink: 0; }
+  #searchBar input { flex: 1; background: transparent; border: none; color: var(--text); font-size: 13px; }
+  #searchBar input:focus { outline: none; }
+
+  /* "Объявления" — постоянный элемент (не пересоздаётся при каждом renderList(), в отличие от
+     остального списка), чтобы его можно было плавно прятать/показывать при поиске и открытии
+     профиля. Раньше высота схлопывалась мгновенным display:none с задержкой в 200мс (после
+     fade) — а поиск при этом всё время держит #list видимым (в отличие от открытия профиля, где
+     список тоже прячется одновременно), так что этот отложенный "прыжок" на 46px вверх было хорошо
+     видно каждый раз, когда начинался поиск. Высота у строки заранее известна и не меняется —
+     поэтому max-height можно анимировать по-настоящему (в отличие от #profilePanel, чей контент
+     заранее неизвестного размера), без скачка в конце. */
+  #historyRow { overflow: hidden; max-height: 48px; transition: opacity .15s ease, transform .2s ease, max-height .2s ease; }
+  #historyRow.hidden-up { opacity: 0; pointer-events: none; transform: translateY(-14px); max-height: 0; }
+
+  /* Плавно прячется, пока открыта панель профиля (см. hideListSmoothly/showListSmoothly) — сначала
+     гаснет (opacity), а когда переход закончится, по-настоящему убирается из раскладки
+     (display:none), иначе остаётся невидимым, но занимающим место. */
+  #list { flex: 1; overflow-y: auto; padding: 6px; transition: opacity .15s ease, transform .2s ease; }
+  #list.hidden { opacity: 0; pointer-events: none; transform: translateY(14px); }
+  .section { padding: 10px 8px 6px 10px; display: flex; align-items: center; gap: 6px; cursor: pointer; border-radius: 6px; user-select: none; }
+  .section .chev { color: var(--muted); display: flex; transition: transform .15s; flex-shrink: 0; }
+  .section.collapsed .chev { transform: rotate(-90deg); }
+  .section .stitle { font-size: 10.5px; color: var(--muted); letter-spacing: .5px; font-weight: 700; }
+  .section .scount { font-size: 10.5px; color: var(--muted); font-weight: 600; font-variant-numeric: tabular-nums; }
+  /* Сворачивание отдела — плавное (max-height), а не мгновенный display:none. Высота содержимого
+     заранее неизвестна (зависит от числа людей в отделе), поэтому конкретное значение max-height
+     на каждый показ/скрытие выставляет JS (см. animateDeptRows) через реально измеренный
+     scrollHeight — иначе пришлось бы либо угадывать с запасом (как у #profilePanel — там это
+     осознанный компромисс без анимации по существу), либо обрезать контент отдела побольше.
+     overflow:hidden обязателен — иначе max-height не будет ничего скрывать. */
+  .dept-rows { overflow: hidden; transition: max-height .2s ease; }
+
+  .row { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 9px; cursor: pointer; transition: background .12s; }
+  /* Интервал между СОСЕДНИМИ строками сотрудников — короче стандартного padding-based (на ~30%),
+     но только между ними: у первой строки отдела нет предыдущего .row (это заголовок отдела), так
+     что отступ от заголовка не трогается, как и отступ до следующего отдела/конца списка. */
+  .row + .row { margin-top: -4px; }
+  .row:hover { background: var(--panel-2); }
+  .row .n { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
+  .row .me-tag { font-weight: 500; font-size: 10.5px; color: var(--muted); margin-left: 6px; display: none; }
+  .row.is-me:hover .me-tag { display: inline; }
+  /* Недоступен для сообщений/файлов — подключён только через веб-панель администратора (см. пункт
+     ниже про canReceiveMessages в ui-kit.js): не кликабелен, приглушён, без обычной подсветки при наведении. */
+  .row.unreachable { opacity: .5; cursor: default; }
+  .row.unreachable:hover { background: transparent; }
+  /* Индикатор непрочитанного — счётчик справа в строке (не путать с точкой присутствия слева).
+     Состояние приходит от главного процесса (см. desktop.onUnreadState) — он же считает, какое
+     окно сейчас открыто/в фокусе, и сбрасывает счётчик при его открытии. */
+  .row .unread-badge { display: none; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--accent); color: #fff; font-size: 10px; font-weight: 700; align-items: center; justify-content: center; flex-shrink: 0; margin-left: 6px; box-sizing: border-box; }
+  .row.unread .unread-badge { display: flex; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--offline); flex-shrink: 0; }
+  .dot.active { background: var(--online); box-shadow: 0 0 6px 0 var(--online); }
+  .dot.idle { background: var(--afk); box-shadow: 0 0 6px 0 var(--afk); }
+  .badge-icon { width: 26px; height: 26px; border-radius: 8px; background: var(--panel-2); color: var(--accent-2); display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+  .empty-hint { padding: 20px 12px; text-align: center; color: var(--muted); font-size: 12px; }
+
+  /* ---- Профиль и настройки — раскрывающаяся панель под me-bar, а не отдельное окно ----
+     Абсолютно спозиционированный оверлей поверх списка контактов (тот же приём, что у #historyPanel
+     в окне чата/рассылок) — только opacity/transform, ничего, что требует пересчёта раскладки.
+     Раньше панель росла через max-height+flex-grow, деля место со списком, который прятался через
+     display:none с задержкой — эти два независимых процесса недосчитывались друг о друга, и ближе к
+     концу анимации, когда список наконец схлопывался, панель заметно "довырастала" рывком. Оверлей
+     с самого начала имеет свою полную, неизменную высоту (top:46px = высота #topSlot, bottom:0) —
+     доращивать нечего, поэтому дёргаться нечему. */
+  #profilePanel {
+    position: absolute; top: 46px; left: 0; right: 0; bottom: 0; z-index: 20;
+    display: flex; flex-direction: column; background: var(--bg);
+    border-top: 2px solid transparent;
+    opacity: 0; transform: translateY(-8px); pointer-events: none;
+    transition: opacity .2s ease, transform .2s ease, border-color .2s ease;
+  }
+  #profilePanel.open { opacity: 1; transform: translateY(0); pointer-events: auto; border-top-color: var(--accent); }
+  #profilePanel .inner { flex: 1; min-height: 0; padding: 14px; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
+  #profilePanel .section-title { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; font-weight: 700; }
+  #profilePanel .theme-row + .section-title { margin-top: 10px; }
+  #profilePanel .theme-row { display: flex; gap: 8px; padding: 10px; border-radius: 9px; background: var(--panel); border: 1px solid var(--border); }
+  #profilePanel .theme-row .info { flex: 1; }
+  #profilePanel .theme-row .t { font-weight: 600; font-size: 12px; }
+  #profilePanel .theme-row .d { color: var(--muted); font-size: 11px; margin-top: 2px; line-height: 1.35; }
+  #profilePanel .theme-switch { position: relative; display: flex; align-items: center; gap: 4px; background: var(--panel-2); border-radius: 20px; padding: 3px; flex-shrink: 0; align-self: center; }
+  /* Плавный слайдер: кружок-подложка едет между кнопками (transform), а не мгновенно перекрашивается
+     то одна, то другая кнопка — сами кнопки поверх него прозрачные, меняется только цвет иконки. */
+  #profilePanel .theme-switch .ts-thumb { position: absolute; top: 3px; left: 3px; width: 28px; height: 28px; border-radius: 50%; background: var(--accent); transition: transform .22s cubic-bezier(.4,0,.2,1); }
+  #profilePanel .theme-switch.light .ts-thumb { transform: translateX(32px); }
+  #profilePanel .theme-switch button { position: relative; z-index: 1; width: 28px; height: 28px; border-radius: 50%; border: none; background: transparent; color: var(--muted); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: color .22s ease; }
+  #profilePanel .theme-switch button.active { color: #fff; }
+  #profilePanel .option { display: flex; align-items: center; gap: 10px; padding: 10px; border-radius: 9px; background: var(--panel); border: 1px solid var(--border); cursor: pointer; }
+  #profilePanel .option:hover { background: var(--panel-2); }
+  #profilePanel .option .opt-text { flex: 1; min-width: 0; }
+  #profilePanel .option .t { font-weight: 600; font-size: 12px; }
+  #profilePanel .option .d { color: var(--muted); font-size: 11px; margin-top: 2px; line-height: 1.35; }
+  /* Слайдер вкл/выкл справа (вместо чекбокса слева) — сам input остаётся в разметке ради
+     доступности/семантики и обработчиков change, но визуально скрыт: видимый вид рисуют
+     .pp-switch-track и её ::before через соседний селектор input:checked +. */
+  #profilePanel .pp-switch { position: relative; display: inline-block; width: 38px; height: 22px; flex-shrink: 0; }
+  #profilePanel .pp-switch input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
+  #profilePanel .pp-switch-track { position: absolute; inset: 0; background: var(--panel-2); border: 1px solid var(--border); border-radius: 20px; transition: background .15s ease, border-color .15s ease; }
+  #profilePanel .pp-switch-track::before { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--muted); transition: transform .15s ease, background .15s ease; }
+  #profilePanel .pp-switch input:checked + .pp-switch-track { background: var(--accent); border-color: var(--accent); }
+  #profilePanel .pp-switch input:checked + .pp-switch-track::before { transform: translateX(16px); background: #fff; }
+  #profilePanel .pp-switch input:focus-visible + .pp-switch-track { outline: 2px solid var(--accent); outline-offset: 2px; }
+  #profilePanel #ppDownloadPathLabel { flex: 1; min-width: 0; font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 7px 9px; }
+  #profilePanel #ppPickFolderBtn { width: auto; padding: 0 10px; gap: 6px; display: flex; }
+  #profilePanel #ppIdleThresholdMinutes { width: 70px; padding: 7px 9px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-size: 12.5px; }
+  /* Стандартный range-input сбрасываем полностью (-webkit-appearance:none) и рисуем свою дорожку/
+     бегунок — иначе на Windows слайдер выглядел бы стандартным системным виджетом не в цвет темы. */
+  #profilePanel input[type="range"] { flex: 1; -webkit-appearance: none; appearance: none; height: 4px; border-radius: 2px; background: var(--panel-2); outline: none; cursor: pointer; }
+  #profilePanel input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 16px; height: 16px; border-radius: 50%; background: var(--accent); cursor: pointer; border: none; box-shadow: 0 1px 3px rgba(0,0,0,.3); }
+  #profilePanel #ppLogoutBtn { margin-top: 2px; padding: 9px; border: 1px solid var(--danger); border-radius: 8px; background: transparent; color: var(--danger); font-weight: 600; cursor: pointer; }
+  #profilePanel #ppLogoutBtn:hover { background: var(--danger); color: #fff; }
+</style>
+</head>
+<body>
+
+<div class="wintitlebar">
+  <span class="title"><span class="brand-dot"></span>Мессенджер</span>
+  <div class="wctl">
+    <button class="icon-btn" id="wcMin"></button>
+    <button class="icon-btn" id="wcMax"></button>
+    <button class="icon-btn close" id="wcClose"></button>
+  </div>
+</div>
+
+<div id="auth">
+  <svg id="authLogo" viewBox="74 16 52 110" fill="var(--text)"><path d="M98.09 95.38 L98.87 90.06 L100.00 20.00 L101.13 90.06 L101.91 95.38 L103.61 95.21 L109.19 90.81 L104.79 96.39 L104.62 98.09 L109.90 98.61 L122.00 100.00 L109.90 101.39 L104.62 101.91 L104.79 103.61 L109.19 109.19 L103.61 104.79 L101.91 104.62 L101.39 109.90 L100.00 122.00 L98.61 109.90 L98.09 104.62 L96.39 104.79 L90.81 109.19 L95.21 103.61 L95.38 101.91 L90.10 101.39 L78.00 100.00 L90.10 98.61 L95.38 98.09 L95.21 96.39 L90.81 90.81 L96.39 95.21 Z"/></svg>
+  <h1>Искра</h1>
+  <div class="auth-subtitle">Корпоративный мессенджер Липецкстата</div>
+  <div class="err" id="authErr"></div>
+  <form id="authForm" onsubmit="event.preventDefault(); doAuth();">
+    <input id="username" placeholder="Логин">
+    <input id="password" type="password" placeholder="Пароль">
+    <button class="primary" type="submit">Войти</button>
+  </form>
+  <div class="switch" id="switchMode" onclick="toggleMode()">Нет аккаунта? Зарегистрироваться</div>
+</div>
+
+<div id="app">
+  <div id="topSlot">
+    <div id="me-bar">
+      <div class="avatar" id="meAvatar"><span class="dot active" id="meDot" title="В сети"></span></div>
+      <div class="name" id="meName"></div>
+      <span class="gear"></span>
+    </div>
+    <div id="searchBar"></div>
+  </div>
+  <div id="profilePanel">
+    <div class="inner">
+      <div class="section-title">Тема оформления</div>
+      <div class="theme-row">
+        <div class="info">
+          <div class="t">Тёмная / светлая</div>
+          <div class="d">Применяется сразу ко всем открытым окнам клиента.</div>
+        </div>
+        <div class="theme-switch">
+          <span class="ts-thumb"></span>
+          <button id="ppThemeDark" title="Тёмная"></button>
+          <button id="ppThemeLight" title="Светлая"></button>
+        </div>
+      </div>
+
+      <div class="section-title">Настройки приложения</div>
+      <label class="option">
+        <div class="opt-text"><div class="t">Открывать окно чата при новых сообщениях</div><div class="d">Вместо системного уведомления сразу откроется и покажется окно с новым сообщением.</div></div>
+        <span class="pp-switch"><input type="checkbox" id="ppOpenChatOnMessage"><span class="pp-switch-track"></span></span>
+      </label>
+      <label class="option">
+        <div class="opt-text"><div class="t">Запоминать размер окон</div><div class="d">Ростер и окна чатов будут открываться с тем размером, который вы задали в последний раз.</div></div>
+        <span class="pp-switch"><input type="checkbox" id="ppRememberWindowSize"><span class="pp-switch-track"></span></span>
+      </label>
+      <label class="option">
+        <div class="opt-text"><div class="t">Поверх остальных окон</div><div class="d">Окна мессенджера всегда будут отображаться над другими приложениями.</div></div>
+        <span class="pp-switch"><input type="checkbox" id="ppAlwaysOnTop"><span class="pp-switch-track"></span></span>
+      </label>
+      <label class="option">
+        <div class="opt-text"><div class="t">Скрывать имя в сообщениях</div><div class="d">Не повторять имя собеседника в каждом сообщении личного чата — только в шапке окна.</div></div>
+        <span class="pp-switch"><input type="checkbox" id="ppHideNames"><span class="pp-switch-track"></span></span>
+      </label>
+
+      <div class="theme-row" style="flex-direction:column; align-items:stretch; gap:8px;">
+        <div class="info">
+          <div class="t">Порог статуса "Отошёл"</div>
+          <div class="d">Через сколько минут без движения мыши/клавиатуры статус переключается на "Отошёл".</div>
+        </div>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <input type="number" id="ppIdleThresholdMinutes" min="1" max="240" step="1">
+          <span style="color:var(--muted); font-size:11.5px;">мин.</span>
+        </div>
+      </div>
+
+      <div class="theme-row" style="flex-direction:column; align-items:stretch; gap:8px;">
+        <div class="info">
+          <div class="t">Масштаб интерфейса</div>
+          <div class="d">Пропорционально увеличивает или уменьшает весь интерфейс — текст, иконки, отступы.</div>
+        </div>
+        <div style="display:flex; gap:10px; align-items:center;">
+          <input type="range" id="ppUiScale" min="70" max="130" step="1" value="100">
+          <span id="ppUiScaleLabel" style="color:var(--muted); font-size:11.5px; width:36px; text-align:right; flex-shrink:0;">100%</span>
+        </div>
+      </div>
+
+      <div class="theme-row" style="flex-direction:column; align-items:stretch; gap:8px;">
+        <div class="info">
+          <div class="t">Папка для сохранения файлов</div>
+          <div class="d">Если указана — файлы из чата будут сразу сохраняться сюда, без диалога "Сохранить как".</div>
+        </div>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <div id="ppDownloadPathLabel"></div>
+          <button id="ppPickFolderBtn" class="icon-btn" title="Выбрать папку">Выбрать</button>
+          <button id="ppClearFolderBtn" class="icon-btn" title="Спрашивать каждый раз"></button>
+        </div>
+      </div>
+
+      <button id="ppLogoutBtn">Выйти из аккаунта</button>
+    </div>
+  </div>
+  <div id="historyRow" class="row" title="Открыть ленту всех рассылок">
+    <div class="badge-icon" id="historyRowIcon"></div><div class="n">Объявления</div><span class="unread-badge" id="historyRowBadge"></span>
+  </div>
+  <div id="list"></div>
+</div>
+
+<script src="ui-kit.js"></script>
+<script>
+let token = localStorage.getItem('token');
+let me = JSON.parse(localStorage.getItem('me') || 'null');
+let serverUrl = ''; // подтягивается из config.js через главный процесс — см. init() внизу файла
+let mode = 'login';
+let ws, presence = {}, usersCache = [];
+let collapsedDepts = new Set(JSON.parse(localStorage.getItem('collapsedDepts') || '[]'));
+let searchQuery = '';
+
+function initials(name) { return (name || '?').slice(0, 2).toUpperCase(); }
+function displayNameOf(u) { return u.display_name || u.username; }
+
+function toggleMode() {
+  mode = mode === 'login' ? 'register' : 'login';
+  document.querySelector('#auth button.primary').textContent = mode === 'login' ? 'Войти' : 'Зарегистрироваться';
+  document.getElementById('switchMode').textContent = mode === 'login' ? 'Нет аккаунта? Зарегистрироваться' : 'Уже есть аккаунт? Войти';
+}
+
+async function doAuth() {
+  const username = document.getElementById('username').value.trim();
+  const password = document.getElementById('password').value;
+  const errEl = document.getElementById('authErr');
+  errEl.textContent = '';
+  try {
+    const res = await fetch(`${serverUrl}/api/${mode}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) { errEl.textContent = data.error || 'Ошибка'; return; }
+    token = data.token; me = data.user;
+    localStorage.setItem('token', token);
+    localStorage.setItem('me', JSON.stringify(me));
+    startApp();
+  } catch {
+    errEl.textContent = 'Сервер недоступен. Обратитесь к администратору';
+  }
+}
+
+// Адрес сервера обычно зашит при сборке (см. config.js) — неудобно пересобирать .exe ради смены IP.
+// Скрытое поле на экране входа, вызываемое Ctrl+S (специально не на виду — это не то, что должен
+// трогать рядовой сотрудник; для него никакой кнопки/подсказки в интерфейсе нет).
+document.addEventListener('keydown', async (e) => {
+  if (!e.ctrlKey || e.key.toLowerCase() !== 's') return;
+  if (document.getElementById('app').classList.contains('active')) return; // уже вошли — не наш экран
+  e.preventDefault(); // иначе Chromium попытается открыть системный диалог "Сохранить страницу"
+  const value = await uiPrompt('Адрес сервера (например, http://192.168.0.11:3000):', serverUrl, { title: 'Адрес сервера', okText: 'Сохранить' });
+  if (value === null) return; // отменили
+  const next = value.trim();
+  if (!next || next === serverUrl) return;
+  serverUrl = await desktop.setServerUrl(next);
+  uiToast('Адрес сервера сохранён: ' + serverUrl);
+});
+
+async function api(path, opts) {
+  const res = await fetch(serverUrl + path, {
+    ...opts,
+    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', ...(opts?.headers || {}) },
+  });
+  if (res.status === 401) { desktop.logout(); throw new Error('Сессия недействительна'); }
+  if (!res.ok) throw new Error('request failed');
+  return res.json();
+}
+
+let wsLostTimer = null; // см. showConnectionLostModal в ui-kit.js
+function connectWs() {
+  const wsUrl = serverUrl.replace(/^http/, 'ws');
+  ws = new WebSocket(`${wsUrl}?token=${token}&host=${encodeURIComponent(desktop.hostname)}`);
+  // Реальный статус на момент подключения, а не всегда "в сети" — иначе новое WS-подключение
+  // (например, при открытии окна чата) на пару секунд перебивало настоящий AFK-статус человека,
+  // пока не придёт очередной 15-секундный тик с исправлением.
+  ws.onopen = async () => {
+    clearTimeout(wsLostTimer);
+    wsLostTimer = null;
+    hideConnectionLostModal();
+    const { state } = await desktop.getIdleState();
+    ws.send(JSON.stringify({ type: 'status', state }));
+  };
+  ws.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    if (data.type === 'presence') { presence = data.users; updatePresenceOnly(); }
+    if (data.type === 'message' && data.from_id !== me.id) {
+      const files = data.files || [];
+      let body = data.text || '';
+      if (files.length === 1) body = body ? `${body} · 📎 ${files[0].name}` : `📎 ${files[0].name}`;
+      else if (files.length > 1) body = body ? `${body} · 📎 ${files.length} файла` : `📎 ${files.length} файла`;
+      desktop.notify({
+        title: data.from_user,
+        body,
+        openPayload: { type: data.room ? 'room' : 'dm', id: data.room || data.from_id, label: data.from_user, token, serverUrl },
+      });
+    }
+    if (data.type === 'broadcast') {
+      desktop.notify({
+        title: '📢 Рассылка от ' + data.from_user,
+        body: data.text || `📎 ${(data.files || []).length} файл(ов)`,
+        openPayload: { type: 'broadcast', id: 'broadcast', label: 'Объявления', token, serverUrl, file: 'broadcast.html' },
+      });
+    }
+    // Админ поменял чью-то роль/отдел/список пользователей — подхватываем сразу, без перезахода
+    if (data.type === 'users-changed') { refreshUsers(); refreshMe(); }
+  };
+  ws.onclose = () => {
+    // Не сбрасываем таймер на каждой неудачной попытке (реконнект — раз в 2с) — иначе постоянные
+    // провалы просто бесконечно откладывали бы показ диалога. Ставим один раз на первый обрыв и
+    // ждём (5с), пока какая-нибудь попытка не удастся; удачное onopen выше сам его отменяет.
+    if (!wsLostTimer) wsLostTimer = setTimeout(() => { wsLostTimer = null; showConnectionLostModal(connectWs); }, 5000);
+    setTimeout(connectWs, 2000);
+  };
+}
+
+// Текст статуса: для "отошёл" — сколько времени человек уже отошёл, а не просто "AFK"
+function formatIdleDuration(idleSince) {
+  if (!idleSince) return '';
+  const mins = Math.max(1, Math.round((Date.now() - idleSince) / 60000));
+  if (mins < 60) return `${mins} мин назад`;
+  const hours = Math.floor(mins / 60);
+  return `${hours} ч назад`;
+}
+function statusLabel(state, idleSince) {
+  if (state === 'active') return 'В сети';
+  if (state === 'idle') return `Отошёл (${formatIdleDuration(idleSince)})`;
+  return 'Не в сети';
+}
+// Тултип строки пользователя: "Статус: ..." + с какого момента этот статус действует (since —
+// от сервера, формируется в formatStatusSince из ui-kit.js) + по строке "Имя ПК: ..." на каждый
+// подключённый компьютер (если несколько сессий на одном аккаунте).
+function buildTooltip(state, idleSince, hosts, since) {
+  const lines = [`Статус: ${statusLabel(state, idleSince)}`];
+  const sinceLine = formatStatusSince(state, since);
+  if (sinceLine) lines.push(sinceLine);
+  (hosts || []).forEach((h) => lines.push(`Имя ПК: ${h}`));
+  return lines.join('\n');
+}
+
+desktop.onIdleState(({ state, idleSeconds }) => {
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'status', state }));
+  const dot = document.getElementById('meDot');
+  if (dot) {
+    dot.className = 'dot ' + state;
+    const mins = Math.floor((idleSeconds || 0) / 60);
+    dot.title = state === 'idle' ? `Отошёл (${mins} мин назад)` : 'В сети';
+  }
+});
+
+desktop.onShowAlert(({ message, title }) => uiAlert(message, title));
+
+document.getElementById('historyRowIcon').innerHTML = uiIcon('megaphone');
+document.getElementById('historyRow').onclick = () => desktop.openBroadcast({ token, serverUrl, me: JSON.stringify(me) });
+
+// ---------- Профиль и настройки — панель под me-bar (не отдельное окно) ----------
+document.getElementById('ppThemeDark').innerHTML = uiIcon('moon');
+document.getElementById('ppThemeLight').innerHTML = uiIcon('sun');
+document.getElementById('ppPickFolderBtn').prepend(document.createRange().createContextualFragment(uiIcon('folder')));
+document.getElementById('ppClearFolderBtn').innerHTML = uiIcon('x');
+
+const PP_CHECKBOX_IDS = [
+  ['ppOpenChatOnMessage', 'openChatOnMessage'],
+  ['ppRememberWindowSize', 'rememberWindowSize'],
+  ['ppAlwaysOnTop', 'alwaysOnTop'],
+  ['ppHideNames', 'hideNameInMessages'],
+];
+
+function paintProfileTheme(theme) {
+  document.getElementById('ppThemeDark').classList.toggle('active', theme !== 'light');
+  document.getElementById('ppThemeLight').classList.toggle('active', theme === 'light');
+  document.querySelector('#profilePanel .theme-switch').classList.toggle('light', theme === 'light');
+}
+function paintProfileDownloadPath(p) {
+  document.getElementById('ppDownloadPathLabel').textContent = p || 'Каждый раз спрашивать, куда сохранить';
+  document.getElementById('ppDownloadPathLabel').title = p || '';
+}
+
+async function loadProfilePanel() {
+  const settings = await desktop.getSettings();
+  PP_CHECKBOX_IDS.forEach(([id, key]) => { document.getElementById(id).checked = !!settings[key]; });
+  paintProfileTheme(settings.theme);
+  paintProfileDownloadPath(settings.downloadPath);
+  document.getElementById('ppIdleThresholdMinutes').value = settings.idleThresholdMinutes || 30;
+  paintProfileUiScale(settings.uiScale);
+}
+function paintProfileUiScale(uiScale) {
+  const pct = Math.round((uiScale || 1) * 100);
+  document.getElementById('ppUiScale').value = pct;
+  document.getElementById('ppUiScaleLabel').textContent = pct + '%';
+}
+
+// Список контактов плавно прячется, пока открыта панель профиля — сначала гаснет (opacity), а
+// когда переход закончится, по-настоящему убирается из раскладки (display:none), иначе остаётся
+// невидимым, но занимающим место (тот же приём, что у ленты рассылок при открытом композере).
+function hideListSmoothly() {
+  const list = document.getElementById('list');
+  if (list.classList.contains('hidden')) return;
+  list.classList.add('hidden');
+  setTimeout(() => { if (list.classList.contains('hidden')) list.style.display = 'none'; }, 160);
+}
+function showListSmoothly() {
+  const list = document.getElementById('list');
+  list.style.display = 'block'; // сначала возвращаем в раскладку (ещё прозрачным)...
+  void list.offsetHeight; // ...форсируем reflow, чтобы transition не схлопнулся...
+  list.classList.remove('hidden'); // ...и только теперь плавно проявляем
+}
+
+// "Объявления" прячутся, уезжая вверх, — что при открытии профиля (вместе со списком), что при
+// активном поиске (вместе с me-bar, см. setSearchActive). Высота строки схлопывается через
+// max-height в самом CSS-переходе (см. #historyRow.hidden-up) — никакого отдельного display:none
+// с задержкой не нужно, поэтому и прыжка в конце анимации, пока список поиска остаётся видимым
+// рядом, больше нет.
+function hideHistoryRowUp() {
+  document.getElementById('historyRow').classList.add('hidden-up');
+}
+function showHistoryRow() {
+  document.getElementById('historyRow').classList.remove('hidden-up');
+}
+
+function toggleProfilePanel() {
+  document.getElementById('profilePanel').classList.contains('open') ? closeProfilePanel() : openProfilePanel();
+}
+async function openProfilePanel() {
+  if (searchQuery) { searchQuery = ''; setSearchActive(false); renderList(); } // поиск и профиль — взаимоисключающие
+  await loadProfilePanel();
+  document.getElementById('profilePanel').classList.add('open');
+  document.getElementById('me-bar').classList.add('open');
+  document.getElementById('me-bar').title = 'Скрыть профиль и настройки';
+  hideListSmoothly();
+  hideHistoryRowUp();
+}
+function closeProfilePanel() {
+  document.getElementById('profilePanel').classList.remove('open');
+  document.getElementById('me-bar').classList.remove('open');
+  document.getElementById('me-bar').title = 'Профиль и настройки';
+  showListSmoothly();
+  showHistoryRow();
+}
+
+PP_CHECKBOX_IDS.forEach(([id, key]) => {
+  document.getElementById(id).addEventListener('change', (e) => desktop.setSettings({ [key]: e.target.checked }));
+});
+document.getElementById('ppThemeDark').onclick = () => { desktop.setSettings({ theme: 'dark' }); paintProfileTheme('dark'); };
+document.getElementById('ppThemeLight').onclick = () => { desktop.setSettings({ theme: 'light' }); paintProfileTheme('light'); };
+document.getElementById('ppPickFolderBtn').onclick = async () => {
+  const folder = await desktop.pickDownloadFolder();
+  if (folder) { desktop.setSettings({ downloadPath: folder }); paintProfileDownloadPath(folder); }
+};
+document.getElementById('ppClearFolderBtn').onclick = () => { desktop.setSettings({ downloadPath: null }); paintProfileDownloadPath(null); };
+document.getElementById('ppIdleThresholdMinutes').addEventListener('change', (e) => {
+  const mins = Math.min(240, Math.max(1, Number(e.target.value) || 30));
+  e.target.value = mins;
+  desktop.setSettings({ idleThresholdMinutes: mins });
+});
+// 'input' (не 'change') — применяем сразу, пока тащат ползунок, а не только когда его отпустят.
+document.getElementById('ppUiScale').addEventListener('input', (e) => {
+  const pct = Number(e.target.value);
+  document.getElementById('ppUiScaleLabel').textContent = pct + '%';
+  desktop.setSettings({ uiScale: pct / 100 });
+});
+document.getElementById('ppLogoutBtn').onclick = async () => {
+  const ok = await uiConfirm('Вы уверены, что хотите выйти из аккаунта на этом компьютере?', {
+    title: 'Выход из аккаунта', okText: 'Выйти', danger: true,
+  });
+  if (ok) desktop.logout();
+};
+
+function deptOnlineCount(users) {
+  const on = users.filter(u => { const s = (presence[u.id] || {}).state; return s === 'active' || s === 'idle'; }).length;
+  return `${on}/${users.length}`;
+}
+
+// Разворачивает/сворачивает отдел на месте (без renderList() — тот сносит и пересоздаёт весь DOM,
+// из-за чего анимация была бы не на чём проигрывать). section.nextElementSibling — это .dept-rows,
+// они всегда идут парой в этом порядке, см. их создание в renderList() ниже.
+function toggleDept(key, section) {
+  const willCollapse = !collapsedDepts.has(key);
+  if (willCollapse) collapsedDepts.add(key); else collapsedDepts.delete(key);
+  localStorage.setItem('collapsedDepts', JSON.stringify([...collapsedDepts]));
+
+  const rows = section.nextElementSibling;
+  if (!rows || !rows.classList.contains('dept-rows')) { renderList(); return; } // подстраховка на случай рассинхрона разметки
+
+  section.classList.toggle('collapsed', willCollapse);
+  section.title = willCollapse ? 'Показать сотрудников отдела' : 'Скрыть сотрудников отдела';
+  animateDeptRows(rows, willCollapse);
+}
+
+function animateDeptRows(rows, collapsing) {
+  if (collapsing) {
+    rows.style.maxHeight = rows.scrollHeight + 'px'; // фиксируем текущую (полную) высоту явным числом...
+    void rows.offsetHeight; // ...форсируем reflow, чтобы браузер зафиксировал её ДО следующего шага...
+    rows.style.maxHeight = '0px'; // ...и только теперь анимируем к нулю
+  } else {
+    rows.style.maxHeight = rows.scrollHeight + 'px'; // scrollHeight измеряется верно, даже пока сам элемент схлопнут
+    rows.addEventListener('transitionend', function onEnd(e) {
+      if (e.propertyName !== 'max-height') return;
+      rows.removeEventListener('transitionend', onEnd);
+      // Снимаем ограничение по завершении — иначе список отдела мог бы обрезаться, если позже
+      // в него добавится сотрудник (перевод из другого отдела и т.п.), а высота осталась бы старой.
+      rows.style.maxHeight = '';
+    });
+  }
+}
+
+// Пользователь, у которого сейчас нет ни одного "живого" подключения (только веб-панель
+// администратора или её сочетание с ничем другим), физически не увидит ни сообщение, ни файл —
+// у веб-панели нет интерфейса чата. Писать ему/кидать файл из ростера поэтому запрещено:
+// строка приглушается и перестаёт быть кликабельной (см. canReceiveMessages в ui-kit.js).
+function applyReachability(row, u, p) {
+  const reachable = canReceiveMessages(p.hosts);
+  const chatPayload = { type: 'dm', id: u.id, label: displayNameOf(u), token, serverUrl };
+  row.classList.toggle('unreachable', !reachable);
+  row.title = buildTooltip(p.state, p.idleSince, p.hosts, p.since)
+    + (reachable ? '' : '\nСейчас недоступен для сообщений и файлов — подключён только через веб-панель администратора');
+  row.onclick = reachable ? () => desktop.openChat(chatPayload) : null;
+  row.oncontextmenu = reachable
+    ? (e) => { e.preventDefault(); desktop.showUserMenu(chatPayload); }
+    : (e) => e.preventDefault();
+}
+
+// ---------- Непрочитанные — состояние хранит и считает главный процесс (main.js), здесь только отрисовка ----------
+let unreadDmCounts = {}; // { userId: count } — ключи приходят строками (через IPC/JSON), см. main.js
+let unreadBroadcastCount = 0;
+
+function setUnreadBadge(row, count) {
+  row.classList.toggle('unread', count > 0);
+  const badge = row.querySelector('.unread-badge');
+  if (badge) badge.textContent = count > 99 ? '99+' : String(count);
+}
+
+function applyUnreadState(state) {
+  unreadDmCounts = state.dms || {};
+  unreadBroadcastCount = state.broadcast || 0;
+  document.querySelectorAll('#list .row[data-uid]').forEach((row) => {
+    setUnreadBadge(row, unreadDmCounts[row.dataset.uid] || 0);
+  });
+  setUnreadBadge(document.getElementById('historyRow'), unreadBroadcastCount);
+}
+desktop.onUnreadState(applyUnreadState);
+
+function makeUserRow(u) {
+  const isMe = u.id === me.id;
+  const p = presence[u.id] || { state: 'offline', hosts: [] };
+  const name = displayNameOf(u);
+  const row = document.createElement('div');
+  row.className = 'row' + (isMe ? ' is-me' : '');
+  row.dataset.uid = u.id; // нужно для точечного обновления статуса без пересборки всего списка
+  row.innerHTML = `<div class="dot ${p.state}"></div><div class="n">${name}${isMe ? ' <span class="me-tag">это вы</span>' : ''}</div><span class="unread-badge"></span>`;
+  if (!isMe) setUnreadBadge(row, unreadDmCounts[u.id] || 0);
+  if (isMe) {
+    row.title = 'Профиль и настройки';
+    row.onclick = toggleProfilePanel;
+  } else {
+    applyReachability(row, u, p);
+  }
+  return row;
+}
+
+// Точечно обновляет точки статуса/тултипы/счётчики "онлайн" по уже существующим DOM-узлам,
+// НЕ пересоздавая их. Раньше presence-сообщение (а оно приходит при изменении статуса ЛЮБОГО
+// пользователя, не только того, над кем сейчас курсор) вызывало renderList(), которая полностью
+// сносит и заново строит список — если мышь в этот момент была над строкой, наведённый элемент
+// уничтожался и на его месте появлялся новый уже без :hover, из-за чего подсветка периодически
+// пропадала и снова появлялась (моргание). Теперь при обычном обновлении статуса элементы не
+// трогаем вообще, только переставляем классы/текст внутри них.
+function updatePresenceOnly() {
+  document.querySelectorAll('#list .row[data-uid]').forEach((row) => {
+    const u = usersCache.find((x) => String(x.id) === row.dataset.uid);
+    if (!u) return;
+    const p = presence[u.id] || { state: 'offline', hosts: [] };
+    const dot = row.querySelector('.dot');
+    if (dot) dot.className = 'dot ' + p.state;
+    if (u.id === me.id) row.title = 'Профиль и настройки';
+    else applyReachability(row, u, p); // пересчитывает и доступность (появился/пропал реальный хост), и тултип
+  });
+  document.querySelectorAll('#list .section[data-dept]').forEach((section) => {
+    const key = section.dataset.dept;
+    const users = usersCache.filter((u) => (u.department || 'Без отдела') === key);
+    const countEl = section.querySelector('.scount');
+    if (countEl) countEl.textContent = deptOnlineCount(users);
+  });
+}
+
+function renderList() {
+  const list = document.getElementById('list');
+  list.innerHTML = '';
+
+  const allUsers = usersCache;
+
+  // Поиск — плоский список без группировки по отделам, без учёта свёрнутости
+  if (searchQuery) {
+    const q = searchQuery.toLowerCase();
+    const found = allUsers.filter(u => displayNameOf(u).toLowerCase().includes(q));
+    if (!found.length) {
+      const hint = document.createElement('div');
+      hint.className = 'empty-hint';
+      hint.textContent = 'Никого не найдено';
+      list.appendChild(hint);
+    } else {
+      found.forEach(u => list.appendChild(makeUserRow(u)));
+    }
+    return;
+  }
+
+  const groups = new Map();
+  allUsers.forEach(u => {
+    const key = u.department || 'Без отдела';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(u);
+  });
+
+  // Порядок — как задан на сервере (веб-панель, стрелки ↑↓), "Без отдела" всегда в самом низу;
+  // если отдела почему-то нет в списке с сервера (рассинхрон) — в конец, по алфавиту между собой.
+  const orderedKeys = [...groups.keys()].sort((a, b) => {
+    if (a === 'Без отдела') return 1;
+    if (b === 'Без отдела') return -1;
+    const ia = deptOrderCache.indexOf(a);
+    const ib = deptOrderCache.indexOf(b);
+    if (ia === -1 && ib === -1) return a.localeCompare(b, 'ru');
+    if (ia === -1) return 1;
+    if (ib === -1) return -1;
+    return ia - ib;
+  });
+
+  for (const key of orderedKeys) {
+    const users = groups.get(key);
+    const collapsed = collapsedDepts.has(key);
+    const section = document.createElement('div');
+    section.className = 'section' + (collapsed ? ' collapsed' : '');
+    section.dataset.dept = key;
+    section.title = collapsed ? 'Показать сотрудников отдела' : 'Скрыть сотрудников отдела';
+    section.innerHTML = `<span class="chev">${uiIcon('chevron')}</span><span class="stitle">${key}</span><span class="scount">${deptOnlineCount(users)}</span>`;
+    section.onclick = () => toggleDept(key, section);
+    list.appendChild(section);
+
+    const rowsWrap = document.createElement('div');
+    rowsWrap.className = 'dept-rows';
+    if (collapsed) rowsWrap.style.maxHeight = '0px'; // сразу схлопнуто, без анимации при первой отрисовке
+    users.forEach(u => rowsWrap.appendChild(makeUserRow(u)));
+    list.appendChild(rowsWrap);
+  }
+}
+
+let deptOrderCache = []; // имена отделов в порядке, заданном на сервере (стрелками ↑↓ в веб-панели)
+
+async function refreshUsers() {
+  usersCache = await api('/api/users');
+  try { deptOrderCache = (await api('/api/departments')).map((d) => d.name); } catch { /* не критично — останется прошлый порядок или алфавитный */ }
+  renderList();
+}
+
+// Роль/имя могли поменять на сервере (через веб-панель) — подтягиваем свежие данные без перезахода
+async function refreshMe() {
+  try {
+    const fresh = await api('/api/me');
+    me = { ...me, ...fresh };
+    localStorage.setItem('me', JSON.stringify(me));
+    document.getElementById('meName').textContent = displayNameOf(me);
+  } catch { /* сеть могла моргнуть — не критично, попробуем при следующем событии */ }
+}
+
+// ---------- Скрытый поиск: начал печатать — появилась строка поиска вместо "себя" ----------
+function setSearchActive(active) {
+  if (active) closeProfilePanel(); // поиск и профиль — взаимоисключающие состояния верхней части ростера
+  document.getElementById('me-bar').classList.toggle('searching', active); // кроссфейд с searchBar — см. #topSlot
+  if (active) hideHistoryRowUp(); else showHistoryRow();
+  const bar = document.getElementById('searchBar');
+  bar.classList.toggle('active', active);
+  if (active && !bar.dataset.built) {
+    bar.dataset.built = '1';
+    bar.innerHTML = `${uiIcon('search')}<input id="searchInput" placeholder="Поиск по имени...">`;
+    document.getElementById('searchInput').addEventListener('input', (e) => {
+      searchQuery = e.target.value;
+      if (!searchQuery) setSearchActive(false);
+      renderList();
+    });
+  }
+  if (active) { bar.querySelector('input').value = searchQuery; bar.querySelector('input').focus(); }
+}
+
+document.addEventListener('keydown', (e) => {
+  if (!document.getElementById('app').classList.contains('active')) return;
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  const active = document.activeElement;
+  const typingElsewhere = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA') && active.id !== 'searchInput';
+  if (typingElsewhere) return;
+
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    if (document.getElementById('profilePanel').classList.contains('open')) { closeProfilePanel(); return; }
+    searchQuery = ''; setSearchActive(false); renderList();
+    return;
+  }
+  if (e.key === 'Backspace') {
+    e.preventDefault(); // иначе на пустом searchQuery Electron может воспринять Backspace как "назад"
+    if (!searchQuery) return;
+    searchQuery = searchQuery.slice(0, -1);
+    if (!searchQuery) { setSearchActive(false); renderList(); return; }
+    setSearchActive(true);
+    renderList();
+    return;
+  }
+  if (e.key.length === 1) { // печатный символ
+    // Без этого браузер, увидев, что мы только что сфокусировали #searchInput (внутри
+    // setSearchActive), сам ЕЩЁ РАЗ вставлял тот же символ в уже сфокусированное поле —
+    // и на экране появлялось "аа" вместо "а".
+    e.preventDefault();
+    searchQuery += e.key;
+    setSearchActive(true);
+    renderList();
+  }
+});
+
+// Главный процесс считает непрочитанное только по живым WS-событиям (см. markUnread в main.js) —
+// если клиент был полностью закрыт (не свёрнут в трей), при следующем запуске эти счётчики стартуют
+// с нуля, и пропущенные, пока клиент был офлайн, рассылки/сообщения не показывают значок
+// непрочитанного, пока диалог не откроют вручную. Досчитываем пропущенное по данным сервера при
+// каждом старте: для рассылок — своя же метка "последнее увиденное" из localStorage (её читает и
+// broadcast.html — тот же file://-источник, общий localStorage) плюс сегодняшняя лента; для личных
+// сообщений — read_at на сервере (авторитетнее localStorage: не зависит от того, открывали ли этот
+// диалог раньше вообще). ВАЖНО вызывать ДО connectWs() — тогда никакой гонки с живыми событиями:
+// сначала фиксируем базовый пропущенный "хвост", а всё, что придёт по WS позже, просто добавится
+// поверх через обычный markUnread.
+async function seedMissedUnread() {
+  try {
+    const now = Date.now();
+    const todayStart = new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate()).getTime();
+    const lastSeenId = Number(localStorage.getItem('broadcastLastSeenId')) || 0;
+    const [todayBroadcasts, dms] = await Promise.all([
+      api(`/api/broadcasts?since=${todayStart}&until=${now}`),
+      api('/api/unread-dms'),
+    ]);
+    const broadcast = todayBroadcasts.filter((b) => b.id > lastSeenId).length;
+    if (broadcast || Object.keys(dms).length) await desktop.seedUnread({ broadcast, dms });
+  } catch { /* сеть недоступна на самом старте — не критично, догонит живыми WS-событиями дальше */ }
+}
+
+async function startApp() {
+  document.getElementById('auth').style.display = 'none';
+  document.getElementById('app').classList.add('active');
+  document.getElementById('meAvatar').prepend(initials(displayNameOf(me)));
+  document.getElementById('meName').textContent = displayNameOf(me);
+  document.querySelector('#me-bar .gear').innerHTML = uiIcon('gear');
+  document.getElementById('me-bar').onclick = toggleProfilePanel;
+  document.getElementById('me-bar').title = 'Профиль и настройки';
+  // connectWs() — до всего остального и безусловно: если сервер лежал уже на момент запуска
+  // приложения (а не просто отвалился во время работы), раньше это было багом — await refreshUsers()
+  // ниже падал (fetch по недоступному серверу) без try/catch, и connectWs() просто никогда не
+  // вызывался — некому было даже начать WS-реконнект и показать диалог о потере соединения.
+  connectWs();
+  try {
+    await refreshUsers();
+    applyUnreadState(await desktop.getUnreadState()); // на случай, если что-то пришло, пока ростер ещё не слушал unread-state
+    await seedMissedUnread();
+  } catch { /* сервер недоступен уже при запуске — connectWs() выше сам занимается переподключением и покажет диалог */ }
+  setInterval(refreshUsers, 20000);
+}
+
+(async function init() {
+  serverUrl = await desktop.getServerUrl();
+  if (token && me) startApp();
+})();
+</script>
+</body>
+</html>

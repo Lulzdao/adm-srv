@@ -1,0 +1,30 @@
+const { contextBridge, ipcRenderer } = require('electron');
+const os = require('os');
+
+contextBridge.exposeInMainWorld('desktop', {
+  hostname: os.hostname(),
+  openChat: (payload) => ipcRenderer.send('open-chat', payload),
+  openBroadcast: (payload) => ipcRenderer.send('open-broadcast', payload),
+  showUserMenu: (payload) => ipcRenderer.send('show-user-menu', payload),
+  showMessageMenu: (payload) => ipcRenderer.send('show-message-menu', payload),
+  windowAction: (action) => ipcRenderer.send('window-action', action),
+  notify: (payload) => ipcRenderer.send('notify', payload),
+  logout: () => ipcRenderer.send('logout'),
+  onIdleState: (cb) => ipcRenderer.on('idle-state', (event, payload) => cb(payload)),
+  onFilesToSend: (cb) => ipcRenderer.on('files-to-send', (event, files) => cb(files)),
+  onShowAlert: (cb) => ipcRenderer.on('show-alert', (event, payload) => cb(payload)),
+  onSettingsChanged: (cb) => ipcRenderer.on('settings-changed', (event, settings) => cb(settings)),
+  onWindowState: (cb) => ipcRenderer.on('window-state', (event, state) => cb(state)),
+  getServerUrl: () => ipcRenderer.invoke('get-server-url'),
+  setServerUrl: (url) => ipcRenderer.invoke('set-server-url', url),
+  getIdleState: () => ipcRenderer.invoke('get-idle-state'),
+  getSettings: () => ipcRenderer.invoke('get-settings'),
+  setSettings: (partial) => ipcRenderer.send('set-settings', partial),
+  downloadFile: (url, downloadId) => ipcRenderer.send('download-file', url, downloadId),
+  onDownloadProgress: (cb) => ipcRenderer.on('download-progress', (event, payload) => cb(payload)),
+  onToast: (cb) => ipcRenderer.on('toast', (event, payload) => cb(payload)),
+  pickDownloadFolder: () => ipcRenderer.invoke('pick-download-folder'),
+  getUnreadState: () => ipcRenderer.invoke('get-unread-state'),
+  seedUnread: (payload) => ipcRenderer.invoke('seed-unread', payload),
+  onUnreadState: (cb) => ipcRenderer.on('unread-state', (event, state) => cb(state)),
+});

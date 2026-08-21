@@ -1,0 +1,506 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Мини-мессенджер — панель администратора</title>
+<style>
+  :root {
+    --bg:#14161a; --panel:#1c1f26; --panel-2:#242832; --border:#2c313c;
+    --accent:#5b8def; --accent-2:#7aa5ff; --text:#eef0f4; --muted:#8b91a3;
+    --online:#3ddc84; --danger:#e0566a; --warn:#f5b942;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif; font-size:14px; }
+  ::-webkit-scrollbar { width:9px; height:9px; }
+  ::-webkit-scrollbar-thumb { background:var(--panel-2); border-radius:5px; }
+
+  /* ---- Логин ---- */
+  #authScreen { min-height:100vh; display:flex; align-items:center; justify-content:center; }
+  #authBox { width:360px; background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:32px; }
+  #authBox h1 { margin:0 0 4px; font-size:19px; }
+  #authBox p.sub { margin:0 0 20px; color:var(--muted); font-size:13px; }
+  #authBox input { width:100%; padding:11px 13px; margin-bottom:10px; background:var(--panel-2); border:1px solid var(--border); border-radius:9px; color:var(--text); font-size:14px; }
+  #authBox input:focus { outline:none; border-color:var(--accent); }
+  #authBox button { width:100%; padding:11px; border:none; border-radius:9px; background:linear-gradient(135deg,var(--accent),var(--accent-2)); color:#fff; font-weight:700; font-size:14px; cursor:pointer; }
+  #authErr { color:var(--danger); font-size:13px; min-height:18px; margin-bottom:4px; }
+
+  /* ---- Layout ---- */
+  #dash { display:none; min-height:100vh; }
+  #dash.active { display:flex; }
+  #sidebar { width:220px; flex-shrink:0; background:var(--panel); border-right:1px solid var(--border); display:flex; flex-direction:column; padding:16px 10px; }
+  #sidebar .brand { font-weight:800; font-size:15px; padding:6px 10px 20px; display:flex; align-items:center; gap:8px; }
+  #sidebar .brand .dot { width:9px; height:9px; border-radius:50%; background:var(--accent); box-shadow:0 0 8px var(--accent); }
+  .nav-item { padding:10px 12px; border-radius:9px; cursor:pointer; color:var(--muted); font-weight:600; font-size:13.5px; margin-bottom:2px; }
+  .nav-item:hover { background:var(--panel-2); color:var(--text); }
+  .nav-item.active { background:var(--accent); color:#fff; }
+  #sidebar .foot { margin-top:auto; padding:10px; border-top:1px solid var(--border); }
+  #sidebar .foot .who { font-size:12.5px; font-weight:600; }
+  #sidebar .foot .role { font-size:11px; color:var(--muted); margin-bottom:8px; }
+  #sidebar .foot button { width:100%; padding:8px; border:1px solid var(--danger); background:transparent; color:var(--danger); border-radius:7px; cursor:pointer; font-size:12px; }
+  #sidebar .foot button:hover { background:var(--danger); color:#fff; }
+
+  #main { flex:1; padding:26px 32px; overflow-y:auto; max-height:100vh; }
+  .view { display:none; }
+  .view.active { display:block; }
+  h2 { margin:0 0 18px; font-size:19px; }
+
+  .cards { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:24px; }
+  .card { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:16px 18px; }
+  .card .v { font-size:26px; font-weight:800; }
+  .card .l { color:var(--muted); font-size:12px; margin-top:4px; }
+
+  .panel { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:18px; margin-bottom:18px; }
+  .panel h3 { margin:0 0 12px; font-size:12.5px; color:var(--muted); text-transform:uppercase; letter-spacing:.4px; }
+  .row-flex { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+
+  table { width:100%; border-collapse:collapse; }
+  th { text-align:left; color:var(--muted); font-size:11px; text-transform:uppercase; padding:8px; border-bottom:1px solid var(--border); }
+  td { padding:9px 8px; border-bottom:1px solid var(--border); vertical-align:middle; }
+
+  select, input, textarea { background:var(--panel-2); border:1px solid var(--border); color:var(--text); border-radius:7px; padding:8px 10px; font-size:13px; font-family:inherit; }
+  select:focus, input:focus, textarea:focus { outline:none; border-color:var(--accent); }
+  button.action { background:var(--accent); border:none; color:#fff; border-radius:7px; padding:8px 13px; cursor:pointer; font-size:12.5px; font-weight:700; }
+  button.action.danger { background:var(--danger); }
+  button.action.ghost { background:var(--panel-2); color:var(--text); }
+
+  #histMessages { display:flex; flex-direction:column; gap:6px; max-height:420px; overflow-y:auto; margin-top:12px; padding:12px; background:var(--panel-2); border-radius:9px; }
+  #histMessages .m { font-size:13px; }
+  #histMessages .m b { color:var(--accent-2); }
+  #histMessages .m .t { color:var(--muted); font-size:10.5px; margin-left:6px; }
+
+  #bcFeed { display:flex; flex-direction:column; gap:10px; }
+  .bc-item { background:var(--panel-2); border:1px solid var(--border); border-radius:10px; padding:11px 13px; }
+  .bc-item .who { color:var(--accent-2); font-weight:700; font-size:12.5px; }
+  .bc-item .time { color:var(--muted); font-size:10.5px; margin-left:6px; }
+  .bc-item .txt { margin-top:4px; white-space:pre-wrap; line-height:1.4; }
+  textarea#bcText { width:100%; height:80px; resize:vertical; }
+</style>
+</head>
+<body>
+
+<div id="authScreen">
+  <div id="authBox">
+    <h1>Панель администратора</h1>
+    <p class="sub">Мини-мессенджер — управление организацией</p>
+    <div id="authErr"></div>
+    <form id="authForm" onsubmit="event.preventDefault(); doLogin();">
+      <input id="username" placeholder="Логин">
+      <input id="password" type="password" placeholder="Пароль">
+      <button type="submit">Войти</button>
+    </form>
+  </div>
+</div>
+
+<div id="dash">
+  <div id="sidebar">
+    <div class="brand"><span class="dot"></span>Мессенджер</div>
+    <div class="nav-item active" data-view="overview">Обзор</div>
+    <div class="nav-item" data-view="users">Пользователи</div>
+    <div class="nav-item" data-view="history">Переписки</div>
+    <div class="nav-item" data-view="broadcast">Рассылка</div>
+    <div class="nav-item" data-view="files">Файлы</div>
+    <div class="foot">
+      <div class="who" id="whoName"></div>
+      <div class="role" id="whoRole"></div>
+      <button onclick="logout()">Выйти</button>
+    </div>
+  </div>
+
+  <div id="main">
+    <div class="view active" id="view-overview">
+      <h2>Обзор</h2>
+      <div class="cards">
+        <div class="card"><div class="v" id="statUsers">—</div><div class="l">Всего пользователей</div></div>
+        <div class="card"><div class="v" id="statOnline">—</div><div class="l">Сейчас в сети</div></div>
+        <div class="card"><div class="v" id="statDepts">—</div><div class="l">Отделов</div></div>
+        <div class="card"><div class="v" id="statMsgs">—</div><div class="l">Сообщений отправлено</div></div>
+      </div>
+      <div class="panel">
+        <h3>Сервер</h3>
+        <div id="statUptime" style="color:var(--muted); font-size:13px;">—</div>
+      </div>
+    </div>
+
+    <div class="view" id="view-users">
+      <h2>Пользователи</h2>
+
+      <div class="panel">
+        <h3>Отделы</h3>
+        <p style="color:var(--muted); font-size:12px; margin:0 0 10px;">
+          Права (рассылки/админка) выдаются только персонально — ниже, каждому пользователю. Здесь
+          только название отдела и порядок отображения (стрелки ↑↓).
+        </p>
+        <div class="row-flex">
+          <input id="newDeptName" placeholder="Название отдела">
+          <button class="action" onclick="createDept()">Добавить</button>
+        </div>
+        <table style="margin-top:12px;">
+          <thead><tr><th style="width:60px"></th><th>Название</th><th style="width:190px"></th></tr></thead>
+          <tbody id="deptsBody"></tbody>
+        </table>
+      </div>
+
+      <div class="panel">
+        <h3>Новый пользователь</h3>
+        <div class="row-flex">
+          <input id="newUsername" placeholder="Логин">
+          <input id="newPassword" placeholder="Пароль">
+          <select id="newDept"><option value="">Без отдела</option></select>
+          <label class="row-flex" style="gap:4px; font-size:12.5px;"><input type="checkbox" id="newUserBroadcast"> Рассылки</label>
+          <label class="row-flex" style="gap:4px; font-size:12.5px;"><input type="checkbox" id="newUserAdmin"> Админка</label>
+          <button class="action" onclick="createUser()">Создать</button>
+        </div>
+      </div>
+      <div class="panel">
+        <input id="userSearch" placeholder="Поиск по логину или имени..." style="width:100%; margin-bottom:12px;" oninput="renderUsers()">
+        <table>
+          <thead><tr><th>Логин</th><th>Отображаемое имя</th><th>Отдел</th><th>Рассылки</th><th>Админка</th><th>Сброс пароля</th><th></th></tr></thead>
+          <tbody id="usersBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="view" id="view-history">
+      <h2>Переписки</h2>
+      <div class="panel">
+        <div class="row-flex">
+          <select id="histType">
+            <option value="room">Общая комната</option>
+            <option value="dm">Личная переписка</option>
+          </select>
+          <select id="histUser1" style="display:none"></select>
+          <select id="histUser2" style="display:none"></select>
+          <button class="action" onclick="loadHistory()">Показать</button>
+          <button class="action ghost" onclick="exportHistory()">Экспорт в .txt</button>
+        </div>
+        <div id="histMessages"></div>
+      </div>
+    </div>
+
+    <div class="view" id="view-files">
+      <h2>Файлы на сервере</h2>
+      <div class="panel">
+        <p style="color:var(--muted); font-size:12.5px; margin:0 0 4px;">
+          Все файлы, которые когда-либо отправляли через личную переписку, общую комнату или рассылки.
+          Удаление стирает файл с диска сервера навсегда — ссылка на него в старой переписке перестанет открываться,
+          но само сообщение никуда не денется.
+        </p>
+        <div class="row-flex" style="margin:10px 0;">
+          <button class="action ghost" onclick="loadFiles()">Обновить список</button>
+          <span id="filesSummary" style="color:var(--muted); font-size:12px;"></span>
+        </div>
+        <table>
+          <thead><tr><th>Имя файла</th><th>Откуда</th><th>От кого</th><th>Когда</th><th>Размер</th><th></th></tr></thead>
+          <tbody id="filesBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="view" id="view-broadcast">
+      <h2>Рассылка всем</h2>
+      <div class="panel">
+        <p style="color:var(--muted); font-size:12.5px; margin:0 0 10px;">Сообщение придёт всем сотрудникам сразу — уведомлением на компьютер и в историю рассылок.</p>
+        <textarea id="bcText" placeholder="Текст рассылки..."></textarea>
+        <div style="margin-top:8px;"><button class="action" onclick="sendBroadcast()">Отправить всем</button></div>
+      </div>
+      <div class="panel">
+        <h3>Лента рассылок</h3>
+        <div id="bcFeed"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+let token = localStorage.getItem('admin_token');
+let me = JSON.parse(localStorage.getItem('admin_me') || 'null');
+let usersCache = [], deptsCache = [];
+let lastHistory = { type: 'room', items: [] };
+
+async function api(path, opts) {
+  const res = await fetch(path, {
+    ...opts,
+    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', ...(opts?.headers || {}) },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Ошибка запроса');
+  return data;
+}
+
+async function doLogin() {
+  const username = document.getElementById('username').value.trim();
+  const password = document.getElementById('password').value;
+  const errEl = document.getElementById('authErr');
+  errEl.textContent = '';
+  try {
+    const res = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }) });
+    const data = await res.json();
+    if (!res.ok) { errEl.textContent = data.error || 'Ошибка входа'; return; }
+    if (!data.user.can_admin) { errEl.textContent = 'Эта панель только для администраторов. Используйте приложение для Windows.'; return; }
+    token = data.token; me = data.user;
+    localStorage.setItem('admin_token', token);
+    localStorage.setItem('admin_me', JSON.stringify(me));
+    startDash();
+  } catch { errEl.textContent = 'Сервер недоступен'; }
+}
+
+function logout() {
+  localStorage.removeItem('admin_token');
+  localStorage.removeItem('admin_me');
+  location.reload();
+}
+
+document.querySelectorAll('.nav-item').forEach(item => {
+  item.onclick = () => {
+    document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    item.classList.add('active');
+    document.getElementById('view-' + item.dataset.view).classList.add('active');
+  };
+});
+
+function fmtUptime(sec) {
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60);
+  return `Работает без перезапуска: ${h} ч ${m} мин`;
+}
+
+async function loadStats() {
+  const s = await api('/api/admin/stats');
+  document.getElementById('statUsers').textContent = s.usersTotal;
+  document.getElementById('statOnline').textContent = s.onlineNow;
+  document.getElementById('statDepts').textContent = s.departmentsTotal;
+  document.getElementById('statMsgs').textContent = s.messagesTotal;
+  document.getElementById('statUptime').textContent = fmtUptime(s.uptimeSeconds);
+}
+
+function renderUsers() {
+  const body = document.getElementById('usersBody');
+  const q = (document.getElementById('userSearch')?.value || '').trim().toLowerCase();
+  const filtered = q
+    ? usersCache.filter(u => u.username.toLowerCase().includes(q) || u.display_name.toLowerCase().includes(q))
+    : usersCache;
+  body.innerHTML = '';
+  if (!filtered.length) { body.innerHTML = '<tr><td colspan="7" style="color:var(--muted); text-align:center;">Никого не найдено</td></tr>'; return; }
+  filtered.forEach(u => {
+    const tr = document.createElement('tr');
+    const deptSelect = `<select onchange="changeDept(${u.id}, this.value)"><option value="">Без отдела</option>${deptsCache.map(d => `<option value="${d.id}" ${u.department_id === d.id ? 'selected' : ''}>${escapeHtml(d.name)}</option>`).join('')}</select>`;
+    tr.innerHTML = `<td>${escapeHtml(u.username)}</td>
+      <td><div class="row-flex"><input type="text" value="${escapeHtml(u.display_name)}" id="dn-${u.id}" style="width:130px"><button class="action ghost" onclick="renameUser(${u.id})">✓</button></div></td>
+      <td>${deptSelect}</td>
+      <td><input type="checkbox" ${u.can_broadcast ? 'checked' : ''} onchange="toggleUserCap(${u.id}, 'can_broadcast', this.checked)"></td>
+      <td><input type="checkbox" ${u.can_admin ? 'checked' : ''} onchange="toggleUserCap(${u.id}, 'can_admin', this.checked)"></td>
+      <td><div class="row-flex"><input type="text" placeholder="Новый пароль" id="pw-${u.id}" style="width:120px"><button class="action ghost" onclick="resetPassword(${u.id})">Сохранить</button></div></td>
+      <td><button class="action danger" onclick="deleteUser(${u.id})">Удалить</button></td>`;
+    body.appendChild(tr);
+  });
+}
+async function renameUser(id) {
+  const val = document.getElementById(`dn-${id}`).value.trim();
+  if (!val) return alert('Имя не может быть пустым');
+  try { await api(`/api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify({ display_name: val }) }); refreshAll(); } catch (e) { alert(e.message); }
+}
+async function toggleUserCap(id, cap, checked) {
+  try { await api(`/api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify({ [cap]: checked }) }); } catch (e) { alert(e.message); refreshAll(); }
+}
+
+function renderDepts() {
+  const body = document.getElementById('deptsBody');
+  body.innerHTML = '';
+  deptsCache.forEach((d, i) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td class="row-flex">
+        <button class="action ghost" title="Выше" ${i === 0 ? 'disabled' : ''} onclick="moveDept(${i}, -1)">↑</button>
+        <button class="action ghost" title="Ниже" ${i === deptsCache.length - 1 ? 'disabled' : ''} onclick="moveDept(${i}, 1)">↓</button>
+      </td>
+      <td>${escapeHtml(d.name)}</td>
+      <td class="row-flex">
+        <button class="action ghost" onclick="renameDept(${d.id}, '${escapeHtml(d.name).replace(/'/g, "\\'")}')">Переименовать</button>
+        <button class="action danger" onclick="deleteDept(${d.id})">Удалить</button>
+      </td>`;
+    body.appendChild(tr);
+  });
+  document.getElementById('newDept').innerHTML = '<option value="">Без отдела</option>' + deptsCache.map(d => `<option value="${d.id}">${escapeHtml(d.name)}</option>`).join('');
+}
+async function renameDept(id, currentName) {
+  const name = prompt('Новое название отдела:', currentName);
+  if (!name || !name.trim() || name.trim() === currentName) return;
+  try { await api(`/api/admin/departments/${id}`, { method: 'PATCH', body: JSON.stringify({ name: name.trim() }) }); refreshAll(); } catch (e) { alert(e.message); }
+}
+async function moveDept(index, dir) {
+  const target = index + dir;
+  if (target < 0 || target >= deptsCache.length) return;
+  const order = deptsCache.map(d => d.id);
+  [order[index], order[target]] = [order[target], order[index]];
+  try { await api('/api/admin/departments/reorder', { method: 'POST', body: JSON.stringify({ order }) }); refreshAll(); } catch (e) { alert(e.message); }
+}
+
+async function refreshAll() {
+  usersCache = await api('/api/admin/users');
+  deptsCache = await api('/api/departments');
+  renderUsers();
+  renderDepts();
+  const opts = usersCache.map(u => `<option value="${u.id}">${u.display_name}</option>`).join('');
+  document.getElementById('histUser1').innerHTML = opts;
+  document.getElementById('histUser2').innerHTML = opts;
+  loadStats();
+}
+
+async function createUser() {
+  const username = document.getElementById('newUsername').value.trim();
+  const password = document.getElementById('newPassword').value;
+  const department_id = document.getElementById('newDept').value || null;
+  const can_broadcast = document.getElementById('newUserBroadcast').checked;
+  const can_admin = document.getElementById('newUserAdmin').checked;
+  if (!username || !password) return alert('Укажите логин и пароль');
+  try {
+    await api('/api/admin/users', { method: 'POST', body: JSON.stringify({ username, password, department_id, can_broadcast, can_admin }) });
+    document.getElementById('newUsername').value = '';
+    document.getElementById('newPassword').value = '';
+    document.getElementById('newUserBroadcast').checked = false;
+    document.getElementById('newUserAdmin').checked = false;
+    refreshAll();
+  } catch (e) { alert(e.message); }
+}
+async function changeDept(id, department_id) { try { await api(`/api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify({ department_id: department_id || null }) }); } catch (e) { alert(e.message); } }
+async function resetPassword(id) {
+  const val = document.getElementById(`pw-${id}`).value;
+  if (!val) return;
+  try { await api(`/api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify({ password: val }) }); alert('Пароль обновлён'); } catch (e) { alert(e.message); }
+}
+async function deleteUser(id) {
+  if (!confirm('Удалить пользователя без возможности восстановления?')) return;
+  try { await api(`/api/admin/users/${id}`, { method: 'DELETE' }); refreshAll(); } catch (e) { alert(e.message); }
+}
+async function createDept() {
+  const name = document.getElementById('newDeptName').value.trim();
+  if (!name) return;
+  try { await api('/api/admin/departments', { method: 'POST', body: JSON.stringify({ name }) }); document.getElementById('newDeptName').value = ''; refreshAll(); } catch (e) { alert(e.message); }
+}
+async function deleteDept(id) {
+  if (!confirm('Удалить отдел? Сотрудники останутся без отдела.')) return;
+  try { await api(`/api/admin/departments/${id}`, { method: 'DELETE' }); refreshAll(); } catch (e) { alert(e.message); }
+}
+
+document.getElementById('histType').onchange = (e) => {
+  const isDm = e.target.value === 'dm';
+  document.getElementById('histUser1').style.display = isDm ? 'inline-block' : 'none';
+  document.getElementById('histUser2').style.display = isDm ? 'inline-block' : 'none';
+};
+
+function escapeHtml(s) { return s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
+
+async function loadHistory() {
+  const type = document.getElementById('histType').value;
+  const box = document.getElementById('histMessages');
+  box.innerHTML = 'Загрузка...';
+  try {
+    let items;
+    if (type === 'room') {
+      items = await api('/api/admin/history/room/general');
+    } else {
+      const u1 = document.getElementById('histUser1').value, u2 = document.getElementById('histUser2').value;
+      if (!u1 || !u2 || u1 === u2) { box.innerHTML = 'Выберите двух разных сотрудников'; return; }
+      items = await api(`/api/admin/history/dm/${u1}/${u2}`);
+    }
+    lastHistory = { type, items };
+    box.innerHTML = items.map(m => {
+      const time = new Date(m.created_at).toLocaleString('ru-RU');
+      const files = (m.files || []).map(f => ` 📎 ${escapeHtml(f.name)}${f.exists === false ? ' (удалён с диска)' : ''}`).join('');
+      return `<div class="m"><b>${m.from_user}:</b> ${escapeHtml(m.text)}${files}<span class="t">${time}</span></div>`;
+    }).join('') || 'Сообщений пока нет';
+  } catch (e) { box.innerHTML = 'Ошибка: ' + e.message; }
+}
+
+function exportHistory() {
+  if (!lastHistory.items.length) { alert('Сначала откройте переписку'); return; }
+  const lines = lastHistory.items.map(m => `[${new Date(m.created_at).toLocaleString('ru-RU')}] ${m.from_user}: ${m.text}`);
+  const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `history-${lastHistory.type}-${Date.now()}.txt`;
+  a.click();
+}
+
+function fmtSize(bytes) {
+  if (!bytes) return '—';
+  if (bytes < 1024) return bytes + ' Б';
+  if (bytes < 1024 * 1024) return Math.round(bytes / 1024) + ' КБ';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' МБ';
+}
+
+async function loadFiles() {
+  const body = document.getElementById('filesBody');
+  body.innerHTML = '<tr><td colspan="6">Загрузка...</td></tr>';
+  try {
+    const files = await api('/api/admin/files');
+    const totalSize = files.reduce((s, f) => s + f.size, 0);
+    const orphaned = files.filter(f => f.orphaned).length;
+    document.getElementById('filesSummary').textContent =
+      `Всего: ${files.length} · Занято места: ${fmtSize(totalSize)}` + (orphaned ? ` · Без ссылок в переписке: ${orphaned}` : '');
+    body.innerHTML = files.map(f => `<tr>
+        <td>${escapeHtml(f.originalName)}${f.orphaned ? ' <span style="color:var(--warn)">(без сообщения)</span>' : ''}</td>
+        <td>${f.context ? escapeHtml(f.context) : '—'}</td>
+        <td>${f.from ? escapeHtml(f.from) : '—'}</td>
+        <td>${new Date(f.created_at).toLocaleString('ru-RU')}</td>
+        <td>${fmtSize(f.size)}</td>
+        <td><button class="action danger" onclick="deleteFile('${f.diskName.replace(/'/g, "\\'")}')">Удалить</button></td>
+      </tr>`).join('') || '<tr><td colspan="6" style="color:var(--muted)">Файлов пока нет</td></tr>';
+  } catch (e) { body.innerHTML = `<tr><td colspan="6">Ошибка: ${e.message}</td></tr>`; }
+}
+async function deleteFile(diskName) {
+  if (!confirm('Удалить файл с сервера без возможности восстановления?')) return;
+  try { await api(`/api/admin/files/${encodeURIComponent(diskName)}`, { method: 'DELETE' }); loadFiles(); } catch (e) { alert(e.message); }
+}
+
+async function loadBroadcastFeed() {
+  const items = await api('/api/broadcasts');
+  document.getElementById('bcFeed').innerHTML = items.map(b => {
+    const time = new Date(b.created_at).toLocaleString('ru-RU');
+    return `<div class="bc-item"><span class="who">${b.from_user}</span><span class="time">${time}</span><div class="txt">${escapeHtml(b.text)}</div></div>`;
+  }).join('') || '<div style="color:var(--muted)">Рассылок пока не было</div>';
+}
+async function sendBroadcast() {
+  const el = document.getElementById('bcText');
+  const text = el.value.trim();
+  if (!text) return;
+  try { await api('/api/broadcast', { method: 'POST', body: JSON.stringify({ text }) }); el.value = ''; loadBroadcastFeed(); } catch (e) { alert(e.message); }
+}
+
+function connectPresenceWs() {
+  const wsUrl = location.origin.replace(/^http/, 'ws');
+  const ws = new WebSocket(`${wsUrl}?token=${token}&host=${encodeURIComponent('Веб-панель администратора')}`);
+  ws.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    if (data.type === 'presence') {
+      const online = new Set(Object.entries(data.users).filter(([, v]) => v.state !== 'offline').map(([k]) => k));
+      document.getElementById('statOnline').textContent = online.size;
+    }
+  };
+  ws.onclose = () => setTimeout(connectPresenceWs, 3000);
+}
+
+async function startDash() {
+  // Право могло измениться (лично или через отдел) с прошлого захода — перепроверяем перед показом панели
+  let fresh;
+  try { fresh = await api('/api/me'); } catch { logout(); return; }
+  if (!fresh.can_admin) { logout(); return; }
+  me = fresh;
+  localStorage.setItem('admin_me', JSON.stringify(me));
+
+  document.getElementById('authScreen').style.display = 'none';
+  document.getElementById('dash').classList.add('active');
+  document.getElementById('whoName').textContent = me.display_name || me.username;
+  await refreshAll();
+  document.getElementById('whoRole').textContent = me.department_id ? (deptsCache.find(d => d.id === me.department_id)?.name || '') : '';
+  await loadHistory();
+  await loadBroadcastFeed();
+  await loadFiles();
+  connectPresenceWs();
+  setInterval(refreshAll, 30000);
+}
+
+if (token && me) startDash();
+</script>
+</body>
+</html>

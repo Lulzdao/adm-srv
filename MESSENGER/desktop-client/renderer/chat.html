@@ -1,0 +1,1001 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Чат</title>
+<link rel="stylesheet" href="theme.css">
+<style>
+  body { display: flex; flex-direction: column; position: relative; }
+  .wintitlebar { height: 40px; }
+  .wintitlebar .who { display: flex; align-items: center; gap: 8px; min-width: 0; -webkit-app-region: drag; }
+  .dot { width: 11px; height: 11px; border-radius: 50%; background: var(--offline); flex-shrink: 0; -webkit-app-region: no-drag; }
+  .dot.active { background: var(--online); box-shadow: 0 0 6px 0 var(--online); }
+  .dot.idle { background: var(--afk); box-shadow: 0 0 6px 0 var(--afk); }
+  .wintitlebar .who .n { font-weight: 600; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* Имя собеседника кликабельно только в личной переписке (см. togglePresencePanel) — курсор и
+     no-drag ставим через JS вместе с обработчиком, чтобы в общем чате имя оставалось обычным
+     текстом без намёка на кликабельность. */
+  .wintitlebar .who .n.clickable { cursor: pointer; -webkit-app-region: no-drag; }
+  .wintitlebar .who .n.clickable:hover { text-decoration: underline; text-decoration-color: var(--muted); text-underline-offset: 2px; }
+
+  /* Всплывающая карточка присутствия — та же визуальная схема, что у панели эмодзи (position:
+     absolute поверх остального, плавные opacity/transform). Показывает то же, что раньше было
+     видно только в title тултипа (наведение на точку статуса), плюс имена ПК, если собеседник
+     сидит с нескольких устройств одновременно под одним аккаунтом. */
+  #presencePanel {
+    position: absolute; top: 44px; left: 12px; min-width: 190px; max-width: 260px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow);
+    padding: 11px 13px; z-index: 40;
+    opacity: 0; transform: translateY(6px) scale(.98); pointer-events: none;
+    transition: opacity .12s ease, transform .12s ease;
+  }
+  #presencePanel.open { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
+  #presencePanel .pp-state { font-weight: 600; font-size: 12.5px; display: flex; align-items: center; gap: 7px; }
+  #presencePanel .pp-state .dot2 { width: 8px; height: 8px; border-radius: 50%; background: var(--offline); flex-shrink: 0; }
+  #presencePanel .pp-state .dot2.active { background: var(--online); }
+  #presencePanel .pp-state .dot2.idle { background: var(--afk); }
+  #presencePanel .pp-since { font-size: 11px; color: var(--muted); margin-top: 3px; }
+  #presencePanel .pp-hosts-title { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .3px; font-weight: 700; margin-top: 9px; margin-bottom: 4px; }
+  #presencePanel .pp-host { display: flex; align-items: center; gap: 6px; font-size: 12px; padding: 2px 0; }
+  #presencePanel .pp-host svg { color: var(--muted); flex-shrink: 0; }
+
+  #messages { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 8px; }
+  /* Раньше здесь стоял justify-content:flex-end на #messages целиком — тот же визуальный эффект
+     (мало сообщений — прижаты к низу, а не висят у верха с пустотой под собой), но у флекс-
+     контейнера со scroll это ломает прокрутку к самым старым сообщениям (пропадает scrollbar/
+     скролл к началу переписки) — известная особенность flexbox + overflow. margin-top:auto у
+     ПЕРВОГО ребёнка — тот же результат без этой проблемы: тянет всё содержимое вниз, только когда
+     оно короче контейнера, а не мешает обычной прокрутке, когда сообщений много. */
+  #messages > *:first-child { margin-top: auto; }
+  .msg { max-width: 78%; min-width: 0; padding: 7px 11px 6px; border-radius: 12px; background: var(--bubble); align-self: flex-start; }
+  .msg.own { background: var(--own); align-self: flex-end; }
+  .msg .who { font-size: 10.5px; color: var(--accent); font-weight: 600; margin-bottom: 2px; }
+  .msg.own .who { display: none; }
+  /* Настройка "Скрывать имя в сообщениях" (см. applyHideNames ниже) — только для личных чатов:
+     имя и так видно в шапке окна, а в общей комнате оно как раз нужно, чтобы различать реплики. */
+  body.hide-names .msg .who { display: none; }
+  .msg .txt { white-space: pre-wrap; word-break: break-word; line-height: 1.4; }
+  /* Подсветка совпадений при поиске по истории — см. highlightHtml/runSearch. */
+  mark.hl { background: var(--accent); color: #fff; border-radius: 3px; padding: 0 1px; }
+  .msg .time { float: right; margin: 3px 0 -3px 12px; font-size: 9px; color: var(--muted); }
+  /* Галочка прочтения — только у своих сообщений в личной переписке (см. readTickHtml): серая, пока
+     собеседник не увидел сообщение, синяя — после того, как он его прочитал (тот же сигнал, что
+     скрывает разделитель "Новые сообщения" у него — клик или прокрутка, см. clearUnreadDivider). */
+  .read-tick { display: inline-flex; vertical-align: -1px; margin-left: 3px; color: var(--muted); }
+  /* width не задаём — у одинарной и двойной галочки разное соотношение сторон viewBox (24x24
+     против 28x24), фиксированная ширина сплющила бы вторую. Высота одна для обеих — auto-ширина
+     сохраняет пропорции сама. */
+  .read-tick svg { display: block; height: 10px; width: auto; }
+  .read-tick.read { color: var(--accent-2); }
+  .msg .files-block { display: flex; flex-direction: column; gap: 6px; }
+  .msg .file { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--hover); border-radius: 8px; text-decoration: none; color: var(--text); min-width: 0; }
+  .msg .file .fi { color: var(--accent-2); flex-shrink: 0; display: flex; width: 17px; height: 17px; position: relative; }
+  .msg .file .fi .fi-download, .msg .file .fi .fi-progress, .msg .file .fi .fi-check { display: none; }
+  .msg .file:hover .fi .fi-file { display: none; }
+  .msg .file:hover .fi .fi-download { display: flex; }
+  .msg .file.downloading .fi .fi-file, .msg .file.downloading .fi .fi-download { display: none !important; }
+  .msg .file.downloading .fi, .msg .file.done .fi { width: 24px; height: 24px; }
+  .msg .file.downloading .fi .fi-progress { display: flex; align-items: center; justify-content: center; position: relative; width: 24px; height: 24px; }
+  .msg .file.downloading .fi .fi-progress svg { position: absolute; inset: 0; transform: rotate(-90deg); }
+  .msg .file.downloading .fi .fi-progress .ring-bg { fill: none; stroke: var(--border); stroke-width: 3; }
+  .msg .file.downloading .fi .fi-progress .ring-bar { fill: none; stroke: var(--accent-2); stroke-width: 3; stroke-linecap: round; transition: stroke-dashoffset .2s linear; transform-box: fill-box; transform-origin: center; }
+  .msg .file.downloading .fi .fi-progress .ring-bar.indeterminate { animation: fi-spin 1s linear infinite; }
+  .msg .file.downloading .fi .fi-pct { font-size: 7px; font-weight: 700; color: var(--text); position: relative; z-index: 1; }
+  @keyframes fi-spin { from { transform: rotate(-90deg); } to { transform: rotate(270deg); } }
+  .msg .file.done .fi .fi-file, .msg .file.done .fi .fi-download, .msg .file.done .fi .fi-progress { display: none !important; }
+  .msg .file.done .fi .fi-check { display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 50%; background: var(--online); color: #fff; }
+  .msg .file .fmeta { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .msg .file .fn { display: block; font-weight: 600; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .msg .file .fs { color: var(--muted); font-size: 10.5px; }
+  /* Файл удалили с диска сервера (через веб-панель) — карточка та же по форме, но не ссылка, а
+     статус: приглушённая, некликабельная, с предупреждающей иконкой вместо файловой. */
+  .msg .file.file-deleted { cursor: default; }
+  .msg .file.file-deleted .fi { color: var(--muted); }
+  .msg .file.file-deleted .fn { color: var(--muted); }
+  .msg .files-time { text-align: right; font-size: 9px; color: var(--muted); margin-top: 1px; }
+  .day-sep { align-self: center; color: var(--muted); font-size: 10.5px; background: var(--panel-2); padding: 3px 10px; border-radius: 20px; margin: 4px 0; }
+  /* Разделитель "Новые сообщения" — как в окне рассылок (см. addLiveBroadcast/loadFeed там же по
+     смыслу), только для входящих сообщений в чате. -webkit-app-region не задаём: разделитель лежит
+     внутри прокручиваемой ленты, а не в области с drag, так что переопределять там нечего. */
+  .unread-divider { display: flex; align-items: center; gap: 10px; margin: 2px 0; align-self: stretch; }
+  .unread-divider::before, .unread-divider::after { content: ''; flex: 1; height: 1px; background: var(--accent); opacity: .35; }
+  .unread-divider span { font-size: 10px; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: .4px; white-space: nowrap; }
+
+  #composer { position: relative; display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--border); background: var(--panel); flex-shrink: 0; align-items: flex-end; }
+  /* #text раньше сам был скруглённым (border-radius:18px) и одновременно overflow-y:auto — кастомный
+     ::-webkit-scrollbar (см. theme.css) в Chromium не обрезается border-radius самого элемента, из-за
+     чего прямоугольная полоса скролла торчала за пределы скруглённых углов. Обёртка берёт на себя
+     скругление и overflow:hidden (обрезает), а сам textarea внутри — прямоугольный, со своим
+     скроллом, который обрезается уже обёрткой. */
+  #textWrap { position: relative; flex: 1; min-width: 0; border: 1px solid var(--border); border-radius: 18px; background: var(--bg); overflow: hidden; }
+  #textWrap:focus-within { border-color: var(--accent); }
+  #text { display: block; width: 100%; padding: 9px 34px 9px 12px; border: none; background: transparent; color: var(--text); font-size: 13px; font-family: inherit; resize: none; max-height: 120px; overflow-y: auto; line-height: 1.35; box-sizing: border-box; }
+  #text:focus { outline: none; }
+  #composer .round { width: 38px; height: 38px; border-radius: 50%; border: none; cursor: pointer; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+  #composer .round svg { width: 19px; height: 19px; }
+  #attach { background: var(--bg); border: 1px solid var(--border); color: var(--muted); }
+  #attach:hover { color: var(--text); }
+  #send { background: var(--accent); color: #fff; }
+  #send svg { width: 18px; height: 18px; }
+
+  /* Кнопка эмодзи — внутри поля ввода справа (как в Telegram), а не отдельной круглой кнопкой в
+     composer'е. Стоит ровно по вертикальному центру #textWrap: при border-radius, близком к
+     половине высоты (почти "таблетка"), именно в центре края скругление касается его по
+     вертикальной касательной — там меньше всего риск обрезаться overflow:hidden обёртки. */
+  #emojiBtn { position: absolute; top: 50%; right: 4px; transform: translateY(-50%); width: 29px; height: 29px; padding: 0; border: none; border-radius: 50%; background: transparent; color: var(--muted); cursor: pointer; display: flex; align-items: center; justify-content: center; }
+  #emojiBtn svg { width: 19px; height: 19px; }
+  #emojiBtn:hover { color: var(--text); }
+  #emojiBtn.active { color: var(--accent); }
+
+  #emojiPanel {
+    position: absolute; bottom: 52px; right: 10px; width: 232px; max-height: 220px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow);
+    padding: 8px; display: grid; grid-template-columns: repeat(6, 1fr); gap: 2px; overflow-y: auto;
+    opacity: 0; transform: translateY(6px) scale(.98); pointer-events: none;
+    transition: opacity .12s ease, transform .12s ease;
+    z-index: 30;
+  }
+  #emojiPanel.open { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
+  #emojiPanel button { width: 32px; height: 32px; border: none; background: transparent; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; line-height: 1; }
+  #emojiPanel button:hover { background: var(--hover); }
+  /* Картинка внутри кнопки (см. emojiHtml) — переопределяем базовый .twemoji (1.2em, для инлайна в
+     тексте сообщений) на фиксированный размер, подходящий под 32px-кнопку сетки выбора. */
+  #emojiPanel button img.twemoji { width: 24px; height: 24px; vertical-align: unset; }
+
+  /* ---- Панель истории ---- */
+  /* Сообщения и строка ввода прячутся плавно (fade + сдвиг вниз), а не мгновенным display:none —
+     см. hideChatBodySmoothly/showChatBodySmoothly. Когда переход заканчивается, элемент по-настоящему
+     убирается из раскладки (display:none), иначе остаётся невидимым, но занимающим место. */
+  #messages, #composer { transition: opacity .15s ease, transform .2s ease; }
+  #messages.chat-hidden, #composer.chat-hidden { opacity: 0; pointer-events: none; transform: translateY(14px); }
+  /* Панель истории — не мгновенный display:none/flex, а плавный fade+сдвиг поверх остального
+     содержимого. Постоянно в DOM (просто прозрачная и некликабельная, пока не открыта), поэтому
+     transition отрабатывает как положено — в отличие от display, opacity/transform анимируются.
+     Открывается сверху вниз (как выпадающее меню из кнопки в шапке), не снизу вверх — и цветная
+     полоска сверху панели визуально продолжает подсветку активной кнопки, которая её открыла. */
+  #historyPanel {
+    position: absolute; top: 40px; left: 0; right: 0; bottom: 0;
+    display: flex; flex-direction: column; background: var(--bg);
+    border-top: 2px solid transparent;
+    opacity: 0; transform: translateY(-8px); pointer-events: none;
+    transition: opacity .2s ease, transform .2s ease, border-color .2s ease;
+    z-index: 50;
+  }
+  #historyPanel.visible { opacity: 1; transform: translateY(0); pointer-events: auto; border-top-color: var(--accent); }
+  #hpSearchRow { display: flex; align-items: center; gap: 8px; padding: 10px; border-bottom: 1px solid var(--border); background: var(--panel); }
+  #hpSearchRow svg { color: var(--muted); flex-shrink: 0; }
+  #hpSearch { flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 20px; padding: 7px 12px; color: var(--text); font-size: 12.5px; }
+  #hpSearch:focus { outline: none; border-color: var(--accent); }
+  #hpBody { flex: 1; display: flex; min-height: 0; }
+  #hpDays { width: 150px; flex-shrink: 0; overflow-y: auto; border-right: 1px solid var(--border); padding: 6px; }
+  #hpDays .mheader { display: flex; align-items: center; gap: 6px; padding: 8px 8px 6px; cursor: pointer; border-radius: 6px; user-select: none; }
+  #hpDays .mheader:hover { background: var(--hover); }
+  #hpDays .mheader .chev { color: var(--muted); display: flex; transition: transform .15s; flex-shrink: 0; }
+  #hpDays .mheader.collapsed .chev { transform: rotate(-90deg); }
+  #hpDays .mheader .mtitle { flex: 1; font-size: 11px; font-weight: 700; color: var(--muted); text-transform: capitalize; }
+  #hpDays .mheader .mcount { font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  #hpDays .mdays.collapsed { display: none; }
+  #hpDays .dbtn { padding: 8px 9px; border-radius: 8px; cursor: pointer; font-size: 12px; margin-bottom: 2px; }
+  #hpDays .dbtn:hover { background: var(--hover); }
+  #hpDays .dbtn.active { background: var(--accent); color: #fff; }
+  #hpDays .dbtn .cnt { display: block; font-size: 10px; color: inherit; opacity: .7; }
+  #hpMessages { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 8px; }
+  #hpEmpty { padding: 30px 14px; text-align: center; color: var(--muted); font-size: 12px; }
+
+  /* ---- Drag-and-drop файлов ---- */
+  #dropOverlay { display: none; position: fixed; inset: 6px; z-index: 500; background: var(--overlay); align-items: center; justify-content: center; flex-direction: column; gap: 10px; border: 3px dashed var(--accent); border-radius: 10px; pointer-events: none; }
+  #dropOverlay.active { display: flex; }
+  #dropOverlay svg { width: 34px; height: 34px; color: var(--accent); }
+  #dropOverlay .dtext { font-size: 14px; font-weight: 700; color: var(--text); }
+
+  /* ---- Модалка выбора способа отправки файлов ---- */
+  .sfp-box { width: min(380px, 90%) !important; }
+  .sfp-list { max-height: 130px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+  .sfp-item { display: flex; justify-content: space-between; gap: 8px; background: var(--panel-2); border-radius: 8px; padding: 7px 10px; font-size: 12px; }
+  .sfp-item .sfp-fn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sfp-item .sfp-fs { color: var(--muted); flex-shrink: 0; }
+  .sfp-split { display: flex; gap: 8px; }
+  .sfp-half { flex: 1; min-width: 0; background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 7px; }
+  .sfp-quick { align-items: center; justify-content: center; cursor: pointer; text-align: center; }
+  .sfp-quick:hover { border-color: var(--accent); background: var(--hover); }
+  .sfp-half-t { font-weight: 700; font-size: 12.5px; display: flex; align-items: center; gap: 6px; }
+  .sfp-quick .sfp-half-t { justify-content: center; }
+  .sfp-half-d { font-size: 10.5px; color: var(--muted); text-align: center; line-height: 1.35; }
+  .sfp-caption input { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 7px 8px; color: var(--text); font-size: 12px; width: 100%; }
+  .sfp-caption input:focus { outline: none; border-color: var(--accent); }
+  .sfp-caption button { background: var(--accent); color: #fff; border: none; border-radius: 6px; padding: 7px; font-size: 11px; font-weight: 600; cursor: pointer; width: 100%; }
+  .sfp-cancel-row { text-align: center; margin-top: 12px; }
+  .sfp-cancel-row button { background: none; border: none; color: var(--muted); font-size: 11.5px; cursor: pointer; padding: 4px; }
+  .sfp-cancel-row button:hover { color: var(--text); }
+  #historyBtn { -webkit-app-region: no-drag; display: flex; align-items: center; gap: 6px; padding: 0 10px; width: auto; height: 28px; border-radius: 8px; font-size: 12px; font-weight: 600; }
+  #historyBtn svg { width: 18px; height: 18px; flex-shrink: 0; }
+  #historyBtn.active { background: var(--accent); color: #fff; }
+  #historyBtn.active:hover { background: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wintitlebar">
+  <div class="who">
+    <div class="dot" id="statusDot"></div>
+    <div class="n" id="label"></div>
+  </div>
+  <div id="tbExtra" style="-webkit-app-region:no-drag; display:flex; gap:2px; margin-left:auto;">
+    <button class="icon-btn" id="historyBtn"><span></span>История</button>
+  </div>
+  <div class="wctl">
+    <button class="icon-btn" id="wcMin"></button>
+    <button class="icon-btn" id="wcMax"></button>
+    <button class="icon-btn close" id="wcClose"></button>
+  </div>
+</div>
+<div id="presencePanel"></div>
+
+<div id="messages"></div>
+<div id="composer">
+  <button class="round" id="attach" title="Прикрепить файл"></button>
+  <input type="file" id="fileInput" multiple style="display:none">
+  <div id="textWrap">
+    <textarea id="text" placeholder="Написать сообщение..." rows="1"></textarea>
+    <button type="button" id="emojiBtn" title="Эмодзи"></button>
+  </div>
+  <div id="emojiPanel"></div>
+  <button class="round" id="send" onclick="send()" title="Отправить"></button>
+</div>
+
+<div id="dropOverlay">
+  <span></span>
+  <div class="dtext">Отпустите, чтобы прикрепить</div>
+</div>
+
+<div id="historyPanel">
+  <div id="hpSearchRow"></div>
+  <div id="hpBody">
+    <div id="hpDays"></div>
+    <div id="hpMessages"></div>
+  </div>
+</div>
+
+<script src="ui-kit.js"></script>
+<script src="twemoji.min.js"></script>
+<script>
+const params = new URLSearchParams(location.search);
+const type = params.get('type');       // 'room' | 'dm'
+const id = type === 'dm' ? Number(params.get('id')) : params.get('id');
+const label = params.get('label');
+const token = params.get('token');
+const serverUrl = params.get('serverUrl');
+const me = JSON.parse(localStorage.getItem('me') || 'null');
+
+document.getElementById('label').textContent = label;
+if (type !== 'dm') document.getElementById('statusDot').style.display = 'none';
+
+// Настройка "Скрывать имя в сообщениях" — только в личных чатах (в общей комнате имя нужно, чтобы
+// различать реплики). Применяется сразу во всех открытых окнах при переключении слайдера (см.
+// onSettingsChanged), не только при следующем открытии чата.
+function applyHideNames(settings) {
+  document.body.classList.toggle('hide-names', type === 'dm' && !!settings.hideNameInMessages);
+}
+desktop.getSettings().then(applyHideNames);
+desktop.onSettingsChanged(applyHideNames);
+
+// Текст статуса собеседника: для "отошёл" — сколько времени он уже отошёл, а не просто "AFK"
+function formatIdleDuration(idleSince) {
+  if (!idleSince) return '';
+  const mins = Math.max(1, Math.round((Date.now() - idleSince) / 60000));
+  if (mins < 60) return `${mins} мин назад`;
+  const hours = Math.floor(mins / 60);
+  return `${hours} ч назад`;
+}
+function statusLabel(state, idleSince) {
+  if (state === 'active') return 'В сети';
+  if (state === 'idle') return `Отошёл (${formatIdleDuration(idleSince)})`;
+  return 'Не в сети';
+}
+// Плюс строка "с какого момента" (since — от сервера, formatStatusSince из ui-kit.js), как в тултипах ростера.
+function statusTitle(state, idleSince, since) {
+  const sinceLine = formatStatusSince(state, since);
+  return sinceLine ? `${statusLabel(state, idleSince)}\n${sinceLine}` : statusLabel(state, idleSince);
+}
+document.getElementById('statusDot').title = statusTitle('offline');
+
+// Всплывающая карточка по клику на имя — то же самое, что тултип у точки статуса (см. statusTitle
+// выше), плюс имена ПК: если у собеседника несколько одновременных подключений под одним аккаунтом
+// (сидит с двух компов), сервер уже присылает их все в presence.hosts (см. presenceSnapshot в
+// server.js) — просто не показывали эту часть нигде в интерфейсе.
+let lastPresence = null; // последний presence этого собеседника — чтобы перерисовать карточку, если она открыта, когда придёт обновление
+const presencePanel = document.getElementById('presencePanel');
+function presencePopupHtml(p) {
+  const state = p ? p.state : 'offline';
+  let html = `<div class="pp-state"><span class="dot2 ${state}"></span>${escapeHtml(statusLabel(state, p?.idleSince))}</div>`;
+  const sinceLine = formatStatusSince(state, p?.since);
+  if (sinceLine) html += `<div class="pp-since">${escapeHtml(sinceLine)}</div>`;
+  const hosts = p?.hosts || [];
+  if (hosts.length) {
+    html += `<div class="pp-hosts-title">${hosts.length > 1 ? 'Подключён с устройств' : 'Подключён с устройства'}</div>`;
+    html += hosts.map((h) => `<div class="pp-host">${uiIcon('monitor')}${escapeHtml(h)}</div>`).join('');
+  }
+  return html;
+}
+function renderPresencePanel() {
+  presencePanel.innerHTML = presencePopupHtml(lastPresence);
+}
+function closePresencePanel() {
+  presencePanel.classList.remove('open');
+}
+function togglePresencePanel() {
+  const opening = !presencePanel.classList.contains('open');
+  if (opening) renderPresencePanel();
+  presencePanel.classList.toggle('open', opening);
+}
+if (type === 'dm') {
+  const labelEl = document.getElementById('label');
+  labelEl.classList.add('clickable'); // .clickable также снимает -webkit-app-region:drag с имени — иначе клик внутри drag-области шапки не всегда доходит
+  labelEl.addEventListener('click', togglePresencePanel);
+  document.addEventListener('click', (e) => {
+    if (presencePanel.classList.contains('open') && !e.target.closest('#presencePanel') && !e.target.closest('#label')) closePresencePanel();
+  });
+}
+
+// Собеседник, подключённый ТОЛЬКО через веб-панель администратора (без единого реального хоста),
+// не может получить ни сообщение, ни файл — у веб-панели нет интерфейса чата. Композер и вложения
+// блокируются, пока у него не появится ещё один хост (запущен десктоп-клиент на реальном ПК).
+// canReceiveMessages — общая функция из ui-kit.js (используется и в ростере).
+let chatReachable = true;
+function updateComposerReachability(hosts) {
+  if (type !== 'dm') return;
+  chatReachable = canReceiveMessages(hosts);
+  document.getElementById('text').disabled = !chatReachable;
+  document.getElementById('send').disabled = !chatReachable;
+  document.getElementById('attach').disabled = !chatReachable;
+  document.getElementById('emojiBtn').disabled = !chatReachable;
+  if (!chatReachable) closeEmojiPanel();
+  document.getElementById('text').placeholder = chatReachable
+    ? 'Написать сообщение...'
+    : 'Собеседник недоступен — подключён только через веб-панель администратора';
+}
+
+document.getElementById('historyBtn').querySelector('span').innerHTML = uiIcon('history');
+document.getElementById('historyBtn').title = 'Открыть историю переписки';
+document.getElementById('attach').innerHTML = uiIcon('attach');
+document.getElementById('send').innerHTML = uiIcon('send');
+document.querySelector('#dropOverlay span').innerHTML = uiIcon('attach');
+
+async function api(path) {
+  const res = await fetch(serverUrl + path, { headers: { Authorization: 'Bearer ' + token } });
+  return res.json();
+}
+
+function escapeHtml(s) { return s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
+function escapeAttr(s) { return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function escapeRegex(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+// Подсветка совпадений при поиске по истории (см. runSearch) — экранируем текст точно так же, как
+// в обычном escapeHtml, и уже В ЭКРАНИРОВАННОЙ строке оборачиваем совпадения запроса в <mark>.
+// Запрос экранируем тем же escapeHtml (чтобы сравнивать "как есть" с уже экранированным текстом),
+// а затем ещё и как regex-спецсимволы, раз он идёт в new RegExp().
+function highlightHtml(text, query) {
+  let html = escapeHtml(text);
+  const q = (query || '').trim();
+  if (q) {
+    const pattern = escapeRegex(escapeHtml(q));
+    if (pattern) html = html.replace(new RegExp(pattern, 'gi'), (m) => `<mark class="hl">${m}</mark>`);
+  }
+  return emojiHtml(html); // emoji-символы в тексте — картинками (см. ui-kit.js), не системным шрифтом
+}
+
+function fmtSize(bytes) {
+  if (!bytes) return '';
+  if (bytes < 1024) return bytes + ' Б';
+  if (bytes < 1024 * 1024) return Math.round(bytes / 1024) + ' КБ';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' МБ';
+}
+
+// Галочка прочтения рисуется только у СВОИХ сообщений в личной переписке (в общей комнате читателей
+// много, "прочитано/не прочитано" одним битом не выразить) — синяя, если read_at уже проставлен
+// сервером (см. markDmRead в server.js), иначе серая.
+function readTickHtml(m) {
+  if (type !== 'dm' || m.from_id !== me.id) return '';
+  // Как в Telegram — одна галочка "отправлено", две галочки "прочитано" (а не одна и та же
+  // галочка, просто перекрашенная).
+  return `<span class="read-tick${m.read_at ? ' read' : ''}" title="${m.read_at ? 'Прочитано' : 'Отправлено'}">${uiIcon(m.read_at ? 'checkDouble' : 'check')}</span>`;
+}
+
+function bubbleHtml(m, { withDate, query } = {}) {
+  const own = m.from_id === me.id;
+  const d = new Date(m.created_at);
+  const time = d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  const stamp = withDate ? d.toLocaleDateString('ru-RU') + ' ' + time : time;
+  const files = m.files || [];
+  const tick = readTickHtml(m);
+
+  let body = '';
+  if (m.text) body += `<div class="txt selectable" data-raw-text="${escapeAttr(m.text)}">${highlightHtml(m.text, query)}${files.length ? '' : `<span class="time">${stamp}${tick}</span>`}</div>`;
+  if (files.length) {
+    // Все карточки файлов — одинаковой ширины (друг под другом, а не в одну строку с временем
+    // у последней — раньше время отнимало место только у последней карточки, и та казалась
+    // урезанной по сравнению с остальными). Время сообщения — отдельной строкой под всеми файлами.
+    const cards = files.map((f) => {
+      // Админ мог удалить файл с диска через веб-панель, не трогая саму переписку (см. normalizeRow
+      // в server.js) — вместо карточки, которая всё равно не скачается, показываем это прямо.
+      if (f.exists === false) {
+        return `<div class="file file-deleted"><span class="fi">${uiIcon('warn')}</span><span class="fmeta"><span class="fn">${escapeHtml(f.name || 'файл')}</span><span class="fs">Файл удалён с сервера</span></span></div>`;
+      }
+      const href = `${serverUrl}${f.url}?token=${token}&name=${encodeURIComponent(f.name || 'файл')}`;
+      return `<a class="file" href="${href}" data-name="${escapeAttr(f.name || 'файл')}"><span class="fi"><span class="fi-file">${uiIcon('file')}</span><span class="fi-download">${uiIcon('download')}</span><span class="fi-progress"><svg viewBox="0 0 24 24"><circle class="ring-bg" cx="12" cy="12" r="10"></circle><circle class="ring-bar" cx="12" cy="12" r="10"></circle></svg><span class="fi-pct"></span></span><span class="fi-check">${uiIcon('check')}</span></span><span class="fmeta"><span class="fn">${escapeHtml(f.name || 'файл')}</span><span class="fs">${fmtSize(f.size)}</span></span></a>`;
+    }).join('');
+    body += `<div class="files-block">${cards}</div><div class="files-time">${stamp}${tick}</div>`;
+  }
+  return `<div class="msg${own ? ' own' : ''}" data-ts="${m.created_at}"><div class="who">${m.from_user}</div>${body}</div>`;
+}
+
+// Живое обновление галочек на уже отрисованных своих сообщениях, когда приходит read-receipt —
+// без этого пришлось бы перезагружать историю, чтобы увидеть, что собеседник прочитал ответ.
+function applyReadReceipt(upTo) {
+  document.querySelectorAll('#messages .msg.own[data-ts]').forEach((el) => {
+    if (Number(el.dataset.ts) > upTo) return;
+    const tick = el.querySelector('.read-tick');
+    if (!tick || tick.classList.contains('read')) return;
+    tick.classList.add('read');
+    tick.title = 'Прочитано';
+    tick.innerHTML = uiIcon('checkDouble'); // была одна галочка ("отправлено") — становится две
+  });
+}
+
+// ---------- "Новые сообщения" — та же логика, что в окне рассылок (см. addLiveBroadcast/loadFeed
+// там же по смыслу): полоска перед первым непрочитанным ВХОДЯЩИМ сообщением, прячется по клику или
+// прокрутке — но не мгновенно, а с трёхсекундной паузой (см. scheduleUnreadClear), чтобы её успели
+// увидеть, даже если клик/скролл случились почти сразу. Метка "последнее увиденное" хранится в
+// localStorage персонально на этот диалог (dm:id или room:id) — переживает закрытие окна. ----------
+const LAST_SEEN_KEY = `chatLastSeenTs:${type}:${id}`;
+function getLastSeenTs() { return Number(localStorage.getItem(LAST_SEEN_KEY)) || 0; }
+function setLastSeenTs(ts) { if (ts) localStorage.setItem(LAST_SEEN_KEY, String(ts)); }
+// Если этот диалог никто ещё не открывал (метки в localStorage вообще нет) — раньше это означало,
+// что разделитель (а вместе с ним и отметка "прочитано"/read-receipt) НИКОГДА не появлялся для него:
+// условие в addMessage ниже намеренно требует непустую метку (см. комментарий там), а сама метка
+// выставляется только внутри clearUnreadDivider(), которая срабатывает только если разделитель уже
+// показан — замкнутый круг, из которого нет выхода. Разрываем его: при самом первом открытии сразу
+// проставляем метку на "сейчас" (всё, что уже есть в истории на этот момент, по умолчанию считается
+// прочитанным — так и было задумано), а всё, что придёт ПОСЛЕ этого момента, уже корректно попадёт
+// под условие ниже и покажет разделитель (а значит, дойдёт и до read-receipt отправителю).
+if (!getLastSeenTs()) setLastSeenTs(Date.now());
+let maxKnownTs = getLastSeenTs(); // растёт по мере отрисовки/получения входящих в этой сессии
+let hasUnreadDivider = false;
+let unreadClearTimer = null;
+let programmaticScroll = false; // чтобы автоскролл к новому сообщению не считался "пользователь прокрутил"
+function unreadDividerHtml() { return `<div class="unread-divider" id="unreadDivider"><span>Новые сообщения</span></div>`; }
+
+function addMessage(m) {
+  const box = document.getElementById('messages');
+  const incoming = m.from_id !== me.id;
+  // getLastSeenTs() (не 0) — иначе при самом первом открытии диалога (метки ещё нет) полоска
+  // отметила бы новым вообще всё, что было отправлено сегодня, а не только реально непрочитанное.
+  if (incoming && !hasUnreadDivider && getLastSeenTs() && m.created_at > getLastSeenTs()) {
+    box.insertAdjacentHTML('beforeend', unreadDividerHtml());
+    hasUnreadDivider = true;
+  }
+  const div = document.createElement('div');
+  div.innerHTML = bubbleHtml(m);
+  box.appendChild(div.firstElementChild);
+  if (incoming && m.created_at > maxKnownTs) maxKnownTs = m.created_at;
+  programmaticScroll = true;
+  box.scrollTop = box.scrollHeight;
+}
+
+function clearUnreadDivider() {
+  if (!hasUnreadDivider) return;
+  clearTimeout(unreadClearTimer);
+  unreadClearTimer = null;
+  document.getElementById('unreadDivider')?.remove();
+  hasUnreadDivider = false;
+  setLastSeenTs(maxKnownTs); // "прочитано" — запоминаем, переживёт закрытие окна
+  // Тем же сигналом (клик/скролл, спустя те же 3 секунды) сообщаем серверу, что сообщения собеседника
+  // до maxKnownTs прочитаны — см. markDmRead в server.js. Только для личных чатов: в общей комнате
+  // "прочитано кем-то одним" не имеет смысла, галочек там нет (см. readTickHtml).
+  if (type === 'dm') sendPayload({ type: 'read', peer: id, upTo: maxKnownTs });
+}
+function scheduleUnreadClear() {
+  if (!hasUnreadDivider) return;
+  clearTimeout(unreadClearTimer);
+  unreadClearTimer = setTimeout(clearUnreadDivider, 3000);
+}
+document.addEventListener('click', scheduleUnreadClear);
+document.getElementById('messages').addEventListener('scroll', () => {
+  if (programmaticScroll) { programmaticScroll = false; return; } // это мы сами долистали, не пользователь
+  scheduleUnreadClear();
+});
+
+// Чат "очищается" визуально каждый день — при обычном открытии показываем только сегодняшние
+// сообщения; вся остальная переписка никуда не пропадает и доступна через кнопку "История".
+function todayRange() {
+  const now = new Date();
+  const since = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  return { since, until: since + 24 * 3600 * 1000 };
+}
+
+async function loadHistory() {
+  const { since, until } = todayRange();
+  const q = `since=${since}&until=${until}`;
+  const items = type === 'room' ? await api(`/api/history/room/${id}?${q}`) : await api(`/api/history/dm/${id}?${q}`);
+  items.forEach(addMessage);
+}
+
+let ws, wsReadyQueue = [];
+let wsLostTimer = null; // см. showConnectionLostModal в ui-kit.js
+function connectWs() {
+  const wsUrl = serverUrl.replace(/^http/, 'ws');
+  ws = new WebSocket(`${wsUrl}?token=${token}&host=${encodeURIComponent(desktop.hostname)}`);
+  // У этого окна своё отдельное подключение к серверу — если оно не будет сообщать свой статус,
+  // сервер посчитает его вечно "активным" и это перекроет настоящий статус AFK от окна ростера
+  // (баг, который был: "Отошёл" не появлялся, пока открыто хоть одно окно чата). Статус на момент
+  // подключения берём реальный, а не всегда "в сети" — иначе на пару секунд перебивало настоящий
+  // AFK, пока не придёт ближайший 15-секундный тик с исправлением.
+  ws.onopen = async () => {
+    clearTimeout(wsLostTimer);
+    wsLostTimer = null;
+    hideConnectionLostModal();
+    const { state } = await desktop.getIdleState();
+    ws.send(JSON.stringify({ type: 'status', state }));
+    wsReadyQueue.forEach(fn => fn());
+    wsReadyQueue = [];
+  };
+  ws.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    if (data.type === 'presence' && type === 'dm') {
+      const p = data.users[id];
+      const state = p ? p.state : 'offline';
+      document.getElementById('statusDot').className = 'dot ' + state;
+      document.getElementById('statusDot').title = statusTitle(state, p?.idleSince, p?.since);
+      updateComposerReachability(p?.hosts);
+      lastPresence = p;
+      if (presencePanel.classList.contains('open')) renderPresencePanel(); // если карточка уже открыта — обновляем вживую
+    }
+    // Собеседник (в этом окне — data.peer) прочитал мои сообщения по data.upTo включительно —
+    // перекрашиваем галочки уже отрисованных своих сообщений из серых в синие, без перезагрузки.
+    if (data.type === 'read-receipt' && type === 'dm' && data.peer === id) applyReadReceipt(data.upTo);
+    if (data.type !== 'message') return;
+    const belongs = type === 'room' ? data.room === id : (data.from_id === id || data.to_id === id);
+    if (belongs) addMessage(data);
+  };
+  ws.onclose = () => {
+    if (!wsLostTimer) wsLostTimer = setTimeout(() => { wsLostTimer = null; showConnectionLostModal(connectWs); }, 5000);
+    setTimeout(connectWs, 2000);
+  };
+}
+
+desktop.onIdleState(({ state }) => {
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'status', state }));
+});
+
+function sendPayload(payload) {
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(payload));
+  else wsReadyQueue.push(() => ws.send(JSON.stringify(payload)));
+}
+
+// Тост должен появляться НАД строкой ввода, а не поверх неё — а высота composer не фиксирована
+// (растёт с многострочным текстом), поэтому отступ считаем от его реальной высоты каждый раз.
+function chatToast(message, opts = {}) {
+  const composerHeight = document.getElementById('composer').offsetHeight;
+  uiToast(message, { ...opts, bottomOffset: composerHeight + 12 });
+}
+
+function send() {
+  if (!chatReachable) return;
+  const input = document.getElementById('text');
+  const text = input.value.trim();
+  if (!text) return;
+  const payload = type === 'room' ? { type: 'send', room: id, text } : { type: 'send', to: id, text };
+  sendPayload(payload);
+  input.value = '';
+  input.style.height = 'auto'; // сброс авто-роста после отправки — снова однострочное поле
+}
+
+// Enter — отправляет сообщение; Shift+Enter — переносит строку (для этого поле ввода и сделано
+// textarea, а не обычным input, у которого многострочный текст в принципе невозможен).
+const textEl = document.getElementById('text');
+textEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+});
+textEl.addEventListener('input', () => {
+  textEl.style.height = 'auto';
+  textEl.style.height = Math.min(textEl.scrollHeight, 120) + 'px';
+});
+
+// Базовый набор эмодзи (как в разделе "часто используемые" на iPhone) — не полный юникодный
+// список, а компактная сетка самых ходовых смайликов/жестов для рабочей переписки.
+const EMOJI_LIST = [
+  '😀', '😂', '🤣', '😊', '😉', '😍', '😘', '🥰', '😎', '🤩',
+  '🙂', '🙃', '😇', '🤔', '😐', '😴', '😪', '😭', '😢', '😡',
+  '🤯', '😱', '🥳', '😅', '😬', '🤫', '🤐', '🙄', '😏', '😜',
+  '👍', '👎', '👏', '🙏', '👌', '✌️', '🤝', '💪', '🤞', '👋',
+  '❤️', '🔥', '🎉', '✅', '❌', '⭐', '💯', '⏰', '☕', '📎',
+];
+const emojiPanel = document.getElementById('emojiPanel');
+const emojiBtn = document.getElementById('emojiBtn');
+emojiBtn.innerHTML = uiIcon('emoji');
+// data-emoji хранит исходный символ для вставки в textarea (см. клик ниже) — сама кнопка теперь
+// содержит картинку (emojiHtml), а не текстовый символ, чтобы выглядеть так же, как в сообщениях.
+emojiPanel.innerHTML = EMOJI_LIST.map((e) => `<button type="button" data-emoji="${escapeAttr(e)}">${emojiHtml(e)}</button>`).join('');
+
+function closeEmojiPanel() {
+  emojiPanel.classList.remove('open');
+  emojiBtn.classList.remove('active');
+}
+function toggleEmojiPanel() {
+  const opening = !emojiPanel.classList.contains('open');
+  emojiPanel.classList.toggle('open', opening);
+  emojiBtn.classList.toggle('active', opening);
+}
+emojiBtn.addEventListener('click', toggleEmojiPanel);
+emojiPanel.addEventListener('click', (e) => {
+  const btn = e.target.closest('button');
+  if (!btn) return;
+  const emoji = btn.dataset.emoji;
+  const start = textEl.selectionStart ?? textEl.value.length;
+  const end = textEl.selectionEnd ?? textEl.value.length;
+  textEl.value = textEl.value.slice(0, start) + emoji + textEl.value.slice(end);
+  const caret = start + emoji.length;
+  textEl.focus();
+  textEl.setSelectionRange(caret, caret);
+  textEl.dispatchEvent(new Event('input')); // пересчитать высоту textarea, если добавили несколько подряд
+});
+document.addEventListener('click', (e) => {
+  if (emojiPanel.classList.contains('open') && !e.target.closest('#emojiBtn') && !e.target.closest('#emojiPanel')) closeEmojiPanel();
+});
+
+async function uploadFile(file) {
+  const formHeaders = { Authorization: 'Bearer ' + token, 'Content-Type': 'application/octet-stream' };
+  let res;
+  try {
+    res = await fetch(`${serverUrl}/api/upload?name=${encodeURIComponent(file.name)}`, { method: 'POST', headers: formHeaders, body: file });
+  } catch {
+    throw new Error('Сервер недоступен — проверьте подключение и повторите попытку.');
+  }
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || `Сервер ответил ошибкой (${res.status})`);
+  }
+  return res.json(); // { url, name, size }
+}
+
+// Несколько файлов + подпись (если есть) уходят ОДНИМ сообщением — сервер хранит произвольное
+// число файлов в одной записи, поэтому в ленте это тоже один пузырь, а не россыпь отдельных.
+async function sendFilesWithCaption(files, caption) {
+  let uploaded;
+  try {
+    uploaded = await Promise.all(files.map(uploadFile));
+  } catch (e) {
+    uiAlert(e.message, files.length > 1 ? 'Не удалось отправить файлы' : 'Не удалось отправить файл');
+    return;
+  }
+  const base = type === 'room' ? { type: 'send', room: id, text: caption } : { type: 'send', to: id, text: caption };
+  sendPayload({ ...base, files: uploaded });
+  chatToast(files.length > 1 ? 'Файлы успешно отправлены' : 'Файл успешно отправлен');
+}
+
+// ---------- Модалка выбора способа отправки: быстро или с подписью ----------
+function openSendFilesModal(files) {
+  const count = files.length;
+  const title = count === 1 ? 'Отправить файл' : `Отправить файлы (${count})`;
+  const noun = count === 1 ? 'файл' : 'файлы';
+
+  const overlay = document.createElement('div');
+  overlay.className = 'ui-modal-overlay';
+  const box = document.createElement('div');
+  box.className = 'ui-modal-box sfp-box';
+  box.innerHTML = `
+    <div class="ui-modal-title">${uiIcon('file')} ${title}</div>
+    <div class="sfp-list">${files.map(f => `<div class="sfp-item"><span class="sfp-fn">${escapeHtml(f.name)}</span><span class="sfp-fs">${fmtSize(f.size)}</span></div>`).join('')}</div>
+    <div class="sfp-split">
+      <button class="sfp-half sfp-quick" id="sfpQuick">
+        <div class="sfp-half-t">${uiIcon('send')} Быстро</div>
+        <div class="sfp-half-d">Отправить ${noun} сразу, без подписи</div>
+      </button>
+      <div class="sfp-half sfp-caption">
+        <div class="sfp-half-t">С подписью</div>
+        <input id="sfpCaptionInput" placeholder="Текст к ${noun}у...">
+        <button id="sfpCaptionSend">Отправить</button>
+      </div>
+    </div>
+    <div class="sfp-cancel-row"><button id="sfpCancel">Отмена</button></div>
+  `;
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+
+  const close = () => overlay.remove();
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  document.getElementById('sfpCancel').onclick = close;
+  document.getElementById('sfpQuick').onclick = () => { close(); sendFilesWithCaption(files, ''); };
+  const captionInput = document.getElementById('sfpCaptionInput');
+  const sendWithCaption = () => { const caption = captionInput.value.trim(); close(); sendFilesWithCaption(files, caption); };
+  document.getElementById('sfpCaptionSend').onclick = sendWithCaption;
+  captionInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendWithCaption(); });
+  captionInput.focus();
+}
+
+document.getElementById('attach').addEventListener('click', () => document.getElementById('fileInput').click());
+document.getElementById('fileInput').addEventListener('change', (e) => {
+  const files = Array.from(e.target.files || []);
+  e.target.value = '';
+  if (files.length && chatReachable) openSendFilesModal(files);
+});
+
+// ---------- Drag-and-drop: перетащили файлы прямо из проводника в окно чата ----------
+let dragCounter = 0;
+window.addEventListener('dragenter', (e) => {
+  e.preventDefault();
+  if (!e.dataTransfer || ![...e.dataTransfer.types].includes('Files')) return;
+  dragCounter++;
+  document.getElementById('dropOverlay').classList.add('active');
+});
+window.addEventListener('dragover', (e) => e.preventDefault()); // без этого drop не сработает
+window.addEventListener('dragleave', (e) => {
+  e.preventDefault();
+  dragCounter = Math.max(0, dragCounter - 1);
+  if (dragCounter === 0) document.getElementById('dropOverlay').classList.remove('active');
+});
+window.addEventListener('drop', (e) => {
+  e.preventDefault();
+  dragCounter = 0;
+  document.getElementById('dropOverlay').classList.remove('active');
+  if (!chatReachable) return;
+  const files = Array.from(e.dataTransfer?.files || []);
+  if (files.length) openSendFilesModal(files);
+});
+
+// Файлы, отправленные через правый клик по контакту в ростере (окно чата могло только что открыться) —
+// приходят одним пакетом и уходят одним сообщением, как и любая другая множественная отправка.
+// (Сам пункт меню в ростере уже не появится для недоступного контакта — здесь просто вторая линия защиты.)
+desktop.onFilesToSend((files) => {
+  if (!chatReachable) return;
+  const base = type === 'room' ? { type: 'send', room: id, text: '' } : { type: 'send', to: id, text: '' };
+  sendPayload({ ...base, files });
+});
+desktop.onShowAlert(({ message, title }) => uiAlert(message, title));
+
+// ---------- История: по дням и полнотекстовый поиск ----------
+let daysCache = [];
+
+function dayLabel(dayStr) {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const [y, m, d] = dayStr.split('-').map(Number);
+  const day = new Date(y, m - 1, d);
+  const diff = Math.round((today - day) / 86400000);
+  if (diff === 0) return 'Сегодня';
+  if (diff === 1) return 'Вчера';
+  return day.toLocaleDateString('ru-RU', { day: '2-digit', month: 'long' });
+}
+function dayRange(dayStr) {
+  const [y, m, d] = dayStr.split('-').map(Number);
+  const since = new Date(y, m - 1, d).getTime();
+  return { since, until: since + 24 * 3600 * 1000 };
+}
+function monthLabel(key) { // key = 'YYYY-MM'
+  const [y, m] = key.split('-').map(Number);
+  const label = new Date(y, m - 1, 1).toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' });
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
+// Сообщения и строка ввода плавно гаснут и сдвигаются вниз, пока не закончится transition — и только
+// тогда по-настоящему убираются из раскладки (display:none), иначе остаются невидимыми, но
+// занимающими место (тот же приём, что у списка контактов в ростере при открытой панели профиля).
+function hideChatBodySmoothly() {
+  const box = document.getElementById('messages');
+  // display:none обнуляет scrollHeight/scrollTop элемента (и то и другое читается как 0, пока он
+  // скрыт) — если что-то попытается прокрутить его в этот момент (например, addMessage при живом
+  // сообщении, пришедшем пока открыта История) или браузер просто не идеально восстановит скролл
+  // после возврата в раскладку, список чуть сдвигается от того места, где реально был. Поэтому сами
+  // запоминаем позицию явно, а не полагаемся на то, что она переживёт display:none сама по себе.
+  box.dataset.wasAtBottom = (box.scrollHeight - box.scrollTop - box.clientHeight < 4) ? '1' : '';
+  box.dataset.savedScrollTop = box.scrollTop;
+  ['messages', 'composer'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el.classList.contains('chat-hidden')) return;
+    el.classList.add('chat-hidden');
+    setTimeout(() => { if (el.classList.contains('chat-hidden')) el.style.display = 'none'; }, 200);
+  });
+}
+function showChatBodySmoothly() {
+  ['messages', 'composer'].forEach((id) => {
+    const el = document.getElementById(id);
+    el.style.display = 'flex'; // оба flex по базовым стилям — сначала возвращаем в раскладку (ещё прозрачным)...
+    void el.offsetHeight; // ...форсируем reflow, чтобы transition не схлопнулся...
+    el.classList.remove('chat-hidden'); // ...и только теперь плавно проявляем
+  });
+  const box = document.getElementById('messages');
+  // Если до открытия Истории список был прокручен в самый низ — возвращаем именно в (новый) низ,
+  // а не на старую абсолютную позицию: пока История была открыта, могли прийти новые сообщения
+  // (см. addMessage), и scrollHeight мог вырасти. Если же пользователь читал более старые сообщения
+  // (не внизу) — просто восстанавливаем точную позицию, где он и был.
+  programmaticScroll = true;
+  box.scrollTop = box.dataset.wasAtBottom ? box.scrollHeight : Number(box.dataset.savedScrollTop || 0);
+}
+
+async function openHistoryPanel() {
+  hideChatBodySmoothly();
+  document.getElementById('historyPanel').classList.add('visible'); // а сама панель проявляется плавно
+  document.getElementById('historyBtn').classList.add('active');
+  document.getElementById('historyBtn').title = 'Скрыть историю переписки';
+  const row = document.getElementById('hpSearchRow');
+  row.innerHTML = `${uiIcon('search')}<input id="hpSearch" placeholder="Поиск по всей истории переписки...">`;
+  document.getElementById('hpSearch').addEventListener('input', debounceSearch);
+  await loadDays();
+  if (daysCache.length) selectDay(daysCache[0].day);
+  else document.getElementById('hpMessages').innerHTML = '<div id="hpEmpty">Переписки пока не было</div>';
+}
+function closeHistoryPanel() {
+  document.getElementById('historyPanel').classList.remove('visible'); // сначала плавно скрываем панель...
+  showChatBodySmoothly(); // ...и одновременно проявляем сообщения/строку ввода обратно
+  document.getElementById('historyBtn').classList.remove('active');
+  document.getElementById('historyBtn').title = 'Открыть историю переписки';
+}
+document.getElementById('historyBtn').addEventListener('click', () => {
+  document.getElementById('historyPanel').classList.contains('visible') ? closeHistoryPanel() : openHistoryPanel();
+});
+
+// Список дней группируем по месяцам (свернуто, кроме самого свежего) — плоский список за год
+// был бы неюзабельным. Быстрый переход к конкретной дате всё равно проще через поиск сверху.
+async function loadDays() {
+  // Смещение часового пояса ЭТОГО компьютера — чтобы дни группировались как на часах у
+  // сотрудника, а не по часовому поясу сервера (getTimezoneOffset() у JS даёт минуты с обратным
+  // знаком, поэтому переворачиваем: для UTC+3 получится +180).
+  const offsetMinutes = -new Date().getTimezoneOffset();
+  daysCache = type === 'room'
+    ? await api(`/api/history/room/${id}/days?offsetMinutes=${offsetMinutes}`)
+    : await api(`/api/history/dm/${id}/days?offsetMinutes=${offsetMinutes}`);
+  const box = document.getElementById('hpDays');
+  box.innerHTML = '';
+  if (!daysCache.length) return;
+
+  const months = new Map(); // 'YYYY-MM' -> [{day,count}, ...]
+  daysCache.forEach(d => {
+    const key = d.day.slice(0, 7);
+    if (!months.has(key)) months.set(key, []);
+    months.get(key).push(d);
+  });
+
+  [...months.entries()].forEach(([key, days], idx) => {
+    const collapsed = idx !== 0; // самый свежий месяц раскрыт сразу, остальные свёрнуты
+    const total = days.reduce((s, d) => s + d.count, 0);
+
+    const header = document.createElement('div');
+    header.className = 'mheader' + (collapsed ? ' collapsed' : '');
+    header.innerHTML = `<span class="chev">${uiIcon('chevron')}</span><span class="mtitle">${monthLabel(key)}</span><span class="mcount">${total}</span>`;
+
+    const list = document.createElement('div');
+    list.className = 'mdays' + (collapsed ? ' collapsed' : '');
+    days.forEach(d => {
+      const btn = document.createElement('div');
+      btn.className = 'dbtn';
+      btn.dataset.day = d.day;
+      btn.innerHTML = `${dayLabel(d.day)}<span class="cnt">${d.count} сообщ.</span>`;
+      btn.onclick = () => selectDay(d.day);
+      list.appendChild(btn);
+    });
+
+    header.onclick = () => { header.classList.toggle('collapsed'); list.classList.toggle('collapsed'); };
+    box.appendChild(header);
+    box.appendChild(list);
+  });
+}
+
+async function selectDay(day) {
+  document.getElementById('hpSearch').value = '';
+  [...document.querySelectorAll('#hpDays .dbtn')].forEach(b => b.classList.toggle('active', b.dataset.day === day));
+  const { since, until } = dayRange(day);
+  const q = `since=${since}&until=${until}`;
+  const items = type === 'room' ? await api(`/api/history/room/${id}?${q}`) : await api(`/api/history/dm/${id}?${q}`);
+  renderHistoryMessages(items, false);
+}
+
+let searchDebounce;
+function debounceSearch(e) {
+  clearTimeout(searchDebounce);
+  const value = e.target.value.trim();
+  if (!value) { if (daysCache.length) selectDay(document.querySelector('#hpDays .dbtn.active')?.dataset.day || daysCache[0].day); return; }
+  searchDebounce = setTimeout(() => runSearch(value), 250);
+}
+async function runSearch(text) {
+  [...document.querySelectorAll('#hpDays .dbtn')].forEach(b => b.classList.remove('active'));
+  const items = type === 'room'
+    ? await api(`/api/history/room/${id}?q=${encodeURIComponent(text)}`)
+    : await api(`/api/history/dm/${id}?q=${encodeURIComponent(text)}`);
+  renderHistoryMessages(items, true, text);
+}
+
+function renderHistoryMessages(items, withDate, query) {
+  const box = document.getElementById('hpMessages');
+  if (!items.length) { box.innerHTML = '<div id="hpEmpty">Ничего не найдено</div>'; return; }
+  box.innerHTML = items.map(m => bubbleHtml(m, { withDate, query })).join('');
+  box.scrollTop = box.scrollHeight; // сразу к самым свежим сообщениям за день, а не к началу
+}
+
+// Клик по прикреплённому файлу — скачивание через главный процесс (webContents.downloadURL),
+// а не обычная навигация по ссылке: раньше здесь стоял target="_blank", из-за чего Electron
+// открывал вспомогательное пустое окно, которое не закрывалось после сохранения файла.
+// Кольцо прогресса: circumference = 2πr, r=10 (совпадает с радиусом окружности в разметке выше)
+const RING_CIRCUMFERENCE = 2 * Math.PI * 10;
+const activeDownloads = new Map(); // downloadId -> элемент <a class="file">, который сейчас качается
+
+function startDownloadUi(link) {
+  const id = `dl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  link.classList.remove('done');
+  link.classList.add('downloading');
+  const bar = link.querySelector('.ring-bar');
+  const pct = link.querySelector('.fi-pct');
+  if (bar) {
+    bar.style.strokeDasharray = RING_CIRCUMFERENCE;
+    bar.style.strokeDashoffset = RING_CIRCUMFERENCE; // старт с пустого кольца
+    bar.classList.add('indeterminate'); // пока не пришёл первый процент — крутится неопределённо
+  }
+  if (pct) pct.textContent = '';
+  activeDownloads.set(id, link);
+  return id;
+}
+
+desktop.onDownloadProgress(({ id, state, percent }) => {
+  const link = activeDownloads.get(id);
+  if (!link) return;
+  const bar = link.querySelector('.ring-bar');
+  const pct = link.querySelector('.fi-pct');
+
+  if (state === 'progressing') {
+    if (percent == null) return; // сервер не прислал размер файла — оставляем неопределённое вращение
+    if (bar) {
+      bar.classList.remove('indeterminate');
+      bar.style.strokeDashoffset = RING_CIRCUMFERENCE * (1 - percent / 100);
+    }
+    if (pct) pct.textContent = percent;
+    return;
+  }
+
+  // Готово (успешно или с ошибкой) — показываем галочку на пару секунд и возвращаем обычную иконку
+  activeDownloads.delete(id);
+  link.classList.remove('downloading');
+  if (state === 'completed') {
+    link.classList.add('done');
+    setTimeout(() => link.classList.remove('done'), 2500);
+    chatToast('Файл успешно скачан');
+  } else if (state === 'failed') {
+    uiAlert('Не удалось скачать файл — проверьте подключение и повторите попытку.', 'Ошибка скачивания');
+  }
+});
+
+desktop.onToast(({ message, error }) => chatToast(message, { error }));
+
+function wireFileClicks(container) {
+  container.addEventListener('click', (e) => {
+    const link = e.target.closest('a.file');
+    if (!link) return;
+    e.preventDefault();
+    const id = startDownloadUi(link);
+    desktop.downloadFile(link.href, id);
+  });
+}
+wireFileClicks(document.getElementById('messages'));
+wireFileClicks(document.getElementById('hpMessages'));
+
+// ПКМ по сообщению: на файле — "Сохранить как...", на тексте — "Копировать текст".
+// Реализовано нативным меню Electron (через главный процесс), т.к. буфер обмена и системный
+// диалог "Сохранить как" всё равно должны идти оттуда.
+function wireMessageContextMenu(container) {
+  container.addEventListener('contextmenu', (e) => {
+    const fileLink = e.target.closest('a.file');
+    if (fileLink) {
+      e.preventDefault();
+      desktop.showMessageMenu({ kind: 'file', url: fileLink.href, name: fileLink.dataset.name });
+      return;
+    }
+    const txtEl = e.target.closest('.txt');
+    if (txtEl) {
+      e.preventDefault();
+      desktop.showMessageMenu({ kind: 'text', text: txtEl.dataset.rawText || '' });
+    }
+  });
+}
+wireMessageContextMenu(document.getElementById('messages'));
+wireMessageContextMenu(document.getElementById('hpMessages'));
+
+loadHistory();
+connectWs();
+</script>
+</body>
+</html>

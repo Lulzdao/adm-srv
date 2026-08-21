@@ -1,0 +1,753 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Объявления</title>
+<link rel="stylesheet" href="theme.css">
+<style>
+  body { display: flex; flex-direction: column; position: relative; }
+  #composeBtn { -webkit-app-region: no-drag; display: flex; align-items: center; gap: 6px; padding: 0 10px; width: auto; height: 28px; border-radius: 8px; font-size: 12px; font-weight: 600; }
+  #composeBtn svg { width: 16px; height: 16px; flex-shrink: 0; }
+  #composeBtn.active { background: var(--accent); color: #fff; }
+  #composeBtn.active:hover { background: var(--accent); }
+
+  /* Абсолютно спозиционированный оверлей поверх ленты (тот же приём, что у #historyPanel ниже) —
+     только opacity/transform, без max-height/flex-grow. Раньше форма росла через max-height+flex-
+     grow, деля место с лентой, которая пряталась через display:none с задержкой — эти два
+     независимых процесса недосчитывались друг о друга, и разворачивание временами заметно
+     "спотыкалось" рывком (особенно ближе к концу, когда лента наконец схлопывалась). У оверлея с
+     самого начала фиксированная полная высота (top:38px = высота титульной панели, bottom:0) —
+     доращивать нечего, дёргаться нечему. */
+  #composer {
+    position: absolute; top: 38px; left: 0; right: 0; bottom: 0; z-index: 20;
+    display: flex; flex-direction: column; padding: 14px;
+    border-top: 2px solid transparent; border-bottom: 1px solid var(--border); background: var(--panel);
+    opacity: 0; transform: translateY(-8px); pointer-events: none;
+    transition: opacity .2s ease, transform .2s ease, border-color .2s ease;
+  }
+  #composer.open { opacity: 1; transform: translateY(0); pointer-events: auto; border-top-color: var(--accent); }
+  #composer p { margin: 0 0 8px; color: var(--muted); font-size: 12px; flex-shrink: 0; }
+  textarea { flex: 1; min-height: 70px; width: 100%; resize: none; background: var(--panel-2); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 10px; font-size: 13px; font-family: inherit; }
+  textarea:focus { outline: none; border-color: var(--accent); }
+  #composerRow2 { display: flex; gap: 8px; margin-top: 8px; flex-shrink: 0; }
+  #attachBtn { width: 40px; height: 40px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel-2); color: var(--muted); cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  #attachBtn:hover { color: var(--text); }
+  #sendBtn { flex: 1; padding: 10px; border: none; border-radius: 8px; background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff; font-weight: 700; cursor: pointer; }
+  #composerFiles { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; flex-shrink: 0; }
+  #composerFiles .chip { display: flex; align-items: center; gap: 6px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 20px; padding: 4px 6px 4px 6px; font-size: 11.5px; }
+  #composerFiles .chip button { width: 16px; height: 16px; border: none; background: var(--hover); border-radius: 50%; color: var(--muted); cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  /* Кольцо загрузки файла на сервер — тот же приём, что и у кольца скачивания в ленте (пусто -> % -> галочка/крестик),
+     только меньше и запускается сразу при выборе файла, а не при клике "Отправить всем". */
+  #composerFiles .chip .chip-fi { position: relative; display: flex; align-items: center; justify-content: center; width: 20px; height: 20px; flex-shrink: 0; color: var(--accent-2); }
+  #composerFiles .chip .chip-fi .fi-check, #composerFiles .chip .chip-fi .fi-error { display: none; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 50%; }
+  #composerFiles .chip.done .chip-fi .fi-progress, #composerFiles .chip.error .chip-fi .fi-progress { display: none; }
+  #composerFiles .chip.done .chip-fi .fi-check { display: flex; background: var(--online); color: #fff; }
+  #composerFiles .chip.error .chip-fi .fi-error { display: flex; color: var(--danger); }
+  #composerFiles .chip .fi-progress { display: flex; align-items: center; justify-content: center; position: relative; width: 20px; height: 20px; }
+  #composerFiles .chip .fi-progress svg { position: absolute; inset: 0; width: 20px; height: 20px; transform: rotate(-90deg); }
+  #composerFiles .chip .ring-bg { fill: none; stroke: var(--border); stroke-width: 3; }
+  #composerFiles .chip .ring-bar { fill: none; stroke: var(--accent-2); stroke-width: 3; stroke-linecap: round; transition: stroke-dashoffset .2s linear; transform-box: fill-box; transform-origin: center; }
+  #composerFiles .chip .ring-bar.indeterminate { animation: fi-spin 1s linear infinite; }
+  #composerFiles .chip .fi-pct { font-size: 6.5px; font-weight: 700; color: var(--text); position: relative; z-index: 1; }
+  #composerFiles .chip .chip-fn { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* Пока открыт композер ИЛИ панель истории — лента снизу скрывается плавно (opacity), а затем,
+     когда переход завершится, по-настоящему убирается из раскладки (display:none) — иначе она
+     просто становится прозрачной, но продолжает занимать место, и под композером остаётся пустая
+     область (именно так и было раньше). */
+  #feed { flex: 1; overflow-y: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 16px; transition: opacity .15s ease, transform .2s ease; }
+  #feed.hidden { opacity: 0; pointer-events: none; transform: translateY(14px); }
+  /* "Сегодня рассылок пока не было" — по умолчанию flex-column прижимает единственного ребёнка
+     к верху (flex-start), из-за чего текст был по центру только горизонтально (text-align), а по
+     вертикали торчал вверху. .empty-state добавляется, только когда лента реально пуста — иначе
+     центрирование сплющило бы обычный многоэлементный список к середине вместо чтения сверху вниз. */
+  #feed.empty-state { justify-content: center; align-items: center; }
+
+  /* -webkit-app-region: no-drag убран по той же причине, что и у .selectable в theme.css — разделитель
+     лежит внутри прокручиваемой ленты, а не в области с drag, так что нечего было и переопределять,
+     а при прокрутке это могло путать расчёт drag-региона у Chromium/Electron. */
+  .unread-divider { display: flex; align-items: center; gap: 10px; margin: 2px 0; }
+  .unread-divider::before, .unread-divider::after { content: ''; flex: 1; height: 1px; background: var(--accent); opacity: .35; }
+  .unread-divider span { font-size: 10px; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: .4px; white-space: nowrap; }
+  .item { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; min-width: 0; }
+  .item .who { color: var(--accent-2); font-weight: 700; font-size: 12px; }
+  .item .time { color: var(--muted); font-size: 10.5px; margin-left: 6px; }
+  .item .txt { margin-top: 4px; white-space: pre-wrap; word-break: break-word; line-height: 1.4; }
+  /* Подсветка совпадений при поиске по истории — см. highlightHtml/runSearch. */
+  mark.hl { background: var(--accent); color: #fff; border-radius: 3px; padding: 0 1px; }
+  .item .file-row { margin-top: 6px; }
+  .item .file { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--hover); border-radius: 8px; text-decoration: none; color: var(--text); min-width: 0; }
+  .item .file .fi { color: var(--accent-2); flex-shrink: 0; display: flex; width: 17px; height: 17px; position: relative; }
+  .item .file .fi .fi-download, .item .file .fi .fi-progress, .item .file .fi .fi-check { display: none; }
+  .item .file:hover .fi .fi-file { display: none; }
+  .item .file:hover .fi .fi-download { display: flex; }
+  .item .file.downloading .fi .fi-file, .item .file.downloading .fi .fi-download { display: none !important; }
+  .item .file.downloading .fi, .item .file.done .fi { width: 24px; height: 24px; }
+  .item .file.downloading .fi .fi-progress { display: flex; align-items: center; justify-content: center; position: relative; width: 24px; height: 24px; }
+  .item .file.downloading .fi .fi-progress svg { position: absolute; inset: 0; transform: rotate(-90deg); }
+  .item .file.downloading .fi .fi-progress .ring-bg { fill: none; stroke: var(--border); stroke-width: 3; }
+  .item .file.downloading .fi .fi-progress .ring-bar { fill: none; stroke: var(--accent-2); stroke-width: 3; stroke-linecap: round; transition: stroke-dashoffset .2s linear; transform-box: fill-box; transform-origin: center; }
+  .item .file.downloading .fi .fi-progress .ring-bar.indeterminate { animation: fi-spin 1s linear infinite; }
+  .item .file.downloading .fi .fi-pct { font-size: 7px; font-weight: 700; color: var(--text); position: relative; z-index: 1; }
+  @keyframes fi-spin { from { transform: rotate(-90deg); } to { transform: rotate(270deg); } }
+  .item .file.done .fi .fi-file, .item .file.done .fi .fi-download, .item .file.done .fi .fi-progress { display: none !important; }
+  .item .file.done .fi .fi-check { display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 50%; background: var(--online); color: #fff; }
+  .item .file .fmeta { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .item .file .fn { display: block; font-weight: 600; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .item .file .fs { color: var(--muted); font-size: 10.5px; }
+  /* Файл удалили с диска сервера (через веб-панель) — карточка та же по форме, но не ссылка, а
+     статус: приглушённая, некликабельная, с предупреждающей иконкой вместо файловой. */
+  .item .file.file-deleted { cursor: default; }
+  .item .file.file-deleted .fi { color: var(--muted); }
+  .item .file.file-deleted .fn { color: var(--muted); }
+  .empty { color: var(--muted); padding: 20px; text-align: center; font-size: 12.5px; }
+
+  #historyBtn { -webkit-app-region: no-drag; display: flex; align-items: center; gap: 6px; padding: 0 10px; width: auto; height: 28px; border-radius: 8px; font-size: 12px; font-weight: 600; }
+  #historyBtn svg { width: 18px; height: 18px; flex-shrink: 0; }
+  #historyBtn.active { background: var(--accent); color: #fff; }
+  #historyBtn.active:hover { background: var(--accent); }
+
+  /* ---- Панель истории по дням/месяцам (как в чате) ---- */
+  /* Композер прячется сам, через свой обычный open/close переход (max-height/opacity) — отдельного
+     аварийного display:none поверх него больше нет, чтобы не обрывать эту анимацию на середине,
+     когда историю открывают при открытой форме рассылки (см. openHistoryPanel/setComposerOpen). */
+  /* Открывается сверху вниз (не снизу вверх) — и цветная полоска сверху продолжает подсветку
+     активной кнопки, которая открыла панель (см. такой же приём в окне чата). */
+  #historyPanel {
+    position: absolute; top: 38px; left: 0; right: 0; bottom: 0;
+    display: flex; flex-direction: column; background: var(--bg);
+    border-top: 2px solid transparent;
+    opacity: 0; transform: translateY(-8px); pointer-events: none;
+    transition: opacity .2s ease, transform .2s ease, border-color .2s ease;
+    z-index: 50;
+  }
+  #historyPanel.visible { opacity: 1; transform: translateY(0); pointer-events: auto; border-top-color: var(--accent); }
+  #hpSearchRow { display: flex; align-items: center; gap: 8px; padding: 10px; border-bottom: 1px solid var(--border); background: var(--panel); }
+  #hpSearchRow svg { color: var(--muted); flex-shrink: 0; }
+  #hpSearch { flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 20px; padding: 7px 12px; color: var(--text); font-size: 12.5px; }
+  #hpSearch:focus { outline: none; border-color: var(--accent); }
+  #hpBody { flex: 1; display: flex; min-height: 0; }
+  #hpDays { width: 150px; flex-shrink: 0; overflow-y: auto; border-right: 1px solid var(--border); padding: 6px; }
+  #hpDays .mheader { display: flex; align-items: center; gap: 6px; padding: 8px 8px 6px; cursor: pointer; border-radius: 6px; user-select: none; }
+  #hpDays .mheader:hover { background: var(--hover); }
+  #hpDays .mheader .chev { color: var(--muted); display: flex; transition: transform .15s; flex-shrink: 0; }
+  #hpDays .mheader.collapsed .chev { transform: rotate(-90deg); }
+  #hpDays .mheader .mtitle { flex: 1; font-size: 11px; font-weight: 700; color: var(--muted); text-transform: capitalize; }
+  #hpDays .mheader .mcount { font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  #hpDays .mdays.collapsed { display: none; }
+  #hpDays .dbtn { padding: 8px 9px; border-radius: 8px; cursor: pointer; font-size: 12px; margin-bottom: 2px; }
+  #hpDays .dbtn:hover { background: var(--hover); }
+  #hpDays .dbtn.active { background: var(--accent); color: #fff; }
+  #hpDays .dbtn .cnt { display: block; font-size: 10px; color: inherit; opacity: .7; }
+  #hpMessages { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+  #hpEmpty { padding: 30px 14px; text-align: center; color: var(--muted); font-size: 12px; }
+
+  /* ---- Drag-and-drop файлов (как в окне чата) ---- */
+  #dropOverlay { display: none; position: fixed; inset: 6px; z-index: 500; background: var(--overlay); align-items: center; justify-content: center; flex-direction: column; gap: 10px; border: 3px dashed var(--accent); border-radius: 10px; pointer-events: none; }
+  #dropOverlay.active { display: flex; }
+  #dropOverlay svg { width: 34px; height: 34px; color: var(--accent); }
+  #dropOverlay .dtext { font-size: 14px; font-weight: 700; color: var(--text); }
+</style>
+</head>
+<body>
+<div id="dropOverlay">
+  <span></span>
+  <div class="dtext">Отпустите, чтобы прикрепить к рассылке</div>
+</div>
+
+<div class="wintitlebar">
+  <span id="ttl" style="display:flex; align-items:center; gap:8px; min-width:0; overflow:hidden; white-space:nowrap;"></span>
+  <div id="tbExtra" style="-webkit-app-region:no-drag; display:flex; gap:2px; margin-left:auto;">
+    <button class="icon-btn" id="historyBtn"><span></span>История</button>
+    <button class="icon-btn" id="composeBtn" style="display:none"><span></span>Написать</button>
+  </div>
+  <div class="wctl">
+    <button class="icon-btn" id="wcMin"></button>
+    <button class="icon-btn" id="wcMax"></button>
+    <button class="icon-btn close" id="wcClose"></button>
+  </div>
+</div>
+<div id="composer">
+  <p>Сообщение придёт всем сотрудникам сразу — как уведомление на компьютер, так и в историю рассылок.</p>
+  <textarea id="text" placeholder="Текст рассылки..."></textarea>
+  <div id="composerFiles"></div>
+  <div id="composerRow2">
+    <button id="attachBtn" title="Прикрепить файл"></button>
+    <input type="file" id="fileInput" multiple style="display:none">
+    <button id="sendBtn" onclick="send()">Отправить всем</button>
+  </div>
+</div>
+<div id="feed"></div>
+
+<div id="historyPanel">
+  <div id="hpSearchRow"></div>
+  <div id="hpBody">
+    <div id="hpDays"></div>
+    <div id="hpMessages"></div>
+  </div>
+</div>
+
+<script src="ui-kit.js"></script>
+<script src="twemoji.min.js"></script>
+<script>
+const params = new URLSearchParams(location.search);
+const token = params.get('token');
+const serverUrl = params.get('serverUrl');
+const me = JSON.parse(params.get('me') || 'null');
+// Право на рассылки может быть выдано лично человеку ИЛИ всему его отделу — сервер уже считает
+// итоговое (эффективное) значение и отдаёт его прямо в /api/me, отдельно спрашивать не нужно.
+let canCompose = false;
+async function checkComposeAccess() {
+  try {
+    const res = await fetch(serverUrl + '/api/me', { headers: { Authorization: 'Bearer ' + token } });
+    const fresh = await res.json();
+    return !!fresh.can_broadcast;
+  } catch { return false; }
+}
+
+document.getElementById('ttl').innerHTML = `${uiIcon('megaphone')} Объявления`;
+document.getElementById('historyBtn').querySelector('span').innerHTML = uiIcon('history');
+document.getElementById('historyBtn').title = 'Найти рассылку по дате или по тексту';
+document.querySelector('#dropOverlay span').innerHTML = uiIcon('attach');
+
+// Выбранные файлы рассылки — каждый начинает грузиться на сервер СРАЗУ при выборе (не дожидаясь
+// "Отправить всем"), чтобы к моменту отправки текста файлы уже были готовы, а не ждали своей
+// очереди. Элемент: { id, file: File, status: 'uploading'|'done'|'error', percent: number|null,
+// uploaded: {url,name,size}|null }.
+let pendingFiles = [];
+const RING_CIRCUMFERENCE = 2 * Math.PI * 10; // тот же радиус кольца (r=10), что и у кольца скачивания ниже
+
+// Открытие/закрытие самой формы рассылки (без ленты — той управляют отдельно, hideFeedSmoothly/
+// showFeedSmoothly) — общая функция, чтобы openHistoryPanel могла закрыть уже открытую форму без
+// побочного повторного показа ленты (который раньше вызывал заметное мигание при переключении
+// "Написать" -> "История": форма сама возвращала ленту, а openHistoryPanel тут же прятала её снова).
+function setComposerOpen(open) {
+  const btn = document.getElementById('composeBtn');
+  document.getElementById('composer').classList.toggle('open', open);
+  btn.classList.toggle('active', open);
+  btn.title = open ? 'Скрыть форму рассылки' : 'Написать рассылку';
+  // .focus() синхронно считает layout (чтобы прокрутить поле в видимую область), а composer в этот
+  // момент только начинает разворачиваться через max-height/flex-grow (дорогой relayout сам по
+  // себе) — вызванный СРАЗУ при переключении класса .open, focus() форсирует этот layout прямо в
+  // момент старта перехода, из-за чего разворачивание визуально дёргалось/подлагивало. Двойной
+  // requestAnimationFrame откладывает фокус до следующего отрисованного кадра, когда браузер уже
+  // сам посчитал этот layout по расписанию, а не по требованию focus().
+  if (open) requestAnimationFrame(() => requestAnimationFrame(() => document.getElementById('text').focus()));
+}
+
+(async () => {
+  canCompose = await checkComposeAccess();
+  if (!canCompose) return;
+  const btn = document.getElementById('composeBtn');
+  btn.style.display = 'flex';
+  btn.querySelector('span').innerHTML = uiIcon('send');
+  btn.title = 'Написать рассылку';
+  btn.addEventListener('click', () => {
+    if (document.getElementById('historyPanel').classList.contains('visible')) closeHistoryPanel();
+    const open = !document.getElementById('composer').classList.contains('open');
+    setComposerOpen(open);
+    if (open) hideFeedSmoothly(); else showFeedSmoothly();
+  });
+  document.getElementById('attachBtn').innerHTML = uiIcon('attach');
+  document.getElementById('attachBtn').addEventListener('click', () => document.getElementById('fileInput').click());
+  document.getElementById('fileInput').addEventListener('change', (e) => {
+    addPendingFiles(Array.from(e.target.files || []));
+    e.target.value = '';
+  });
+
+  // ---------- Drag-and-drop: перетащили файлы прямо из проводника в окно рассылки ----------
+  let dragCounter = 0;
+  window.addEventListener('dragenter', (e) => {
+    e.preventDefault();
+    if (!e.dataTransfer || ![...e.dataTransfer.types].includes('Files')) return;
+    dragCounter++;
+    document.getElementById('dropOverlay').classList.add('active');
+  });
+  window.addEventListener('dragover', (e) => e.preventDefault()); // без этого drop не сработает
+  window.addEventListener('dragleave', (e) => {
+    e.preventDefault();
+    dragCounter = Math.max(0, dragCounter - 1);
+    if (dragCounter === 0) document.getElementById('dropOverlay').classList.remove('active');
+  });
+  window.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dragCounter = 0;
+    document.getElementById('dropOverlay').classList.remove('active');
+    const files = Array.from(e.dataTransfer?.files || []);
+    if (!files.length) return;
+    addPendingFiles(files);
+    // Перетащили файл — сразу открываем композер, чтобы было видно, что файл подхватился
+    if (!document.getElementById('composer').classList.contains('open')) document.getElementById('composeBtn').click();
+  });
+})();
+
+// Плавное скрытие/показ ленты сегодняшних рассылок — сначала гаснет (opacity), а когда переход
+// закончится, по-настоящему убирается из раскладки (display:none), иначе остаётся невидимой, но
+// занимающей место — из-за этого раньше под открытым композером было пустое пространство.
+function hideFeedSmoothly() {
+  const feed = document.getElementById('feed');
+  if (feed.classList.contains('hidden')) return;
+  feed.classList.add('hidden');
+  setTimeout(() => { if (feed.classList.contains('hidden')) feed.style.display = 'none'; }, 160);
+}
+function showFeedSmoothly() {
+  const feed = document.getElementById('feed');
+  feed.style.display = 'flex'; // сначала возвращаем в раскладку (ещё прозрачным)...
+  void feed.offsetHeight; // ...форсируем reflow, чтобы transition не схлопнулся...
+  feed.classList.remove('hidden'); // ...и только теперь плавно проявляем
+}
+
+function chipHtml(entry) {
+  const pct = entry.percent != null ? entry.percent : '';
+  const offset = entry.percent != null ? RING_CIRCUMFERENCE * (1 - entry.percent / 100) : RING_CIRCUMFERENCE;
+  return `<span class="chip ${entry.status}" data-id="${entry.id}">
+    <span class="chip-fi">
+      <span class="fi-progress"><svg viewBox="0 0 24 24"><circle class="ring-bg" cx="12" cy="12" r="10"></circle><circle class="ring-bar${entry.percent == null ? ' indeterminate' : ''}" cx="12" cy="12" r="10" style="stroke-dasharray:${RING_CIRCUMFERENCE};stroke-dashoffset:${offset}"></circle></svg><span class="fi-pct">${pct}</span></span>
+      <span class="fi-check">${uiIcon('check')}</span>
+      <span class="fi-error">${uiIcon('warn')}</span>
+    </span>
+    <span class="chip-fn">${escapeHtml(entry.file.name)}</span>
+    <button data-id="${entry.id}" title="${entry.status === 'error' ? 'Убрать (загрузка не удалась)' : 'Убрать'}">${uiIcon('x')}</button>
+  </span>`;
+}
+
+function renderComposerFiles() {
+  const box = document.getElementById('composerFiles');
+  box.innerHTML = pendingFiles.map(chipHtml).join('');
+  box.querySelectorAll('button').forEach(b => b.onclick = () => {
+    pendingFiles = pendingFiles.filter((e) => e.id !== b.dataset.id);
+    renderComposerFiles();
+  });
+  document.getElementById('sendBtn').disabled = pendingFiles.some((e) => e.status === 'uploading');
+}
+
+// Точечно обновляет только кольцо прогресса конкретного чипа — без пересборки всего #composerFiles,
+// иначе на каждый onprogress-тик (их много) все чипы мигали бы и терялся бы фокус/hover.
+function updateChipProgress(entry) {
+  const chip = document.querySelector(`#composerFiles .chip[data-id="${entry.id}"]`);
+  if (!chip) return;
+  const bar = chip.querySelector('.ring-bar');
+  const pct = chip.querySelector('.fi-pct');
+  if (bar) {
+    bar.classList.remove('indeterminate');
+    bar.style.strokeDashoffset = RING_CIRCUMFERENCE * (1 - entry.percent / 100);
+  }
+  if (pct) pct.textContent = entry.percent;
+}
+
+// fetch() в Electron/Chromium не даёт прогресс отправки тела запроса — только XMLHttpRequest умеет
+// upload.onprogress, поэтому загрузка файлов рассылки сделана на нём, а не через fetch, как везде
+// в остальном клиенте.
+function startUpload(entry) {
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', `${serverUrl}/api/upload?name=${encodeURIComponent(entry.file.name)}`);
+  xhr.setRequestHeader('Authorization', 'Bearer ' + token);
+  xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+  xhr.upload.onprogress = (e) => {
+    if (!e.lengthComputable) return;
+    entry.percent = Math.round((e.loaded / e.total) * 100);
+    updateChipProgress(entry);
+  };
+  xhr.onload = () => {
+    if (xhr.status >= 200 && xhr.status < 300) {
+      try { entry.uploaded = JSON.parse(xhr.responseText); entry.status = 'done'; }
+      catch { entry.status = 'error'; }
+    } else {
+      entry.status = 'error';
+    }
+    renderComposerFiles();
+  };
+  xhr.onerror = () => { entry.status = 'error'; renderComposerFiles(); };
+  xhr.send(entry.file);
+}
+
+function addPendingFiles(files) {
+  files.forEach((file) => {
+    const entry = { id: `pf-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, file, status: 'uploading', percent: null, uploaded: null };
+    pendingFiles.push(entry);
+    startUpload(entry);
+  });
+  renderComposerFiles();
+}
+
+async function api(path, opts) {
+  const res = await fetch(serverUrl + path, {
+    ...opts,
+    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', ...(opts?.headers || {}) },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Ошибка запроса');
+  return data;
+}
+
+function escapeHtml(s) { return s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
+function escapeAttr(s) { return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function escapeRegex(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+// Подсветка совпадений при поиске по истории (см. runSearch) — экранируем текст точно так же, как
+// в обычном escapeHtml, и уже В ЭКРАНИРОВАННОЙ строке оборачиваем совпадения запроса в <mark>.
+function highlightHtml(text, query) {
+  let html = escapeHtml(text);
+  const q = (query || '').trim();
+  if (q) {
+    const pattern = escapeRegex(escapeHtml(q));
+    if (pattern) html = html.replace(new RegExp(pattern, 'gi'), (m) => `<mark class="hl">${m}</mark>`);
+  }
+  return emojiHtml(html); // emoji-символы в тексте — картинками (см. ui-kit.js), не системным шрифтом
+}
+
+function fmtSize(bytes) {
+  if (!bytes) return '';
+  if (bytes < 1024) return bytes + ' Б';
+  if (bytes < 1024 * 1024) return Math.round(bytes / 1024) + ' КБ';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' МБ';
+}
+
+function itemHtml(b, query) {
+  const time = new Date(b.created_at).toLocaleString('ru-RU');
+  let filesHtml = '';
+  (b.files || []).forEach(f => {
+    // Админ мог удалить файл с диска через веб-панель, не трогая саму рассылку (см. normalizeRow
+    // в server.js) — вместо карточки, которая всё равно не скачается, показываем это прямо.
+    if (f.exists === false) {
+      filesHtml += `<div class="file-row"><div class="file file-deleted"><span class="fi">${uiIcon('warn')}</span><span class="fmeta"><span class="fn">${escapeHtml(f.name || 'файл')}</span><span class="fs">Файл удалён с сервера</span></span></div></div>`;
+      return;
+    }
+    const href = `${serverUrl}${f.url}?token=${token}&name=${encodeURIComponent(f.name || 'файл')}`;
+    filesHtml += `<div class="file-row"><a class="file" href="${href}" data-name="${escapeAttr(f.name || 'файл')}"><span class="fi"><span class="fi-file">${uiIcon('file')}</span><span class="fi-download">${uiIcon('download')}</span><span class="fi-progress"><svg viewBox="0 0 24 24"><circle class="ring-bg" cx="12" cy="12" r="10"></circle><circle class="ring-bar" cx="12" cy="12" r="10"></circle></svg><span class="fi-pct"></span></span><span class="fi-check">${uiIcon('check')}</span></span><span class="fmeta"><span class="fn">${escapeHtml(f.name || 'файл')}</span><span class="fs">${fmtSize(f.size)}</span></span></a></div>`;
+  });
+  const txtHtml = b.text ? `<div class="txt selectable" data-raw-text="${escapeAttr(b.text)}">${highlightHtml(b.text, query)}</div>` : '';
+  return `<div class="item"><span class="who">${b.from_user}</span><span class="time">${time}</span>${txtHtml}${filesHtml}</div>`;
+}
+
+// Лента "сегодняшних" рассылок — обнуляется каждый день, как и в чате. Вся история доступна
+// через кнопку "История" (панель с днями/месяцами + поиском), а не листанием этой ленты.
+function todayRange() {
+  const now = new Date();
+  const since = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  return { since, until: since + 24 * 3600 * 1000 };
+}
+
+// Разделитель "Новые объявления" раньше появлялся только для живых WS-сообщений, пока окно было
+// открыто — если окно закрыть и снова открыть уже ПОСЛЕ того, как объявление пришло, разделителя
+// не было вообще (loadFeed() просто отрисовывал всё как есть). ID последнего показанного объявления
+// хранится в localStorage (переживает закрытие окна, в отличие от переменных в памяти) — при
+// загрузке ленты всё, что новее этой метки, тоже помечается разделителем.
+const LAST_SEEN_KEY = 'broadcastLastSeenId';
+function getLastSeenId() { return Number(localStorage.getItem(LAST_SEEN_KEY)) || 0; }
+function setLastSeenId(id) { if (id) localStorage.setItem(LAST_SEEN_KEY, String(id)); }
+let maxKnownBroadcastId = getLastSeenId(); // растёт по мере отрисовки/получения объявлений в этой сессии
+function unreadDividerHtml() { return `<div class="unread-divider" id="unreadDivider"><span>Новые объявления</span></div>`; }
+
+async function loadFeed() {
+  const { since, until } = todayRange();
+  const items = await api(`/api/broadcasts?since=${since}&until=${until}`);
+  const feed = document.getElementById('feed');
+  feed.classList.toggle('empty-state', !items.length);
+  const lastSeenId = getLastSeenId();
+  const firstUnreadIndex = lastSeenId ? items.findIndex((b) => b.id > lastSeenId) : -1;
+  feed.innerHTML = items.map((b, i) => (i === firstUnreadIndex ? unreadDividerHtml() : '') + itemHtml(b)).join('')
+    || '<div class="empty">Сегодня рассылок пока не было</div>';
+  hasUnreadDivider = firstUnreadIndex !== -1;
+  items.forEach((b) => { if (b.id > maxKnownBroadcastId) maxKnownBroadcastId = b.id; });
+  // Тот же замкнутый круг, что был в личных сообщениях (см. chat.html): если метку никто раньше не
+  // ставил (lastSeenId с самого начала 0), разделитель никогда бы не появился и для будущих
+  // объявлений тоже — сама метка выставляется только внутри clearUnreadDivider(), которая
+  // срабатывает только если разделитель уже показан. При самом первом открытии окна сразу
+  // проставляем метку на максимальный ID из уже загруженного сейчас (то, что уже видно, по
+  // умолчанию считается прочитанным) — а всё, что придёт позже, уже корректно покажет разделитель.
+  if (!lastSeenId) setLastSeenId(maxKnownBroadcastId);
+  // Без этого флага сработавшее от этой строки событие 'scroll' принималось бы за настоящую
+  // прокрутку пользователя и сразу запускало 3-секундный таймер скрытия полоски — именно поэтому
+  // разделитель пропадал сам через 3 секунды после открытия окна, без единого клика.
+  programmaticScroll = true;
+  feed.scrollTop = feed.scrollHeight; // сразу показываем самую свежую рассылку, а не листаем сверху
+}
+
+async function send() {
+  const el = document.getElementById('text');
+  const text = el.value.trim();
+  if (!text && !pendingFiles.length) return;
+  if (pendingFiles.some((e) => e.status === 'uploading')) return; // кнопка и так задизейблена на этот случай
+  if (pendingFiles.some((e) => e.status === 'error')) { uiAlert('Уберите файлы, которые не удалось загрузить (крестик на чипе), или перетащите их заново.'); return; }
+  const sendBtn = document.getElementById('sendBtn');
+  sendBtn.disabled = true;
+  try {
+    // Файлы уже загружены на сервер (см. addPendingFiles/startUpload) — здесь просто собираем
+    // сообщение из готовых { url, name, size }, повторно ничего не грузим.
+    const files = pendingFiles.map((e) => e.uploaded);
+    await api('/api/broadcast', { method: 'POST', body: JSON.stringify({ text, files }) });
+    el.value = '';
+    pendingFiles = [];
+    renderComposerFiles();
+    document.getElementById('composer').classList.remove('open');
+    document.getElementById('composeBtn').classList.remove('active');
+    document.getElementById('composeBtn').title = 'Написать рассылку';
+    showFeedSmoothly();
+    uiToast('Рассылка успешно отправлена');
+    // Живое обновление придёт по тому же WS, что и всем остальным (эхо собственного отправленного
+    // сообщения) — отдельно перезапрашивать ленту не нужно, иначе будет два одинаковых пузыря.
+  } catch (e) { uiAlert(e.message); } finally { sendBtn.disabled = pendingFiles.some((e) => e.status === 'uploading'); }
+}
+
+// Кольцо прогресса скачивания на карточке файла: пусто -> проценты -> галочка (как в окне чата)
+const activeDownloads = new Map();
+
+function startDownloadUi(link) {
+  const id = `dl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  link.classList.remove('done');
+  link.classList.add('downloading');
+  const bar = link.querySelector('.ring-bar');
+  const pct = link.querySelector('.fi-pct');
+  if (bar) {
+    bar.style.strokeDasharray = RING_CIRCUMFERENCE;
+    bar.style.strokeDashoffset = RING_CIRCUMFERENCE;
+    bar.classList.add('indeterminate');
+  }
+  if (pct) pct.textContent = '';
+  activeDownloads.set(id, link);
+  return id;
+}
+
+desktop.onDownloadProgress(({ id, state, percent }) => {
+  const link = activeDownloads.get(id);
+  if (!link) return;
+  const bar = link.querySelector('.ring-bar');
+  const pct = link.querySelector('.fi-pct');
+
+  if (state === 'progressing') {
+    if (percent == null) return;
+    if (bar) {
+      bar.classList.remove('indeterminate');
+      bar.style.strokeDashoffset = RING_CIRCUMFERENCE * (1 - percent / 100);
+    }
+    if (pct) pct.textContent = percent;
+    return;
+  }
+
+  activeDownloads.delete(id);
+  link.classList.remove('downloading');
+  if (state === 'completed') {
+    link.classList.add('done');
+    setTimeout(() => link.classList.remove('done'), 2500);
+    uiToast('Файл успешно скачан');
+  } else if (state === 'failed') {
+    uiAlert('Не удалось скачать файл — проверьте подключение и повторите попытку.', 'Ошибка скачивания');
+  }
+});
+
+desktop.onToast(({ message, error }) => uiToast(message, { error }));
+
+// Клик по файлу — скачивание через главный процесс; ПКМ — скопировать текст / сохранить файл как
+function wireFeedInteractions(container) {
+  container.addEventListener('click', (e) => {
+    const link = e.target.closest('a.file');
+    if (!link) return;
+    e.preventDefault();
+    const id = startDownloadUi(link);
+    desktop.downloadFile(link.href, id);
+  });
+  container.addEventListener('contextmenu', (e) => {
+    const fileLink = e.target.closest('a.file');
+    if (fileLink) { e.preventDefault(); desktop.showMessageMenu({ kind: 'file', url: fileLink.href, name: fileLink.dataset.name }); return; }
+    const txtEl = e.target.closest('.txt');
+    if (txtEl) { e.preventDefault(); desktop.showMessageMenu({ kind: 'text', text: txtEl.dataset.rawText || '' }); }
+  });
+}
+wireFeedInteractions(document.getElementById('feed'));
+wireFeedInteractions(document.getElementById('hpMessages'));
+
+// ---------- Панель истории: по дням/месяцам + полнотекстовый поиск (как в окне чата) ----------
+let daysCache = [];
+
+function dayLabel(dayStr) {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const [y, m, d] = dayStr.split('-').map(Number);
+  const day = new Date(y, m - 1, d);
+  const diff = Math.round((today - day) / 86400000);
+  if (diff === 0) return 'Сегодня';
+  if (diff === 1) return 'Вчера';
+  return day.toLocaleDateString('ru-RU', { day: '2-digit', month: 'long' });
+}
+function dayRange(dayStr) {
+  const [y, m, d] = dayStr.split('-').map(Number);
+  const since = new Date(y, m - 1, d).getTime();
+  return { since, until: since + 24 * 3600 * 1000 };
+}
+function monthLabel(key) {
+  const [y, m] = key.split('-').map(Number);
+  const label = new Date(y, m - 1, 1).toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' });
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
+async function openHistoryPanel() {
+  // Композер и история — взаимоисключающие: не должны накладываться друг на друга. Просто закрываем
+  // форму (без showFeedSmoothly, который вызвал бы клик по "Написать") — ленту всё равно прячем ниже.
+  if (document.getElementById('composer').classList.contains('open')) setComposerOpen(false);
+  hideFeedSmoothly();
+  document.getElementById('historyPanel').classList.add('visible'); // а сама панель проявляется плавно
+  document.getElementById('historyBtn').classList.add('active');
+  document.getElementById('historyBtn').title = 'Скрыть историю';
+  const row = document.getElementById('hpSearchRow');
+  row.innerHTML = `${uiIcon('search')}<input id="hpSearch" placeholder="Поиск по всей истории рассылок...">`;
+  document.getElementById('hpSearch').addEventListener('input', debounceSearch);
+  await loadDays();
+  if (daysCache.length) selectDay(daysCache[0].day);
+  else document.getElementById('hpMessages').innerHTML = '<div id="hpEmpty">Рассылок пока не было</div>';
+}
+function closeHistoryPanel() {
+  document.getElementById('historyPanel').classList.remove('visible'); // сначала плавно скрываем панель...
+  showFeedSmoothly(); // ...и одновременно проявляем ленту обратно
+  document.getElementById('historyBtn').classList.remove('active');
+  document.getElementById('historyBtn').title = 'Найти рассылку по дате или по тексту';
+}
+document.getElementById('historyBtn').addEventListener('click', () => {
+  document.getElementById('historyPanel').classList.contains('visible') ? closeHistoryPanel() : openHistoryPanel();
+});
+
+async function loadDays() {
+  const offsetMinutes = -new Date().getTimezoneOffset();
+  daysCache = await api(`/api/broadcasts/days?offsetMinutes=${offsetMinutes}`);
+  const box = document.getElementById('hpDays');
+  box.innerHTML = '';
+  if (!daysCache.length) return;
+
+  const months = new Map();
+  daysCache.forEach(d => {
+    const key = d.day.slice(0, 7);
+    if (!months.has(key)) months.set(key, []);
+    months.get(key).push(d);
+  });
+
+  [...months.entries()].forEach(([key, days], idx) => {
+    const collapsed = idx !== 0;
+    const total = days.reduce((s, d) => s + d.count, 0);
+
+    const header = document.createElement('div');
+    header.className = 'mheader' + (collapsed ? ' collapsed' : '');
+    header.innerHTML = `<span class="chev">${uiIcon('chevron')}</span><span class="mtitle">${monthLabel(key)}</span><span class="mcount">${total}</span>`;
+
+    const list = document.createElement('div');
+    list.className = 'mdays' + (collapsed ? ' collapsed' : '');
+    days.forEach(d => {
+      const btn = document.createElement('div');
+      btn.className = 'dbtn';
+      btn.dataset.day = d.day;
+      btn.innerHTML = `${dayLabel(d.day)}<span class="cnt">${d.count} рассыл.</span>`;
+      btn.onclick = () => selectDay(d.day);
+      list.appendChild(btn);
+    });
+
+    header.onclick = () => { header.classList.toggle('collapsed'); list.classList.toggle('collapsed'); };
+    box.appendChild(header);
+    box.appendChild(list);
+  });
+}
+
+async function selectDay(day) {
+  document.getElementById('hpSearch').value = '';
+  [...document.querySelectorAll('#hpDays .dbtn')].forEach(b => b.classList.toggle('active', b.dataset.day === day));
+  const { since, until } = dayRange(day);
+  const items = await api(`/api/broadcasts?since=${since}&until=${until}`);
+  renderHistoryItems(items);
+}
+
+let searchDebounce;
+function debounceSearch(e) {
+  clearTimeout(searchDebounce);
+  const value = e.target.value.trim();
+  if (!value) { if (daysCache.length) selectDay(document.querySelector('#hpDays .dbtn.active')?.dataset.day || daysCache[0].day); return; }
+  searchDebounce = setTimeout(() => runSearch(value), 250);
+}
+async function runSearch(text) {
+  [...document.querySelectorAll('#hpDays .dbtn')].forEach(b => b.classList.remove('active'));
+  const items = await api(`/api/broadcasts?q=${encodeURIComponent(text)}`);
+  renderHistoryItems(items, text);
+}
+
+function renderHistoryItems(items, query) {
+  const box = document.getElementById('hpMessages');
+  if (!items.length) { box.innerHTML = '<div id="hpEmpty">Ничего не найдено</div>'; return; }
+  // items.map(itemHtml) напрямую передал бы itemHtml ещё и (index, array) от Array.prototype.map —
+  // индекс попал бы вторым аргументом туда, где теперь ожидается query. Оборачиваем явно.
+  box.innerHTML = items.map((b) => itemHtml(b, query)).join('');
+  box.scrollTop = box.scrollHeight; // сразу к самым свежим рассылкам за день, а не к началу
+}
+
+// ---------- Живое обновление: новая рассылка появляется в ленте сразу, без переоткрытия окна ----------
+let hasUnreadDivider = false;
+let programmaticScroll = false; // чтобы наш собственный автоскролл вниз не считался "пользователь посмотрел"
+let unreadClearTimer = null;
+
+function addLiveBroadcast(b) {
+  const feed = document.getElementById('feed');
+  feed.querySelector('.empty')?.remove();
+  feed.classList.remove('empty-state');
+
+  // Показываем полоску безусловно, при любой живой рассылке, независимо от фокуса окна.
+  if (!hasUnreadDivider) {
+    feed.insertAdjacentHTML('beforeend', unreadDividerHtml());
+    hasUnreadDivider = true;
+  }
+
+  const wrap = document.createElement('div');
+  wrap.innerHTML = itemHtml(b);
+  feed.appendChild(wrap.firstElementChild);
+  if (b.id > maxKnownBroadcastId) maxKnownBroadcastId = b.id;
+  if (!document.getElementById('historyPanel').classList.contains('visible')) {
+    programmaticScroll = true;
+    feed.scrollTop = feed.scrollHeight;
+  }
+}
+
+function clearUnreadDivider() {
+  if (!hasUnreadDivider) return;
+  clearTimeout(unreadClearTimer);
+  unreadClearTimer = null;
+  document.getElementById('unreadDivider')?.remove();
+  hasUnreadDivider = false;
+  setLastSeenId(maxKnownBroadcastId); // "прочитано" — запоминаем, переживёт закрытие окна
+}
+// Раньше таймер запускало событие 'focus' окна — но оно срабатывает и синтетически, просто от
+// показа окна (см. ready-to-show в main.js), а не только когда пользователь осознанно кликнул в уже
+// открытое окно. Из-за этого полоска либо пряталась мгновенно при обычном открытии, либо (если окно
+// открывалось без явного фокуса — например, по клику на уведомление при выключенном автооткрытии)
+// вообще не запускала таймер и просто никогда не исчезала сама. Теперь таймер стартует только по
+// настоящему клику или прокрутке — недвусмысленный сигнал, что пользователь смотрит в окно.
+function scheduleUnreadClear() {
+  if (!hasUnreadDivider) return;
+  clearTimeout(unreadClearTimer);
+  unreadClearTimer = setTimeout(clearUnreadDivider, 3000);
+}
+document.addEventListener('click', scheduleUnreadClear);
+document.getElementById('feed').addEventListener('scroll', () => {
+  if (programmaticScroll) { programmaticScroll = false; return; } // это мы сами долистали, не пользователь
+  scheduleUnreadClear();
+});
+
+let ws;
+let wsLostTimer = null; // см. showConnectionLostModal в ui-kit.js
+function connectWs() {
+  const wsUrl = serverUrl.replace(/^http/, 'ws');
+  ws = new WebSocket(`${wsUrl}?token=${token}&host=${encodeURIComponent(desktop.hostname)}`);
+  ws.onopen = async () => {
+    clearTimeout(wsLostTimer);
+    wsLostTimer = null;
+    hideConnectionLostModal();
+    const { state } = await desktop.getIdleState();
+    ws.send(JSON.stringify({ type: 'status', state }));
+  };
+  ws.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    if (data.type === 'broadcast') addLiveBroadcast(data);
+  };
+  ws.onclose = () => {
+    if (!wsLostTimer) wsLostTimer = setTimeout(() => { wsLostTimer = null; showConnectionLostModal(connectWs); }, 5000);
+    setTimeout(connectWs, 2000);
+  };
+}
+
+loadFeed();
+connectWs();
+</script>
+</body>
+</html>
