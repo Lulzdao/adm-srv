@@ -5,66 +5,92 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Мини-мессенджер — панель администратора</title>
 <style>
+  /* Палитра и вёрстка — в стиле остальной платформы (helpdesk-backend/CERTVIEWER):
+     тёплый золотой акцент на светлом фоне, шапка с вкладками вместо бокового меню.
+     Имена --muted и --warn сохранены как есть — на них ссылаются inline-стили,
+     которые генерирует script ниже (не переименовывать без правки script). */
   :root {
-    --bg:#14161a; --panel:#1c1f26; --panel-2:#242832; --border:#2c313c;
-    --accent:#5b8def; --accent-2:#7aa5ff; --text:#eef0f4; --muted:#8b91a3;
-    --online:#3ddc84; --danger:#e0566a; --warn:#f5b942;
+    --bg:#EEF1F6; --paper:#FFFFFF; --text:#1C2733; --muted:#5B6B7D;
+    --border:#DDE3EA; --panel-2:#F1F4F8;
+    --accent:#A97F45; --accent-2:#C7791F; --accent-soft:#F7EEDC;
+    --danger:#B5432F; --danger-soft:#F5E1DC;
+    --warn:#C7791F; --warn-soft:#F7E9D6;
+    --navy:#1E3A5F; --navy-2:#16304D;
+    --serif: Georgia, "Times New Roman", serif;
   }
   * { box-sizing: border-box; }
-  body { margin:0; background:var(--bg); color:var(--text); font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif; font-size:14px; }
+  html, body { height:100%; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif; font-size:14px; overflow:hidden; }
   ::-webkit-scrollbar { width:9px; height:9px; }
-  ::-webkit-scrollbar-thumb { background:var(--panel-2); border-radius:5px; }
+  ::-webkit-scrollbar-thumb { background:var(--border); border-radius:5px; }
 
   /* ---- Логин ---- */
-  #authScreen { min-height:100vh; display:flex; align-items:center; justify-content:center; }
-  #authBox { width:360px; background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:32px; }
-  #authBox h1 { margin:0 0 4px; font-size:19px; }
-  #authBox p.sub { margin:0 0 20px; color:var(--muted); font-size:13px; }
-  #authBox input { width:100%; padding:11px 13px; margin-bottom:10px; background:var(--panel-2); border:1px solid var(--border); border-radius:9px; color:var(--text); font-size:14px; }
+  #authScreen {
+    height:100%; display:flex; align-items:center; justify-content:center; position:relative; overflow:hidden;
+    background: linear-gradient(135deg, var(--navy) 0%, var(--navy-2) 100%);
+  }
+  #authScreen::before {
+    content:""; position:absolute; top:-15%; right:-10%; width:55vw; height:55vw; max-width:700px; max-height:700px;
+    background: radial-gradient(circle, var(--accent) 0%, transparent 70%); opacity:.18; filter:blur(60px); pointer-events:none;
+  }
+  #authBox { position:relative; width:340px; background:var(--paper); border-radius:16px; padding:34px 30px; box-shadow:0 20px 50px rgba(0,0,0,0.35); }
+  #authBox .seal { display:flex; justify-content:center; margin-bottom:12px; color:var(--accent); }
+  #authBox h1 { margin:0 0 4px; font-family:var(--serif); font-weight:600; font-size:19px; color:var(--navy); text-align:center; }
+  #authBox p.sub { margin:0 0 22px; color:var(--muted); font-size:11px; text-align:center; text-transform:uppercase; letter-spacing:1px; }
+  #authBox label { display:block; font-size:12px; font-weight:600; color:var(--muted); margin:0 0 6px; }
+  #authBox input { width:100%; padding:9px 11px; margin-bottom:14px; background:var(--paper); border:1px solid var(--border); border-radius:10px; color:var(--text); font-size:14px; }
   #authBox input:focus { outline:none; border-color:var(--accent); }
-  #authBox button { width:100%; padding:11px; border:none; border-radius:9px; background:linear-gradient(135deg,var(--accent),var(--accent-2)); color:#fff; font-weight:700; font-size:14px; cursor:pointer; }
-  #authErr { color:var(--danger); font-size:13px; min-height:18px; margin-bottom:4px; }
+  #authBox button { width:100%; padding:10px; border:none; border-radius:10px; background:var(--accent); color:#fff; font-weight:700; font-size:13.5px; cursor:pointer; transition:filter .12s ease; }
+  #authBox button:hover { filter:brightness(0.96); }
+  #authErr { color:var(--danger); font-size:12.5px; min-height:16px; margin-bottom:2px; text-align:center; }
 
-  /* ---- Layout ---- */
-  #dash { display:none; min-height:100vh; }
+  /* ---- Layout: шапка + вкладки сверху ---- */
+  #dash { display:none; height:100%; flex-direction:column; }
   #dash.active { display:flex; }
-  #sidebar { width:220px; flex-shrink:0; background:var(--panel); border-right:1px solid var(--border); display:flex; flex-direction:column; padding:16px 10px; }
-  #sidebar .brand { font-weight:800; font-size:15px; padding:6px 10px 20px; display:flex; align-items:center; gap:8px; }
-  #sidebar .brand .dot { width:9px; height:9px; border-radius:50%; background:var(--accent); box-shadow:0 0 8px var(--accent); }
-  .nav-item { padding:10px 12px; border-radius:9px; cursor:pointer; color:var(--muted); font-weight:600; font-size:13.5px; margin-bottom:2px; }
-  .nav-item:hover { background:var(--panel-2); color:var(--text); }
-  .nav-item.active { background:var(--accent); color:#fff; }
-  #sidebar .foot { margin-top:auto; padding:10px; border-top:1px solid var(--border); }
-  #sidebar .foot .who { font-size:12.5px; font-weight:600; }
-  #sidebar .foot .role { font-size:11px; color:var(--muted); margin-bottom:8px; }
-  #sidebar .foot button { width:100%; padding:8px; border:1px solid var(--danger); background:transparent; color:var(--danger); border-radius:7px; cursor:pointer; font-size:12px; }
-  #sidebar .foot button:hover { background:var(--danger); color:#fff; }
 
-  #main { flex:1; padding:26px 32px; overflow-y:auto; max-height:100vh; }
+  #topbar-top { flex-shrink:0; display:flex; align-items:center; justify-content:space-between; padding:16px 28px 12px; background:var(--paper); }
+  .mm-brand { display:flex; align-items:center; gap:10px; }
+  .mm-brand .dot { width:30px; height:30px; border-radius:9px; background:var(--accent); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:14px; flex-shrink:0; }
+  .mm-brand .name { font-family:var(--serif); font-weight:600; font-size:17px; color:var(--text); }
+  .mm-user { display:flex; align-items:center; gap:14px; }
+  .mm-user-text { text-align:right; line-height:1.35; }
+  #whoName { font-size:12.5px; font-weight:600; color:var(--text); }
+  #whoRole { font-size:11px; color:var(--muted); }
+  .mm-logout { display:flex; align-items:center; gap:6px; padding:7px 13px; border:1px solid var(--border); background:var(--panel-2); color:var(--muted); border-radius:9px; cursor:pointer; font-size:12px; font-weight:600; transition:background .12s ease, color .12s ease, border-color .12s ease; }
+  .mm-logout:hover { background:var(--danger-soft); color:var(--danger); border-color:var(--danger-soft); }
+
+  #tabs { flex-shrink:0; display:flex; gap:22px; padding:0 28px; border-bottom:1px solid var(--border); background:var(--paper); }
+  .nav-item { padding:11px 2px 10px; cursor:pointer; color:var(--muted); font-weight:600; font-size:13.5px; border-bottom:2px solid transparent; transition:color .12s ease, border-color .12s ease; }
+  .nav-item:hover { color:var(--text); }
+  .nav-item.active { color:var(--accent); border-bottom-color:var(--accent); }
+
+  #main { flex:1; padding:24px 28px 28px; overflow-y:auto; min-height:0; background:var(--bg); }
   .view { display:none; }
   .view.active { display:block; }
-  h2 { margin:0 0 18px; font-size:19px; }
+  h2 { margin:0 0 18px; font-family:var(--serif); font-weight:600; font-size:19px; }
 
-  .cards { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:24px; }
-  .card { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:16px 18px; }
-  .card .v { font-size:26px; font-weight:800; }
+  .cards { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:20px; }
+  .card { background:var(--paper); border:1px solid var(--border); border-radius:14px; padding:16px 18px; }
+  .card .v { font-size:26px; font-weight:700; color:var(--text); }
   .card .l { color:var(--muted); font-size:12px; margin-top:4px; }
 
-  .panel { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:18px; margin-bottom:18px; }
-  .panel h3 { margin:0 0 12px; font-size:12.5px; color:var(--muted); text-transform:uppercase; letter-spacing:.4px; }
+  .panel { background:var(--paper); border:1px solid var(--border); border-radius:14px; padding:18px; margin-bottom:18px; }
+  .panel h3 { margin:0 0 12px; font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.4px; font-weight:700; }
   .row-flex { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
 
   table { width:100%; border-collapse:collapse; }
-  th { text-align:left; color:var(--muted); font-size:11px; text-transform:uppercase; padding:8px; border-bottom:1px solid var(--border); }
-  td { padding:9px 8px; border-bottom:1px solid var(--border); vertical-align:middle; }
+  th { text-align:left; color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.3px; padding:9px 8px; border-bottom:1px solid var(--border); background:var(--panel-2); font-weight:700; }
+  td { padding:9px 8px; border-bottom:1px solid var(--panel-2); vertical-align:middle; }
+  tbody tr:hover { background:var(--panel-2); }
 
-  select, input, textarea { background:var(--panel-2); border:1px solid var(--border); color:var(--text); border-radius:7px; padding:8px 10px; font-size:13px; font-family:inherit; }
+  select, input, textarea { background:var(--paper); border:1px solid var(--border); color:var(--text); border-radius:9px; padding:8px 10px; font-size:13px; font-family:inherit; }
   select:focus, input:focus, textarea:focus { outline:none; border-color:var(--accent); }
-  button.action { background:var(--accent); border:none; color:#fff; border-radius:7px; padding:8px 13px; cursor:pointer; font-size:12.5px; font-weight:700; }
+  button.action { background:var(--accent); border:none; color:#fff; border-radius:9px; padding:8px 13px; cursor:pointer; font-size:12.5px; font-weight:700; transition:filter .12s ease; }
+  button.action:hover { filter:brightness(0.96); }
   button.action.danger { background:var(--danger); }
   button.action.ghost { background:var(--panel-2); color:var(--text); }
 
-  #histMessages { display:flex; flex-direction:column; gap:6px; max-height:420px; overflow-y:auto; margin-top:12px; padding:12px; background:var(--panel-2); border-radius:9px; }
+  #histMessages { display:flex; flex-direction:column; gap:6px; max-height:420px; overflow-y:auto; margin-top:12px; padding:12px; background:var(--panel-2); border-radius:10px; }
   #histMessages .m { font-size:13px; }
   #histMessages .m b { color:var(--accent-2); }
   #histMessages .m .t { color:var(--muted); font-size:10.5px; margin-left:6px; }
@@ -81,11 +107,19 @@
 
 <div id="authScreen">
   <div id="authBox">
-    <h1>Панель администратора</h1>
-    <p class="sub">Мини-мессенджер — управление организацией</p>
+    <div class="seal">
+      <svg width="32" height="32" viewBox="0 0 24 24" fill="none">
+        <circle cx="12" cy="12" r="9.5" stroke="currentColor" stroke-width="1.4"/>
+        <path d="M8 12.2l2.6 2.6L16.2 9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </div>
+    <h1>Искра</h1>
+    <p class="sub">Панель администратора</p>
     <div id="authErr"></div>
     <form id="authForm" onsubmit="event.preventDefault(); doLogin();">
+      <label for="username">Логин</label>
       <input id="username" placeholder="Логин">
+      <label for="password">Пароль</label>
       <input id="password" type="password" placeholder="Пароль">
       <button type="submit">Войти</button>
     </form>
@@ -93,18 +127,22 @@
 </div>
 
 <div id="dash">
-  <div id="sidebar">
-    <div class="brand"><span class="dot"></span>Мессенджер</div>
+  <div id="topbar-top">
+    <div class="mm-brand"><span class="dot">И</span><span class="name">Искра</span></div>
+    <div class="mm-user">
+      <div class="mm-user-text">
+        <div id="whoName"></div>
+        <div id="whoRole"></div>
+      </div>
+      <button class="mm-logout" onclick="logout()">Выйти</button>
+    </div>
+  </div>
+  <div id="tabs">
     <div class="nav-item active" data-view="overview">Обзор</div>
     <div class="nav-item" data-view="users">Пользователи</div>
     <div class="nav-item" data-view="history">Переписки</div>
     <div class="nav-item" data-view="broadcast">Рассылка</div>
     <div class="nav-item" data-view="files">Файлы</div>
-    <div class="foot">
-      <div class="who" id="whoName"></div>
-      <div class="role" id="whoRole"></div>
-      <button onclick="logout()">Выйти</button>
-    </div>
   </div>
 
   <div id="main">
