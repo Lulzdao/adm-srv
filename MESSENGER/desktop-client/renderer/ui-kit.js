@@ -57,6 +57,8 @@
     emoji: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9.3"/><path d="M8.3 10.2h.01M15.7 10.2h.01"/><path d="M8 14.3c1 1.4 2.4 2.1 4 2.1s3-.7 4-2.1"/></svg>',
     monitor: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="12" rx="1.5"/><path d="M8.5 20h7M12 16.5V20"/></svg>',
     gear: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M12 2.4 A9.6 9.6 0 0 1 15.11 2.92 L14.59 4.43 A8 8 0 0 1 17.66 6.34 L18.79 5.21 A9.6 9.6 0 0 1 20.62 7.78 L19.18 8.48 A8 8 0 0 1 20 12 L21.6 12 A9.6 9.6 0 0 1 21.08 15.11 L19.57 14.59 A8 8 0 0 1 17.66 17.66 L18.79 18.79 A9.6 9.6 0 0 1 16.22 20.62 L15.52 19.18 A8 8 0 0 1 12 20 L12 21.6 A9.6 9.6 0 0 1 8.89 21.08 L9.41 19.57 A8 8 0 0 1 6.34 17.66 L5.21 18.79 A9.6 9.6 0 0 1 3.38 16.22 L4.82 15.52 A8 8 0 0 1 4 12 L2.4 12 A9.6 9.6 0 0 1 2.92 8.89 L4.43 9.41 A8 8 0 0 1 6.34 6.34 L5.21 5.21 A9.6 9.6 0 0 1 7.78 3.38 L8.48 4.82 A8 8 0 0 1 12 4 Z"/><circle cx="12" cy="12" r="3.3"/></svg>',
+    reply: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 015 5v2"/></svg>',
+    group: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="8.5" cy="8" r="3"/><path d="M2.3 20a6.2 6.2 0 0112.4 0"/><circle cx="17" cy="8.7" r="2.4"/><path d="M15.3 13.3a5.3 5.3 0 015.9 5.1"/></svg>',
   };
   window.uiIcon = (name) => ICONS[name] || '';
 
@@ -133,7 +135,7 @@
   // сервер лёг, у каждого появится свой, это ожидаемо, не дублирование одного и того же окна.
   let connectionLostOverlay = null;
   window.showConnectionLostModal = (onRetry) => {
-    if (connectionLostOverlay) return; // уже показан в этом окне
+    if (connectionLostOverlay || window.appShuttingDown) return; // уже показан в этом окне / выключаемся
     const overlay = document.createElement('div');
     overlay.className = 'ui-modal-overlay';
     const box = document.createElement('div');
@@ -157,6 +159,19 @@
     connectionLostOverlay.remove();
     connectionLostOverlay = null;
   };
+
+  // Windows завершает сеанс (выключение/перезагрузка), главный процесс вот-вот снесёт окна — см.
+  // beginShutdown в main.js. Общий флаг на окно: connectWs в roster/chat/broadcast перестаёт
+  // переподключаться, а диалог о потере связи больше не всплывает. Без этого сеть, отваливающаяся
+  // на выключении раньше нас, гарантированно роняла каждое окно в цикл реконнекта и показывала
+  // модалку прямо поверх экрана выключения — лишняя работа ровно тогда, когда её меньше всего надо.
+  window.appShuttingDown = false;
+  if (window.desktop && window.desktop.onShuttingDown) {
+    window.desktop.onShuttingDown(() => {
+      window.appShuttingDown = true;
+      window.hideConnectionLostModal();
+    });
+  }
 
   // Короткое ненавязчивое уведомление ("Файл скачан", "Скопировано в буфер обмена") — в отличие
   // от uiAlert, ничего не блокирует и само пропадает через пару секунд.
@@ -263,4 +278,35 @@
       img.outerHTML = img.alt;
     }
   }, true);
+
+  // ---------- Отправка ошибок клиента на сервер ----------
+  // token/serverUrl объявлены отдельным <script> на каждой странице (roster.html/chat.html/
+  // broadcast.html) ПОСЛЕ подключения этого файла — как const верхнего уровня они не становятся
+  // свойствами window, поэтому сюда их передают явно, а не читают напрямую. Вызывается один раз на
+  // странице, сразу как только token/serverUrl уже объявлены (см. вызовы в конце каждого файла).
+  // Цель — чтобы ошибку на чьём-то рабочем месте можно было разобрать по логам НА СЕРВЕРЕ (см.
+  // POST /api/client-log в server.js), а не просить сотрудника прислать скриншот или лезть к нему
+  // на ПК за локальным логом.
+  window.installErrorReporting = (serverUrl, token, source) => {
+    function report(kind, message, extra) {
+      if (!serverUrl || !token) return;
+      fetch(serverUrl + '/api/client-log', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          kind, source,
+          message: String(message == null ? 'Error' : message).slice(0, 2000),
+          extra,
+          hostname: window.desktop ? window.desktop.hostname : undefined,
+        }),
+      }).catch(() => {}); // сервер недоступен — теряем эту запись, не ретраим бесконечно ради лога об ошибке
+    }
+    window.addEventListener('error', (e) => {
+      report('window-error', e.message, { filename: e.filename, lineno: e.lineno, stack: e.error && e.error.stack });
+    });
+    window.addEventListener('unhandledrejection', (e) => {
+      const reason = e.reason;
+      report('unhandled-rejection', reason && reason.message ? reason.message : String(reason), { stack: reason && reason.stack });
+    });
+  };
 })();

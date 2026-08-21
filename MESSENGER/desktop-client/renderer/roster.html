@@ -118,6 +118,33 @@
   .badge-icon { width: 26px; height: 26px; border-radius: 8px; background: var(--panel-2); color: var(--accent-2); display:flex; align-items:center; justify-content:center; flex-shrink:0; }
   .empty-hint { padding: 20px 12px; text-align: center; color: var(--muted); font-size: 12px; }
 
+  /* ---- Группы ---- */
+  /* Заголовок секции групп — тот же визуальный класс .section, но не сворачивается (групп обычно
+     немного) и несёт кнопку создания справа, а не chevron слева. */
+  .section.groups-header { cursor: default; }
+  .section .group-add-btn { margin-left: auto; width: 20px; height: 20px; border: none; background: transparent; color: var(--muted); cursor: pointer; border-radius: 5px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .section .group-add-btn:hover { background: var(--hover); color: var(--text); }
+  .section .group-add-btn svg { width: 13px; height: 13px; }
+  .row .group-manage-btn { width: 22px; height: 22px; border: none; background: transparent; color: var(--muted); cursor: pointer; border-radius: 6px; display: none; align-items: center; justify-content: center; flex-shrink: 0; }
+  .row:hover .group-manage-btn { display: flex; }
+  .row .group-manage-btn:hover { background: var(--panel); color: var(--text); }
+  .row .group-manage-btn svg { width: 14px; height: 14px; }
+
+  /* ---- Модалка создания/управления группой ---- */
+  .group-modal-box { width: min(340px, 90%) !important; }
+  .gm-field { margin-bottom: 12px; }
+  .gm-field label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 5px; font-weight: 600; }
+  .gm-field input[type="text"] { width: 100%; box-sizing: border-box; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; color: var(--text); font-size: 13px; }
+  .gm-field input[type="text"]:focus { outline: none; border-color: var(--accent); }
+  .gm-members { max-height: 220px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; padding: 4px; }
+  .gm-member { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; font-size: 12.5px; }
+  .gm-member:hover { background: var(--hover); }
+  .gm-member input { flex-shrink: 0; }
+  .gm-member .n { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .gm-readonly-members { max-height: 220px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+  .gm-readonly-members .gm-member-name { padding: 5px 8px; font-size: 12.5px; }
+  .gm-owner-tag { color: var(--muted); font-size: 10.5px; margin-left: 4px; }
+
   /* ---- Профиль и настройки — раскрывающаяся панель под me-bar, а не отдельное окно ----
      Абсолютно спозиционированный оверлей поверх списка контактов (тот же приём, что у #historyPanel
      в окне чата/рассылок) — только opacity/transform, ничего, что требует пересчёта раскладки.
@@ -344,11 +371,15 @@ async function api(path, opts) {
     headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', ...(opts?.headers || {}) },
   });
   if (res.status === 401) { desktop.logout(); throw new Error('Сессия недействительна'); }
-  if (!res.ok) throw new Error('request failed');
-  return res.json();
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'request failed');
+  return data;
 }
 
+function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+
 let wsLostTimer = null; // см. showConnectionLostModal в ui-kit.js
+let wsReconnectDelay = 2000; // экспоненциальный бэкофф между попытками (см. onclose ниже)
 function connectWs() {
   const wsUrl = serverUrl.replace(/^http/, 'ws');
   ws = new WebSocket(`${wsUrl}?token=${token}&host=${encodeURIComponent(desktop.hostname)}`);
@@ -358,6 +389,7 @@ function connectWs() {
   ws.onopen = async () => {
     clearTimeout(wsLostTimer);
     wsLostTimer = null;
+    wsReconnectDelay = 2000;
     hideConnectionLostModal();
     const { state } = await desktop.getIdleState();
     ws.send(JSON.stringify({ type: 'status', state }));
@@ -370,10 +402,20 @@ function connectWs() {
       let body = data.text || '';
       if (files.length === 1) body = body ? `${body} · 📎 ${files[0].name}` : `📎 ${files[0].name}`;
       else if (files.length > 1) body = body ? `${body} · 📎 ${files.length} файла` : `📎 ${files.length} файла`;
+      // В группе/общей комнате в заголовке уведомления — название комнаты, а не имя автора (иначе
+      // не отличить, из какой именно группы прилетело), а имя автора переносится в текст сообщения.
+      let title = data.from_user;
+      let label = data.from_user;
+      if (data.room) {
+        const group = groupsCache.find((g) => `group:${g.id}` === data.room);
+        label = group ? group.name : 'Общая комната';
+        title = label;
+        body = `${data.from_user}: ${body}`;
+      }
       desktop.notify({
-        title: data.from_user,
+        title,
         body,
-        openPayload: { type: data.room ? 'room' : 'dm', id: data.room || data.from_id, label: data.from_user, token, serverUrl },
+        openPayload: { type: data.room ? 'room' : 'dm', id: data.room || data.from_id, label, token, serverUrl },
       });
     }
     if (data.type === 'broadcast') {
@@ -385,13 +427,20 @@ function connectWs() {
     }
     // Админ поменял чью-то роль/отдел/список пользователей — подхватываем сразу, без перезахода
     if (data.type === 'users-changed') { refreshUsers(); refreshMe(); }
+    // Группу создали/переименовали/поменяли состав/удалили — у нас самих или у кого-то ещё —
+    // перечитываем свой список групп (дёшево, групп мало) и перерисовываем сайдбар.
+    if (data.type === 'groups-changed') refreshGroups().then(renderList);
   };
   ws.onclose = () => {
+    if (window.appShuttingDown) return; // выключается ПК — не переподключаемся и не мигаем модалкой
     // Не сбрасываем таймер на каждой неудачной попытке (реконнект — раз в 2с) — иначе постоянные
     // провалы просто бесконечно откладывали бы показ диалога. Ставим один раз на первый обрыв и
     // ждём (5с), пока какая-нибудь попытка не удастся; удачное onopen выше сам его отменяет.
     if (!wsLostTimer) wsLostTimer = setTimeout(() => { wsLostTimer = null; showConnectionLostModal(connectWs); }, 5000);
-    setTimeout(connectWs, 2000);
+    // Бэкофф: 2с → ×1.5 после каждой неудачи, потолок 30с — при обрыве сети на несколько часов
+    // это фоновые редкие попытки, а не спам раз в 2 секунды. Успешное onopen сбрасывает задержку.
+    setTimeout(connectWs, wsReconnectDelay);
+    wsReconnectDelay = Math.min(wsReconnectDelay * 1.5, 30000);
   };
 }
 
@@ -664,11 +713,135 @@ function updatePresenceOnly() {
   });
 }
 
+function renderGroupsSection(list) {
+  const header = document.createElement('div');
+  header.className = 'section groups-header';
+  header.innerHTML = `<span class="stitle">ГРУППЫ</span><span class="scount">${groupsCache.length}</span><button type="button" class="group-add-btn" title="Создать группу">${uiIcon('plus')}</button>`;
+  header.querySelector('.group-add-btn').onclick = (e) => { e.stopPropagation(); openGroupModal({ mode: 'create' }); };
+  list.appendChild(header);
+
+  if (!groupsCache.length) return;
+  const rowsWrap = document.createElement('div');
+  rowsWrap.className = 'dept-rows'; // тот же контейнер-обёртка, что у отделов — просто переиспользуем отступы/раскладку
+  groupsCache.forEach((g) => rowsWrap.appendChild(makeGroupRow(g)));
+  list.appendChild(rowsWrap);
+}
+
+function makeGroupRow(g) {
+  const row = document.createElement('div');
+  row.className = 'row';
+  row.dataset.gid = g.id;
+  row.title = g.name;
+  row.innerHTML = `<div class="badge-icon">${uiIcon('group')}</div><div class="n">${escapeHtml(g.name)}</div><button type="button" class="group-manage-btn" title="Управление группой">${uiIcon('gear')}</button><span class="unread-badge"></span>`;
+  row.onclick = () => desktop.openChat({ type: 'room', id: `group:${g.id}`, label: g.name, token, serverUrl });
+  row.querySelector('.group-manage-btn').onclick = (e) => { e.stopPropagation(); openGroupModal({ mode: 'manage', group: g }); };
+  return row;
+}
+
+// ---------- Создание/управление группой — одна модалка на оба случая ----------
+// mode: 'create' — название + чек-лист участников из usersCache, создатель добавляется сам.
+// mode: 'manage' — если canManageGroup(group): та же форма, предзаполненная текущими участниками,
+// плюс "Удалить группу"; иначе — только список участников для чтения и кнопка "Покинуть группу"
+// (выйти может любой, без специальных прав).
+async function openGroupModal({ mode, group }) {
+  const canManage = mode === 'create' || canManageGroup(group);
+  let currentMemberIds = new Set([me.id]);
+  if (mode === 'manage') {
+    try {
+      const members = await api(`/api/groups/${group.id}/members`);
+      currentMemberIds = new Set(members.map((m) => m.id));
+    } catch (e) { uiAlert(e.message, 'Не удалось загрузить участников'); return; }
+  }
+
+  const overlay = document.createElement('div');
+  overlay.className = 'ui-modal-overlay';
+  const box = document.createElement('div');
+  box.className = 'ui-modal-box group-modal-box';
+
+  const candidates = usersCache.filter((u) => u.id !== me.id); // себя в чек-лист не добавляем — участие и так гарантировано
+  const memberListHtml = candidates.map((u) => {
+    const checked = currentMemberIds.has(u.id) ? 'checked' : '';
+    return canManage
+      ? `<label class="gm-member"><input type="checkbox" data-uid="${u.id}" ${checked}><span class="n">${escapeHtml(displayNameOf(u))}</span></label>`
+      : (currentMemberIds.has(u.id) ? `<div class="gm-member-name">${escapeHtml(displayNameOf(u))}</div>` : '');
+  }).join('');
+
+  box.innerHTML = `
+    <div class="ui-modal-title">${uiIcon('group')} ${mode === 'create' ? 'Новая группа' : escapeHtml(group.name)}</div>
+    ${canManage ? `
+      <div class="gm-field"><label>Название</label><input type="text" id="gmName" maxlength="80" value="${mode === 'manage' ? escapeHtml(group.name) : ''}" placeholder="Например, Отдел статистики"></div>
+      <div class="gm-field"><label>Участники</label><div class="gm-members">${memberListHtml || '<div class="gm-member-name" style="color:var(--muted)">Пока больше некого добавить</div>'}</div></div>
+    ` : `
+      <div class="gm-field"><label>Участники</label><div class="gm-readonly-members">${memberListHtml}</div></div>
+    `}
+    <div class="ui-modal-actions" style="margin-top:6px; flex-wrap:wrap;">
+      ${mode === 'manage' ? '<button class="ui-btn-ghost" id="gmLeave">Покинуть группу</button>' : ''}
+      ${mode === 'manage' && canManage ? '<button class="ui-btn-danger" id="gmDelete">Удалить</button>' : ''}
+      <button class="ui-btn-ghost" id="gmCancel">Отмена</button>
+      ${canManage ? '<button class="ui-btn-primary" id="gmSave">Сохранить</button>' : ''}
+    </div>
+  `;
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  box.querySelector('#gmCancel').onclick = close;
+
+  if (canManage) {
+    box.querySelector('#gmSave').onclick = async () => {
+      const name = box.querySelector('#gmName').value.trim();
+      if (!name) return uiAlert('Введите название группы', 'Пустое название');
+      const checked = [...box.querySelectorAll('.gm-member input[type=checkbox]:checked')].map((el) => Number(el.dataset.uid));
+      try {
+        if (mode === 'create') {
+          await api('/api/groups', { method: 'POST', body: JSON.stringify({ name, memberIds: checked }) });
+        } else {
+          if (name !== group.name) await api(`/api/groups/${group.id}`, { method: 'PATCH', body: JSON.stringify({ name }) });
+          const toAdd = checked.filter((id) => !currentMemberIds.has(id));
+          const toRemove = [...currentMemberIds].filter((id) => id !== me.id && !checked.includes(id));
+          if (toAdd.length) await api(`/api/groups/${group.id}/members`, { method: 'POST', body: JSON.stringify({ userIds: toAdd }) });
+          for (const uid of toRemove) await api(`/api/groups/${group.id}/members/${uid}`, { method: 'DELETE' });
+        }
+        close();
+        await refreshGroups();
+        renderList();
+      } catch (e) { uiAlert(e.message, 'Не удалось сохранить'); }
+    };
+  }
+  if (mode === 'manage') {
+    box.querySelector('#gmLeave').onclick = async () => {
+      const ok = await uiConfirm(`Покинуть группу «${group.name}»? Вернуться обратно можно будет, только если вас снова добавят.`, { title: 'Покинуть группу', okText: 'Покинуть', danger: true });
+      if (!ok) return;
+      try {
+        await api(`/api/groups/${group.id}/members/${me.id}`, { method: 'DELETE' });
+        close();
+        await refreshGroups();
+        renderList();
+      } catch (e) { uiAlert(e.message, 'Не удалось выйти из группы'); }
+    };
+    if (canManage) {
+      box.querySelector('#gmDelete').onclick = async () => {
+        const ok = await uiConfirm(`Удалить группу «${group.name}» без возможности восстановления? Переписка останется в базе, но открыть её будет уже нельзя.`, { title: 'Удалить группу', okText: 'Удалить', danger: true });
+        if (!ok) return;
+        try {
+          await api(`/api/groups/${group.id}`, { method: 'DELETE' });
+          close();
+          await refreshGroups();
+          renderList();
+        } catch (e) { uiAlert(e.message, 'Не удалось удалить группу'); }
+      };
+    }
+  }
+}
 function renderList() {
   const list = document.getElementById('list');
   list.innerHTML = '';
 
   const allUsers = usersCache;
+
+  // Группы — своя секция над отделами, без учёта поискового запроса (во время поиска ищем только
+  // среди людей — секция скрывается вместе с обычной группировкой по отделам, см. ниже).
+  if (!searchQuery) renderGroupsSection(list);
 
   // Поиск — плоский список без группировки по отделам, без учёта свёрнутости
   if (searchQuery) {
@@ -726,11 +899,45 @@ function renderList() {
 
 let deptOrderCache = []; // имена отделов в порядке, заданном на сервере (стрелками ↑↓ в веб-панели)
 
+// Раз в 20 секунд (см. setInterval ниже) плюс по каждому 'users-changed' от WS — при росте штата
+// гонять список целиком на каждый пустой тик расточительно. Сервер отдаёт ETag на основе версии
+// списка (см. usersVersion в server.js); пока никто ничего не менял, ответ — пустой 304, без сборки
+// и передачи JSON, и без повторного рендера списка на клиенте.
+let usersEtag = null;
+let deptsEtag = null;
 async function refreshUsers() {
-  usersCache = await api('/api/users');
-  try { deptOrderCache = (await api('/api/departments')).map((d) => d.name); } catch { /* не критично — останется прошлый порядок или алфавитный */ }
-  renderList();
+  let changed = false;
+  const uHeaders = { Authorization: 'Bearer ' + token };
+  if (usersEtag) uHeaders['If-None-Match'] = usersEtag;
+  const ures = await fetch(serverUrl + '/api/users', { headers: uHeaders });
+  if (ures.status === 401) { desktop.logout(); throw new Error('Сессия недействительна'); }
+  if (!ures.ok && ures.status !== 304) throw new Error('request failed');
+  if (ures.status !== 304) {
+    usersEtag = ures.headers.get('ETag');
+    usersCache = await ures.json();
+    changed = true;
+  }
+  try {
+    const dHeaders = { Authorization: 'Bearer ' + token };
+    if (deptsEtag) dHeaders['If-None-Match'] = deptsEtag;
+    const dres = await fetch(serverUrl + '/api/departments', { headers: dHeaders });
+    if (dres.ok && dres.status !== 304) {
+      deptsEtag = dres.headers.get('ETag');
+      deptOrderCache = (await dres.json()).map((d) => d.name);
+      changed = true;
+    }
+  } catch { /* не критично — останется прошлый порядок или алфавитный */ }
+  if (changed) renderList();
 }
+
+// Список именованных групп, в которых состоит текущий пользователь (см. /api/groups в server.js) —
+// без ETag: групп мало (в отличие от списка сотрудников), гонять его целиком не накладно, а меняется
+// он реже, чем список пользователей, зато сразу по свежему WS-событию 'groups-changed' (см. выше).
+let groupsCache = [];
+async function refreshGroups() {
+  try { groupsCache = await api('/api/groups'); } catch { /* сервер недоступен — останется прошлый список */ }
+}
+function canManageGroup(g) { return g.created_by === me.id || !!me.can_admin; }
 
 // Роль/имя могли поменять на сервере (через веб-панель) — подтягиваем свежие данные без перезахода
 async function refreshMe() {
@@ -819,6 +1026,7 @@ async function seedMissedUnread() {
 }
 
 async function startApp() {
+  installErrorReporting(serverUrl, token, 'roster'); // см. ui-kit.js — токен/сервер уже точно известны
   document.getElementById('auth').style.display = 'none';
   document.getElementById('app').classList.add('active');
   document.getElementById('meAvatar').prepend(initials(displayNameOf(me)));
@@ -833,6 +1041,8 @@ async function startApp() {
   connectWs();
   try {
     await refreshUsers();
+    await refreshGroups();
+    renderList();
     applyUnreadState(await desktop.getUnreadState()); // на случай, если что-то пришло, пока ростер ещё не слушал unread-state
     await seedMissedUnread();
   } catch { /* сервер недоступен уже при запуске — connectWs() выше сам занимается переподключением и покажет диалог */ }

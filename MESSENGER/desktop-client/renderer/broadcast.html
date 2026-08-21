@@ -194,6 +194,7 @@ const params = new URLSearchParams(location.search);
 const token = params.get('token');
 const serverUrl = params.get('serverUrl');
 const me = JSON.parse(params.get('me') || 'null');
+installErrorReporting(serverUrl, token, 'broadcast'); // см. ui-kit.js
 // Право на рассылки может быть выдано лично человеку ИЛИ всему его отделу — сервер уже считает
 // итоговое (эффективное) значение и отдаёт его прямо в /api/me, отдельно спрашивать не нужно.
 let canCompose = false;
@@ -412,8 +413,10 @@ function itemHtml(b, query) {
       filesHtml += `<div class="file-row"><div class="file file-deleted"><span class="fi">${uiIcon('warn')}</span><span class="fmeta"><span class="fn">${escapeHtml(f.name || 'файл')}</span><span class="fs">Файл удалён с сервера</span></span></div></div>`;
       return;
     }
-    const href = `${serverUrl}${f.url}?token=${token}&name=${encodeURIComponent(f.name || 'файл')}`;
-    filesHtml += `<div class="file-row"><a class="file" href="${href}" data-name="${escapeAttr(f.name || 'файл')}"><span class="fi"><span class="fi-file">${uiIcon('file')}</span><span class="fi-download">${uiIcon('download')}</span><span class="fi-progress"><svg viewBox="0 0 24 24"><circle class="ring-bg" cx="12" cy="12" r="10"></circle><circle class="ring-bar" cx="12" cy="12" r="10"></circle></svg><span class="fi-pct"></span></span><span class="fi-check">${uiIcon('check')}</span></span><span class="fmeta"><span class="fn">${escapeHtml(f.name || 'файл')}</span><span class="fs">${fmtSize(f.size)}</span></span></a></div>`;
+    // Без токена в href — короткоживущий токен на скачивание запрашивается прямо перед кликом
+    // (см. wireFileClicks/wireMessageContextMenu), а не подставляется здесь заранее: карточка может
+    // провисеть в ленте часами, и токен на момент клика уже истёк бы.
+    filesHtml += `<div class="file-row"><a class="file" href="#" data-url="${escapeAttr(f.url)}" data-name="${escapeAttr(f.name || 'файл')}"><span class="fi"><span class="fi-file">${uiIcon('file')}</span><span class="fi-download">${uiIcon('download')}</span><span class="fi-progress"><svg viewBox="0 0 24 24"><circle class="ring-bg" cx="12" cy="12" r="10"></circle><circle class="ring-bar" cx="12" cy="12" r="10"></circle></svg><span class="fi-pct"></span></span><span class="fi-check">${uiIcon('check')}</span></span><span class="fmeta"><span class="fn">${escapeHtml(f.name || 'файл')}</span><span class="fs">${fmtSize(f.size)}</span></span></a></div>`;
   });
   const txtHtml = b.text ? `<div class="txt selectable" data-raw-text="${escapeAttr(b.text)}">${highlightHtml(b.text, query)}</div>` : '';
   return `<div class="item"><span class="who">${b.from_user}</span><span class="time">${time}</span>${txtHtml}${filesHtml}</div>`;
@@ -537,18 +540,40 @@ desktop.onDownloadProgress(({ id, state, percent }) => {
 
 desktop.onToast(({ message, error }) => uiToast(message, { error }));
 
+// Короткоживущий (60с) токен на скачивание конкретного файла — запрашивается прямо перед тем, как
+// он понадобится (клик/ПКМ), а не подставляется в ссылку заранее: карточка может провисеть в ленте
+// часами, и токен в её href к этому моменту уже истёк бы (см. /api/download-token в server.js).
+async function getDownloadUrl(relUrl, name) {
+  const { token: dlToken } = await api(`/api/download-token?path=${encodeURIComponent(relUrl)}`);
+  return `${serverUrl}${relUrl}?token=${dlToken}&name=${encodeURIComponent(name || 'файл')}`;
+}
+
 // Клик по файлу — скачивание через главный процесс; ПКМ — скопировать текст / сохранить файл как
 function wireFeedInteractions(container) {
-  container.addEventListener('click', (e) => {
+  container.addEventListener('click', async (e) => {
     const link = e.target.closest('a.file');
     if (!link) return;
     e.preventDefault();
     const id = startDownloadUi(link);
-    desktop.downloadFile(link.href, id);
+    try {
+      const url = await getDownloadUrl(link.dataset.url, link.dataset.name);
+      desktop.downloadFile(url, id);
+    } catch {
+      uiToast('Не удалось начать скачивание — проверьте подключение.', { error: true });
+    }
   });
-  container.addEventListener('contextmenu', (e) => {
+  container.addEventListener('contextmenu', async (e) => {
     const fileLink = e.target.closest('a.file');
-    if (fileLink) { e.preventDefault(); desktop.showMessageMenu({ kind: 'file', url: fileLink.href, name: fileLink.dataset.name }); return; }
+    if (fileLink) {
+      e.preventDefault();
+      try {
+        const url = await getDownloadUrl(fileLink.dataset.url, fileLink.dataset.name);
+        desktop.showMessageMenu({ kind: 'file', url, name: fileLink.dataset.name });
+      } catch {
+        uiToast('Не удалось подготовить файл — проверьте подключение.', { error: true });
+      }
+      return;
+    }
     const txtEl = e.target.closest('.txt');
     if (txtEl) { e.preventDefault(); desktop.showMessageMenu({ kind: 'text', text: txtEl.dataset.rawText || '' }); }
   });
@@ -726,12 +751,14 @@ document.getElementById('feed').addEventListener('scroll', () => {
 
 let ws;
 let wsLostTimer = null; // см. showConnectionLostModal в ui-kit.js
+let wsReconnectDelay = 2000; // экспоненциальный бэкофф между попытками (см. onclose ниже)
 function connectWs() {
   const wsUrl = serverUrl.replace(/^http/, 'ws');
   ws = new WebSocket(`${wsUrl}?token=${token}&host=${encodeURIComponent(desktop.hostname)}`);
   ws.onopen = async () => {
     clearTimeout(wsLostTimer);
     wsLostTimer = null;
+    wsReconnectDelay = 2000;
     hideConnectionLostModal();
     const { state } = await desktop.getIdleState();
     ws.send(JSON.stringify({ type: 'status', state }));
@@ -741,8 +768,12 @@ function connectWs() {
     if (data.type === 'broadcast') addLiveBroadcast(data);
   };
   ws.onclose = () => {
+    if (window.appShuttingDown) return; // выключается ПК — не переподключаемся и не мигаем модалкой
     if (!wsLostTimer) wsLostTimer = setTimeout(() => { wsLostTimer = null; showConnectionLostModal(connectWs); }, 5000);
-    setTimeout(connectWs, 2000);
+    // Бэкофф: 2с → ×1.5 после каждой неудачи, потолок 30с — при обрыве сети на несколько часов
+    // это фоновые редкие попытки, а не спам раз в 2 секунды. Успешное onopen сбрасывает задержку.
+    setTimeout(connectWs, wsReconnectDelay);
+    wsReconnectDelay = Math.min(wsReconnectDelay * 1.5, 30000);
   };
 }
 

@@ -23,6 +23,23 @@ if (process.platform === 'win32' && require('os').release().startsWith('6.1')) {
   app.disableHardwareAcceleration();
 }
 
+// ---------- Локальный лог клиента ----------
+// Ошибки ВНУТРИ окон (JS-исключения, unhandledrejection) рендереры сами отправляют на сервер
+// (см. installErrorReporting в ui-kit.js/preload.js) — так их видно централизованно, не выезжая к
+// сотруднику. Но если упал сам рендерер целиком ('render-process-gone' ниже) или неперехваченное
+// исключение случилось в ГЛАВНОМ процессе — слать уже некому и нечем, единственное, что остаётся —
+// записать на диск самого пользователя, чтобы при разборе инцидента можно было попросить этот файл.
+const LOG_PATH = path.join(app.getPath('userData'), 'client.log');
+function logLocal(event, meta = {}) {
+  fs.appendFile(LOG_PATH, `${new Date().toISOString()} [${event}] ${JSON.stringify(meta)}\n`, () => {});
+}
+process.on('uncaughtException', (err) => {
+  logLocal('main_uncaught_exception', { message: err.message, stack: err.stack });
+});
+process.on('unhandledRejection', (reason) => {
+  logLocal('main_unhandled_rejection', { reason: reason instanceof Error ? reason.stack : String(reason) });
+});
+
 const SETTINGS_PATH = path.join(app.getPath('userData'), 'settings.json');
 
 const DEFAULT_SETTINGS = {
@@ -67,9 +84,7 @@ function unreadStatePayload() {
   return { dms: Object.fromEntries(unreadDms), broadcast: unreadBroadcastCount };
 }
 function broadcastUnreadState() {
-  if (rosterWin && !rosterWin.isDestroyed()) {
-    rosterWin.webContents.send('unread-state', unreadStatePayload());
-  }
+  sendToWindow(rosterWin, 'unread-state', unreadStatePayload());
 }
 function markUnread(openPayload) {
   if (!openPayload) return;
@@ -92,23 +107,41 @@ function allWindows() {
   return [rosterWin, ...namedWins.values()].filter((w) => w && !w.isDestroyed());
 }
 
+// Отправка в окно всегда через это, а не через win.webContents.send() напрямую. Окно может быть
+// формально живым (win.isDestroyed() === false), но его процесс-рендерер уже мёртвым — например,
+// в момент завершения сеанса Windows, когда рендереры гасятся раньше главного процесса. Посылка
+// IPC в уже погибший рендерер — как раз один из способов словить CHECK-фейл внутри Chromium,
+// который наружу выглядит как "unknown software exception (0x80000003)".
+function sendToWindow(win, channel, payload) {
+  if (!win || win.isDestroyed()) return;
+  const wc = win.webContents;
+  if (!wc || wc.isDestroyed() || wc.isCrashed()) return;
+  try { wc.send(channel, payload); } catch { /* окно умирает прямо сейчас — терять тут нечего */ }
+}
+
 function debounce(fn, ms) {
   let timer;
-  return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), ms); };
+  const wrapped = (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), ms); };
+  wrapped.cancel = () => clearTimeout(timer);
+  return wrapped;
 }
 
 // Раньше запоминался только размер, не позиция — окно каждый раз пересоздавалось там, где Electron
 // сам решит (обычно по центру экрана), а не там, где его оставил пользователь.
+const pendingPersisters = new Set(); // см. beginShutdown — отменяем отложенные записи на диск
 function attachSizePersistence(win, key) {
   const persist = debounce(() => {
+    if (isQuitting) return; // при завершении сеанса Windows сама двигает/сворачивает окна — не пишем
     if (!settings.rememberWindowSize) return;
     const [width, height] = win.getSize();
     const [x, y] = win.getPosition();
     settings[key] = { width, height, x, y };
     saveSettings();
   }, 600);
+  pendingPersisters.add(persist);
   win.on('resize', persist);
   win.on('move', persist);
+  win.on('closed', () => pendingPersisters.delete(persist));
 }
 
 // Сохранённая позиция могла остаться от монитора, который сейчас отключён (ноутбук унесли от
@@ -127,9 +160,90 @@ function clampToVisibleArea(x, y, width, height) {
 // Кнопка "развернуть" в шапке должна показывать актуальную иконку (квадрат / два квадрата),
 // в том числе если окно развернули не кнопкой, а системным способом (Win+Стрелка вверх и т.п.)
 function attachWindowStateEvents(win) {
-  const send = () => { if (!win.isDestroyed()) win.webContents.send('window-state', { maximized: win.isMaximized() }); };
+  const send = () => sendToWindow(win, 'window-state', { maximized: win.isMaximized() });
   win.on('maximize', send);
   win.on('unmaximize', send);
+}
+
+// ---------- Завершение сеанса Windows (выключение/перезагрузка/выход из системы) ----------
+// История вопроса: у ростера обработчик 'close' в норме отменяет закрытие (preventDefault) и прячет
+// окно в трей. Во время реального выключения ПК такой "отказ закрываться" сбивает штатную
+// последовательность завершения Chromium и роняет процесс с 0x80000003 (см. electron#34311).
+// Первые версии фикса вешали hookWindowMessage(WM_QUERYENDSESSION/WM_ENDSESSION) и прямо ВНУТРИ
+// этого обработчика звали win.destroy() + app.quit(). Краш стал реже, но не ушёл совсем — и вот
+// почему:
+//
+//  1. Колбэк hookWindowMessage выполняется СИНХРОННО внутри оконной процедуры, пока Windows ждёт
+//     возврата из неё. Уничтожать окно (и тем более гасить всё приложение) прямо там — значит
+//     сносить нативное окно изнутри его же обработчика сообщений. Это ре-энтрантность, на которой
+//     Chromium штатно срабатывает своим CHECK(), а CHECK — это int3, то есть ровно 0x80000003.
+//     Отсюда и ощущение, что приложение "ждёт, пока какой-то процесс сам себя закроет": очередь
+//     сообщений действительно заблокирована внутри WndProc, пока там крутится вся эта уборка.
+//  2. Обработчик на окнах чата (в отличие от ростера) не имел защиты от повторного входа, а
+//     WM_QUERYENDSESSION/WM_ENDSESSION Windows шлёт КАЖДОМУ окну отдельно. При трёх открытых окнах
+//     это до шести перекрывающихся app.quit() вперемешку с destroy().
+//  3. app.quit() запускает длинный асинхронный каскад (before-quit → закрытие каждого окна →
+//     window-all-closed → will-quit). На слабом железе он просто не укладывается в отведённое
+//     Windows время до принудительного завершения — поэтому на медленных ПК краш и заметнее.
+//
+// Теперь: в самой оконной процедуре делаем ТОЛЬКО одно — синхронно снимаем вето на закрытие
+// (isQuitting = true), это дёшево и безопасно. Всё остальное уносим из WndProc через setImmediate,
+// то есть в обычный виток цикла событий, когда Windows уже получила возврат из обработчика.
+//
+// Важно, что теперь корректность НЕ зависит от того, успеет ли отложенная уборка: даже если Windows
+// прибьёт процесс раньше, чем сработает setImmediate, вето уже снято — и штатное завершение
+// Chromium (то самое, которое ломал preventDefault) отработает само. Отложенный beginShutdown —
+// это быстрый предсказуемый путь выхода, а не обязательное условие. Раньше было наоборот: вся
+// надежда была на уборку, выполняемую в самом опасном для этого месте.
+//
+// hookWindowMessage — единственный доступный тут механизм: события app 'session-end' в Electron нет
+// (в списке событий app его не существует), а powerMonitor 'shutdown' работает только на Linux/macOS.
+let idleTimer = null;
+let shutdownStarted = false;
+
+// Оборванный WebSocket каждое окно переподключает по таймеру и через 5с показывает модалку
+// "соединение потеряно". При завершении работы это лишнее: сокеты и DOM-узлы создаются ровно
+// тогда, когда приложение уже разбирают, а модалка успевает мигнуть поверх экрана выключения.
+// Работает это в первую очередь на обычном выходе (before-quit → app.quit()), где у рендереров
+// есть время обработать IPC. На пути beginShutdown() сразу за этим идёт синхронный app.exit(0),
+// так что сигнал скорее всего не успеет дойти — вызов там оставлен как дешёвая подстраховка на
+// случай, если выход по какой-то причине затянется.
+function stopRendererReconnects() {
+  for (const win of allWindows()) sendToWindow(win, 'app-shutting-down');
+}
+
+function beginShutdown() {
+  if (shutdownStarted) return;
+  shutdownStarted = true;
+  isQuitting = true;
+
+  // Ничего больше не должно трогать рендереры и диск, пока мы разбираем приложение по частям.
+  if (idleTimer) { clearInterval(idleTimer); idleTimer = null; }
+  for (const persist of pendingPersisters) persist.cancel();
+  pendingPersisters.clear();
+
+  stopRendererReconnects(); // здесь — только как подстраховка, см. комментарий у самой функции
+
+  if (tray) { try { tray.destroy(); } catch { /* уже снят системой */ } tray = null; }
+  // destroy(), а не close(): не эмитит 'close' (а значит, и вето из обработчика ростера не сработает)
+  // и не ждёт beforeunload/unload страницы.
+  for (const win of allWindows()) { try { win.destroy(); } catch { /* уже уничтожено */ } }
+
+  // app.exit(), а не app.quit(): нам нужен предсказуемо быстрый выход, а не асинхронный каскад,
+  // в который слабый ПК не успевает уложиться (см. п.3 выше). Всё, что нужно было сохранить,
+  // сохраняется синхронно в момент изменения настроек.
+  app.exit(0);
+}
+
+// Единственное, что делаем прямо в оконной процедуре — снимаем вето. Уборку откладываем.
+function hookSessionEnd(win) {
+  if (process.platform !== 'win32') return;
+  const onSessionEnding = () => {
+    isQuitting = true; // синхронно и дёшево: с этого момента 'close' больше не отменяется
+    setImmediate(beginShutdown);
+  };
+  win.hookWindowMessage(0x0011, onSessionEnding); // WM_QUERYENDSESSION — приходит первым
+  win.hookWindowMessage(0x0016, onSessionEnding); // WM_ENDSESSION — подстраховка
 }
 
 // Ключ в settings.json для запоминания размера окна — свой на каждый тип окна (чат, рассылки),
@@ -174,22 +288,11 @@ function createWindow(key, file, payload, size) {
   const qs = new URLSearchParams(payload).toString();
   win.loadFile(path.join(__dirname, 'renderer', file), { search: qs });
   win.once('ready-to-show', () => win.show());
-  // Тот же перехват завершения сеанса, что и у ростера (см. createRoster) — но здесь ОБЯЗАТЕЛЕН
-  // на каждом отдельном окне чата/рассылки, а не только на ростере: Windows шлёт WM_QUERYENDSESSION/
-  // WM_ENDSESSION КАЖДОМУ окну напрямую и независимо, а не только главному, у которого он раньше
-  // был единственным перехватчиком. Именно окно чата (а не ростер) и падало на Win7 при перезагрузке
-  // — судя по всему, особенно легко, если окно только что создано и ещё не до конца загрузилось
-  // (штатная обработка Chromium для такого окна на Win7, похоже, менее надёжна). Не полагаемся на
-  // штатное закрытие — сразу принудительно уничтожаем себя.
-  if (process.platform === 'win32') {
-    const onSessionEnding = () => {
-      isQuitting = true;
-      if (!win.isDestroyed()) win.destroy();
-      app.quit();
-    };
-    win.hookWindowMessage(0x0011, onSessionEnding);
-    win.hookWindowMessage(0x0016, onSessionEnding);
-  }
+  // Перехват нужен на КАЖДОМ окне, а не только на ростере: Windows шлёт WM_QUERYENDSESSION/
+  // WM_ENDSESSION каждому окну напрямую и независимо. Само окно себя больше не уничтожает —
+  // всё делает общий beginShutdown() (см. hookSessionEnd), поэтому N открытых окон дают один
+  // проход уборки, а не N перекрывающихся.
+  hookSessionEnd(win);
   // Пользователь мог вернуться к уже открытому, но не сфокусированному окну (Alt+Tab, клик по
   // панели задач) без повторного клика по контакту/значку в ростере — это тоже прочтение.
   win.on('focus', () => clearUnreadForWindow(file, payload));
@@ -228,36 +331,11 @@ function createRoster() {
   attachSizePersistence(rosterWin, 'rosterSize');
   attachWindowStateEvents(rosterWin);
 
-  // На Windows настоящее завершение сеанса (выключение/перезагрузка ПК) доходит до окна тем же
-  // событием 'close', что и обычный клик по крестику — а обработчик ниже в норме отменяет close
-  // (preventDefault) и просто прячет окно в трей. Во время реального выключения это "отменённое"
-  // закрытие сбивает штатную последовательность завершения Chromium и на Windows 7 роняло процесс
-  // с "unknown software exception (0x80000003)" прямо в момент выключения/перезагрузки ПК (см.
-  // https://github.com/electron/electron/issues/34311 — тот же паттерн: close-хендлер, который не
-  // даёт окну закрыться, ломает штатную обработку WM_QUERYENDSESSION).
-  //
-  // Выключение и перезагрузка ведут себя по-разному: после первой версии фикса (только 0x0011 +
-  // app.quit()) краш на простом выключении пропал, а на перезагрузке остался — похоже, у Windows
-  // при перезагрузке меньше запаса по времени до принудительного завершения процесса, чем при
-  // простом выключении (ей ведь ещё нужно успеть погасить и заново поднять видеодрайвер под POST),
-  // и обычный асинхронный каскад app.quit() (window-all-closed → before-quit → закрытие каждого
-  // окна по очереди) может не укладываться в это окно. Теперь: слушаем ОБА сигнала — WM_QUERYEND-
-  // SESSION (0x0011, приходит первым) И WM_ENDSESSION (0x0016, на случай, если первый придёт
-  // слишком поздно/не будет обработан вовремя) — и сразу же, синхронно, а не через обычную
-  // последовательность закрытия, уничтожаем все дочерние окна (win.destroy(), не close() — не ждёт
-  // события 'close' и связанной с ним логики) перед тем, как звать app.quit().
-  if (process.platform === 'win32') {
-    const onSessionEnding = () => {
-      if (isQuitting) return; // уже начали закрываться (напр. от второго сигнала) — не дублируем
-      isQuitting = true;
-      for (const win of namedWins.values()) { if (!win.isDestroyed()) win.destroy(); }
-      app.quit();
-    };
-    rosterWin.hookWindowMessage(0x0011, onSessionEnding);
-    rosterWin.hookWindowMessage(0x0016, onSessionEnding);
-  }
+  hookSessionEnd(rosterWin);
 
-  // Не закрываем насовсем — сворачиваем в трей, чтобы приложение продолжало получать сообщения
+  // Не закрываем насовсем — сворачиваем в трей, чтобы приложение продолжало получать сообщения.
+  // Именно это вето (preventDefault) и ломало завершение сеанса Windows, пока его не научились
+  // вовремя снимать — подробности в комментарии к beginShutdown() выше.
   rosterWin.on('close', (e) => {
     if (!isQuitting) {
       e.preventDefault();
@@ -303,10 +381,14 @@ function currentIdleState() {
   return { state: idleSeconds >= thresholdSeconds ? 'idle' : 'active', idleSeconds };
 }
 
+// idleTimer объявлен рядом с beginShutdown() — при завершении работы интервал обязательно гасится:
+// иначе очередной тик придётся ровно на момент, когда рендереры уже мертвы, а окна ещё нет, и
+// попытка достучаться до них — один из путей к тому самому 0x80000003.
 function startIdleWatch() {
-  setInterval(() => {
+  idleTimer = setInterval(() => {
+    if (isQuitting) return;
     const payload = currentIdleState();
-    for (const win of allWindows()) win.webContents.send('idle-state', payload);
+    for (const win of allWindows()) sendToWindow(win, 'idle-state', payload);
   }, 15000);
 }
 
@@ -364,14 +446,12 @@ async function handleSendFile(payload) {
     } catch (e) {
       // Диалог именно в окне ростера (renderer), а не системный showErrorBox — чтобы выглядел
       // как часть клиента, а не как отдельное окно Windows не в теме приложения.
-      if (rosterWin && !rosterWin.isDestroyed()) {
-        rosterWin.webContents.send('show-alert', { message: String(e.message || e), title: 'Не удалось отправить файл' });
-      }
+      sendToWindow(rosterWin, 'show-alert', { message: String(e.message || e), title: 'Не удалось отправить файл' });
     }
   }
   // Все успешно загруженные файлы уходят одним сообщением, а не россыпью — так же, как при
   // выборе через кнопку-скрепку или drag-and-drop прямо в окне чата.
-  if (uploadedFiles.length) win.webContents.send('files-to-send', uploadedFiles);
+  if (uploadedFiles.length) sendToWindow(win, 'files-to-send', uploadedFiles);
 }
 
 // ---------- IPC от окон ----------
@@ -416,7 +496,7 @@ ipcMain.on('show-message-menu', (event, payload) => {
       label: 'Копировать текст',
       click: () => {
         clipboard.writeText(payload.text);
-        if (!win.isDestroyed()) win.webContents.send('toast', { message: 'Скопировано в буфер обмена' });
+        sendToWindow(win, 'toast', { message: 'Скопировано в буфер обмена' });
       },
     });
   }
@@ -503,7 +583,7 @@ ipcMain.on('set-settings', (event, partial) => {
   }
   // Тема (и в перспективе другие настройки внешнего вида) должны применяться сразу во всех открытых
   // окнах, не только в том, где их поменяли — иначе пришлось бы перезапускать каждое окно вручную.
-  for (const win of allWindows()) win.webContents.send('settings-changed', settings);
+  for (const win of allWindows()) sendToWindow(win, 'settings-changed', settings);
 });
 
 // Выход из аккаунта: чистим localStorage ростера, закрываем все окна кроме него, возвращаем на экран входа
@@ -546,6 +626,12 @@ app.whenReady().then(() => {
   createTray();
   startIdleWatch();
 
+  // Рендерер вылетел целиком (не просто JS-исключение внутри страницы, а сам процесс окна) —
+  // в этот момент он уже не может сам отправить лог на сервер, поэтому только локально.
+  app.on('render-process-gone', (event, webContents, details) => {
+    logLocal('render_process_gone', { reason: details.reason, exitCode: details.exitCode });
+  });
+
   // Путь для сохранения файлов по умолчанию (настройки клиента). Если задан — сохраняем сразу
   // туда без диалога "Сохранить как"; если нет — Electron сам покажет системный диалог с верно
   // подставленным именем файла (сервер присылает его через Content-Disposition).
@@ -570,7 +656,7 @@ app.whenReady().then(() => {
     }
 
     if (downloadId && progressWin && !progressWin.isDestroyed()) {
-      const send = (payload) => { if (!progressWin.isDestroyed()) progressWin.webContents.send('download-progress', { id: downloadId, ...payload }); };
+      const send = (payload) => sendToWindow(progressWin, 'download-progress', { id: downloadId, ...payload });
       item.on('updated', (e, state) => {
         if (state !== 'progressing' || item.isPaused()) return;
         const total = item.getTotalBytes();
@@ -584,8 +670,7 @@ app.whenReady().then(() => {
       // "Сохранить как..." из контекстного меню — своего кольца прогресса на карточке файла тут
       // нет (это разовое сохранение в произвольное место), но об успехе/ошибке всё равно сообщаем.
       item.once('done', (e, state) => {
-        if (saveAsWin.isDestroyed()) return;
-        saveAsWin.webContents.send('toast', state === 'completed'
+        sendToWindow(saveAsWin, 'toast', state === 'completed'
           ? { message: 'Файл успешно скачан' }
           : { message: 'Не удалось скачать файл', error: true });
       });
@@ -602,4 +687,11 @@ app.on('activate', () => {
   else rosterWin.show();
 });
 
-app.on('before-quit', () => { isQuitting = true; });
+// Обычный выход (трей → "Выход", кнопка "Выйти" в диалоге о потере связи) идёт штатным каскадом
+// app.quit() — он не спешит, и рендереры живут ещё какое-то время. Тикающий таймер бездействия и
+// переподключение WS им на этом отрезке уже ни к чему: окна закрываются.
+app.on('before-quit', () => {
+  isQuitting = true;
+  if (idleTimer) { clearInterval(idleTimer); idleTimer = null; }
+  stopRendererReconnects();
+});

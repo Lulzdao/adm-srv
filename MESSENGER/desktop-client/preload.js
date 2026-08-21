@@ -27,4 +27,10 @@ contextBridge.exposeInMainWorld('desktop', {
   getUnreadState: () => ipcRenderer.invoke('get-unread-state'),
   seedUnread: (payload) => ipcRenderer.invoke('seed-unread', payload),
   onUnreadState: (cb) => ipcRenderer.on('unread-state', (event, state) => cb(state)),
+  // Приложение закрывается по сигналу Windows о завершении сеанса (см. beginShutdown в main.js).
+  // Окну это нужно, чтобы перестать переподключать WebSocket и не показывать диалог о потере
+  // связи: сеть на выключении отваливается раньше нас, и без этого каждое окно в последние
+  // мгновения жизни успевает открыть новый сокет и нарисовать модалку — лишняя работа ровно
+  // тогда, когда главный процесс уже сносит окна.
+  onShuttingDown: (cb) => ipcRenderer.on('app-shutting-down', () => cb()),
 });

@@ -47,10 +47,62 @@
      ПЕРВОГО ребёнка — тот же результат без этой проблемы: тянет всё содержимое вниз, только когда
      оно короче контейнера, а не мешает обычной прокрутке, когда сообщений много. */
   #messages > *:first-child { margin-top: auto; }
-  .msg { max-width: 78%; min-width: 0; padding: 7px 11px 6px; border-radius: 12px; background: var(--bubble); align-self: flex-start; }
+  .msg { position: relative; max-width: 78%; min-width: 0; padding: 7px 11px 6px; border-radius: 12px; background: var(--bubble); align-self: flex-start; }
   .msg.own { background: var(--own); align-self: flex-end; }
   .msg .who { font-size: 10.5px; color: var(--accent); font-weight: 600; margin-bottom: 2px; }
   .msg.own .who { display: none; }
+  /* Клик по сообщению-цитате (см. scrollToMessage) — короткая вспышка рамки, чтобы глаз нашёл,
+     куда именно долистало, а не мгновенный прыжок без обратной связи. */
+  @keyframes msgFlash { 0%, 100% { box-shadow: none; } 30% { box-shadow: 0 0 0 3px var(--accent); } }
+  .msg.flash { animation: msgFlash .9s ease; }
+
+  /* Всплывающий тулбар (реакция/ответ) — над правым (своим) или левым (чужим) верхним углом
+     пузыря, показывается только при наведении, не занимает место в раскладке. */
+  .msg-toolbar {
+    position: absolute; top: -14px; right: 8px; display: none; gap: 2px; z-index: 5;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    padding: 2px; box-shadow: var(--shadow);
+  }
+  .msg.own .msg-toolbar { right: auto; left: 8px; }
+  .msg:hover .msg-toolbar { display: flex; }
+  .mt-btn { width: 24px; height: 24px; border: none; background: transparent; border-radius: 6px; color: var(--muted); cursor: pointer; display: flex; align-items: center; justify-content: center; }
+  .mt-btn:hover { background: var(--hover); color: var(--text); }
+  .mt-btn svg { width: 14px; height: 14px; }
+
+  /* Цитата сообщения, на которое отвечают (см. replyQuoteHtml) — клик прокручивает к оригиналу. */
+  .reply-quote { display: flex; gap: 7px; margin-bottom: 4px; padding: 3px 8px; border-radius: 6px; background: var(--hover); cursor: pointer; }
+  .reply-quote .rq-bar { width: 2px; border-radius: 2px; background: var(--accent); flex-shrink: 0; }
+  .reply-quote .rq-body { min-width: 0; display: flex; flex-direction: column; }
+  .reply-quote .rq-name { font-size: 10.5px; font-weight: 700; color: var(--accent); }
+  .reply-quote .rq-text { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* Реакции — плашки под сообщением (см. reactionsBarHtml); своя реакция залита акцентным
+     цветом — тот же приём, что у активной кнопки дня в панели истории (#hpDays .dbtn.active). */
+  .reactions-bar { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+  .reaction-pill { display: inline-flex; align-items: center; gap: 3px; padding: 1px 7px; border-radius: 10px; border: 1px solid var(--border); background: var(--panel-2); cursor: pointer; font-size: 11px; color: var(--text); }
+  .reaction-pill img.twemoji { width: 13px; height: 13px; vertical-align: -2px; }
+  .reaction-pill.mine { border-color: var(--accent); background: var(--accent); color: #fff; }
+  .reaction-pill .rcount { font-variant-numeric: tabular-nums; color: var(--muted); }
+  .reaction-pill.mine .rcount { color: #fff; }
+
+  /* Быстрый выбор реакции — компактная плашка из нескольких эмодзи, всплывает у кнопки в тулбаре
+     сообщения (см. openQuickReact); position:fixed — считается от экрана, а не от #messages, чтобы
+     не обрезаться его overflow:hidden. */
+  .quick-react-popup { position: fixed; display: flex; gap: 2px; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 6px; box-shadow: var(--shadow); z-index: 200; }
+  .quick-react-popup button { width: 30px; height: 30px; border: none; background: transparent; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+  .quick-react-popup button:hover { background: var(--hover); }
+  .quick-react-popup img.twemoji { width: 20px; height: 20px; }
+
+  /* Плашка "Ответ на..." над строкой ввода (см. paintReplyBanner) — в отличие от typingIndicator
+     это часть обычной раскладки (не absolute): должна раздвигать композер, а не наплывать поверх
+     текста, который набирают. */
+  .reply-banner { display: none; align-items: center; gap: 8px; padding: 6px 10px; border-top: 1px solid var(--border); background: var(--panel); }
+  .reply-banner .rb-bar { width: 2px; align-self: stretch; border-radius: 2px; background: var(--accent); }
+  .reply-banner .rb-content { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .reply-banner .rb-name { font-size: 11px; font-weight: 700; color: var(--accent); }
+  .reply-banner .rb-text { font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .reply-banner .rb-close { width: 24px; height: 24px; border: none; background: transparent; border-radius: 50%; color: var(--muted); cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .reply-banner .rb-close:hover { background: var(--hover); color: var(--text); }
   /* Настройка "Скрывать имя в сообщениях" (см. applyHideNames ниже) — только для личных чатов:
      имя и так видно в шапке окна, а в общей комнате оно как раз нужно, чтобы различать реплики. */
   body.hide-names .msg .who { display: none; }
@@ -102,6 +154,17 @@
   .unread-divider span { font-size: 10px; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: .4px; white-space: nowrap; }
 
   #composer { position: relative; display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--border); background: var(--panel); flex-shrink: 0; align-items: flex-end; }
+  /* "Печатает..." — плавающая плашка над строкой ввода (см. sendTyping/showTypingIndicator ниже),
+     не занимает своё место в раскладке (position:absolute), поэтому не сдвигает сообщения при
+     появлении/исчезновении. */
+  #typingIndicator {
+    position: absolute; left: 14px; bottom: 100%; margin-bottom: 6px; z-index: 20;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+    padding: 3px 10px; font-size: 11px; font-style: italic; color: var(--muted); box-shadow: var(--shadow);
+    opacity: 0; transform: translateY(4px); pointer-events: none;
+    transition: opacity .15s ease, transform .15s ease;
+  }
+  #typingIndicator.show { opacity: 1; transform: translateY(0); }
   /* #text раньше сам был скруглённым (border-radius:18px) и одновременно overflow-y:auto — кастомный
      ::-webkit-scrollbar (см. theme.css) в Chromium не обрезается border-radius самого элемента, из-за
      чего прямоугольная полоса скролла торчала за пределы скруглённых углов. Обёртка берёт на себя
@@ -231,7 +294,13 @@
 <div id="presencePanel"></div>
 
 <div id="messages"></div>
+<div id="replyBanner" class="reply-banner">
+  <div class="rb-bar"></div>
+  <div class="rb-content"><div class="rb-name"></div><div class="rb-text"></div></div>
+  <button type="button" class="rb-close" id="rbClose"></button>
+</div>
 <div id="composer">
+  <div id="typingIndicator"></div>
   <button class="round" id="attach" title="Прикрепить файл"></button>
   <input type="file" id="fileInput" multiple style="display:none">
   <div id="textWrap">
@@ -265,6 +334,7 @@ const label = params.get('label');
 const token = params.get('token');
 const serverUrl = params.get('serverUrl');
 const me = JSON.parse(localStorage.getItem('me') || 'null');
+installErrorReporting(serverUrl, token, 'chat'); // см. ui-kit.js
 
 document.getElementById('label').textContent = label;
 if (type !== 'dm') document.getElementById('statusDot').style.display = 'none';
@@ -419,12 +489,35 @@ function bubbleHtml(m, { withDate, query } = {}) {
       if (f.exists === false) {
         return `<div class="file file-deleted"><span class="fi">${uiIcon('warn')}</span><span class="fmeta"><span class="fn">${escapeHtml(f.name || 'файл')}</span><span class="fs">Файл удалён с сервера</span></span></div>`;
       }
-      const href = `${serverUrl}${f.url}?token=${token}&name=${encodeURIComponent(f.name || 'файл')}`;
-      return `<a class="file" href="${href}" data-name="${escapeAttr(f.name || 'файл')}"><span class="fi"><span class="fi-file">${uiIcon('file')}</span><span class="fi-download">${uiIcon('download')}</span><span class="fi-progress"><svg viewBox="0 0 24 24"><circle class="ring-bg" cx="12" cy="12" r="10"></circle><circle class="ring-bar" cx="12" cy="12" r="10"></circle></svg><span class="fi-pct"></span></span><span class="fi-check">${uiIcon('check')}</span></span><span class="fmeta"><span class="fn">${escapeHtml(f.name || 'файл')}</span><span class="fs">${fmtSize(f.size)}</span></span></a>`;
+      // Без токена в href — короткоживущий токен на скачивание запрашивается прямо перед кликом
+      // (см. wireFileClicks/wireMessageContextMenu), а не подставляется здесь заранее: ссылка может
+      // провисеть в DOM часами, и токен на момент клика уже истёк бы.
+      return `<a class="file" href="#" data-url="${escapeAttr(f.url)}" data-name="${escapeAttr(f.name || 'файл')}"><span class="fi"><span class="fi-file">${uiIcon('file')}</span><span class="fi-download">${uiIcon('download')}</span><span class="fi-progress"><svg viewBox="0 0 24 24"><circle class="ring-bg" cx="12" cy="12" r="10"></circle><circle class="ring-bar" cx="12" cy="12" r="10"></circle></svg><span class="fi-pct"></span></span><span class="fi-check">${uiIcon('check')}</span></span><span class="fmeta"><span class="fn">${escapeHtml(f.name || 'файл')}</span><span class="fs">${fmtSize(f.size)}</span></span></a>`;
     }).join('');
     body += `<div class="files-block">${cards}</div><div class="files-time">${stamp}${tick}</div>`;
   }
-  return `<div class="msg${own ? ' own' : ''}" data-ts="${m.created_at}"><div class="who">${m.from_user}</div>${body}</div>`;
+  const toolbar = `<div class="msg-toolbar"><button type="button" class="mt-btn mt-react" data-mid="${m.id}" title="Реакция">${uiIcon('emoji')}</button><button type="button" class="mt-btn mt-reply" data-mid="${m.id}" title="Ответить">${uiIcon('reply')}</button></div>`;
+  return `<div class="msg${own ? ' own' : ''}" data-ts="${m.created_at}" data-id="${m.id}">${toolbar}${replyQuoteHtml(m)}<div class="who">${m.from_user}</div>${body}${reactionsBarHtml(m)}</div>`;
+}
+
+// Цитата сообщения, на которое отвечают — снимок автора/текста сделан на сервере в момент отправки
+// (см. миграцию reply_snapshot в server.js), поэтому не ломается, даже если само оригинальное
+// сообщение сейчас не загружено в этом окне (старая страница пагинации/другой день).
+function replyQuoteHtml(m) {
+  if (!m.reply) return '';
+  return `<div class="reply-quote" data-reply-id="${m.reply.id}"><div class="rq-bar"></div><div class="rq-body"><span class="rq-name">${escapeHtml(m.reply.from_user || '')}</span><span class="rq-text">${escapeHtml((m.reply.text || '').slice(0, 140))}</span></div></div>`;
+}
+
+// Реакции — переиспользуется и при первой отрисовке сообщения (bubbleHtml), и при живом обновлении
+// по WS-событию 'reaction' (см. ws.onmessage) — там результат подставляется через outerHTML/remove.
+function reactionsBarHtml(m) { return reactionsMarkup(m.id, m.reactions || []); }
+function reactionsMarkup(mid, reactions) {
+  if (!reactions || !reactions.length) return '';
+  const pills = reactions.map((r) => {
+    const mine = r.userIds.includes(me.id);
+    return `<button type="button" class="reaction-pill${mine ? ' mine' : ''}" data-emoji="${escapeAttr(r.emoji)}" data-mid="${mid}">${emojiHtml(r.emoji)}<span class="rcount">${r.userIds.length}</span></button>`;
+  }).join('');
+  return `<div class="reactions-bar">${pills}</div>`;
 }
 
 // Живое обновление галочек на уже отрисованных своих сообщениях, когда приходит read-receipt —
@@ -520,6 +613,7 @@ async function loadHistory() {
 
 let ws, wsReadyQueue = [];
 let wsLostTimer = null; // см. showConnectionLostModal в ui-kit.js
+let wsReconnectDelay = 2000; // экспоненциальный бэкофф между попытками (см. onclose ниже)
 function connectWs() {
   const wsUrl = serverUrl.replace(/^http/, 'ws');
   ws = new WebSocket(`${wsUrl}?token=${token}&host=${encodeURIComponent(desktop.hostname)}`);
@@ -531,6 +625,7 @@ function connectWs() {
   ws.onopen = async () => {
     clearTimeout(wsLostTimer);
     wsLostTimer = null;
+    wsReconnectDelay = 2000;
     hideConnectionLostModal();
     const { state } = await desktop.getIdleState();
     ws.send(JSON.stringify({ type: 'status', state }));
@@ -551,19 +646,139 @@ function connectWs() {
     // Собеседник (в этом окне — data.peer) прочитал мои сообщения по data.upTo включительно —
     // перекрашиваем галочки уже отрисованных своих сообщений из серых в синие, без перезагрузки.
     if (data.type === 'read-receipt' && type === 'dm' && data.peer === id) applyReadReceipt(data.upTo);
+    if (data.type === 'typing') {
+      const belongsTyping = type === 'room' ? data.room === id : data.from_id === id;
+      if (belongsTyping) showTypingIndicator(data.from_user);
+      return;
+    }
+    // Реакция добавлена/снята/заменена — сообщение может быть отрисовано и в основной ленте, и
+    // в панели истории одновременно, поэтому обновляем везде, где сейчас есть карточка с этим id.
+    if (data.type === 'reaction') {
+      const html = reactionsMarkup(data.messageId, data.reactions);
+      document.querySelectorAll(`[data-id="${data.messageId}"]`).forEach((el) => {
+        const bar = el.querySelector('.reactions-bar');
+        if (bar) { if (html) bar.outerHTML = html; else bar.remove(); }
+        else if (html) el.insertAdjacentHTML('beforeend', html);
+      });
+      return;
+    }
     if (data.type !== 'message') return;
     const belongs = type === 'room' ? data.room === id : (data.from_id === id || data.to_id === id);
-    if (belongs) addMessage(data);
+    if (belongs) { hideTypingIndicator(); addMessage(data); } // раз сообщение пришло — печатать закончил
   };
   ws.onclose = () => {
+    if (window.appShuttingDown) return; // выключается ПК — не переподключаемся и не мигаем модалкой
     if (!wsLostTimer) wsLostTimer = setTimeout(() => { wsLostTimer = null; showConnectionLostModal(connectWs); }, 5000);
-    setTimeout(connectWs, 2000);
+    // Бэкофф: 2с → ×1.5 после каждой неудачи, потолок 30с — при обрыве сети на несколько часов
+    // это фоновые редкие попытки, а не спам раз в 2 секунды. Успешное onopen сбрасывает задержку.
+    setTimeout(connectWs, wsReconnectDelay);
+    wsReconnectDelay = Math.min(wsReconnectDelay * 1.5, 30000);
   };
 }
 
 desktop.onIdleState(({ state }) => {
   if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'status', state }));
 });
+
+// ---------- "Печатает..." — ничего не хранится на сервере, чистая ретрансляция (см. server.js).
+// Отправляем не чаще раза в TYPING_THROTTLE_MS (иначе WS-событие на каждую нажатую клавишу), а у
+// получателя индикатор гаснет сам через TYPING_TIMEOUT_MS без нового события — эквивалент явного
+// "закончил печатать", которого сервер не шлёт.
+const TYPING_THROTTLE_MS = 2500;
+const TYPING_TIMEOUT_MS = 4000;
+let lastTypingSentAt = 0;
+function sendTyping() {
+  if (!textEl.value.trim()) return; // стёр всё — не поддерживаем индикатор пустым полем
+  const now = Date.now();
+  if (now - lastTypingSentAt < TYPING_THROTTLE_MS) return;
+  lastTypingSentAt = now;
+  sendPayload(type === 'room' ? { type: 'typing', room: id } : { type: 'typing', to: id });
+}
+let typingHideTimer = null;
+function showTypingIndicator(name) {
+  const el = document.getElementById('typingIndicator');
+  el.textContent = `${name} печатает...`;
+  el.classList.add('show');
+  clearTimeout(typingHideTimer);
+  typingHideTimer = setTimeout(hideTypingIndicator, TYPING_TIMEOUT_MS);
+}
+function hideTypingIndicator() {
+  clearTimeout(typingHideTimer);
+  document.getElementById('typingIndicator').classList.remove('show');
+}
+
+// ---------- Ответ на сообщение (reply) ----------
+let replyingTo = null; // { id, from_user, text } | null
+function paintReplyBanner() {
+  const el = document.getElementById('replyBanner');
+  if (!replyingTo) { el.style.display = 'none'; return; }
+  el.style.display = 'flex';
+  el.querySelector('.rb-name').textContent = replyingTo.from_user;
+  el.querySelector('.rb-text').textContent = replyingTo.text;
+}
+function clearReplyingTo() { replyingTo = null; paintReplyBanner(); }
+function startReplyTo(mid) {
+  const el = document.querySelector(`#messages [data-id="${mid}"], #hpMessages [data-id="${mid}"]`);
+  if (!el) return;
+  const from_user = el.querySelector('.who')?.textContent || label;
+  const text = el.querySelector('.txt')?.dataset.rawText || (el.querySelector('.fn') ? '📎 ' + el.querySelector('.fn').textContent : '');
+  replyingTo = { id: mid, from_user, text };
+  paintReplyBanner();
+  textEl.focus();
+}
+document.getElementById('rbClose').addEventListener('click', clearReplyingTo);
+
+// ---------- Реакции ----------
+function toggleReaction(mid, emoji) {
+  sendPayload({ type: 'react', messageId: mid, emoji });
+}
+const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🔥', '🙏', '✅'];
+let quickReactPopup = null;
+function closeQuickReact() { quickReactPopup?.remove(); quickReactPopup = null; }
+function openQuickReact(btn) {
+  closeQuickReact();
+  const mid = Number(btn.dataset.mid);
+  const pop = document.createElement('div');
+  pop.className = 'quick-react-popup';
+  pop.innerHTML = QUICK_REACTIONS.map((e) => `<button type="button" data-emoji="${escapeAttr(e)}">${emojiHtml(e)}</button>`).join('');
+  document.body.appendChild(pop); // сначала в DOM — иначе offsetWidth/offsetHeight ниже ещё не посчитаны
+  const rect = btn.getBoundingClientRect();
+  pop.style.left = Math.max(4, Math.min(rect.left, window.innerWidth - pop.offsetWidth - 4)) + 'px';
+  pop.style.top = Math.max(4, rect.top - pop.offsetHeight - 4) + 'px';
+  pop.addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-emoji]');
+    if (!b) return;
+    toggleReaction(mid, b.dataset.emoji);
+    closeQuickReact();
+  });
+  quickReactPopup = pop;
+}
+document.addEventListener('click', (e) => {
+  if (quickReactPopup && !e.target.closest('.quick-react-popup') && !e.target.closest('.mt-react')) closeQuickReact();
+});
+
+// Клик по цитате (reply-quote) прокручивает к оригиналу, если он сейчас загружен в этом окне —
+// текст цитаты в самой карточке (reply_snapshot с сервера) не зависит от того, найдётся ли оригинал.
+function scrollToMessage(mid) {
+  const el = document.querySelector(`#messages [data-id="${mid}"]`) || document.querySelector(`#hpMessages [data-id="${mid}"]`);
+  if (!el) { chatToast('Исходное сообщение не загружено в этом окне'); return; }
+  el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  el.classList.add('flash');
+  setTimeout(() => el.classList.remove('flash'), 900);
+}
+
+function wireMessageToolbar(container) {
+  container.addEventListener('click', (e) => {
+    const reactBtn = e.target.closest('.mt-react');
+    if (reactBtn) { e.stopPropagation(); openQuickReact(reactBtn); return; }
+    const replyBtn = e.target.closest('.mt-reply');
+    if (replyBtn) { e.stopPropagation(); startReplyTo(Number(replyBtn.dataset.mid)); return; }
+    const pill = e.target.closest('.reaction-pill');
+    if (pill) { e.stopPropagation(); toggleReaction(Number(pill.dataset.mid), pill.dataset.emoji); return; }
+    const quote = e.target.closest('.reply-quote');
+    if (quote) { e.stopPropagation(); scrollToMessage(Number(quote.dataset.replyId)); return; }
+  });
+}
 
 function sendPayload(payload) {
   if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(payload));
@@ -583,9 +798,12 @@ function send() {
   const text = input.value.trim();
   if (!text) return;
   const payload = type === 'room' ? { type: 'send', room: id, text } : { type: 'send', to: id, text };
+  if (replyingTo) payload.replyTo = replyingTo.id;
   sendPayload(payload);
+  clearReplyingTo();
   input.value = '';
   input.style.height = 'auto'; // сброс авто-роста после отправки — снова однострочное поле
+  lastTypingSentAt = 0; // следующее нажатие клавиши для НОВОГО сообщения не должно ждать throttle
 }
 
 // Enter — отправляет сообщение; Shift+Enter — переносит строку (для этого поле ввода и сделано
@@ -593,10 +811,12 @@ function send() {
 const textEl = document.getElementById('text');
 textEl.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+  if (e.key === 'Escape' && replyingTo) { e.preventDefault(); clearReplyingTo(); }
 });
 textEl.addEventListener('input', () => {
   textEl.style.height = 'auto';
   textEl.style.height = Math.min(textEl.scrollHeight, 120) + 'px';
+  sendTyping();
 });
 
 // Базовый набор эмодзи (как в разделе "часто используемые" на iPhone) — не полный юникодный
@@ -786,6 +1006,7 @@ function hideChatBodySmoothly() {
   // запоминаем позицию явно, а не полагаемся на то, что она переживёт display:none сама по себе.
   box.dataset.wasAtBottom = (box.scrollHeight - box.scrollTop - box.clientHeight < 4) ? '1' : '';
   box.dataset.savedScrollTop = box.scrollTop;
+  document.getElementById('replyBanner').style.display = 'none'; // не участвует в fade — просто убираем, пока открыта История
   ['messages', 'composer'].forEach((id) => {
     const el = document.getElementById(id);
     if (el.classList.contains('chat-hidden')) return;
@@ -807,6 +1028,7 @@ function showChatBodySmoothly() {
   // (не внизу) — просто восстанавливаем точную позицию, где он и был.
   programmaticScroll = true;
   box.scrollTop = box.dataset.wasAtBottom ? box.scrollHeight : Number(box.dataset.savedScrollTop || 0);
+  paintReplyBanner(); // восстановит видимость, если ответ так и не был отправлен/отменён за время открытой Истории
 }
 
 async function openHistoryPanel() {
@@ -877,9 +1099,17 @@ async function loadDays() {
   });
 }
 
+// Подгрузка более старых результатов поиска при прокрутке вверх (см. hpState/scroll ниже). День
+// (selectDay) не листается постранично — сервер отдаёт день целиком без ограничения LIMIT, там
+// нечего подгружать. А вот поиск (roomHistorySearch/dmHistorySearch в server.js) режется по
+// HISTORY_PAGE_SIZE (200) — в старом активном диалоге по частому слову легко упереться в этот
+// потолок и не увидеть более ранние совпадения без подгрузки.
+let hpState = { query: null, oldestId: null, hasMore: false, loading: false };
+
 async function selectDay(day) {
   document.getElementById('hpSearch').value = '';
   [...document.querySelectorAll('#hpDays .dbtn')].forEach(b => b.classList.toggle('active', b.dataset.day === day));
+  hpState = { query: null, oldestId: null, hasMore: false, loading: false };
   const { since, until } = dayRange(day);
   const q = `since=${since}&until=${until}`;
   const items = type === 'room' ? await api(`/api/history/room/${id}?${q}`) : await api(`/api/history/dm/${id}?${q}`);
@@ -895,10 +1125,16 @@ function debounceSearch(e) {
 }
 async function runSearch(text) {
   [...document.querySelectorAll('#hpDays .dbtn')].forEach(b => b.classList.remove('active'));
+  hpState = { query: text, oldestId: null, hasMore: false, loading: false };
   const items = type === 'room'
     ? await api(`/api/history/room/${id}?q=${encodeURIComponent(text)}`)
     : await api(`/api/history/dm/${id}?q=${encodeURIComponent(text)}`);
+  applySearchPage(items);
   renderHistoryMessages(items, true, text);
+}
+function applySearchPage(items) {
+  hpState.hasMore = items.length === 200; // HISTORY_PAGE_SIZE на сервере — полная страница значит, скорее всего, есть ещё
+  if (items.length) hpState.oldestId = items[0].id; // items уже в хронологическом порядке (самое старое — первое)
 }
 
 function renderHistoryMessages(items, withDate, query) {
@@ -907,6 +1143,28 @@ function renderHistoryMessages(items, withDate, query) {
   box.innerHTML = items.map(m => bubbleHtml(m, { withDate, query })).join('');
   box.scrollTop = box.scrollHeight; // сразу к самым свежим сообщениям за день, а не к началу
 }
+
+// Прокрутка почти до самого верха ленты поиска — подгружаем более старую страницу совпадений и
+// вставляем её сверху, сохраняя видимую позицию (иначе вставка сверху дёргала бы ленту вниз).
+document.getElementById('hpMessages').addEventListener('scroll', async (e) => {
+  const box = e.target;
+  if (box.scrollTop > 40 || !hpState.hasMore || hpState.loading || !hpState.query) return;
+  const state = hpState; // снимок — если пока грузится страница, пользователь переключится на другой
+  state.loading = true;  // день/поиск (selectDay/runSearch создают НОВЫЙ hpState), применяем результат
+  const prevHeight = box.scrollHeight; // только к тому состоянию, для которого его реально запросили
+  const items = type === 'room'
+    ? await api(`/api/history/room/${id}?q=${encodeURIComponent(state.query)}&before=${state.oldestId}`)
+    : await api(`/api/history/dm/${id}?q=${encodeURIComponent(state.query)}&before=${state.oldestId}`);
+  if (state !== hpState) return; // состояние уже сменилось — эта страница больше не актуальна
+  applySearchPage(items);
+  if (items.length) {
+    const frag = document.createElement('div');
+    frag.innerHTML = items.map(m => bubbleHtml(m, { withDate: true, query: state.query })).join('');
+    while (frag.firstChild) box.insertBefore(frag.firstChild, box.firstChild);
+    box.scrollTop = box.scrollHeight - prevHeight + box.scrollTop;
+  }
+  state.loading = false;
+});
 
 // Клик по прикреплённому файлу — скачивание через главный процесс (webContents.downloadURL),
 // а не обычная навигация по ссылке: раньше здесь стоял target="_blank", из-за чего Electron
@@ -961,13 +1219,27 @@ desktop.onDownloadProgress(({ id, state, percent }) => {
 
 desktop.onToast(({ message, error }) => chatToast(message, { error }));
 
+// Короткоживущий (60с) токен на скачивание конкретного файла — запрашивается прямо перед тем, как
+// он понадобится (клик/ПКМ), а не подставляется в ссылку заранее: карточка файла может пролежать
+// в открытом окне часами, а токен в её href к этому моменту уже истёк бы (см. /api/download-token
+// в server.js — там же объяснение, зачем это вообще нужно вместо основного сессионного токена).
+async function getDownloadUrl(relUrl, name) {
+  const { token: dlToken } = await api(`/api/download-token?path=${encodeURIComponent(relUrl)}`);
+  return `${serverUrl}${relUrl}?token=${dlToken}&name=${encodeURIComponent(name || 'файл')}`;
+}
+
 function wireFileClicks(container) {
-  container.addEventListener('click', (e) => {
+  container.addEventListener('click', async (e) => {
     const link = e.target.closest('a.file');
     if (!link) return;
     e.preventDefault();
     const id = startDownloadUi(link);
-    desktop.downloadFile(link.href, id);
+    try {
+      const url = await getDownloadUrl(link.dataset.url, link.dataset.name);
+      desktop.downloadFile(url, id);
+    } catch {
+      chatToast('Не удалось начать скачивание — проверьте подключение.', { error: true });
+    }
   });
 }
 wireFileClicks(document.getElementById('messages'));
@@ -977,11 +1249,16 @@ wireFileClicks(document.getElementById('hpMessages'));
 // Реализовано нативным меню Electron (через главный процесс), т.к. буфер обмена и системный
 // диалог "Сохранить как" всё равно должны идти оттуда.
 function wireMessageContextMenu(container) {
-  container.addEventListener('contextmenu', (e) => {
+  container.addEventListener('contextmenu', async (e) => {
     const fileLink = e.target.closest('a.file');
     if (fileLink) {
       e.preventDefault();
-      desktop.showMessageMenu({ kind: 'file', url: fileLink.href, name: fileLink.dataset.name });
+      try {
+        const url = await getDownloadUrl(fileLink.dataset.url, fileLink.dataset.name);
+        desktop.showMessageMenu({ kind: 'file', url, name: fileLink.dataset.name });
+      } catch {
+        chatToast('Не удалось подготовить файл — проверьте подключение.', { error: true });
+      }
       return;
     }
     const txtEl = e.target.closest('.txt');
@@ -993,6 +1270,8 @@ function wireMessageContextMenu(container) {
 }
 wireMessageContextMenu(document.getElementById('messages'));
 wireMessageContextMenu(document.getElementById('hpMessages'));
+wireMessageToolbar(document.getElementById('messages'));
+wireMessageToolbar(document.getElementById('hpMessages'));
 
 loadHistory();
 connectWs();

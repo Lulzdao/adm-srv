@@ -59,8 +59,8 @@
   .mm-logout { display:flex; align-items:center; gap:6px; padding:7px 13px; border:1px solid var(--border); background:var(--panel-2); color:var(--muted); border-radius:9px; cursor:pointer; font-size:12px; font-weight:600; transition:background .12s ease, color .12s ease, border-color .12s ease; }
   .mm-logout:hover { background:var(--danger-soft); color:var(--danger); border-color:var(--danger-soft); }
 
-  #tabs { flex-shrink:0; display:flex; gap:22px; padding:0 28px; border-bottom:1px solid var(--border); background:var(--paper); }
-  .nav-item { padding:11px 2px 10px; cursor:pointer; color:var(--muted); font-weight:600; font-size:13.5px; border-bottom:2px solid transparent; transition:color .12s ease, border-color .12s ease; }
+  #tabs { flex-shrink:0; display:flex; gap:22px; padding:0 28px; border-bottom:1px solid var(--border); background:var(--paper); overflow-x:auto; }
+  .nav-item { padding:11px 2px 10px; cursor:pointer; color:var(--muted); font-weight:600; font-size:13.5px; border-bottom:2px solid transparent; white-space:nowrap; transition:color .12s ease, border-color .12s ease; }
   .nav-item:hover { color:var(--text); }
   .nav-item.active { color:var(--accent); border-bottom-color:var(--accent); }
 
@@ -89,6 +89,7 @@
   button.action:hover { filter:brightness(0.96); }
   button.action.danger { background:var(--danger); }
   button.action.ghost { background:var(--panel-2); color:var(--text); }
+  button.action:disabled { opacity:.6; cursor:not-allowed; }
 
   #histMessages { display:flex; flex-direction:column; gap:6px; max-height:420px; overflow-y:auto; margin-top:12px; padding:12px; background:var(--panel-2); border-radius:10px; }
   #histMessages .m { font-size:13px; }
@@ -143,6 +144,7 @@
     <div class="nav-item" data-view="history">Переписки</div>
     <div class="nav-item" data-view="broadcast">Рассылка</div>
     <div class="nav-item" data-view="files">Файлы</div>
+    <div class="nav-item" data-view="logs">Логи</div>
   </div>
 
   <div id="main">
@@ -213,11 +215,39 @@
           <button class="action ghost" onclick="exportHistory()">Экспорт в .txt</button>
         </div>
         <div id="histMessages"></div>
+        <div class="row-flex" id="histMoreRow" style="display:none; margin-top:8px;">
+          <button class="action ghost" onclick="loadMoreHistory()" id="histMoreBtn">Показать более ранние</button>
+        </div>
       </div>
     </div>
 
     <div class="view" id="view-files">
       <h2>Файлы на сервере</h2>
+
+      <div class="panel">
+        <h3>Ограничения на загрузку</h3>
+        <p style="color:var(--muted); font-size:12.5px; margin:0 0 12px;">
+          Действует сразу для всех — без перезапуска сервера. «Запрещённые» — список того, что нельзя
+          прислать (всё остальное можно); «Разрешённые» — наоборот, можно только то, что в списке.
+          Расширения — через запятую или пробел, без точки (exe, bat, zip...).
+        </p>
+        <div class="row-flex" style="margin-bottom:10px;">
+          <select id="uploadExtMode">
+            <option value="block">Запрещённые расширения</option>
+            <option value="allow">Разрешённые расширения</option>
+          </select>
+          <label class="row-flex" style="gap:6px; font-size:12.5px; color:var(--muted);">
+            Макс. размер файла (МБ)
+            <input type="number" id="uploadMaxMb" min="1" style="width:80px">
+          </label>
+        </div>
+        <textarea id="uploadExtList" style="width:100%; height:60px;" placeholder="exe, bat, cmd, ..."></textarea>
+        <div class="row-flex" style="margin-top:10px;">
+          <button class="action" onclick="saveUploadSettings()">Сохранить</button>
+          <span id="uploadSettingsMsg" style="color:var(--muted); font-size:12px;"></span>
+        </div>
+      </div>
+
       <div class="panel">
         <p style="color:var(--muted); font-size:12.5px; margin:0 0 4px;">
           Все файлы, которые когда-либо отправляли через личную переписку, общую комнату или рассылки.
@@ -231,6 +261,36 @@
         <table>
           <thead><tr><th>Имя файла</th><th>Откуда</th><th>От кого</th><th>Когда</th><th>Размер</th><th></th></tr></thead>
           <tbody id="filesBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="view" id="view-logs">
+      <h2>Логи</h2>
+      <div class="panel">
+        <p style="color:var(--muted); font-size:12.5px; margin:0 0 10px;">
+          Входы/выходы, срабатывания защиты от подбора пароля и ошибки сервера — плюс ошибки,
+          присланные с рабочих мест сотрудников (сбои в приложении на их ПК). Хранится по дням в
+          файлах на сервере (папка logs/), здесь — только просмотр.
+        </p>
+        <div class="row-flex">
+          <input type="date" id="logsDay">
+          <select id="logsType">
+            <option value="all">Сервер и клиенты</option>
+            <option value="server">Только сервер</option>
+            <option value="client">Только клиенты</option>
+          </select>
+          <select id="logsLevel">
+            <option value="all">Все уровни</option>
+            <option value="ERROR">Только ошибки</option>
+            <option value="WARN">Предупреждения и ошибки</option>
+          </select>
+          <button class="action" onclick="loadLogs()">Показать</button>
+          <span id="logsSummary" style="color:var(--muted); font-size:12px;"></span>
+        </div>
+        <table style="margin-top:12px;">
+          <thead><tr><th style="width:80px">Время</th><th style="width:70px">Уровень</th><th style="width:60px">Откуда</th><th style="width:150px">Событие</th><th>Подробности</th></tr></thead>
+          <tbody id="logsBody"></tbody>
         </table>
       </div>
     </div>
@@ -254,7 +314,10 @@
 let token = localStorage.getItem('admin_token');
 let me = JSON.parse(localStorage.getItem('admin_me') || 'null');
 let usersCache = [], deptsCache = [];
-let lastHistory = { type: 'room', items: [] };
+// path/oldestId/hasMore — курсор постраничной подгрузки (см. loadMoreHistory): admin/history/*
+// в server.js режет ответ по HISTORY_PAGE_SIZE (200) — в старом активном диалоге этого может не
+// хватить, дальше 200 сообщений назад без подгрузки было не прокрутить.
+let lastHistory = { type: 'room', path: null, items: [], oldestId: null, hasMore: false };
 
 async function api(path, opts) {
   const res = await fetch(path, {
@@ -333,13 +396,16 @@ function renderUsers() {
     body.appendChild(tr);
   });
 }
+function userVersion(id) { return usersCache.find(u => u.id === id)?.version; }
+function applyUserVersion(id, version) { const u = usersCache.find(x => x.id === id); if (u && version !== undefined) u.version = version; }
+
 async function renameUser(id) {
   const val = document.getElementById(`dn-${id}`).value.trim();
   if (!val) return alert('Имя не может быть пустым');
-  try { await api(`api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify({ display_name: val }) }); refreshAll(); } catch (e) { alert(e.message); }
+  try { await api(`api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify({ display_name: val, version: userVersion(id) }) }); refreshAll(); } catch (e) { alert(e.message); refreshAll(); }
 }
 async function toggleUserCap(id, cap, checked) {
-  try { await api(`api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify({ [cap]: checked }) }); } catch (e) { alert(e.message); refreshAll(); }
+  try { const r = await api(`api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify({ [cap]: checked, version: userVersion(id) }) }); applyUserVersion(id, r.version); } catch (e) { alert(e.message); refreshAll(); }
 }
 
 function renderDepts() {
@@ -400,11 +466,11 @@ async function createUser() {
     refreshAll();
   } catch (e) { alert(e.message); }
 }
-async function changeDept(id, department_id) { try { await api(`api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify({ department_id: department_id || null }) }); } catch (e) { alert(e.message); } }
+async function changeDept(id, department_id) { try { const r = await api(`api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify({ department_id: department_id || null, version: userVersion(id) }) }); applyUserVersion(id, r.version); } catch (e) { alert(e.message); refreshAll(); } }
 async function resetPassword(id) {
   const val = document.getElementById(`pw-${id}`).value;
   if (!val) return;
-  try { await api(`api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify({ password: val }) }); alert('Пароль обновлён'); } catch (e) { alert(e.message); }
+  try { await api(`api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify({ password: val, version: userVersion(id) }) }); alert('Пароль обновлён'); refreshAll(); } catch (e) { alert(e.message); refreshAll(); }
 }
 async function deleteUser(id) {
   if (!confirm('Удалить пользователя без возможности восстановления?')) return;
@@ -428,26 +494,56 @@ document.getElementById('histType').onchange = (e) => {
 
 function escapeHtml(s) { return s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
 
+function renderHistoryBox(items) {
+  document.getElementById('histMessages').innerHTML = items.map(m => {
+    const time = new Date(m.created_at).toLocaleString('ru-RU');
+    const files = (m.files || []).map(f => ` 📎 ${escapeHtml(f.name)}${f.exists === false ? ' (удалён с диска)' : ''}`).join('');
+    return `<div class="m"><b>${m.from_user}:</b> ${escapeHtml(m.text)}${files}<span class="t">${time}</span></div>`;
+  }).join('') || 'Сообщений пока нет';
+}
+
 async function loadHistory() {
   const type = document.getElementById('histType').value;
   const box = document.getElementById('histMessages');
   box.innerHTML = 'Загрузка...';
+  document.getElementById('histMoreRow').style.display = 'none';
   try {
-    let items;
+    let path;
     if (type === 'room') {
-      items = await api('api/admin/history/room/general');
+      path = 'api/admin/history/room/general';
     } else {
       const u1 = document.getElementById('histUser1').value, u2 = document.getElementById('histUser2').value;
       if (!u1 || !u2 || u1 === u2) { box.innerHTML = 'Выберите двух разных сотрудников'; return; }
-      items = await api(`api/admin/history/dm/${u1}/${u2}`);
+      path = `api/admin/history/dm/${u1}/${u2}`;
     }
-    lastHistory = { type, items };
-    box.innerHTML = items.map(m => {
-      const time = new Date(m.created_at).toLocaleString('ru-RU');
-      const files = (m.files || []).map(f => ` 📎 ${escapeHtml(f.name)}${f.exists === false ? ' (удалён с диска)' : ''}`).join('');
-      return `<div class="m"><b>${m.from_user}:</b> ${escapeHtml(m.text)}${files}<span class="t">${time}</span></div>`;
-    }).join('') || 'Сообщений пока нет';
+    const items = await api(path);
+    lastHistory = { type, path, items, oldestId: items.length ? items[0].id : null, hasMore: items.length === 200 };
+    renderHistoryBox(items);
+    document.getElementById('histMoreRow').style.display = lastHistory.hasMore ? 'flex' : 'none';
   } catch (e) { box.innerHTML = 'Ошибка: ' + e.message; }
+}
+
+async function loadMoreHistory() {
+  if (!lastHistory.hasMore || !lastHistory.path) return;
+  const btn = document.getElementById('histMoreBtn');
+  const box = document.getElementById('histMessages');
+  btn.disabled = true;
+  btn.textContent = 'Загрузка...';
+  try {
+    const items = await api(`${lastHistory.path}?before=${lastHistory.oldestId}`);
+    lastHistory.hasMore = items.length === 200;
+    if (items.length) {
+      lastHistory.oldestId = items[0].id;
+      lastHistory.items = [...items, ...lastHistory.items];
+      const prevHeight = box.scrollHeight, prevTop = box.scrollTop;
+      renderHistoryBox(lastHistory.items);
+      box.scrollTop = box.scrollHeight - prevHeight + prevTop; // не сбрасываем позицию просмотра вставкой сверху
+    }
+    document.getElementById('histMoreRow').style.display = lastHistory.hasMore ? 'flex' : 'none';
+  } catch (e) { alert(e.message); } finally {
+    btn.disabled = false;
+    btn.textContent = 'Показать более ранние';
+  }
 }
 
 function exportHistory() {
@@ -465,6 +561,30 @@ function fmtSize(bytes) {
   if (bytes < 1024) return bytes + ' Б';
   if (bytes < 1024 * 1024) return Math.round(bytes / 1024) + ' КБ';
   return (bytes / (1024 * 1024)).toFixed(1) + ' МБ';
+}
+
+async function loadUploadSettings() {
+  try {
+    const s = await api('api/admin/upload-settings');
+    document.getElementById('uploadExtMode').value = s.mode;
+    document.getElementById('uploadExtList').value = s.extensions.join(', ');
+    document.getElementById('uploadMaxMb').value = s.maxMb;
+    document.getElementById('uploadMaxMb').max = s.hardCeilingMb;
+  } catch (e) { document.getElementById('uploadSettingsMsg').textContent = 'Ошибка: ' + e.message; }
+}
+async function saveUploadSettings() {
+  const msg = document.getElementById('uploadSettingsMsg');
+  msg.textContent = 'Сохранение...';
+  try {
+    await api('api/admin/upload-settings', { method: 'PATCH', body: JSON.stringify({
+      mode: document.getElementById('uploadExtMode').value,
+      extensions: document.getElementById('uploadExtList').value,
+      maxMb: document.getElementById('uploadMaxMb').value,
+    }) });
+    msg.textContent = 'Сохранено';
+    setTimeout(() => { if (msg.textContent === 'Сохранено') msg.textContent = ''; }, 2500);
+    loadUploadSettings();
+  } catch (e) { msg.textContent = 'Ошибка: ' + e.message; }
 }
 
 async function loadFiles() {
@@ -489,6 +609,37 @@ async function loadFiles() {
 async function deleteFile(diskName) {
   if (!confirm('Удалить файл с сервера без возможности восстановления?')) return;
   try { await api(`api/admin/files/${encodeURIComponent(diskName)}`, { method: 'DELETE' }); loadFiles(); } catch (e) { alert(e.message); }
+}
+
+function todayStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+const LEVEL_COLOR = { INFO: 'var(--muted)', WARN: 'var(--warn)', ERROR: 'var(--danger)' };
+async function loadLogs() {
+  const day = document.getElementById('logsDay').value || todayStr();
+  document.getElementById('logsDay').value = day;
+  const type = document.getElementById('logsType').value;
+  const level = document.getElementById('logsLevel').value;
+  const body = document.getElementById('logsBody');
+  body.innerHTML = '<tr><td colspan="5">Загрузка...</td></tr>';
+  try {
+    const { entries, truncated, total } = await api(`api/admin/logs?day=${day}&type=${type}&level=${level}`);
+    document.getElementById('logsSummary').textContent = `Записей: ${total}` + (truncated ? ' (показаны последние ' + entries.length + ')' : '');
+    body.innerHTML = entries.map(e => {
+      const time = new Date(e.ts).toLocaleTimeString('ru-RU');
+      const color = LEVEL_COLOR[e.level] || 'var(--muted)';
+      // meta уже структура, а не строка — просто аккуратно раскладываем в "ключ: значение" построчно
+      const details = Object.entries(e.meta || {}).map(([k, v]) => `${escapeHtml(k)}: ${escapeHtml(String(v))}`).join(' · ');
+      return `<tr>
+          <td style="color:var(--muted); font-variant-numeric:tabular-nums;">${time}</td>
+          <td style="color:${color}; font-weight:700;">${e.level}</td>
+          <td style="color:var(--muted);">${e.source === 'client' ? 'клиент' : 'сервер'}</td>
+          <td>${escapeHtml(e.event)}</td>
+          <td style="color:var(--muted); font-size:12px;">${details}</td>
+        </tr>`;
+    }).join('') || '<tr><td colspan="5" style="color:var(--muted)">За этот день записей нет</td></tr>';
+  } catch (e) { body.innerHTML = `<tr><td colspan="5">Ошибка: ${e.message}</td></tr>`; }
 }
 
 async function loadBroadcastFeed() {
@@ -534,6 +685,9 @@ async function startDash() {
   await loadHistory();
   await loadBroadcastFeed();
   await loadFiles();
+  await loadUploadSettings();
+  document.getElementById('logsDay').value = todayStr();
+  await loadLogs();
   connectPresenceWs();
   setInterval(refreshAll, 30000);
 }

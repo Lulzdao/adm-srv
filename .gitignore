@@ -13,6 +13,7 @@ helpdesk-backend/uploads/*
 helpdesk-backend/data/*
 !helpdesk-backend/data/.gitkeep
 
-# MESSENGER — стартовый админ с паролем открытым текстом, сборки клиента
+# MESSENGER — стартовый админ с паролем открытым текстом, сборки клиента, файловые логи сервера
 MESSENGER/bootstrap-admin.js
 MESSENGER/desktop-client/dist/
+MESSENGER/logs/
