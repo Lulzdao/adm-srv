@@ -234,7 +234,7 @@ async function doLogin() {
   const errEl = document.getElementById('authErr');
   errEl.textContent = '';
   try {
-    const res = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }) });
+    const res = await fetch('api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }) });
     const data = await res.json();
     if (!res.ok) { errEl.textContent = data.error || 'Ошибка входа'; return; }
     if (!data.user.can_admin) { errEl.textContent = 'Эта панель только для администраторов. Используйте приложение для Windows.'; return; }
@@ -266,7 +266,7 @@ function fmtUptime(sec) {
 }
 
 async function loadStats() {
-  const s = await api('/api/admin/stats');
+  const s = await api('api/admin/stats');
   document.getElementById('statUsers').textContent = s.usersTotal;
   document.getElementById('statOnline').textContent = s.onlineNow;
   document.getElementById('statDepts').textContent = s.departmentsTotal;
@@ -298,10 +298,10 @@ function renderUsers() {
 async function renameUser(id) {
   const val = document.getElementById(`dn-${id}`).value.trim();
   if (!val) return alert('Имя не может быть пустым');
-  try { await api(`/api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify({ display_name: val }) }); refreshAll(); } catch (e) { alert(e.message); }
+  try { await api(`api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify({ display_name: val }) }); refreshAll(); } catch (e) { alert(e.message); }
 }
 async function toggleUserCap(id, cap, checked) {
-  try { await api(`/api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify({ [cap]: checked }) }); } catch (e) { alert(e.message); refreshAll(); }
+  try { await api(`api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify({ [cap]: checked }) }); } catch (e) { alert(e.message); refreshAll(); }
 }
 
 function renderDepts() {
@@ -325,19 +325,19 @@ function renderDepts() {
 async function renameDept(id, currentName) {
   const name = prompt('Новое название отдела:', currentName);
   if (!name || !name.trim() || name.trim() === currentName) return;
-  try { await api(`/api/admin/departments/${id}`, { method: 'PATCH', body: JSON.stringify({ name: name.trim() }) }); refreshAll(); } catch (e) { alert(e.message); }
+  try { await api(`api/admin/departments/${id}`, { method: 'PATCH', body: JSON.stringify({ name: name.trim() }) }); refreshAll(); } catch (e) { alert(e.message); }
 }
 async function moveDept(index, dir) {
   const target = index + dir;
   if (target < 0 || target >= deptsCache.length) return;
   const order = deptsCache.map(d => d.id);
   [order[index], order[target]] = [order[target], order[index]];
-  try { await api('/api/admin/departments/reorder', { method: 'POST', body: JSON.stringify({ order }) }); refreshAll(); } catch (e) { alert(e.message); }
+  try { await api('api/admin/departments/reorder', { method: 'POST', body: JSON.stringify({ order }) }); refreshAll(); } catch (e) { alert(e.message); }
 }
 
 async function refreshAll() {
-  usersCache = await api('/api/admin/users');
-  deptsCache = await api('/api/departments');
+  usersCache = await api('api/admin/users');
+  deptsCache = await api('api/departments');
   renderUsers();
   renderDepts();
   const opts = usersCache.map(u => `<option value="${u.id}">${u.display_name}</option>`).join('');
@@ -354,7 +354,7 @@ async function createUser() {
   const can_admin = document.getElementById('newUserAdmin').checked;
   if (!username || !password) return alert('Укажите логин и пароль');
   try {
-    await api('/api/admin/users', { method: 'POST', body: JSON.stringify({ username, password, department_id, can_broadcast, can_admin }) });
+    await api('api/admin/users', { method: 'POST', body: JSON.stringify({ username, password, department_id, can_broadcast, can_admin }) });
     document.getElementById('newUsername').value = '';
     document.getElementById('newPassword').value = '';
     document.getElementById('newUserBroadcast').checked = false;
@@ -362,24 +362,24 @@ async function createUser() {
     refreshAll();
   } catch (e) { alert(e.message); }
 }
-async function changeDept(id, department_id) { try { await api(`/api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify({ department_id: department_id || null }) }); } catch (e) { alert(e.message); } }
+async function changeDept(id, department_id) { try { await api(`api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify({ department_id: department_id || null }) }); } catch (e) { alert(e.message); } }
 async function resetPassword(id) {
   const val = document.getElementById(`pw-${id}`).value;
   if (!val) return;
-  try { await api(`/api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify({ password: val }) }); alert('Пароль обновлён'); } catch (e) { alert(e.message); }
+  try { await api(`api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify({ password: val }) }); alert('Пароль обновлён'); } catch (e) { alert(e.message); }
 }
 async function deleteUser(id) {
   if (!confirm('Удалить пользователя без возможности восстановления?')) return;
-  try { await api(`/api/admin/users/${id}`, { method: 'DELETE' }); refreshAll(); } catch (e) { alert(e.message); }
+  try { await api(`api/admin/users/${id}`, { method: 'DELETE' }); refreshAll(); } catch (e) { alert(e.message); }
 }
 async function createDept() {
   const name = document.getElementById('newDeptName').value.trim();
   if (!name) return;
-  try { await api('/api/admin/departments', { method: 'POST', body: JSON.stringify({ name }) }); document.getElementById('newDeptName').value = ''; refreshAll(); } catch (e) { alert(e.message); }
+  try { await api('api/admin/departments', { method: 'POST', body: JSON.stringify({ name }) }); document.getElementById('newDeptName').value = ''; refreshAll(); } catch (e) { alert(e.message); }
 }
 async function deleteDept(id) {
   if (!confirm('Удалить отдел? Сотрудники останутся без отдела.')) return;
-  try { await api(`/api/admin/departments/${id}`, { method: 'DELETE' }); refreshAll(); } catch (e) { alert(e.message); }
+  try { await api(`api/admin/departments/${id}`, { method: 'DELETE' }); refreshAll(); } catch (e) { alert(e.message); }
 }
 
 document.getElementById('histType').onchange = (e) => {
@@ -397,11 +397,11 @@ async function loadHistory() {
   try {
     let items;
     if (type === 'room') {
-      items = await api('/api/admin/history/room/general');
+      items = await api('api/admin/history/room/general');
     } else {
       const u1 = document.getElementById('histUser1').value, u2 = document.getElementById('histUser2').value;
       if (!u1 || !u2 || u1 === u2) { box.innerHTML = 'Выберите двух разных сотрудников'; return; }
-      items = await api(`/api/admin/history/dm/${u1}/${u2}`);
+      items = await api(`api/admin/history/dm/${u1}/${u2}`);
     }
     lastHistory = { type, items };
     box.innerHTML = items.map(m => {
@@ -433,7 +433,7 @@ async function loadFiles() {
   const body = document.getElementById('filesBody');
   body.innerHTML = '<tr><td colspan="6">Загрузка...</td></tr>';
   try {
-    const files = await api('/api/admin/files');
+    const files = await api('api/admin/files');
     const totalSize = files.reduce((s, f) => s + f.size, 0);
     const orphaned = files.filter(f => f.orphaned).length;
     document.getElementById('filesSummary').textContent =
@@ -450,11 +450,11 @@ async function loadFiles() {
 }
 async function deleteFile(diskName) {
   if (!confirm('Удалить файл с сервера без возможности восстановления?')) return;
-  try { await api(`/api/admin/files/${encodeURIComponent(diskName)}`, { method: 'DELETE' }); loadFiles(); } catch (e) { alert(e.message); }
+  try { await api(`api/admin/files/${encodeURIComponent(diskName)}`, { method: 'DELETE' }); loadFiles(); } catch (e) { alert(e.message); }
 }
 
 async function loadBroadcastFeed() {
-  const items = await api('/api/broadcasts');
+  const items = await api('api/broadcasts');
   document.getElementById('bcFeed').innerHTML = items.map(b => {
     const time = new Date(b.created_at).toLocaleString('ru-RU');
     return `<div class="bc-item"><span class="who">${b.from_user}</span><span class="time">${time}</span><div class="txt">${escapeHtml(b.text)}</div></div>`;
@@ -464,7 +464,7 @@ async function sendBroadcast() {
   const el = document.getElementById('bcText');
   const text = el.value.trim();
   if (!text) return;
-  try { await api('/api/broadcast', { method: 'POST', body: JSON.stringify({ text }) }); el.value = ''; loadBroadcastFeed(); } catch (e) { alert(e.message); }
+  try { await api('api/broadcast', { method: 'POST', body: JSON.stringify({ text }) }); el.value = ''; loadBroadcastFeed(); } catch (e) { alert(e.message); }
 }
 
 function connectPresenceWs() {
@@ -483,7 +483,7 @@ function connectPresenceWs() {
 async function startDash() {
   // Право могло измениться (лично или через отдел) с прошлого захода — перепроверяем перед показом панели
   let fresh;
-  try { fresh = await api('/api/me'); } catch { logout(); return; }
+  try { fresh = await api('api/me'); } catch { logout(); return; }
   if (!fresh.can_admin) { logout(); return; }
   me = fresh;
   localStorage.setItem('admin_me', JSON.stringify(me));
