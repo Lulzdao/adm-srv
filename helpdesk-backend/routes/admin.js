@@ -21,13 +21,26 @@ module.exports = function adminRoutes(db) {
     res.json({ departments: result });
   });
 
+  // Роль в ключе настройки берём только из справочника отделов, а не из тела
+  // запроса: иначе через это поле можно было записать любой ключ в settings
+  // (в т.ч. перетереть чужую настройку) — ключ подставлялся в строку как есть.
+  const KNOWN_ROLES = new Set(departments.map((d) => d.role));
+  const GROUP_NAME_MAX = 256;
+
   router.put("/settings", (req, res) => {
     const { departments: incoming } = req.body || {};
     if (!Array.isArray(incoming)) return res.status(400).json({ error: "Ожидался список отделов" });
+
     for (const dept of incoming) {
-      if (!dept.role) continue;
-      if (dept.groupA !== undefined) setSetting(db, `${dept.role}_group_A`, dept.groupA);
-      if (dept.groupB !== undefined) setSetting(db, `${dept.role}_group_B`, dept.groupB);
+      if (!dept || !KNOWN_ROLES.has(dept.role)) continue;
+      for (const [field, domain] of [["groupA", "A"], ["groupB", "B"]]) {
+        const value = dept[field];
+        if (value === undefined) continue;
+        if (typeof value !== "string" || value.length > GROUP_NAME_MAX) {
+          return res.status(400).json({ error: "Имя группы должно быть строкой до 256 символов" });
+        }
+        setSetting(db, `${dept.role}_group_${domain}`, value.trim());
+      }
     }
     res.json({ ok: true });
   });

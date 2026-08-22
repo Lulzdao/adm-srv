@@ -30,8 +30,12 @@ const PORT = process.env.PORT || 3101;
 const DB_PATH = path.join(__dirname, 'certificates.db');
 
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'change-me';
-const SESSION_SECRET = process.env.SESSION_SECRET || 'insecure-default-secret-change-in-env';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
+// Секрет подписи сессионной cookie. Фиксированного значения по умолчанию
+// быть не должно: оно лежало прямо в исходнике, а зная его, можно подписать
+// себе действительную сессию, не зная пароля. Если секрет не задан — берём
+// случайный на время работы процесса (после перезапуска все входят заново).
+const SESSION_SECRET = (process.env.SESSION_SECRET || '').trim() || crypto.randomBytes(32).toString('hex');
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000; // 12 часов
 
 // Если true — модуль встроен в общую платформу (хелпдеск) через прокси, и
@@ -48,10 +52,23 @@ const BEHIND_GATEWAY = process.env.BEHIND_GATEWAY === 'true';
 // на всех интерфейсах, для прямого автономного использования.
 const BIND_HOST = BEHIND_GATEWAY ? '127.0.0.1' : process.env.HOST || '0.0.0.0';
 
-if (!BEHIND_GATEWAY && (!process.env.ADMIN_PASSWORD || !process.env.SESSION_SECRET)) {
+// В автономном режиме модуль слушает всю сеть и сам отвечает за вход, поэтому
+// без заданного пароля не запускаемся вовсе. Раньше в этом случае молча
+// подставлялся пароль по умолчанию ('change-me') и печаталось предупреждение —
+// то есть реестр сертификатов оказывался доступен из сети с общеизвестным
+// паролем, если .env забыли создать.
+if (!BEHIND_GATEWAY && !ADMIN_PASSWORD) {
+  console.error(
+    '\n[остановка] ADMIN_PASSWORD не задан, а модуль запускается автономно (BEHIND_GATEWAY=false).\n' +
+      'Без пароля веб-интерфейс был бы открыт всей сети. Задайте ADMIN_PASSWORD в .env\n' +
+      '(см. .env.example) либо включите BEHIND_GATEWAY=true, если модуль работает за платформой.\n'
+  );
+  process.exit(1);
+}
+if (!process.env.SESSION_SECRET && !BEHIND_GATEWAY) {
   console.warn(
-    '[внимание] ADMIN_PASSWORD или SESSION_SECRET не заданы в .env — используются значения по умолчанию, ' +
-      'это небезопасно. Создайте файл .env (см. README).'
+    '[внимание] SESSION_SECRET не задан — используется случайный секрет на время работы процесса. ' +
+      'После перезапуска сервера потребуется войти заново. Задайте свой секрет в .env.'
   );
 }
 
@@ -248,8 +265,9 @@ function requireAuthApi(req, res, next) {
 const app = express();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: false }));
+app.disable('x-powered-by');
+app.use(express.json({ limit: '32kb' }));
+app.use(express.urlencoded({ extended: false, limit: '32kb' }));
 
 // Страница логина — доступна без авторизации
 app.get('/login', (req, res) => {
@@ -258,6 +276,13 @@ app.get('/login', (req, res) => {
 
 app.post('/login', (req, res) => {
   const { username, password } = req.body || {};
+
+  // Пароль не настроен (режим за платформой) — вход по паролю не работает
+  // вообще. Без этой проверки пустой ADMIN_PASSWORD совпал бы с пустым
+  // паролем в запросе и выдал бы действительную сессию кому угодно.
+  if (!ADMIN_PASSWORD) {
+    return res.status(403).json({ error: 'Собственный вход отключён: модуль работает за платформой' });
+  }
 
   const userOk = typeof username === 'string' && safeEquals(username, ADMIN_USERNAME);
   const passOk = typeof password === 'string' && safeEquals(password, ADMIN_PASSWORD);
@@ -278,12 +303,21 @@ app.get('/logout', (req, res) => {
   res.redirect('login');
 });
 
-// Статика (стили и т.п.), кроме index.html — тот отдаём вручную после проверки сессии
-app.use(express.static(path.join(__dirname, 'public'), { index: false }));
-
-app.get('/', requireAuthPage, (req, res) => {
+// Защищённая страница. Оба адреса — и корень, и прямой /index.html —
+// объявлены ДО express.static: опция index:false отключает index.html только
+// как индекс каталога, а по прямому адресу статика отдавала его как обычный
+// файл, и реестр открывался вообще без входа.
+app.get(['/', '/index.html'], requireAuthPage, (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
+
+// Остальная статика (стили, скрипты) — без авторизации, там нет данных.
+app.use(
+  express.static(path.join(__dirname, 'public'), {
+    index: false,
+    setHeaders: (res) => res.setHeader('X-Content-Type-Options', 'nosniff'),
+  })
+);
 
 // ---------- API (защищено сессией) ----------
 app.post('/api/upload', requireAuthApi, upload.array('certificates', 50), (req, res) => {
@@ -308,6 +342,11 @@ app.get('/api/certificates', requireAuthApi, (req, res) => {
 });
 
 app.delete('/api/certificates/:id', requireAuthApi, (req, res) => {
+  // Без проверки в запрос уходил NaN (id вида "abc"), и node:sqlite падал
+  // пятисоткой вместо понятного ответа.
+  if (!/^[1-9]\d{0,17}$/.test(String(req.params.id))) {
+    return res.status(400).json({ error: 'Некорректный идентификатор сертификата' });
+  }
   deleteCertificate(req.params.id);
   res.json({ ok: true });
 });

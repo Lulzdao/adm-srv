@@ -8,14 +8,33 @@ const db = initDb();
 ensureLocalAccounts(db);
 
 const app = express();
-app.use(express.json());
+
+// Заголовок-версия Express выдаёт стек и версию сервера — снимаем.
+app.disable("x-powered-by");
+
+// Ограничение размера JSON-тела: без него любой вошедший мог отправить
+// запрос на сотни мегабайт и занять память процесса.
+app.use(express.json({ limit: "100kb" }));
+
+if (!process.env.SESSION_SECRET) {
+  console.warn(
+    "[внимание] SESSION_SECRET не задан в .env — используется значение по умолчанию. " +
+      "Сессии можно подделать: задайте свой секрет и перезапустите сервер."
+  );
+}
+
 app.use(session({
   secret: config.sessionSecret,
   resave: false,
   saveUninitialized: false,
   rolling: true, // продлевает срок действия куки при каждом активном запросе
+  name: "helpdesk.sid", // не оставляем узнаваемый connect.sid по умолчанию
   cookie: {
     httpOnly: true,
+    // Явно, а не полагаясь на умолчание браузера: куку не отправят при
+    // переходе/отправке формы с чужого сайта — это закрывает CSRF на
+    // изменяющих запросах и к платформе, и к проксируемым модулям.
+    sameSite: "lax",
     maxAge: config.sessionMaxAgeDays * 24 * 60 * 60 * 1000,
     // secure: true — включить, когда сервер будет за HTTPS/reverse proxy
   },

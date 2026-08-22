@@ -78,7 +78,7 @@ async function authenticate(domainKey, login, password, db) {
   const { getSetting } = require("./settings");
   const departments = require("../config/departments");
 
-  const inGroup = (name) => name && memberOf.some((dn) => dn.toLowerCase().includes(`cn=${name.toLowerCase()}`));
+  const inGroup = (name) => isMemberOfGroup(memberOf, name);
 
   // Порядок в config/departments.js — это и порядок приоритета: первое
   // совпадение побеждает (обычно "it" стоит первым, чтобы сотрудник,
@@ -108,6 +108,29 @@ function normalizeMemberOf(memberOf) {
   return Array.isArray(memberOf) ? memberOf : [memberOf];
 }
 
+/**
+ * Состоит ли пользователь в группе с точно таким именем.
+ *
+ * Сравнивается первый компонент DN (CN=...) целиком, а не ищется подстрока.
+ * Прежняя проверка (`dn.includes("cn=" + name)`) выдавала лишние права: при
+ * группе администраторов "Otdel-IT" под условие попадала любая группа, чей DN
+ * просто содержит эти символы, — например "CN=Otdel-IT-Praktikanty" или
+ * вложенная "OU=...,CN=Otdel-IT-Arhiv". Регистр не важен (AD его не различает).
+ */
+function isMemberOfGroup(memberOf, groupName) {
+  if (!groupName) return false;
+  const target = String(groupName).trim().toLowerCase();
+  if (!target) return false;
+
+  return normalizeMemberOf(memberOf).some((dn) => {
+    // Компоненты DN разделяются запятой, но запятая внутри самого имени
+    // экранируется обратным слэшем ("CN=Иванов\, Иван,OU=...").
+    const rdn = String(dn).split(/(?<!\\),/)[0].trim();
+    if (!rdn.toLowerCase().startsWith("cn=")) return false;
+    return rdn.slice(3).replace(/\\(.)/g, "$1").trim().toLowerCase() === target;
+  });
+}
+
 // ldapts не всегда "схлопывает" одиночное значение атрибута в строку —
 // иногда отдаёт массив из одного элемента даже для однозначных атрибутов
 // вроде mail/department/telephoneNumber. Если положить такой массив прямо
@@ -135,4 +158,4 @@ class LdapAuthError extends Error {
   }
 }
 
-module.exports = { authenticate, LdapAuthError };
+module.exports = { authenticate, LdapAuthError, isMemberOfGroup };

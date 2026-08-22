@@ -1,14 +1,41 @@
+import os
 import socket
 import sqlite3
 import time
 import re
 import logging
 from datetime import datetime
+from pathlib import Path
 
-HOST = "10.148.130.207"
-PORT = 23000
-LOGIN = b"SMDR\r\n"
-PASSWORD = b"CCSMDRP\r\n"
+# Адрес АТС и пароль SMDR раньше лежали прямо в этом файле и уезжали в
+# репозиторий вместе с кодом. Теперь берём их из окружения или из соседнего
+# файла .env (он в .gitignore). Разбираем .env вручную, без python-dotenv:
+# на закрытом контуре ставить пакеты неоткуда, а формат тут простейший.
+def load_env():
+    env_path = Path(__file__).with_name('.env')
+    if not env_path.exists():
+        return
+    for raw in env_path.read_text(encoding='utf-8').splitlines():
+        line = raw.strip()
+        if not line or line.startswith('#') or '=' not in line:
+            continue
+        key, value = line.split('=', 1)
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+load_env()
+
+HOST = os.environ.get('SMDR_HOST', '')
+PORT = int(os.environ.get('SMDR_PORT', '23000'))
+LOGIN = (os.environ.get('SMDR_LOGIN', 'SMDR') + '\r\n').encode()
+PASSWORD = (os.environ.get('SMDR_PASSWORD', '') + '\r\n').encode()
+
+if not HOST or not os.environ.get('SMDR_PASSWORD'):
+    raise SystemExit(
+        'Не заданы SMDR_HOST и/или SMDR_PASSWORD.\n'
+        'Скопируйте .env.example в .env рядом с этим файлом и укажите адрес АТС '
+        'и пароль SMDR (см. SMDR/README.md).'
+    )
 
 logging.basicConfig(filename='collector.log', level=logging.INFO,
                      format='%(asctime)s %(message)s')

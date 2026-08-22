@@ -41,6 +41,13 @@
 </div>
 
 <script>
+// Сводная таблица ниже собирается через innerHTML, поэтому значения из базы
+// (в первую очередь ФИО из справочника — его вводит человек) экранируем.
+function escHtml(value) {
+  return String(value == null ? '' : value).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+}
 fetch('api/stats/daily').then(r => r.json()).then(data => {
   const days = [...new Set(data.map(d => d.day))].sort();
   const dirs = ['outgoing', 'incoming', 'internal'];
@@ -100,13 +107,13 @@ function renderSummary() {
 
   document.getElementById('summaryBody').innerHTML = sorted.map(row => `
     <tr>
-      <td>${row.ext}</td>
-      <td>${row.fio || '—'}</td>
-      <td>${row.total}</td>
-      <td>${row.outgoing}</td>
-      <td>${row.incoming}</td>
-      <td>${row.internal}</td>
-      <td>${formatMinutes(row.outgoingSeconds)}</td>
+      <td>${escHtml(row.ext)}</td>
+      <td>${row.fio ? escHtml(row.fio) : '—'}</td>
+      <td>${Number(row.total) || 0}</td>
+      <td>${Number(row.outgoing) || 0}</td>
+      <td>${Number(row.incoming) || 0}</td>
+      <td>${Number(row.internal) || 0}</td>
+      <td>${escHtml(formatMinutes(row.outgoingSeconds))}</td>
     </tr>`).join('');
 
   document.querySelectorAll('th.sortable').forEach(th => {

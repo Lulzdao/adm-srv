@@ -651,7 +651,10 @@ function renderDetail(main, ticket) {
   }
   function renderAttachments() {
     document.getElementById("attachList").innerHTML = (ticket.attachments || []).map(a => `
-      <div class="badge" style="color:var(--ink);background:var(--line-soft);">${icon("paperclip", 13)} ${esc(a.filename)} <span style="color:var(--ink-soft);">· ${(a.filesize/1024).toFixed(0)} КБ</span></div>`).join("");
+      <a class="badge" href="/api/tickets/${ticket.id}/attachments/${a.id}" download="${esc(a.filename)}"
+         style="color:var(--ink);background:var(--line-soft);text-decoration:none;">
+        ${icon("paperclip", 13)} ${esc(a.filename)} <span style="color:var(--ink-soft);">· ${(a.filesize/1024).toFixed(0)} КБ</span>
+      </a>`).join("");
   }
   function renderComments() {
     const list = ticket.comments || [];
@@ -669,8 +672,8 @@ function renderDetail(main, ticket) {
     document.getElementById("historyList").innerHTML = list.length ? list.map(h => `
       <div style="font-size:12px;color:var(--ink-soft);margin-bottom:8px;">
         <span class="mono" style="color:var(--ink);">${fmtDate(h.changed_at)}</span> —
-        ${(STATUSES.find(s=>s.id===h.old_status)||{}).label || h.old_status || "—"} →
-        <b style="color:var(--ink);">${(STATUSES.find(s=>s.id===h.new_status)||{}).label || h.new_status}</b>, ${esc(h.changed_by)}
+        ${esc((STATUSES.find(s=>s.id===h.old_status)||{}).label || h.old_status || "—")} →
+        <b style="color:var(--ink);">${esc((STATUSES.find(s=>s.id===h.new_status)||{}).label || h.new_status)}</b>, ${esc(h.changed_by)}
       </div>`).join("") : `<div style="font-size:12px;color:var(--ink-soft);">Изменений не было.</div>`;
   }
   async function renderAssigneeSelect() {

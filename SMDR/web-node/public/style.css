@@ -56,25 +56,6 @@ body.dashboard-page th { position: sticky; top: 0; z-index: 2; }
 
 h1 { font-size: 21px; }
 
-.login-page { display: flex; align-items: center; justify-content: center; height: 100vh; }
-.login-box {
-  background: var(--panel-bg); padding: 34px; border-radius: 14px;
-  border: 1px solid var(--panel-border); box-shadow: 0 4px 16px var(--shadow);
-  display: flex; flex-direction: column; gap: 14px; width: 300px;
-}
-.login-box h2 { color: var(--text); margin: 0 0 4px; }
-.login-box input {
-  padding: 8px 12px; font-size: 13.5px;
-  border: 1px solid var(--input-border); border-radius: 8px;
-  background: var(--panel-bg); color: var(--text);
-}
-.login-box input:focus { outline: none; border-color: var(--accent); }
-.login-box button {
-  padding: 8px 16px; font-size: 13px; font-weight: 600; cursor: pointer;
-  border: 1px solid var(--accent-dark); background: var(--panel-bg); color: var(--accent-dark); border-radius: 8px;
-  transition: background 0.15s, color 0.15s;
-}
-.login-box button:hover { background: var(--accent-dark); color: #fff; }
 .error { color: #a83a3a; font-size: 13px; }
 
 .cards { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }

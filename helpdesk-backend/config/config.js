@@ -1,4 +1,18 @@
 require("dotenv").config();
+const crypto = require("crypto");
+
+// Секрет подписи сессионных cookie. Раньше при незаданном SESSION_SECRET
+// подставлялась одна и та же строка "dev-secret-change-me" — зная её (а она
+// лежала в открытом исходнике), можно подписать себе любую сессию, в том
+// числе администраторскую. Теперь при отсутствии переменной берём случайный
+// секрет на время работы процесса: подделать нельзя, а платой будет лишь то,
+// что после перезапуска сервера всем придётся войти заново — это и есть
+// заметный сигнал, что секрет пора прописать в .env.
+function sessionSecret() {
+  const fromEnv = process.env.SESSION_SECRET;
+  if (fromEnv && fromEnv.trim()) return fromEnv;
+  return crypto.randomBytes(32).toString("hex");
+}
 
 function domainConfig(prefix) {
   return {
@@ -13,7 +27,7 @@ function domainConfig(prefix) {
 
 module.exports = {
   port: process.env.PORT || 3000,
-  sessionSecret: process.env.SESSION_SECRET || "dev-secret-change-me",
+  sessionSecret: sessionSecret(),
   dbPath: process.env.DB_PATH || "./data/helpdesk.db",
   uploadsDir: process.env.UPLOADS_DIR || "./uploads",
 

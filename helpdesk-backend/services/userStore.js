@@ -20,6 +20,13 @@ function upsertFromLdap(db, ldapUser) {
 
   const existing = db.prepare("SELECT * FROM users WHERE ad_login = ?").get(login);
 
+  // Локальные аварийные учётки доменным входом не трогаем: иначе доменный
+  // аккаунт с совпавшим логином перезаписал бы им роль и ФИО и въехал бы в
+  // ту же строку пользователя (а вместе с ней — в её заявки и права).
+  if (existing && existing.auth_type === "local") {
+    throw new Error(`Логин "${login}" занят локальной аварийной учётной записью`);
+  }
+
   if (existing) {
     db.prepare(
       `UPDATE users SET full_name = ?, department = ?, email = ?, phone = ?,
