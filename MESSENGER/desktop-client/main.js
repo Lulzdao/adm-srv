@@ -5,10 +5,18 @@ const fs = require('fs');
 const http = require('http');
 const https = require('https');
 const { SERVER_URL } = require('./config');
+const { autoUpdater } = require('electron-updater');
 // Иконка окна/панели задач — в собранном .exe она и так встроена (см. build.win.icon в
 // package.json), но при разработке через `npm start` (без сборки) без этого показывался бы
 // стандартный логотип Electron вместо своего.
 const APP_ICON_PATH = path.join(__dirname, 'build', 'icon.ico');
+
+// Какой сборкой пользуется человек — под Windows 7/8.1 или под Windows 10+. Метку проставляет
+// electron-builder на этапе сборки (extraMetadata в build-config/win7.js и win10.js), поэтому в
+// собранном приложении она есть всегда, а при запуске из исходников (npm start) её нет — тогда
+// 'dev'. Нужна поддержке: обе сборки внешне одинаковы, и без этой строки узнать, какая именно
+// стоит у сотрудника, можно только по версии Electron в диспетчере задач.
+const BUILD_TRACK = require('./package.json').buildTrack || 'dev';
 
 // GPU/аппаратное ускорение Chromium на Windows 7 нестабильно (устаревшие/неполные драйверы DirectX,
 // не рассчитанные на современный Chromium) и регулярно приводит к падениям с "unknown software
@@ -32,6 +40,13 @@ if (process.platform === 'win32' && require('os').release().startsWith('6.1')) {
 const LOG_PATH = path.join(app.getPath('userData'), 'client.log');
 function logLocal(event, meta = {}) {
   fs.appendFile(LOG_PATH, `${new Date().toISOString()} [${event}] ${JSON.stringify(meta)}\n`, () => {});
+  // ...и заодно на сервер, чтобы это было видно в разделе "Логи" веб-панели. Раньше события
+  // главного процесса (сбои обновления, падения окон) оставались только здесь, на машине
+  // сотрудника, — добраться до них можно было, лишь придя к человеку за компьютер.
+  // Отправляет ростер: токен для обращения к серверу есть только у него. Через try, потому что
+  // logLocal вызывается в том числе из обработчика неперехваченных исключений — он может
+  // сработать раньше, чем появится само окно ростера.
+  try { sendToWindow(rosterWin, 'report-to-server', { kind: event, meta }); } catch { /* окна ещё/уже нет */ }
 }
 process.on('uncaughtException', (err) => {
   logLocal('main_uncaught_exception', { message: err.message, stack: err.stack });
@@ -55,6 +70,7 @@ const DEFAULT_SETTINGS = {
   chatSize: null,
   broadcastSize: null,
   serverUrlOverride: null,   // переопределяет SERVER_URL из config.js без пересборки — см. Ctrl+S на экране входа
+  autoUpdate: true,          // сама качать вышедшие обновления (ставятся при выходе) — см. setupUpdater
 };
 
 function loadSettings() {
@@ -454,7 +470,129 @@ async function handleSendFile(payload) {
   if (uploadedFiles.length) sendToWindow(win, 'files-to-send', uploadedFiles);
 }
 
+// ---------- Обновление приложения ----------
+// Механика: electron-builder кладёт рядом с установщиком latest.yml (версия, имя файла, контрольная
+// сумма), обе сборки — каждая в свою папку на сервере (см. /updates в server.js). Клиент сверяет
+// свою версию с latest.yml и при необходимости качает новый установщик.
+//
+// Обновление НЕ прерывает работу насильно: скачанное ставится при обычном выходе из приложения
+// (autoInstallOnAppQuit), а пользователю просто предлагается перезапуститься сейчас, если он готов.
+// Принудительный перезапуск по таймеру, который обсуждался в концепте, отброшен — оборвать человека
+// посреди разговора хуже, чем поставить обновление на день позже.
+let updateState = { state: 'idle' }; // см. sendUpdateState — состояние для панели настроек
+
+function updateFeedUrl() {
+  // Адрес берём тот, к которому клиент реально подключён СЕЙЧАС, а не зашитый при сборке: на
+  // конкретной машине его могли поменять по Ctrl+S, да и сам сервер мог переехать. Иначе клиент
+  // искал бы обновления там, где сервера уже нет.
+  const base = String(settings.serverUrlOverride || SERVER_URL).replace(/\/+$/, '');
+  return `${base}/updates/${BUILD_TRACK}`;
+}
+
+function sendUpdateState(state) {
+  updateState = state;
+  sendToWindow(rosterWin, 'update-state', state);
+}
+
+// electron-updater кладёт в ошибку весь ответ сервера целиком — со всеми заголовками и куском
+// HTML-страницы 404 в придачу. В панели настроек из этого получается простыня на десяток строк,
+// по которой всё равно не понять, что делать. Поэтому наружу отдаём короткую фразу по-русски, а
+// полный текст пишем в client.log (в папке данных пользователя) — там он и нужен, когда разбираются.
+function shortUpdateError(err) {
+  const raw = String((err && (err.stack || err.message)) || err);
+  // Самый частый случай в работе: сборки на сервер ещё не выложили, значит latest.yml нет и в ответ
+  // приходит 404. Это не поломка — так и говорим, без слова "ошибка".
+  if (/\b404\b|latest\.yml|Cannot find .*\.yml/i.test(raw)) return 'На сервере пока нет файлов обновления';
+  if (/ECONNREFUSED|ENOTFOUND|EHOSTUNREACH|ENETUNREACH|ETIMEDOUT|ECONNRESET|socket hang up/i.test(raw)) return 'Сервер недоступен';
+  // Понадобится, когда сервер переедет на https со своим сертификатом — см. CONCEPT-roadmap.md.
+  if (/certificate|CERT_|ERR_TLS|self.signed/i.test(raw)) return 'Сертификат сервера не признан доверенным';
+  return 'Не удалось проверить обновления';
+}
+
+// Обновление, запущенное администратором из веб-панели: качаем и ставим без вопросов. Обычный
+// сценарий (см. ниже) ждёт выхода из приложения, но здесь администратор действует осознанно —
+// например, когда нужно срочно раскатить исправление.
+let forceInstallAfterDownload = false;
+
+function forceUpdateNow() {
+  if (!app.isPackaged) return;
+  logLocal('update_forced_by_admin', {});
+  forceInstallAfterDownload = true;
+  autoUpdater.autoDownload = true;
+  checkForUpdates();
+}
+
+function setupUpdater() {
+  // В режиме разработки (npm start) обновляться неоткуда и незачем: app-update.yml появляется
+  // только в собранном приложении, и electron-updater без него бросает ошибку.
+  if (!app.isPackaged) return;
+
+  autoUpdater.autoDownload = !!settings.autoUpdate;
+  autoUpdater.autoInstallOnAppQuit = true; // скачанное встанет при следующем выходе, без вопросов
+  autoUpdater.logger = { info: () => {}, warn: () => {}, error: (m) => logLocal('updater_error', { message: String(m) }) };
+
+  autoUpdater.on('checking-for-update', () => sendUpdateState({ state: 'checking' }));
+  autoUpdater.on('update-not-available', () => sendUpdateState({ state: 'not-available' }));
+  autoUpdater.on('update-available', (info) => sendUpdateState({
+    state: settings.autoUpdate ? 'downloading' : 'available',
+    version: info.version,
+  }));
+  autoUpdater.on('download-progress', (p) => sendUpdateState({ state: 'downloading', percent: Math.round(p.percent) }));
+  autoUpdater.on('update-downloaded', (info) => {
+    logLocal('update_downloaded', { version: info.version });
+    sendUpdateState({ state: 'downloaded', version: info.version });
+    if (forceInstallAfterDownload) {
+      // Обновление запустил администратор. Совсем без предупреждения окна закрывать нельзя —
+      // человек может печатать, — но и отменить он это не может: решение принято не им.
+      // Небольшой паузы хватает, чтобы дописать фразу и понять, что происходит.
+      sendToWindow(rosterWin, 'toast', { message: `Администратор запустил обновление до ${info.version}. Перезапуск через 15 секунд…` });
+      setTimeout(() => { isQuitting = true; autoUpdater.quitAndInstall(); }, 15000);
+    }
+  });
+  autoUpdater.on('error', (err) => {
+    // Ошибку показываем в настройках, а не глотаем: молча не обновляющийся клиент — это то, что
+    // замечают через полгода. Но показываем коротко — полный текст только в лог (см. shortUpdateError).
+    logLocal('updater_error', { message: err && err.message, stack: err && err.stack });
+    sendUpdateState({ state: 'error', message: shortUpdateError(err) });
+  });
+
+  checkForUpdates(); // разовая проверка на старте; дальше — только по кнопке в настройках
+}
+
+function checkForUpdates() {
+  if (!app.isPackaged) {
+    sendUpdateState({ state: 'dev' });
+    return;
+  }
+  try {
+    autoUpdater.setFeedURL({ provider: 'generic', url: updateFeedUrl() });
+    autoUpdater.autoDownload = !!settings.autoUpdate;
+    autoUpdater.checkForUpdates();
+  } catch (e) {
+    logLocal('updater_error', { message: e && e.message, stack: e && e.stack });
+    sendUpdateState({ state: 'error', message: shortUpdateError(e) });
+  }
+}
+
 // ---------- IPC от окон ----------
+ipcMain.handle('get-update-state', () => updateState);
+ipcMain.on('check-updates', () => checkForUpdates());
+ipcMain.on('force-update', () => forceUpdateNow());
+// Администратор запросил журнал этой машины из веб-панели. Отдаём его ростеру — отправить на
+// сервер может только он, токен есть лишь у него.
+ipcMain.handle('read-local-log', () => {
+  try { return fs.readFileSync(LOG_PATH, 'utf8'); }
+  catch { return '(локальный журнал пуст или недоступен)'; }
+});
+ipcMain.on('download-update', () => { if (app.isPackaged) autoUpdater.downloadUpdate(); });
+ipcMain.on('install-update', () => {
+  // isQuitting обязателен ДО quitAndInstall: иначе обработчик close у окна списка контактов
+  // отменит закрытие и спрячет окно в трей (см. createRoster), приложение не выйдет,
+  // и установка не начнётся.
+  isQuitting = true;
+  autoUpdater.quitAndInstall();
+});
+
 ipcMain.on('open-chat', (event, payload) => {
   createWindow(`${payload.type}:${payload.id}`, 'chat.html', payload);
 });
@@ -548,6 +686,12 @@ ipcMain.handle('set-server-url', (event, url) => {
   saveSettings();
   return settings.serverUrlOverride || SERVER_URL;
 });
+// Строка "что именно у меня установлено" для панели настроек — см. BUILD_TRACK выше.
+ipcMain.handle('get-app-info', () => ({
+  version: app.getVersion(),
+  track: BUILD_TRACK,
+  electron: process.versions.electron,
+}));
 ipcMain.handle('get-unread-state', () => unreadStatePayload());
 // unreadDms/unreadBroadcastCount выше — только в памяти этого процесса, пополняются исключительно
 // живыми WS-событиями (см. markUnread). Если клиент был полностью закрыт (не просто свёрнут в
@@ -580,6 +724,11 @@ ipcMain.on('set-settings', (event, partial) => {
   }
   if ('uiScale' in partial) {
     for (const win of allWindows()) win.webContents.setZoomFactor(settings.uiScale || 1);
+  }
+  // Включили автообновление — начинаем качать уже найденное, не дожидаясь следующей проверки.
+  if ('autoUpdate' in partial && app.isPackaged) {
+    autoUpdater.autoDownload = !!settings.autoUpdate;
+    if (settings.autoUpdate && updateState.state === 'available') autoUpdater.downloadUpdate();
   }
   // Тема (и в перспективе другие настройки внешнего вида) должны применяться сразу во всех открытых
   // окнах, не только в том, где их поменяли — иначе пришлось бы перезапускать каждое окно вручную.
@@ -625,6 +774,7 @@ app.whenReady().then(() => {
   createRoster();
   createTray();
   startIdleWatch();
+  setupUpdater();
 
   // Рендерер вылетел целиком (не просто JS-исключение внутри страницы, а сам процесс окна) —
   // в этот момент он уже не может сам отправить лог на сервер, поэтому только локально.

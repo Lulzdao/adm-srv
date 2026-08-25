@@ -17,3 +17,5 @@ helpdesk-backend/data/*
 MESSENGER/bootstrap-admin.js
 MESSENGER/desktop-client/dist/
 MESSENGER/logs/
+# Готовые установщики клиента, которые сервер раздаёт на автообновление
+MESSENGER/updates/

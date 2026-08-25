@@ -381,7 +381,10 @@ async function api(path, opts) {
   return data;
 }
 
-function escapeHtml(s) { return s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
+// Кавычки экранируем наравне с угловыми скобками: значение нередко подставляется в атрибут, где
+// собственная кавычка закрыла бы его и всё дальнейшее читалось бы уже как разметка. String() —
+// на случай, если вместо строки придёт число или null (у них нет .replace).
+function escapeHtml(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 function escapeAttr(s) { return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 function escapeRegex(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 // Подсветка совпадений при поиске по истории (см. runSearch) — экранируем текст точно так же, как
@@ -419,7 +422,7 @@ function itemHtml(b, query) {
     filesHtml += `<div class="file-row"><a class="file" href="#" data-url="${escapeAttr(f.url)}" data-name="${escapeAttr(f.name || 'файл')}"><span class="fi"><span class="fi-file">${uiIcon('file')}</span><span class="fi-download">${uiIcon('download')}</span><span class="fi-progress"><svg viewBox="0 0 24 24"><circle class="ring-bg" cx="12" cy="12" r="10"></circle><circle class="ring-bar" cx="12" cy="12" r="10"></circle></svg><span class="fi-pct"></span></span><span class="fi-check">${uiIcon('check')}</span></span><span class="fmeta"><span class="fn">${escapeHtml(f.name || 'файл')}</span><span class="fs">${fmtSize(f.size)}</span></span></a></div>`;
   });
   const txtHtml = b.text ? `<div class="txt selectable" data-raw-text="${escapeAttr(b.text)}">${highlightHtml(b.text, query)}</div>` : '';
-  return `<div class="item"><span class="who">${b.from_user}</span><span class="time">${time}</span>${txtHtml}${filesHtml}</div>`;
+  return `<div class="item"><span class="who">${escapeHtml(b.from_user)}</span><span class="time">${time}</span>${txtHtml}${filesHtml}</div>`;
 }
 
 // Лента "сегодняшних" рассылок — обнуляется каждый день, как и в чате. Вся история доступна
@@ -754,7 +757,10 @@ let wsLostTimer = null; // см. showConnectionLostModal в ui-kit.js
 let wsReconnectDelay = 2000; // экспоненциальный бэкофф между попытками (см. onclose ниже)
 function connectWs() {
   const wsUrl = serverUrl.replace(/^http/, 'ws');
-  ws = new WebSocket(`${wsUrl}?token=${token}&host=${encodeURIComponent(desktop.hostname)}`);
+  ws = new WebSocket(`${wsUrl}?token=${token}&host=${encodeURIComponent(desktop.hostname)}`
+    // Версия и сборка — чтобы администратор в веб-панели видел, у кого что установлено, и
+    // мог понять, до кого обновление ещё не доехало (см. /api/admin/clients в server.js).
+    + `&ver=${encodeURIComponent(desktop.appVersion)}&track=${encodeURIComponent(desktop.buildTrack)}`);
   ws.onopen = async () => {
     clearTimeout(wsLostTimer);
     wsLostTimer = null;

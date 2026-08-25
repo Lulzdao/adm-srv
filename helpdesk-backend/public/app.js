@@ -20,11 +20,15 @@ function icon(name, size) {
 // ====== Константы ======
 const TITLE_MAX = 50;
 const DESCRIPTION_MAX = 140;
+// Цвета — тональные пары Material 3 (насыщенный тон для точки/текста,
+// светлый «container» для подложки). Держите их в согласии с палитрой
+// public/styles.css: значения продублированы здесь, потому что подставляются
+// в инлайновые стили при отрисовке.
 const PRIORITIES = [
-  { id: "critical", label: "Критичный", color: "#B5432F", soft: "#F5E1DC" },
-  { id: "high", label: "Высокий", color: "#C7791F", soft: "#F7E9D6" },
-  { id: "medium", label: "Средний", color: "#8A7A2E", soft: "#F2EFD8" },
-  { id: "low", label: "Низкий", color: "#5B6560", soft: "#EAECE7" },
+  { id: "critical", label: "Критичный", color: "#8C1D18", soft: "#FFDAD6" },
+  { id: "high", label: "Высокий", color: "#8A4600", soft: "#FFDCC2" },
+  { id: "medium", label: "Средний", color: "#7D5700", soft: "#FFDEA6" },
+  { id: "low", label: "Низкий", color: "#5A5248", soft: "#EFE5DB" },
 ];
 const STATUSES = [
   { id: "new", label: "Новая" },
@@ -34,9 +38,10 @@ const STATUSES = [
   { id: "closed", label: "Закрыта" },
   { id: "cancelled", label: "Отменена" },
 ];
+// [цвет текста, цвет подложки] — тональные пары Material 3.
 const STATUS_COLORS = {
-  new: ["#2B6E6B", "#E4EFEE"], progress: ["#C7791F", "#F7E9D6"], waiting: ["#8A7A2E", "#F2EFD8"],
-  resolved: ["#3F7A4E", "#E4EFE5"], closed: ["#5B6560", "#EAECE7"], cancelled: ["#5B6560", "#EAECE7"],
+  new: ["#101C33", "#DCE3F9"], progress: ["#2E1500", "#FFDCC2"], waiting: ["#21005D", "#EADDFF"],
+  resolved: ["#08210F", "#CDEBD5"], closed: ["#302A24", "#EFE5DB"], cancelled: ["#302A24", "#EFE5DB"],
 };
 
 // ====== Состояние ======
@@ -388,9 +393,11 @@ async function renderList(main, opts = {}) {
     mine: "Мои заявки",
   };
 
+  // Тема занимает всё свободное место (1fr), а не упирается в 260px:
+  // на широком экране заголовок заявки иначе обрезался посреди слова.
   const gridCols = isPrivileged
-    ? "96px minmax(160px,260px) 150px 90px 130px 150px 140px 24px"
-    : "96px minmax(160px,260px) 130px 150px 140px 24px";
+    ? "92px minmax(220px,1fr) 150px 80px 130px 150px 140px 24px"
+    : "92px minmax(220px,1fr) 130px 150px 140px 24px";
 
   main.innerHTML = `
     <div class="topbar">

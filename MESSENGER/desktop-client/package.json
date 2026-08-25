@@ -5,41 +5,16 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --win nsis"
+    "dist:win7": "electron-builder --win --config build-config/win7.js",
+    "dist:win10": "electron-builder --win --config build-config/win10.js",
+    "dist": "npm run dist:win7 && npm run dist:win10"
+  },
+  "dependencies": {
+    "electron-updater": "6.3.9"
   },
   "devDependencies": {
     "electron": "22.3.27",
     "electron-builder": "24.13.3"
-  },
-  "build": {
-    "appId": "com.yourorg.minimessenger",
-    "productName": "Мини-мессенджер",
-    "win": {
-      "icon": "build/icon.ico",
-      "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "x64",
-            "ia32"
-          ]
-        }
-      ]
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true
-    },
-    "files": [
-      "main.js",
-      "preload.js",
-      "config.js",
-      "renderer/**/*",
-      "tray-icon.png",
-      "build/icon.ico"
-    ]
   },
   "allowScripts": {
     "electron@22.3.27": true

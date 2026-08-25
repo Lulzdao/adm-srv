@@ -16,7 +16,6 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 
-const SECRET = process.env.JWT_SECRET || 'change-me-in-production';
 const PORT = process.env.PORT || 3000;
 const IDLE_AFTER_MS = 30 * 60 * 1000; // 30 минут бездействия = AFK (страховка на стороне сервера)
 
@@ -201,6 +200,28 @@ function setSettingRaw(key, value) {
   db.prepare('INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value);
 }
 
+// ---------- Ключ подписи токенов ----------
+// Раньше здесь стояло `process.env.JWT_SECRET || 'change-me-in-production'`. Строка-заглушка лежала
+// в открытом репозитории, а переменную окружения на практике почти никто не выставляет — значит,
+// ключ подписи был публично известен. Зная его, любой человек в сети мог сам подписать токен с
+// чужим id (в том числе администратора) и получить полный доступ, вообще не зная паролей.
+// Теперь: если JWT_SECRET не задан, при первом запуске генерируем случайный ключ и сохраняем его в
+// базу — дальше он постоянный, отдельной настройки при развёртывании не требуется, а угадать его
+// нельзя. Явно заданный JWT_SECRET по-прежнему в приоритете (удобно, если ключ хранят централизованно).
+// ВНИМАНИЕ при обновлении: у тех, кто работал на прежней строке-заглушке, ключ сменится, и всем
+// один раз придётся заново войти в клиент. Это ожидаемо и происходит ровно один раз.
+function resolveSecret() {
+  if (process.env.JWT_SECRET) return process.env.JWT_SECRET;
+  let stored = getSettingRaw('jwt_secret');
+  if (!stored) {
+    stored = crypto.randomBytes(48).toString('hex');
+    setSettingRaw('jwt_secret', stored);
+    logServer('INFO', 'jwt_secret_generated', {});
+  }
+  return stored;
+}
+const SECRET = resolveSecret();
+
 // Старые сообщения хранили один файл в отдельных колонках (file_url/file_name/file_size), новые —
 // произвольное количество файлов в files_json. Приводим и то, и другое к единому виду files[].
 // Админ может удалить файл с диска через веб-панель, не трогая саму историю переписки (см.
@@ -225,9 +246,39 @@ function normalizeRow(row) {
   }
   return { ...rest, files, reply };
 }
+// Список файлов, лежащих сейчас в uploads. Раньше на каждый файл в каждом сообщении делался
+// отдельный fs.existsSync — на странице истории в 200 сообщений это сотни синхронных обращений к
+// диску, и все они блокируют единственный поток, в котором сервер обслуживает вообще всех. Одного
+// чтения каталога хватает на все файлы запроса; короткий срок жизни кэша нужен только чтобы
+// удаление файла из веб-панели отражалось практически сразу.
+const UPLOADS_CACHE_MS = 2000;
+let uploadsCache = { names: null, at: 0 };
+function uploadedFileNames() {
+  const now = Date.now();
+  if (!uploadsCache.names || now - uploadsCache.at > UPLOADS_CACHE_MS) {
+    try { uploadsCache = { names: new Set(fs.readdirSync(uploadsDir)), at: now }; }
+    catch { uploadsCache = { names: new Set(), at: now }; }
+  }
+  return uploadsCache.names;
+}
+function invalidateUploadsCache() { uploadsCache = { names: null, at: 0 }; }
 function fileExistsForUrl(url) {
   const diskName = String(url || '').split('/').pop();
-  return !!diskName && fs.existsSync(path.join(uploadsDir, diskName));
+  return !!diskName && uploadedFileNames().has(diskName);
+}
+
+// Список файлов, пришедший от клиента (в сообщении или в рассылке) — приводим к безопасному виду:
+// только объекты с url, не больше 20 штук, все поля обрезаны по длине и приведены к нужному типу.
+// Раньше это было продублировано в двух местах слово в слово.
+function normalizeIncomingFiles(rawFiles) {
+  if (!Array.isArray(rawFiles)) return [];
+  return rawFiles.slice(0, 20)
+    .filter((f) => f && typeof f === 'object' && typeof f.url === 'string' && f.url)
+    .map((f) => ({
+      url: f.url.slice(0, 300),
+      name: (typeof f.name === 'string' && f.name ? f.name : 'файл').slice(0, 200),
+      size: Number.isFinite(Number(f.size)) ? Number(f.size) : 0,
+    }));
 }
 
 // Реакции — отдельным батч-запросом по набору id (а не JOIN в каждый history-запрос: их SQL и
@@ -428,6 +479,19 @@ const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
+// ---------- Файлы обновлений клиента ----------
+// Клиент сам проверяет наличие новой версии и качает её отсюда (см. electron-updater в main.js
+// десктоп-клиента). Отдельный сервер под это не нужен — у нас уже есть доступ ко всем машинам.
+// Внутри — по папке на каждую сборку: updates/win7/ и updates/win10/. Раскладывать их обязательно
+// раздельно: сборка для Windows 10 несёт Electron, который на Windows 7 просто не запускается,
+// и клиент, скачавший чужое обновление, перестанет открываться.
+// В каждой папке лежит то, что положил electron-builder: сам .exe и latest.yml с версией и
+// контрольной суммой. Namespace без авторизации намеренно — это установочные файлы, не секрет,
+// а клиенту на этапе обновления может быть уже нечем предъявить токен.
+const updatesDir = path.join(__dirname, 'updates');
+if (!fs.existsSync(updatesDir)) fs.mkdirSync(updatesDir, { recursive: true });
+app.use('/updates', express.static(updatesDir));
+
 // Разрешаем запросы от десктоп-клиента (Electron грузит страницы с file://)
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
@@ -514,6 +578,7 @@ app.post('/api/upload', auth, (req, res, next) => {
   }
   const safeName = `${Date.now()}-${crypto.randomBytes(4).toString('hex')}-${originalName}`;
   fs.writeFileSync(path.join(uploadsDir, safeName), req.body);
+  invalidateUploadsCache(); // иначе только что загруженный файл до 2 секунд считался бы удалённым
   res.json({ url: `/uploads/${safeName}`, name: originalName, size: req.body.length });
 });
 // Файл больше жёсткого потолка (см. UPLOAD_HARD_CEILING_MB) — express.raw() бросает ошибку мимо
@@ -572,7 +637,9 @@ app.get('/uploads/:diskName', (req, res) => {
   try { payload = jwt.verify(req.query.token, SECRET); } catch { return res.sendStatus(401); }
   if (payload.purpose !== 'download' || payload.diskName !== req.params.diskName) return res.sendStatus(401);
   const filePath = path.join(uploadsDir, req.params.diskName);
-  if (!filePath.startsWith(uploadsDir) || !fs.existsSync(filePath)) return res.sendStatus(404);
+  // Сравниваем именно каталог файла с uploadsDir, а не начало строки пути: startsWith прошёл бы и
+  // для соседнего каталога с похожим именем (uploads-old и т.п.). Тот же приём, что в DELETE ниже.
+  if (path.dirname(filePath) !== uploadsDir || !fs.existsSync(filePath)) return res.sendStatus(404);
   const displayName = req.query.name ? String(req.query.name).slice(0, 260) : req.params.diskName;
   res.download(filePath, displayName);
 });
@@ -634,7 +701,17 @@ setInterval(() => {
   }
 }, 10 * 60 * 1000).unref();
 
+// Самостоятельная регистрация: кто угодно, дотянувшийся до порта сервера, заводит себе учётку и
+// попадает в общую комнату и в список сотрудников. Для корпоративного мессенджера это обычно
+// нежелательно — учётки должен раздавать администратор. Выключается в веб-панели (раздел
+// «Сотрудники»). По умолчанию оставлена включённой, чтобы обновление не отрезало вход тем, у кого
+// сейчас все так и регистрируются; рекомендация выключить — в README.
+function registrationOpen() { return getSettingRaw('registration_open') !== '0'; }
+
 app.post('/api/register', ipRateLimit({ windowMs: 60 * 60 * 1000, max: 10 }), (req, res) => {
+  if (!registrationOpen()) {
+    return res.status(403).json({ error: 'Самостоятельная регистрация отключена. Обратитесь к администратору за учётной записью.' });
+  }
   const { username, password } = req.body || {};
   if (!username || !password || password.length < 4) {
     return res.status(400).json({ error: 'Логин и пароль (мин. 4 символа) обязательны' });
@@ -677,7 +754,27 @@ app.post('/api/login', ipRateLimit({ windowMs: 10 * 60 * 1000, max: 30 }), (req,
 // unhandledrejection (см. installErrorReporting в ui-kit.js). Пишем в отдельный файл лога (не мешаем
 // с серверными событиями), с указанием, кто прислал и с какого хоста — так инцидент на чьём-то ПК
 // можно разобрать по логам на сервере, не прося сотрудника прислать скриншот или не выезжая к нему.
+// Ограничение потока: рендерер шлёт сюда каждую свою ошибку, а ошибка внутри цикла отрисовки или
+// переподключения повторяется десятки раз в секунду. Без потолка один сбойный клиент за ночь
+// раздувает дневной лог до гигабайтов и забивает диск сервера. Разбирать инцидент хватает и
+// нескольких десятков записей — остальные всё равно одинаковые.
+const CLIENT_LOG_MAX_PER_MIN = 30;
+const clientLogRate = new Map(); // userId -> { count, resetAt }
 app.post('/api/client-log', auth, (req, res) => {
+  const now = Date.now();
+  let bucket = clientLogRate.get(req.user.id);
+  if (!bucket || bucket.resetAt < now) {
+    bucket = { count: 0, resetAt: now + 60000 };
+    clientLogRate.set(req.user.id, bucket);
+  }
+  bucket.count += 1;
+  if (bucket.count > CLIENT_LOG_MAX_PER_MIN) {
+    // Одна отметка на «пачку», чтобы в логе осталось видно сам факт шторма ошибок.
+    if (bucket.count === CLIENT_LOG_MAX_PER_MIN + 1) {
+      logServer('WARN', 'client_log_flood', { userId: req.user.id, username: req.user.username });
+    }
+    return res.json({ ok: true });
+  }
   const { kind, message, extra, source, hostname } = req.body || {};
   logClient({
     userId: req.user.id,
@@ -689,6 +786,32 @@ app.post('/api/client-log', auth, (req, res) => {
     extra: extra !== undefined ? JSON.stringify(extra).slice(0, 2000) : null,
   });
   res.json({ ok: true });
+});
+
+// ---------- Журнал с конкретной машины ----------
+// Ошибки внутри окон рендереры шлют сюда сами по мере возникновения (см. /api/client-log выше). Но
+// у клиента есть и второй журнал — локальный client.log главного процесса, куда попадает то, что
+// рендерер отправить уже не может: падения самого окна и сбои обновления. Раньше он оставался на
+// машине сотрудника, и добраться до него можно было, только придя к человеку за компьютер.
+// Теперь администратор запрашивает его из веб-панели, клиент отвечает вот сюда.
+const clientLogDumps = new Map(); // "userId:hostname" -> { at, username, hostname, text }
+const CLIENT_LOG_DUMP_LIMIT = 400 * 1024;
+
+app.post('/api/client-log-file', auth, express.text({ limit: '2mb', type: () => true }), (req, res) => {
+  const hostname = String(req.query.host || '?').slice(0, 64);
+  const text = String(req.body || '').slice(-CLIENT_LOG_DUMP_LIMIT); // хвост: интересен конец, а не начало
+  clientLogDumps.set(`${req.user.id}:${hostname}`, {
+    at: Date.now(), username: req.user.username, hostname, text,
+  });
+  logServer('INFO', 'client_log_received', { userId: req.user.id, hostname, bytes: text.length });
+  res.json({ ok: true });
+});
+
+app.get('/api/admin/client-log', auth, requireCapability('can_admin'), (req, res) => {
+  const key = `${Number(req.query.userId)}:${String(req.query.host || '')}`;
+  const dump = clientLogDumps.get(key);
+  if (!dump) return res.status(404).json({ error: 'Журнал с этой машины ещё не получен' });
+  res.json(dump);
 });
 
 // ---------- Профиль (свой аккаунт) ----------
@@ -864,23 +987,29 @@ app.get('/api/broadcasts', auth, (req, res) => {
 app.get('/api/broadcasts/days', auth, (req, res) => res.json(broadcastsDays.all(tzModifier(req))));
 app.post('/api/broadcast', auth, requireCapability('can_broadcast'), (req, res) => {
   const text = String((req.body || {}).text || '').slice(0, 4000).trim();
-  const rawFiles = Array.isArray((req.body || {}).files) ? req.body.files : [];
-  const files = rawFiles.slice(0, 20).filter((f) => f && f.url).map((f) => ({
-    url: String(f.url).slice(0, 300),
-    name: String(f.name || 'файл').slice(0, 200),
-    size: Number(f.size) || 0,
-  }));
+  const files = normalizeIncomingFiles((req.body || {}).files);
   if (!text && !files.length) return res.status(400).json({ error: 'Пустая рассылка' });
   const now = Date.now();
   const filesJson = files.length ? JSON.stringify(files) : null;
   insertBroadcast.run(req.user.id, text, filesJson, now);
   const payload = JSON.stringify({ type: 'broadcast', from_user: req.user.display_name, text, files, created_at: now });
-  for (const ws of connMeta.keys()) ws.send(payload);
+  sendToAll(payload);
   res.json({ ok: true });
 });
 
 // ---------- Админка ----------
 app.get('/api/admin/users', auth, requireCapability('can_admin'), (req, res) => res.json(listUsersFull.all()));
+
+// Включение/выключение самостоятельной регистрации (см. registrationOpen выше).
+app.get('/api/admin/registration', auth, requireCapability('can_admin'), (req, res) => {
+  res.json({ open: registrationOpen() });
+});
+app.patch('/api/admin/registration', auth, requireCapability('can_admin'), (req, res) => {
+  const open = !!(req.body || {}).open;
+  setSettingRaw('registration_open', open ? '1' : '0');
+  logServer('INFO', 'registration_toggled', { adminId: req.user.id, open });
+  res.json({ open });
+});
 
 app.post('/api/admin/users', auth, requireCapability('can_admin'), (req, res) => {
   const { username, password, department_id, can_broadcast, can_admin } = req.body || {};
@@ -986,13 +1115,24 @@ app.post('/api/admin/departments/reorder', auth, requireCapability('can_admin'),
 // админке было видно не только "какой-то файл весом 3 МБ", а кто его отправил и куда.
 function buildFileIndex() {
   const index = new Map(); // diskName -> { from, context, created_at, originalName }
-  const userName = (id) => (getUserById.get(id) || {}).display_name || `#${id}`;
+  // Имена авторов запрашиваем по одному разу на человека, а не на каждый файл: у активной
+  // организации файлов тысячи, а отправителей — десятки.
+  const nameCache = new Map();
+  const userName = (id) => {
+    if (!nameCache.has(id)) nameCache.set(id, (getUserById.get(id) || {}).display_name || `#${id}`);
+    return nameCache.get(id);
+  };
+  const groupNames = new Map(db.prepare('SELECT id, name FROM groups').all().map((g) => [g.id, g.name]));
 
   const msgs = db.prepare('SELECT from_id, room, to_id, files_json, created_at FROM messages WHERE files_json IS NOT NULL').all();
   for (const m of msgs) {
     let files = [];
     try { files = JSON.parse(m.files_json); } catch { continue; }
-    const context = m.room ? `общая комната` : 'личная переписка';
+    // Раньше любая комната подписывалась как «общая комната» — с появлением групп это стало
+    // неправдой: файл из закрытой группы выглядел в панели как выложенный всей организации.
+    let context = 'личная переписка';
+    if (isGroupRoom(m.room)) context = `группа «${groupNames.get(groupIdFromRoom(m.room)) || '?'}»`;
+    else if (m.room) context = 'общая комната';
     for (const f of files) {
       const diskName = String(f.url || '').split('/').pop();
       if (diskName) index.set(diskName, { from: userName(m.from_id), context, created_at: m.created_at, originalName: f.name });
@@ -1043,6 +1183,8 @@ app.delete('/api/admin/files/:diskName', auth, requireCapability('can_admin'), (
   if (path.dirname(filePath) !== uploadsDir) return res.status(400).json({ error: 'Некорректное имя файла' });
   if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'Файл не найден' });
   fs.unlinkSync(filePath);
+  invalidateUploadsCache();
+  logServer('INFO', 'file_deleted', { adminId: req.user.id, diskName });
   // Сообщение/рассылка, где был этот файл, никуда не денется — просто ссылка в ней перестанет
   // скачиваться. Это осознанное решение: удаляем файл с диска, а не переписываем историю.
   res.json({ ok: true });
@@ -1055,6 +1197,94 @@ app.get('/api/admin/history/room/:room', auth, requireCapability('can_admin'), (
 app.get('/api/admin/history/dm/:u1/:u2', auth, requireCapability('can_admin'), (req, res) => {
   const a = Number(req.params.u1), b = Number(req.params.u2);
   res.json(dmHistoryAll.all(a, b, b, a, beforeId(req)).reverse().map(normalizeRow));
+});
+
+// ---------- Обновления клиентов ----------
+// Под этим именем к серверу подключается веб-панель администратора (см. connectPresenceWs в
+// public/index.html) — рабочим местом она не является.
+const ADMIN_WEB_HOSTNAME = 'Веб-панель администратора';
+// Какая версия сейчас выложена на сервере — читаем прямо из latest.yml, который положил
+// electron-builder. Полноценный разбор YAML ради одного поля не нужен и потянул бы зависимость:
+// строка "version: 1.0.1" в этом файле всегда первая и всегда такого вида.
+function publishedVersion(track) {
+  try {
+    const text = fs.readFileSync(path.join(updatesDir, track, 'latest.yml'), 'utf8');
+    const m = text.match(/^version:\s*(\S+)/m);
+    const f = text.match(/^path:\s*(\S+)/m);
+    return m ? { version: m[1], file: f ? f[1] : null } : null;
+  } catch { return null; }
+}
+app.get('/api/admin/update-published', auth, requireCapability('can_admin'), (req, res) => {
+  res.json({ win7: publishedVersion('win7'), win10: publishedVersion('win10') });
+});
+
+// Кто сейчас на связи и с какой версией. Один человек может сидеть с нескольких компьютеров и
+// держать несколько окон — схлопываем по паре "сотрудник + компьютер", иначе в списке было бы по
+// строке на каждое открытое окно чата.
+app.get('/api/admin/clients', auth, requireCapability('can_admin'), (req, res) => {
+  const byMachine = new Map();
+  for (const meta of connMeta.values()) {
+    // Сама веб-панель тоже держит подключение (чтобы показывать, кто в сети), но это не рабочее
+    // место: обновлять там нечего и журнала у неё нет. В списке машин она была бы только шумом.
+    if (meta.hostname === ADMIN_WEB_HOSTNAME) continue;
+    const key = `${meta.userId}:${meta.hostname}`;
+    const prev = byMachine.get(key);
+    if (!prev) {
+      const u = getUserById.get(meta.userId);
+      byMachine.set(key, {
+        userId: meta.userId,
+        user: u ? u.display_name : `#${meta.userId}`,
+        hostname: meta.hostname,
+        version: meta.appVersion || null,
+        track: meta.buildTrack || null,
+        connections: 1,
+        hasLogDump: clientLogDumps.has(key),
+      });
+    } else {
+      prev.connections += 1;
+      // Версию берём с того подключения, которое её сообщило: у окон, открытых старым клиентом
+      // после обновления сборки, её может не быть.
+      if (!prev.version && meta.appVersion) { prev.version = meta.appVersion; prev.track = meta.buildTrack; }
+    }
+  }
+  res.json([...byMachine.values()].sort((a, b) => a.user.localeCompare(b.user, 'ru')));
+});
+
+// Принудительное обновление конкретной машины. Отправляем команду во все её подключения — клиент
+// скачает обновление и перезапустится сам (см. force-update в main.js десктоп-клиента).
+app.post('/api/admin/force-update', auth, requireCapability('can_admin'), (req, res) => {
+  const { userId, host } = req.body || {};
+  const target = toUserId(userId);
+  if (!target) return res.status(400).json({ error: 'Не указан сотрудник' });
+  const out = JSON.stringify({ type: 'force-update' });
+  let sent = 0;
+  for (const [ws, meta] of connMeta) {
+    if (meta.userId !== target) continue;
+    if (host && meta.hostname !== host) continue;
+    sendTo(ws, out);
+    sent += 1;
+  }
+  logServer('INFO', 'force_update_requested', { adminId: req.user.id, userId: target, host, connections: sent });
+  if (!sent) return res.status(409).json({ error: 'Этот клиент сейчас не в сети' });
+  res.json({ ok: true, sent });
+});
+
+// Запрос журнала с машины сотрудника — клиент пришлёт его на /api/client-log-file (см. выше).
+app.post('/api/admin/request-log', auth, requireCapability('can_admin'), (req, res) => {
+  const { userId, host } = req.body || {};
+  const target = toUserId(userId);
+  if (!target) return res.status(400).json({ error: 'Не указан сотрудник' });
+  const out = JSON.stringify({ type: 'send-log' });
+  let sent = 0;
+  for (const [ws, meta] of connMeta) {
+    if (meta.userId !== target) continue;
+    if (host && meta.hostname !== host) continue;
+    sendTo(ws, out);
+    sent += 1;
+  }
+  logServer('INFO', 'client_log_requested', { adminId: req.user.id, userId: target, host });
+  if (!sent) return res.status(409).json({ error: 'Этот клиент сейчас не в сети' });
+  res.json({ ok: true });
 });
 
 app.get('/api/admin/stats', auth, requireCapability('can_admin'), (req, res) => {
@@ -1127,6 +1357,23 @@ const wss = new WebSocketServer({ server });
 const online = new Map();   // userId -> Set(ws)              — для маршрутизации сообщений
 const connMeta = new Map(); // ws -> { userId, hostname, state } — для presence (может быть несколько ПК на юзера)
 
+// Отправка в сокет всегда через это, а не ws.send() напрямую. Между обрывом связи и событием
+// 'close' сокет какое-то время ещё числится в connMeta, но писать в него уже нельзя — а рассылок
+// "всем подключённым" здесь много, и попасть в этот промежуток тем легче, чем больше людей онлайн.
+// Ошибку при этом гасим: недоставленное сообщение отдельному отвалившемуся клиенту не повод
+// прерывать рассылку остальным.
+function sendTo(ws, payload) {
+  if (!ws || ws.readyState !== ws.OPEN) return;
+  try { ws.send(payload); } catch { /* сокет закрылся между проверкой и отправкой */ }
+}
+function sendToAll(payload) {
+  for (const ws of connMeta.keys()) sendTo(ws, payload);
+}
+function sendToUser(userId, payload) {
+  const conns = online.get(userId);
+  if (conns) for (const ws of conns) sendTo(ws, payload);
+}
+
 // Кэш id всех пользователей — чтобы presenceSnapshot() не делал SELECT по таблице users на каждый
 // вызов (а вызывается он на каждое presence-событие: подключение/отключение/каждый статус-тик от
 // клиентов, т.е. часто). Сбрасывается при создании/удалении пользователя.
@@ -1174,9 +1421,17 @@ function presenceSnapshot() {
   return result;
 }
 
+// Клиенты присылают свой статус каждые 15 секунд, и раньше КАЖДЫЙ такой тик рассылал полный
+// снимок присутствия всем подключённым. При 200 сотрудниках это 200 снимков в 15 секунд, каждый
+// размером со список всех пользователей, каждый — всем 200 адресатам: трафик растёт как квадрат
+// численности, хотя сам статус почти всегда не меняется. Сравниваем с прошлым снимком и молчим,
+// если он тот же — рассылка идёт только когда кто-то реально появился, отошёл или отключился.
+let lastPresencePayload = null;
 function broadcastPresence() {
   const payload = JSON.stringify({ type: 'presence', users: presenceSnapshot() });
-  for (const ws of connMeta.keys()) ws.send(payload);
+  if (payload === lastPresencePayload) return;
+  lastPresencePayload = payload;
+  sendToAll(payload);
 }
 
 // Оповещаем всех подключённых клиентов, что список пользователей/отделов/ролей изменился —
@@ -1189,8 +1444,7 @@ function broadcastPresence() {
 let usersVersion = 0;
 function broadcastUsersChanged() {
   usersVersion++;
-  const payload = JSON.stringify({ type: 'users-changed' });
-  for (const ws of connMeta.keys()) ws.send(payload);
+  sendToAll(JSON.stringify({ type: 'users-changed' }));
 }
 
 // Группа создана/переименована/у неё поменялись участники/её удалили — оповещаем ВСЕХ подключённых
@@ -1198,27 +1452,80 @@ function broadcastUsersChanged() {
 // каждого клиента крошечный, перезапросить его не накладно), клиент сам решает, актуально ли это
 // для него, и просто перезапрашивает /api/groups.
 function broadcastGroupsChanged() {
-  const payload = JSON.stringify({ type: 'groups-changed' });
-  for (const ws of connMeta.keys()) ws.send(payload);
+  sendToAll(JSON.stringify({ type: 'groups-changed' }));
 }
 
 wss.on('connection', (ws, req) => {
   const url = new URL(req.url, 'http://x');
   const token = url.searchParams.get('token');
-  const hostname = url.searchParams.get('host') || 'неизвестный ПК';
+  // Имя ПК присылает сам клиент, то есть доверять ему нельзя: обрезаем по длине, чтобы через него
+  // нельзя было раздуть снимок присутствия (он рассылается всем) или дневной лог сервера.
+  const hostname = (url.searchParams.get('host') || 'неизвестный ПК').slice(0, 64);
+  // Версия клиента и трек сборки — чтобы администратор видел в панели, у кого что установлено и до
+  // кого обновление ещё не доехало. Как и имя ПК, приходят от клиента, поэтому обрезаем по длине.
+  const appVersion = (url.searchParams.get('ver') || '').slice(0, 20) || null;
+  const buildTrack = (url.searchParams.get('track') || '').slice(0, 20) || null;
   let payload;
   try { payload = jwt.verify(token, SECRET); } catch { logServer('WARN', 'ws_auth_failed', { ip: req.socket.remoteAddress }); return ws.close(); }
   const user = getUserById.get(payload.id);
   if (!user) return ws.close();
 
+  // Сокет без обработчика 'error' — это падение всего сервера: 'error' на EventEmitter без
+  // слушателя превращается в исключение, а неперехваченное исключение у нас завершает процесс
+  // (см. process.on('uncaughtException') в начале файла). А прилетает такой 'error' в самой
+  // обычной ситуации: ECONNRESET, когда клиентский ПК выключили или он потерял сеть, не успев
+  // корректно закрыть соединение. То есть один погасший в неудачный момент Windows-клиент мог
+  // уронить мессенджер у всей организации.
+  ws.on('error', (err) => logServer('WARN', 'ws_error', { userId: user.id, message: err.message }));
+
   if (!online.has(user.id)) online.set(user.id, new Set());
   online.get(user.id).add(ws);
-  connMeta.set(ws, { userId: user.id, hostname, state: 'active', lastSeen: Date.now(), idleSince: null });
+  connMeta.set(ws, { userId: user.id, hostname, appVersion, buildTrack, state: 'active', lastSeen: Date.now(), idleSince: null });
+  // Снимок присутствия этому сокету — обязательно отдельно от broadcastPresence(): та теперь молчит,
+  // когда снимок не изменился (см. её комментарий), а при втором подключении с того же ПК он и не
+  // меняется — новое окно осталось бы вообще без списка, кто сейчас в сети.
+  sendTo(ws, JSON.stringify({ type: 'presence', users: presenceSnapshot() }));
   broadcastPresence();
 
   ws.on('message', (raw) => {
     let msg;
     try { msg = JSON.parse(raw); } catch { return; }
+    // Всё тело обработчика — под try: исключение здесь ничем не перехватывается и убивает процесс.
+    // Достаточно было прислать, например, {"type":"send","to":{},"text":"x"} — объект вместо числа
+    // роняет привязку параметров в better-sqlite3, и сервер выключался. То есть любой вошедший
+    // сотрудник (или тот, кто добрался до порта) мог погасить мессенджер одной строкой.
+    try {
+      handleClientMessage(ws, user, msg);
+    } catch (err) {
+      logServer('ERROR', 'ws_message_failed', { userId: user.id, type: msg && msg.type, message: err.message });
+    }
+  });
+
+  ws.on('close', () => {
+    online.get(user.id)?.delete(ws);
+    if (online.get(user.id)?.size === 0) online.delete(user.id);
+    connMeta.delete(ws);
+    broadcastPresence();
+  });
+});
+
+// Ошибка самого сервера WebSocket (не отдельного соединения) — тоже обязана иметь слушателя,
+// иначе она всплывает как неперехваченное исключение и гасит процесс.
+wss.on('error', (err) => logServer('ERROR', 'wss_error', { message: err.message }));
+
+// Вынесено из wss.on('connection') отдельной функцией, чтобы её вызов можно было целиком обернуть
+// в try/catch выше. Все входящие поля здесь — из сети, поэтому каждое приводится к ожидаемому типу
+// явно (см. toUserId/toRoom), а не подставляется в SQL как пришло.
+function toUserId(v) {
+  const n = Number(v);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+function toRoom(v) {
+  return typeof v === 'string' && v.length && v.length <= 64 ? v : null;
+}
+
+function handleClientMessage(ws, user, msg) {
+    if (!msg || typeof msg !== 'object') return;
 
     if (msg.type === 'status') {
       const meta = connMeta.get(ws);
@@ -1237,32 +1544,38 @@ wss.on('connection', (ws, req) => {
     // (см. sendTyping в chat.html); индикатор у получателя гаснет сам по таймауту без нового
     // события, так что явного "закончил печатать" сигнала не нужно.
     if (msg.type === 'typing') {
-      const out = JSON.stringify({ type: 'typing', room: msg.room || null, from_id: user.id, from_user: user.display_name });
-      if (isGroupRoom(msg.room)) {
+      const room = toRoom(msg.room);
+      const to = toUserId(msg.to);
+      const out = JSON.stringify({ type: 'typing', room, from_id: user.id, from_user: user.display_name });
+      if (isGroupRoom(room)) {
         // Только участникам группы, а не буквально всем (как для 'general') — иначе кто угодно
         // подключённый увидел бы, что кто-то печатает в группе, где его самого нет.
-        for (const uid of groupMemberIds(groupIdFromRoom(msg.room))) {
+        // Проверка членства обязательна и здесь: без неё посторонний, подставив id группы, узнавал
+        // бы её состав по тому, кому доставился его собственный «печатает».
+        const groupId = groupIdFromRoom(room);
+        if (!isGroupMemberStmt.get(groupId, user.id)) return;
+        for (const uid of groupMemberIds(groupId)) {
           if (uid === user.id) continue;
-          (online.get(uid) || new Set()).forEach((c) => c.send(out));
+          sendToUser(uid, out);
         }
-      } else if (msg.room) {
-        for (const [c, meta] of connMeta) { if (meta.userId !== user.id) c.send(out); }
-      } else if (msg.to) {
-        (online.get(Number(msg.to)) || new Set()).forEach((c) => c.send(out));
+      } else if (room) {
+        for (const [c, meta] of connMeta) { if (meta.userId !== user.id) sendTo(c, out); }
+      } else if (to) {
+        sendToUser(to, out);
       }
       return;
     }
 
     if (msg.type === 'read') {
-      const peer = Number(msg.peer);
+      const peer = toUserId(msg.peer);
       const upTo = Number(msg.upTo);
-      if (!peer || !upTo) return;
+      if (!peer || !Number.isFinite(upTo) || upTo <= 0) return;
       const info = markDmRead.run(Date.now(), peer, user.id, upTo);
       if (info.changes > 0) {
         // Сообщаем автору (peer), что я прочитал его сообщения по upTo включительно — если он сейчас
         // онлайн, его открытое окно переписки со мной сразу перекрасит галочки в синий.
         const out = JSON.stringify({ type: 'read-receipt', peer: user.id, upTo });
-        (online.get(peer) || new Set()).forEach((c) => c.send(out));
+        sendToUser(peer, out);
       }
       return;
     }
@@ -1271,11 +1584,16 @@ wss.on('connection', (ws, req) => {
     // реакцию, другой — заменяет. Рассылаем ПОЛНЫЙ актуальный набор реакций сообщения (а не дельту) —
     // проще и надёжнее инкрементального патча, а реакций на одном сообщении обычно немного.
     if (msg.type === 'react') {
-      const messageId = Number(msg.messageId);
-      const emoji = String(msg.emoji || '').slice(0, 8);
+      const messageId = toUserId(msg.messageId); // тот же критерий: целое положительное
+      const emoji = typeof msg.emoji === 'string' ? msg.emoji.slice(0, 8) : '';
       if (!messageId || !emoji) return;
       const target = getMessageRoute.get(messageId);
       if (!target) return;
+      // Реакция в группе — только от её участника: иначе посторонний мог бы и пометить чужое
+      // сообщение, и по разосланному обновлению узнать, что за переписка скрывается за id.
+      if (isGroupRoom(target.room) && !isGroupMemberStmt.get(groupIdFromRoom(target.room), user.id)) return;
+      // В личной переписке реакцию может ставить только один из двух её участников.
+      if (!target.room && target.from_id !== user.id && target.to_id !== user.id) return;
       const existing = getUserReactionOnMessage.get(messageId, user.id);
       if (existing && existing.emoji === emoji) deleteReaction.run(messageId, user.id);
       else upsertReaction.run(messageId, user.id, emoji, Date.now());
@@ -1287,28 +1605,27 @@ wss.on('connection', (ws, req) => {
       const reactions = [...byEmoji].map(([e, userIds]) => ({ emoji: e, userIds }));
       const out = JSON.stringify({ type: 'reaction', messageId, reactions });
       if (target.room) {
-        for (const c of connMeta.keys()) c.send(out);
+        sendToAll(out);
       } else {
         const targets = new Set([...(online.get(target.to_id) || []), ...(online.get(target.from_id) || [])]);
-        targets.forEach((c) => c.send(out));
+        targets.forEach((c) => sendTo(c, out));
       }
       return;
     }
 
     if (msg.type !== 'send') return;
+    const room = toRoom(msg.room);
+    const to = toUserId(msg.to);
+    if (!room && !to) return;
     // Писать в группу может только её участник — молча игнорируем чужую попытку (не подсказываем
     // подбором id группы, что именно там за люди/переписка).
-    if (isGroupRoom(msg.room) && !isGroupMemberStmt.get(groupIdFromRoom(msg.room), user.id)) return;
+    if (isGroupRoom(room) && !isGroupMemberStmt.get(groupIdFromRoom(room), user.id)) return;
     const now = Date.now();
-    const text = String(msg.text || '').slice(0, 4000).trim();
+    const text = typeof msg.text === 'string' ? msg.text.slice(0, 4000).trim() : '';
     // Несколько файлов в одном сообщении: msg.files — массив; msg.file (в ед. числе) — старый формат,
     // поддерживаем на случай, если где-то остался не обновлённый клиент.
     const rawFiles = Array.isArray(msg.files) ? msg.files : (msg.file ? [msg.file] : []);
-    const files = rawFiles.slice(0, 20).filter((f) => f && f.url).map((f) => ({
-      url: String(f.url).slice(0, 300),
-      name: String(f.name || 'файл').slice(0, 200),
-      size: Number(f.size) || 0,
-    }));
+    const files = normalizeIncomingFiles(rawFiles);
     if (!text && !files.length) return;
     const filesJson = files.length ? JSON.stringify(files) : null;
 
@@ -1317,8 +1634,9 @@ wss.on('connection', (ws, req) => {
     // (старая страница пагинации), а после отправки должно остаться верным, даже если оригинал
     // потом станет недоступен клиенту.
     let replyToId = null, replySnapshot = null, replyOut = null;
-    if (msg.replyTo) {
-      const target = getMessageForReply.get(Number(msg.replyTo));
+    const replyToRaw = toUserId(msg.replyTo); // тот же критерий: целое положительное
+    if (replyToRaw) {
+      const target = getMessageForReply.get(replyToRaw);
       if (target) {
         const targetUser = getUserById.get(target.from_id);
         replyToId = target.id;
@@ -1327,29 +1645,21 @@ wss.on('connection', (ws, req) => {
       }
     }
 
-    if (msg.room) {
-      const info = insertMessage.run(user.id, msg.room, null, text, filesJson, now, replyToId, replySnapshot);
-      const out = JSON.stringify({ type: 'message', id: info.lastInsertRowid, room: msg.room, from_id: user.id, from_user: user.display_name, text, files, created_at: now, reply: replyOut });
-      if (isGroupRoom(msg.room)) {
-        for (const uid of groupMemberIds(groupIdFromRoom(msg.room))) (online.get(uid) || new Set()).forEach((c) => c.send(out));
+    if (room) {
+      const info = insertMessage.run(user.id, room, null, text, filesJson, now, replyToId, replySnapshot);
+      const out = JSON.stringify({ type: 'message', id: info.lastInsertRowid, room, from_id: user.id, from_user: user.display_name, text, files, created_at: now, reply: replyOut });
+      if (isGroupRoom(room)) {
+        for (const uid of groupMemberIds(groupIdFromRoom(room))) sendToUser(uid, out);
       } else {
-        for (const c of connMeta.keys()) c.send(out); // общая комната — всем
+        sendToAll(out); // общая комната — всем
       }
-    } else if (msg.to) {
-      const info = insertMessage.run(user.id, null, msg.to, text, filesJson, now, replyToId, replySnapshot);
-      const out = JSON.stringify({ type: 'message', id: info.lastInsertRowid, to_id: msg.to, from_id: user.id, from_user: user.display_name, text, files, created_at: now, reply: replyOut });
-      const targets = new Set([...(online.get(msg.to) || []), ...(online.get(user.id) || [])]);
-      targets.forEach((c) => c.send(out));
+    } else {
+      const info = insertMessage.run(user.id, null, to, text, filesJson, now, replyToId, replySnapshot);
+      const out = JSON.stringify({ type: 'message', id: info.lastInsertRowid, to_id: to, from_id: user.id, from_user: user.display_name, text, files, created_at: now, reply: replyOut });
+      const targets = new Set([...(online.get(to) || []), ...(online.get(user.id) || [])]);
+      targets.forEach((c) => sendTo(c, out));
     }
-  });
-
-  ws.on('close', () => {
-    online.get(user.id)?.delete(ws);
-    if (online.get(user.id)?.size === 0) online.delete(user.id);
-    connMeta.delete(ws);
-    broadcastPresence();
-  });
-});
+}
 
 // Подстраховка: если клиент отвалился без close-события, считаем его оффлайн через таймаут
 setInterval(() => {

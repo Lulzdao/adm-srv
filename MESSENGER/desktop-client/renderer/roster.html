@@ -24,6 +24,13 @@
   #auth .switch { -webkit-app-region: no-drag; text-align: center; color: var(--muted); cursor: pointer; margin-top: 6px; }
   #auth .switch:hover { color: var(--text); }
   #auth .err { color: var(--danger); text-align: center; min-height: 16px; font-size: 12px; }
+  /* Подсказка про Caps Lock (см. refreshCapsHint) — пароль в поле не виден, и набранный с зажатым
+     Caps Lock он выглядит точно так же, как правильный: человек несколько раз получает "неверный
+     логин или пароль", не понимая, почему. Показываем ровно тогда, когда Caps Lock действительно
+     включён, — постоянная надпись быстро становится фоновым шумом и перестаёт читаться. */
+  #auth .caps-hint { display: none; align-items: center; gap: 6px; font-size: 11.5px; color: var(--afk); padding: 0 2px; }
+  #auth .caps-hint.show { display: flex; }
+  #auth .caps-hint svg { flex-shrink: 0; }
 
   /* ---- Заголовок ---- */
   .wintitlebar .title { font-weight: 600; font-size: 12px; letter-spacing: .3px; display: flex; align-items: center; gap: 6px; flex-shrink: 0; -webkit-app-region: drag; }
@@ -163,6 +170,9 @@
   #profilePanel.open { opacity: 1; transform: translateY(0); pointer-events: auto; border-top-color: var(--accent); }
   #profilePanel .inner { flex: 1; min-height: 0; padding: 14px; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
   #profilePanel .section-title { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; font-weight: 700; }
+  /* Версия и трек сборки — мелким шрифтом над кнопкой выхода. Нужно не пользователю, а поддержке:
+     "продиктуйте нижнюю строку в настройках" вместо выяснения, что за версия у человека стоит. */
+  #profilePanel .pp-about { font-size: 10.5px; color: var(--muted); text-align: center; margin-top: 10px; user-select: text; }
   #profilePanel .theme-row + .section-title { margin-top: 10px; }
   #profilePanel .theme-row { display: flex; gap: 8px; padding: 10px; border-radius: 9px; background: var(--panel); border: 1px solid var(--border); }
   #profilePanel .theme-row .info { flex: 1; }
@@ -197,6 +207,12 @@
      бегунок — иначе на Windows слайдер выглядел бы стандартным системным виджетом не в цвет темы. */
   #profilePanel input[type="range"] { flex: 1; -webkit-appearance: none; appearance: none; height: 4px; border-radius: 2px; background: var(--panel-2); outline: none; cursor: pointer; }
   #profilePanel input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 16px; height: 16px; border-radius: 50%; background: var(--accent); cursor: pointer; border: none; box-shadow: 0 1px 3px rgba(0,0,0,.3); }
+  /* Текстовая кнопка в панели настроек. Класс .icon-btn для такого не годится: он жёстко задан как
+     квадрат 27×27 под иконку, и надпись из двух слов ломается пополам внутри него. */
+  #profilePanel .pp-btn { width: auto; height: auto; padding: 7px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2); color: var(--text); font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+  #profilePanel .pp-btn:hover { background: var(--hover); border-color: var(--accent); }
+  #profilePanel .pp-btn:disabled { opacity: .5; cursor: default; }
+  #profilePanel .pp-btn:disabled:hover { background: var(--panel-2); border-color: var(--border); }
   #profilePanel #ppLogoutBtn { margin-top: 2px; padding: 9px; border: 1px solid var(--danger); border-radius: 8px; background: transparent; color: var(--danger); font-weight: 600; cursor: pointer; }
   #profilePanel #ppLogoutBtn:hover { background: var(--danger); color: #fff; }
 </style>
@@ -220,6 +236,7 @@
   <form id="authForm" onsubmit="event.preventDefault(); doAuth();">
     <input id="username" placeholder="Логин">
     <input id="password" type="password" placeholder="Пароль">
+    <div class="caps-hint" id="capsHint"><span></span>Включён Caps Lock</div>
     <button class="primary" type="submit">Войти</button>
   </form>
   <div class="switch" id="switchMode" onclick="toggleMode()">Нет аккаунта? Зарегистрироваться</div>
@@ -301,6 +318,23 @@
         </div>
       </div>
 
+      <div class="section-title">Обновление приложения</div>
+      <label class="option">
+        <div class="opt-text"><div class="t">Обновлять автоматически</div><div class="d">Новая версия скачается сама и установится при следующем выходе из приложения. Работу это не прерывает.</div></div>
+        <span class="pp-switch"><input type="checkbox" id="ppAutoUpdate"><span class="pp-switch-track"></span></span>
+      </label>
+      <div class="theme-row" style="flex-direction:column; align-items:stretch; gap:8px;">
+        <div class="info">
+          <div class="t">Состояние</div>
+          <div class="d" id="ppUpdateStatus">Проверка не выполнялась</div>
+        </div>
+        <div style="display:flex; gap:8px; align-items:center; justify-content:center; flex-wrap:wrap;">
+          <button class="pp-btn" id="ppCheckUpdateBtn">Проверить сейчас</button>
+          <button class="pp-btn" id="ppInstallUpdateBtn" style="display:none;">Перезапустить и обновить</button>
+        </div>
+      </div>
+
+      <div class="pp-about" id="ppAbout"></div>
       <button id="ppLogoutBtn">Выйти из аккаунта</button>
     </div>
   </div>
@@ -322,6 +356,18 @@ let searchQuery = '';
 
 function initials(name) { return (name || '?').slice(0, 2).toUpperCase(); }
 function displayNameOf(u) { return u.display_name || u.username; }
+
+// Caps Lock отслеживаем на уровне документа, а не поля пароля: клавишу почти всегда нажимают ДО
+// того, как поставить курсор в поле, — слушая только сам input, мы узнали бы об этом лишь после
+// первого набранного символа. getModifierState есть и у мыши, поэтому клик по форме тоже обновляет
+// подсказку (случай "Caps Lock был включён ещё до запуска клиента").
+function refreshCapsHint(e) {
+  if (!e || typeof e.getModifierState !== 'function') return;
+  document.getElementById('capsHint').classList.toggle('show', e.getModifierState('CapsLock'));
+}
+document.addEventListener('keydown', refreshCapsHint);
+document.addEventListener('keyup', refreshCapsHint);
+document.addEventListener('mousedown', refreshCapsHint);
 
 function toggleMode() {
   mode = mode === 'login' ? 'register' : 'login';
@@ -382,7 +428,10 @@ let wsLostTimer = null; // см. showConnectionLostModal в ui-kit.js
 let wsReconnectDelay = 2000; // экспоненциальный бэкофф между попытками (см. onclose ниже)
 function connectWs() {
   const wsUrl = serverUrl.replace(/^http/, 'ws');
-  ws = new WebSocket(`${wsUrl}?token=${token}&host=${encodeURIComponent(desktop.hostname)}`);
+  ws = new WebSocket(`${wsUrl}?token=${token}&host=${encodeURIComponent(desktop.hostname)}`
+    // Версия и сборка — чтобы администратор в веб-панели видел, у кого что установлено, и
+    // мог понять, до кого обновление ещё не доехало (см. /api/admin/clients в server.js).
+    + `&ver=${encodeURIComponent(desktop.appVersion)}&track=${encodeURIComponent(desktop.buildTrack)}`);
   // Реальный статус на момент подключения, а не всегда "в сети" — иначе новое WS-подключение
   // (например, при открытии окна чата) на пару секунд перебивало настоящий AFK-статус человека,
   // пока не придёт очередной 15-секундный тик с исправлением.
@@ -397,6 +446,9 @@ function connectWs() {
   ws.onmessage = (e) => {
     const data = JSON.parse(e.data);
     if (data.type === 'presence') { presence = data.users; updatePresenceOnly(); }
+    // Команды администратора из веб-панели. Выполняет их главный процесс — окно только передаёт.
+    if (data.type === 'force-update') { desktop.forceUpdate(); return; }
+    if (data.type === 'send-log') { sendLocalLogToServer(); return; }
     if (data.type === 'message' && data.from_id !== me.id) {
       const files = data.files || [];
       let body = data.text || '';
@@ -481,6 +533,88 @@ desktop.onIdleState(({ state, idleSeconds }) => {
 desktop.onShowAlert(({ message, title }) => uiAlert(message, title));
 
 document.getElementById('historyRowIcon').innerHTML = uiIcon('megaphone');
+document.querySelector('#capsHint span').innerHTML = uiIcon('capsLock');
+
+// Версия и трек сборки внизу панели настроек — см. get-app-info в main.js.
+const BUILD_TRACK_LABEL = {
+  win7: 'сборка для Windows 7 и 8.1',
+  win10: 'сборка для Windows 10 и новее',
+  dev: 'запуск из исходников',
+};
+desktop.getAppInfo().then(({ version, track, electron }) => {
+  const label = BUILD_TRACK_LABEL[track] || track;
+  document.getElementById('ppAbout').textContent = `Искра ${version} · ${label} · Electron ${electron}`;
+}).catch(() => { /* не критично: без этой строки всё остальное работает */ });
+
+// ---------- Журнал этой машины и события главного процесса ----------
+// Главный процесс пишет свои события (сбои обновления, падения окон) в локальный файл и присылает
+// их сюда — потому что обратиться к серверу может только это окно, токен есть лишь у него.
+// Без этого такие события оставались бы на машине сотрудника и до раздела "Логи" не доходили.
+desktop.onReportToServer(({ kind, meta }) => {
+  if (!token || !serverUrl) return; // ещё не вошли — отправлять нечем и некуда
+  fetch(`${serverUrl}/api/client-log`, {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      kind, source: 'main', hostname: desktop.hostname,
+      message: (meta && (meta.message || meta.reason)) || kind,
+      extra: meta,
+    }),
+  }).catch(() => { /* сервер недоступен — теряем запись, повторять ради лога не будем */ });
+});
+
+// Администратор запросил журнал этой машины из веб-панели (см. /api/admin/request-log).
+async function sendLocalLogToServer() {
+  if (!token || !serverUrl) return;
+  try {
+    const text = await desktop.readLocalLog();
+    await fetch(`${serverUrl}/api/client-log-file?host=${encodeURIComponent(desktop.hostname)}`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'text/plain' },
+      body: text,
+    });
+  } catch { /* не смогли — администратор просто увидит, что журнал не пришёл */ }
+}
+
+// ---------- Обновление приложения ----------
+// Состояние считает главный процесс (см. setupUpdater в main.js), здесь только показ. Кнопка
+// "Перезапустить и обновить" появляется, лишь когда обновление реально скачано и готово ставиться.
+let lastUpdateState = { state: 'idle' };
+function paintUpdateState(s) {
+  lastUpdateState = s || { state: 'idle' };
+  const text = document.getElementById('ppUpdateStatus');
+  const installBtn = document.getElementById('ppInstallUpdateBtn');
+  const checkBtn = document.getElementById('ppCheckUpdateBtn');
+  const byState = {
+    idle: () => 'Проверка не выполнялась',
+    dev: () => 'Запуск из исходников — обновления не проверяются',
+    checking: () => 'Проверяем наличие обновлений…',
+    'not-available': () => 'Установлена последняя версия',
+    available: () => `Доступна версия ${s.version}. Нажмите «Проверить сейчас», чтобы скачать.`,
+    downloading: () => (s.percent != null ? `Загрузка обновления — ${s.percent}%` : 'Загрузка обновления…'),
+    downloaded: () => `Версия ${s.version} загружена. Установится при выходе из приложения — или перезапустите сейчас.`,
+    // message приходит уже готовой короткой фразой (см. shortUpdateError в main.js), полный текст
+    // ошибки лежит в client.log — приписывать сюда что-то ещё незачем.
+    error: () => s.message || 'Не удалось проверить обновления',
+  };
+  text.textContent = (byState[s.state] || byState.idle)();
+  installBtn.style.display = s.state === 'downloaded' ? '' : 'none';
+  checkBtn.disabled = s.state === 'checking' || s.state === 'downloading';
+}
+desktop.getUpdateState().then(paintUpdateState).catch(() => {});
+desktop.onUpdateState(paintUpdateState);
+document.getElementById('ppCheckUpdateBtn').onclick = () => {
+  // Та же кнопка запускает и загрузку, если обновление уже найдено, но автозагрузка выключена —
+  // иначе для скачивания вручную понадобилась бы вторая кнопка ровно с тем же смыслом.
+  if (lastUpdateState.state === 'available') desktop.downloadUpdate();
+  else desktop.checkUpdates();
+};
+document.getElementById('ppInstallUpdateBtn').onclick = async () => {
+  const ok = await uiConfirm('Приложение закроется и обновится. Несохранённых данных в мессенджере нет, но открытые окна чатов закроются.', {
+    title: 'Перезапустить и обновить', okText: 'Перезапустить',
+  });
+  if (ok) desktop.installUpdate();
+};
 document.getElementById('historyRow').onclick = () => desktop.openBroadcast({ token, serverUrl, me: JSON.stringify(me) });
 
 // ---------- Профиль и настройки — панель под me-bar (не отдельное окно) ----------
@@ -494,6 +628,7 @@ const PP_CHECKBOX_IDS = [
   ['ppRememberWindowSize', 'rememberWindowSize'],
   ['ppAlwaysOnTop', 'alwaysOnTop'],
   ['ppHideNames', 'hideNameInMessages'],
+  ['ppAutoUpdate', 'autoUpdate'],
 ];
 
 function paintProfileTheme(theme) {
@@ -677,7 +812,7 @@ function makeUserRow(u) {
   const row = document.createElement('div');
   row.className = 'row' + (isMe ? ' is-me' : '');
   row.dataset.uid = u.id; // нужно для точечного обновления статуса без пересборки всего списка
-  row.innerHTML = `<div class="dot ${p.state}"></div><div class="n">${name}${isMe ? ' <span class="me-tag">это вы</span>' : ''}</div><span class="unread-badge"></span>`;
+  row.innerHTML = `<div class="dot ${p.state}"></div><div class="n">${escapeHtml(name)}${isMe ? ' <span class="me-tag">это вы</span>' : ''}</div><span class="unread-badge"></span>`;
   if (!isMe) setUnreadBadge(row, unreadDmCounts[u.id] || 0);
   if (isMe) {
     row.title = 'Профиль и настройки';

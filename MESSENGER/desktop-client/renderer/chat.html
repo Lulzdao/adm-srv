@@ -57,9 +57,13 @@
   .msg.flash { animation: msgFlash .9s ease; }
 
   /* Всплывающий тулбар (реакция/ответ) — над правым (своим) или левым (чужим) верхним углом
-     пузыря, показывается только при наведении, не занимает место в раскладке. */
+     пузыря, показывается только при наведении, не занимает место в раскладке.
+     bottom:100% (а не отрицательный top, как было) — тулбар лежит ЦЕЛИКОМ выше пузыря и не
+     накрывает собой первые строки сообщения: раньше он перекрывал имя автора и начало текста,
+     мешая и читать, и выделять их мышью. Ровно 100%, без зазора: между тулбаром и пузырём не
+     должно быть щели, иначе курсор, идущий к кнопкам, теряет :hover и тулбар исчезает. */
   .msg-toolbar {
-    position: absolute; top: -14px; right: 8px; display: none; gap: 2px; z-index: 5;
+    position: absolute; bottom: 100%; right: 8px; display: none; gap: 2px; z-index: 5;
     background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
     padding: 2px; box-shadow: var(--shadow);
   }
@@ -76,9 +80,17 @@
   .reply-quote .rq-name { font-size: 10.5px; font-weight: 700; color: var(--accent); }
   .reply-quote .rq-text { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-  /* Реакции — плашки под сообщением (см. reactionsBarHtml); своя реакция залита акцентным
+  /* Реакции — плашки под сообщением (см. reactionsMarkup); своя реакция залита акцентным
      цветом — тот же приём, что у активной кнопки дня в панели истории (#hpDays .dbtn.active). */
-  .reactions-bar { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+  .reactions-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 4px; }
+  /* Время переезжает сюда, как только у сообщения появляется хотя бы одна реакция (см.
+     placeTime): в обычном состоянии оно приклеено к концу текста через float, и если оставить
+     его там, пузырь дорастает вниз на высоту плашек с реакциями, а время так и остаётся висеть
+     на уровне текста — в пустоте посреди пузыря, а не по его нижнему краю. margin-left:auto
+     прижимает его к правому краю той строки реакций, на которой оно оказалось.
+     Селектор с .msg — чтобы перебить float у ".msg .time" ниже: там та же специфичность, но
+     правило идёт позже по файлу и иначе выиграло бы. */
+  .msg .reactions-bar .time { float: none; margin: 0 0 0 auto; padding-left: 8px; }
   .reaction-pill { display: inline-flex; align-items: center; gap: 3px; padding: 1px 7px; border-radius: 10px; border: 1px solid var(--border); background: var(--panel-2); cursor: pointer; font-size: 11px; color: var(--text); }
   .reaction-pill img.twemoji { width: 13px; height: 13px; vertical-align: -2px; }
   .reaction-pill.mine { border-color: var(--accent); background: var(--accent); color: #fff; }
@@ -93,9 +105,8 @@
   .quick-react-popup button:hover { background: var(--hover); }
   .quick-react-popup img.twemoji { width: 20px; height: 20px; }
 
-  /* Плашка "Ответ на..." над строкой ввода (см. paintReplyBanner) — в отличие от typingIndicator
-     это часть обычной раскладки (не absolute): должна раздвигать композер, а не наплывать поверх
-     текста, который набирают. */
+  /* Плашка "Ответ на..." над строкой ввода (см. paintReplyBanner) — часть обычной раскладки
+     (не absolute): должна раздвигать композер, а не наплывать поверх текста, который набирают. */
   .reply-banner { display: none; align-items: center; gap: 8px; padding: 6px 10px; border-top: 1px solid var(--border); background: var(--panel); }
   .reply-banner .rb-bar { width: 2px; align-self: stretch; border-radius: 2px; background: var(--accent); }
   .reply-banner .rb-content { flex: 1; min-width: 0; display: flex; flex-direction: column; }
@@ -145,6 +156,28 @@
   .msg .file.file-deleted .fi { color: var(--muted); }
   .msg .file.file-deleted .fn { color: var(--muted); }
   .msg .files-time { text-align: right; font-size: 9px; color: var(--muted); margin-top: 1px; }
+  /* Здесь время — единственное содержимое строки, и выравнивает его сам контейнер (text-align).
+     Оставленный float схлопнул бы высоту этой строки: у float'а её некому держать. */
+  .msg .files-time .time { float: none; margin: 0; }
+  /* С реакциями время уезжает в их строку (см. placeTime) и обёртка остаётся пустой. */
+  .msg .files-time:empty { display: none; }
+  /* "Печатает" — пузырь с тремя бегущими точками в самом конце ленты, ровно там, где вот-вот
+     появится сообщение собеседника (как в Telegram). Раньше это была плавающая плашка с текстом
+     "N печатает...", висевшая над строкой ввода: она ложилась ПОВЕРХ последнего сообщения и
+     закрывала его. Теперь это обычный элемент потока (.msg, как у настоящего сообщения) — лента
+     просто поднимается и освобождает место, ничего не перекрывая. */
+  .typing-bubble .tdots { display: flex; align-items: center; gap: 4px; padding: 3px 1px; }
+  .typing-bubble .tdot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); animation: typingWave 1.25s ease-in-out infinite; }
+  /* Сдвиг фаз по точкам и даёт «волну»: соседняя начинает подниматься, когда предыдущая ещё
+     наверху. Пауза в середине цикла (60%→100% в состоянии покоя) не даёт волне сливаться в
+     сплошное мельтешение. */
+  .typing-bubble .tdot:nth-child(2) { animation-delay: .16s; }
+  .typing-bubble .tdot:nth-child(3) { animation-delay: .32s; }
+  @keyframes typingWave {
+    0%, 60%, 100% { transform: translateY(0); opacity: .45; }
+    30% { transform: translateY(-4px); opacity: 1; }
+  }
+
   .day-sep { align-self: center; color: var(--muted); font-size: 10.5px; background: var(--panel-2); padding: 3px 10px; border-radius: 20px; margin: 4px 0; }
   /* Разделитель "Новые сообщения" — как в окне рассылок (см. addLiveBroadcast/loadFeed там же по
      смыслу), только для входящих сообщений в чате. -webkit-app-region не задаём: разделитель лежит
@@ -154,17 +187,6 @@
   .unread-divider span { font-size: 10px; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: .4px; white-space: nowrap; }
 
   #composer { position: relative; display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--border); background: var(--panel); flex-shrink: 0; align-items: flex-end; }
-  /* "Печатает..." — плавающая плашка над строкой ввода (см. sendTyping/showTypingIndicator ниже),
-     не занимает своё место в раскладке (position:absolute), поэтому не сдвигает сообщения при
-     появлении/исчезновении. */
-  #typingIndicator {
-    position: absolute; left: 14px; bottom: 100%; margin-bottom: 6px; z-index: 20;
-    background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
-    padding: 3px 10px; font-size: 11px; font-style: italic; color: var(--muted); box-shadow: var(--shadow);
-    opacity: 0; transform: translateY(4px); pointer-events: none;
-    transition: opacity .15s ease, transform .15s ease;
-  }
-  #typingIndicator.show { opacity: 1; transform: translateY(0); }
   /* #text раньше сам был скруглённым (border-radius:18px) и одновременно overflow-y:auto — кастомный
      ::-webkit-scrollbar (см. theme.css) в Chromium не обрезается border-radius самого элемента, из-за
      чего прямоугольная полоса скролла торчала за пределы скруглённых углов. Обёртка берёт на себя
@@ -300,7 +322,6 @@
   <button type="button" class="rb-close" id="rbClose"></button>
 </div>
 <div id="composer">
-  <div id="typingIndicator"></div>
   <button class="round" id="attach" title="Прикрепить файл"></button>
   <input type="file" id="fileInput" multiple style="display:none">
   <div id="textWrap">
@@ -435,7 +456,10 @@ async function api(path) {
   return res.json();
 }
 
-function escapeHtml(s) { return s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
+// Кавычки экранируем наравне с угловыми скобками: значение нередко подставляется в атрибут, где
+// собственная кавычка закрыла бы его и всё дальнейшее читалось бы уже как разметка. String() —
+// на случай, если вместо строки придёт число или null (у них нет .replace).
+function escapeHtml(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 function escapeAttr(s) { return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 function escapeRegex(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 // Подсветка совпадений при поиске по истории (см. runSearch) — экранируем текст точно так же, как
@@ -477,8 +501,14 @@ function bubbleHtml(m, { withDate, query } = {}) {
   const files = m.files || [];
   const tick = readTickHtml(m);
 
+  // Время сообщения — один и тот же узел, который живёт либо рядом с текстом/файлами, либо в
+  // строке реакций, если она есть (см. placeTime и ".msg .reactions-bar .time" в стилях).
+  const timeEl = `<span class="time">${stamp}${tick}</span>`;
+  const reactions = m.reactions || [];
+  const inlineTime = reactions.length ? '' : timeEl;
+
   let body = '';
-  if (m.text) body += `<div class="txt selectable" data-raw-text="${escapeAttr(m.text)}">${highlightHtml(m.text, query)}${files.length ? '' : `<span class="time">${stamp}${tick}</span>`}</div>`;
+  if (m.text) body += `<div class="txt selectable" data-raw-text="${escapeAttr(m.text)}">${highlightHtml(m.text, query)}${files.length ? '' : inlineTime}</div>`;
   if (files.length) {
     // Все карточки файлов — одинаковой ширины (друг под другом, а не в одну строку с временем
     // у последней — раньше время отнимало место только у последней карточки, и та казалась
@@ -494,10 +524,10 @@ function bubbleHtml(m, { withDate, query } = {}) {
       // провисеть в DOM часами, и токен на момент клика уже истёк бы.
       return `<a class="file" href="#" data-url="${escapeAttr(f.url)}" data-name="${escapeAttr(f.name || 'файл')}"><span class="fi"><span class="fi-file">${uiIcon('file')}</span><span class="fi-download">${uiIcon('download')}</span><span class="fi-progress"><svg viewBox="0 0 24 24"><circle class="ring-bg" cx="12" cy="12" r="10"></circle><circle class="ring-bar" cx="12" cy="12" r="10"></circle></svg><span class="fi-pct"></span></span><span class="fi-check">${uiIcon('check')}</span></span><span class="fmeta"><span class="fn">${escapeHtml(f.name || 'файл')}</span><span class="fs">${fmtSize(f.size)}</span></span></a>`;
     }).join('');
-    body += `<div class="files-block">${cards}</div><div class="files-time">${stamp}${tick}</div>`;
+    body += `<div class="files-block">${cards}</div><div class="files-time">${inlineTime}</div>`;
   }
   const toolbar = `<div class="msg-toolbar"><button type="button" class="mt-btn mt-react" data-mid="${m.id}" title="Реакция">${uiIcon('emoji')}</button><button type="button" class="mt-btn mt-reply" data-mid="${m.id}" title="Ответить">${uiIcon('reply')}</button></div>`;
-  return `<div class="msg${own ? ' own' : ''}" data-ts="${m.created_at}" data-id="${m.id}">${toolbar}${replyQuoteHtml(m)}<div class="who">${m.from_user}</div>${body}${reactionsBarHtml(m)}</div>`;
+  return `<div class="msg${own ? ' own' : ''}" data-ts="${m.created_at}" data-id="${m.id}">${toolbar}${replyQuoteHtml(m)}<div class="who">${escapeHtml(m.from_user)}</div>${body}${reactionsMarkup(m.id, reactions, timeEl)}</div>`;
 }
 
 // Цитата сообщения, на которое отвечают — снимок автора/текста сделан на сервере в момент отправки
@@ -509,15 +539,37 @@ function replyQuoteHtml(m) {
 }
 
 // Реакции — переиспользуется и при первой отрисовке сообщения (bubbleHtml), и при живом обновлении
-// по WS-событию 'reaction' (см. ws.onmessage) — там результат подставляется через outerHTML/remove.
-function reactionsBarHtml(m) { return reactionsMarkup(m.id, m.reactions || []); }
-function reactionsMarkup(mid, reactions) {
+// по WS-событию 'reaction' (см. applyReactions). trailing — время сообщения: когда реакции есть,
+// оно едет последним элементом их строки, чтобы не остаться висеть на уровне текста.
+function reactionsMarkup(mid, reactions, trailing = '') {
   if (!reactions || !reactions.length) return '';
   const pills = reactions.map((r) => {
     const mine = r.userIds.includes(me.id);
     return `<button type="button" class="reaction-pill${mine ? ' mine' : ''}" data-emoji="${escapeAttr(r.emoji)}" data-mid="${mid}">${emojiHtml(r.emoji)}<span class="rcount">${r.userIds.length}</span></button>`;
   }).join('');
-  return `<div class="reactions-bar">${pills}</div>`;
+  return `<div class="reactions-bar">${pills}${trailing}</div>`;
+}
+
+// Куда положить время у уже отрисованного сообщения: строка реакций, если она есть, иначе строка
+// под файлами, иначе — конец текста (там оно прижимается float'ом). Порядок именно такой, поэтому
+// одна и та же функция годится и когда реакцию поставили, и когда сняли последнюю.
+function placeTime(msgEl, timeNode) {
+  const home = msgEl.querySelector('.reactions-bar') || msgEl.querySelector('.files-time') || msgEl.querySelector('.txt');
+  if (home) home.appendChild(timeNode);
+}
+
+// Пересборка реакций уже отрисованного сообщения. Узел времени вынимаем ДО пересборки и потом
+// возвращаем тот же самый, а не рисуем заново: он несёт галочку прочтения, которая к этому моменту
+// могла уже перекраситься в "прочитано" (см. applyReadReceipt) — перерисовка откатила бы её.
+// Плюс он вполне может лежать внутри той самой строки реакций, которую мы сейчас заменим.
+function applyReactions(msgEl, mid, reactions) {
+  const timeNode = msgEl.querySelector('.time');
+  if (timeNode) timeNode.remove();
+  const bar = msgEl.querySelector('.reactions-bar');
+  const html = reactionsMarkup(mid, reactions);
+  if (bar) { if (html) bar.outerHTML = html; else bar.remove(); }
+  else if (html) msgEl.insertAdjacentHTML('beforeend', html);
+  if (timeNode) placeTime(msgEl, timeNode);
 }
 
 // Живое обновление галочек на уже отрисованных своих сообщениях, когда приходит read-receipt —
@@ -541,33 +593,49 @@ function applyReadReceipt(upTo) {
 const LAST_SEEN_KEY = `chatLastSeenTs:${type}:${id}`;
 function getLastSeenTs() { return Number(localStorage.getItem(LAST_SEEN_KEY)) || 0; }
 function setLastSeenTs(ts) { if (ts) localStorage.setItem(LAST_SEEN_KEY, String(ts)); }
-// Если этот диалог никто ещё не открывал (метки в localStorage вообще нет) — раньше это означало,
-// что разделитель (а вместе с ним и отметка "прочитано"/read-receipt) НИКОГДА не появлялся для него:
-// условие в addMessage ниже намеренно требует непустую метку (см. комментарий там), а сама метка
-// выставляется только внутри clearUnreadDivider(), которая срабатывает только если разделитель уже
-// показан — замкнутый круг, из которого нет выхода. Разрываем его: при самом первом открытии сразу
-// проставляем метку на "сейчас" (всё, что уже есть в истории на этот момент, по умолчанию считается
-// прочитанным — так и было задумано), а всё, что придёт ПОСЛЕ этого момента, уже корректно попадёт
-// под условие ниже и покажет разделитель (а значит, дойдёт и до read-receipt отправителю).
-if (!getLastSeenTs()) setLastSeenTs(Date.now());
+// Общая комната и группы: своей отметки о прочтении на сервере нет (читателей много, см.
+// readTickHtml), поэтому "что уже новое" определяем по локальной метке "докуда я долистал". Она
+// не работает при самом первом открытии диалога — метки в localStorage ещё нет, и полоска
+// отметила бы новым вообще всё, что было отправлено сегодня. Разрываем это тем же приёмом, что и
+// раньше: при первом открытии сразу проставляем метку на "сейчас" — то, что уже в истории на этот
+// момент, считается прочитанным по умолчанию, а всё, что придёт ПОСЛЕ, покажет разделитель как
+// обычно. Для личных чатов (см. addMessage ниже) это не нужно вовсе — там есть кое-что понадёжнее.
+if (type !== 'dm' && !getLastSeenTs()) setLastSeenTs(Date.now());
 let maxKnownTs = getLastSeenTs(); // растёт по мере отрисовки/получения входящих в этой сессии
 let hasUnreadDivider = false;
 let unreadClearTimer = null;
 let programmaticScroll = false; // чтобы автоскролл к новому сообщению не считался "пользователь прокрутил"
 function unreadDividerHtml() { return `<div class="unread-divider" id="unreadDivider"><span>Новые сообщения</span></div>`; }
 
+// "Пользователь смотрит конец ленты" — с запасом в пару строк, чтобы это не ломалось от пары
+// пикселей округления при дробном масштабе интерфейса (см. uiScale).
+function isNearBottom(box) { return box.scrollHeight - box.scrollTop - box.clientHeight < 60; }
+
 function addMessage(m) {
   const box = document.getElementById('messages');
   const incoming = m.from_id !== me.id;
-  // getLastSeenTs() (не 0) — иначе при самом первом открытии диалога (метки ещё нет) полоска
-  // отметила бы новым вообще всё, что было отправлено сегодня, а не только реально непрочитанное.
-  if (incoming && !hasUnreadDivider && getLastSeenTs() && m.created_at > getLastSeenTs()) {
+  // Личный чат: "непрочитано" — то, что говорит СЕРВЕР (read_at ещё не проставлен у входящего
+  // сообщения), а не локальная метка "докуда я долистал" в localStorage. Раньше использовалась
+  // только метка — и она в принципе не знает о сообщениях, которые пришли ДО самого первого
+  // открытия этого диалога на этом компьютере: при первом открытии метка сразу выставлялась на
+  // "сейчас", молча объявляя всё уже присланное прочитанным, без единого read-receipt на сервер.
+  // Кружок непрочитанного в ростере после этого возвращался при каждом перезапуске клиента — сервер
+  // отвечал по своим данным, а по ним сообщения и правда ещё не были прочитаны. read_at свободен от
+  // этой проблемы: он не про то, что запомнил этот конкретный компьютер, а про факт на сервере.
+  const isUnread = type === 'dm'
+    ? incoming && m.read_at == null
+    : incoming && getLastSeenTs() && m.created_at > getLastSeenTs();
+  if (isUnread && !hasUnreadDivider) {
     box.insertAdjacentHTML('beforeend', unreadDividerHtml());
     hasUnreadDivider = true;
   }
   const div = document.createElement('div');
   div.innerHTML = bubbleHtml(m);
   box.appendChild(div.firstElementChild);
+  // Пузырь "печатает" должен оставаться в самом низу. Обычно его к этому моменту уже сняли (см.
+  // ws.onmessage), но в комнате может печатать один, а сообщение прийти от другого.
+  const typing = document.getElementById('typingBubble');
+  if (typing) box.appendChild(typing);
   if (incoming && m.created_at > maxKnownTs) maxKnownTs = m.created_at;
   programmaticScroll = true;
   box.scrollTop = box.scrollHeight;
@@ -595,6 +663,11 @@ document.getElementById('messages').addEventListener('scroll', () => {
   if (programmaticScroll) { programmaticScroll = false; return; } // это мы сами долистали, не пользователь
   scheduleUnreadClear();
 });
+// Окно уже было открыто (в фоне/свёрнуто) и получило сообщение через свой WS — вернулись к нему
+// Alt+Tab'ом или кликом по панели задач, вообще не кликая внутри самого чата. loadHistory() здесь
+// не перезапускается (страница не перезагружается), поэтому без отдельного слушателя это тоже
+// осталось бы непрочитанным до случайного клика.
+window.addEventListener('focus', scheduleUnreadClear);
 
 // Чат "очищается" визуально каждый день — при обычном открытии показываем только сегодняшние
 // сообщения; вся остальная переписка никуда не пропадает и доступна через кнопку "История".
@@ -609,6 +682,14 @@ async function loadHistory() {
   const q = `since=${since}&until=${until}`;
   const items = type === 'room' ? await api(`/api/history/room/${id}?${q}`) : await api(`/api/history/dm/${id}?${q}`);
   items.forEach(addMessage);
+  // Окно открыли — значит уже увидели непрочитанное (addMessage выше и так доскроллил до конца).
+  // Раньше отметка "прочитано" уходила на сервер только по клику/скроллу внутри чата — а просто
+  // открыть диалог и сразу закрыть клиент, ничего не кликнув, этого не считалось. Кружок непрочи-
+  // танного и разделитель "Новые сообщения" в такой ситуации возвращались после перезапуска: сервер
+  // корректно отвечал по своим данным — read_at так и не был проставлен, значит по его данным
+  // сообщения и правда ещё не прочитаны. scheduleUnreadClear() — тот же путь, что у клика/скролла,
+  // с той же трёхсекундной паузой (разделитель успевает мелькнуть, а не исчезает мгновенно).
+  scheduleUnreadClear();
 }
 
 let ws, wsReadyQueue = [];
@@ -616,7 +697,10 @@ let wsLostTimer = null; // см. showConnectionLostModal в ui-kit.js
 let wsReconnectDelay = 2000; // экспоненциальный бэкофф между попытками (см. onclose ниже)
 function connectWs() {
   const wsUrl = serverUrl.replace(/^http/, 'ws');
-  ws = new WebSocket(`${wsUrl}?token=${token}&host=${encodeURIComponent(desktop.hostname)}`);
+  ws = new WebSocket(`${wsUrl}?token=${token}&host=${encodeURIComponent(desktop.hostname)}`
+    // Версия и сборка — чтобы администратор в веб-панели видел, у кого что установлено, и
+    // мог понять, до кого обновление ещё не доехало (см. /api/admin/clients в server.js).
+    + `&ver=${encodeURIComponent(desktop.appVersion)}&track=${encodeURIComponent(desktop.buildTrack)}`);
   // У этого окна своё отдельное подключение к серверу — если оно не будет сообщать свой статус,
   // сервер посчитает его вечно "активным" и это перекроет настоящий статус AFK от окна ростера
   // (баг, который был: "Отошёл" не появлялся, пока открыто хоть одно окно чата). Статус на момент
@@ -654,11 +738,8 @@ function connectWs() {
     // Реакция добавлена/снята/заменена — сообщение может быть отрисовано и в основной ленте, и
     // в панели истории одновременно, поэтому обновляем везде, где сейчас есть карточка с этим id.
     if (data.type === 'reaction') {
-      const html = reactionsMarkup(data.messageId, data.reactions);
       document.querySelectorAll(`[data-id="${data.messageId}"]`).forEach((el) => {
-        const bar = el.querySelector('.reactions-bar');
-        if (bar) { if (html) bar.outerHTML = html; else bar.remove(); }
-        else if (html) el.insertAdjacentHTML('beforeend', html);
+        applyReactions(el, data.messageId, data.reactions);
       });
       return;
     }
@@ -696,15 +777,34 @@ function sendTyping() {
 }
 let typingHideTimer = null;
 function showTypingIndicator(name) {
-  const el = document.getElementById('typingIndicator');
-  el.textContent = `${name} печатает...`;
-  el.classList.add('show');
+  const box = document.getElementById('messages');
+  // Доскроллить вниз можно только если пользователь и так внизу: если он ушёл читать старую
+  // переписку, дёргать его ленту из-за того, что кто-то начал печатать, нельзя.
+  const follow = isNearBottom(box);
+  let el = document.getElementById('typingBubble');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'typingBubble';
+    el.className = 'msg typing-bubble';
+    el.innerHTML = '<div class="who"></div><div class="tdots"><span class="tdot"></span><span class="tdot"></span><span class="tdot"></span></div>';
+    box.appendChild(el);
+  } else if (el !== box.lastElementChild) {
+    box.appendChild(el); // держим пузырь последним — после него могли добавиться сообщения
+  }
+  // Имя — только в комнате/группе, где печатать может кто угодно. В личном чате оно очевидно и
+  // лишняя строка только растит пузырь.
+  const who = el.querySelector('.who');
+  who.textContent = type === 'room' ? name : '';
+  who.style.display = type === 'room' ? '' : 'none';
+  if (follow) { programmaticScroll = true; box.scrollTop = box.scrollHeight; }
   clearTimeout(typingHideTimer);
   typingHideTimer = setTimeout(hideTypingIndicator, TYPING_TIMEOUT_MS);
 }
 function hideTypingIndicator() {
   clearTimeout(typingHideTimer);
-  document.getElementById('typingIndicator').classList.remove('show');
+  typingHideTimer = null;
+  const el = document.getElementById('typingBubble');
+  if (el) el.remove();
 }
 
 // ---------- Ответ на сообщение (reply) ----------

@@ -5,103 +5,209 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Мини-мессенджер — панель администратора</title>
 <style>
-  /* Палитра и вёрстка — в стиле остальной платформы (helpdesk-backend/CERTVIEWER):
-     тёплый золотой акцент на светлом фоне, шапка с вкладками вместо бокового меню.
-     Имена --muted и --warn сохранены как есть — на них ссылаются inline-стили,
-     которые генерирует script ниже (не переименовывать без правки script). */
+  /* Material You (Material 3) — единая тема с платформой и остальными
+     модулями. Панель открывается в iframe внутри платформы, поэтому палитра,
+     скругления и типографика совпадают с helpdesk-backend/public/styles.css.
+     Вместо прежней тёмной темы — светлые тональные поверхности, «таблетки»
+     и вкладки сверху.
+
+     Цвета в hex, а не в oklch: панель открывают с рабочих машин, где браузер
+     может быть старше Chrome 111. Веб-шрифты не подключаются — сеть изолирована.
+
+     Имена --muted, --warn, --danger и т.п. сохранены: скрипт ниже подставляет
+     их в инлайновые стили при отрисовке таблиц. */
   :root {
-    --bg:#EEF1F6; --paper:#FFFFFF; --text:#1C2733; --muted:#5B6B7D;
-    --border:#DDE3EA; --panel-2:#F1F4F8;
-    --accent:#A97F45; --accent-2:#C7791F; --accent-soft:#F7EEDC;
-    --danger:#B5432F; --danger-soft:#F5E1DC;
-    --warn:#C7791F; --warn-soft:#F7E9D6;
-    --navy:#1E3A5F; --navy-2:#16304D;
-    --serif: Georgia, "Times New Roman", serif;
+    --md-primary: #7D5700;
+    --md-on-primary: #FFFFFF;
+    --md-primary-container: #FFDEA6;
+    --md-on-primary-container: #281900;
+    --md-secondary-container: #F0E0C8;
+    --md-on-secondary-container: #251A04;
+
+    --md-surface: #FFF8F3;
+    --md-surface-container-lowest: #FFFFFF;
+    --md-surface-container-low: #FBF1E9;
+    --md-surface-container: #F5ECE3;
+    --md-surface-container-high: #F0E6DE;
+    --md-surface-container-highest: #EAE1D9;
+    --md-on-surface: #1F1B16;
+    --md-on-surface-variant: #4F453A;
+    --md-outline: #817567;
+    --md-outline-variant: #D8CCBE;
+
+    --md-error: #8C1D18;
+    --md-error-container: #FFDAD6;
+    --md-on-error-container: #410002;
+    --md-success-container: #CDEBD5;
+    --md-on-success-container: #08210F;
+
+    --md-state-hover: rgba(31, 27, 22, 0.06);
+    --md-shape-xs: 8px;
+    --md-shape-s: 12px;
+    --md-shape-m: 16px;
+    --md-shape-l: 20px;
+    --md-shape-xl: 28px;
+    --md-shape-full: 100px;
+    --md-elev-1: 0 1px 2px rgba(31, 27, 22, 0.10);
+    --md-elev-3: 0 6px 18px rgba(31, 27, 22, 0.12);
+
+    --sans: Roboto, "Segoe UI", system-ui, -apple-system, Arial, sans-serif;
+
+    /* Имена, на которые ссылается script ниже */
+    --bg: var(--md-surface);
+    --panel: var(--md-surface-container-lowest);
+    --panel-2: var(--md-surface-container-high);
+    --border: var(--md-outline-variant);
+    --accent: var(--md-primary);
+    --accent-2: var(--md-on-primary-container);
+    --text: var(--md-on-surface);
+    --muted: var(--md-on-surface-variant);
+    --online: #1F6B37;
+    --danger: var(--md-error);
+    --warn: #8A4600;
   }
   * { box-sizing: border-box; }
   html, body { height:100%; }
-  body { margin:0; background:var(--bg); color:var(--text); font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif; font-size:14px; overflow:hidden; }
-  ::-webkit-scrollbar { width:9px; height:9px; }
-  ::-webkit-scrollbar-thumb { background:var(--border); border-radius:5px; }
+  body {
+    margin:0; background:var(--md-surface); color:var(--md-on-surface);
+    font-family: var(--sans); font-size:14px; overflow:hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::-webkit-scrollbar { width:10px; height:10px; }
+  ::-webkit-scrollbar-thumb { background:var(--md-surface-container-highest); border-radius:5px; }
 
   /* ---- Логин ---- */
   #authScreen {
-    height:100%; display:flex; align-items:center; justify-content:center; position:relative; overflow:hidden;
-    background: linear-gradient(135deg, var(--navy) 0%, var(--navy-2) 100%);
+    height:100%; display:flex; align-items:center; justify-content:center;
+    background: var(--md-surface-container);
   }
-  #authScreen::before {
-    content:""; position:absolute; top:-15%; right:-10%; width:55vw; height:55vw; max-width:700px; max-height:700px;
-    background: radial-gradient(circle, var(--accent) 0%, transparent 70%); opacity:.18; filter:blur(60px); pointer-events:none;
+  #authBox {
+    width:380px; background:var(--md-surface-container-lowest); border:none;
+    border-radius:var(--md-shape-xl); padding:40px 36px; box-shadow:var(--md-elev-3);
   }
-  #authBox { position:relative; width:340px; background:var(--paper); border-radius:16px; padding:34px 30px; box-shadow:0 20px 50px rgba(0,0,0,0.35); }
-  #authBox .seal { display:flex; justify-content:center; margin-bottom:12px; color:var(--accent); }
-  #authBox h1 { margin:0 0 4px; font-family:var(--serif); font-weight:600; font-size:19px; color:var(--navy); text-align:center; }
-  #authBox p.sub { margin:0 0 22px; color:var(--muted); font-size:11px; text-align:center; text-transform:uppercase; letter-spacing:1px; }
-  #authBox label { display:block; font-size:12px; font-weight:600; color:var(--muted); margin:0 0 6px; }
-  #authBox input { width:100%; padding:9px 11px; margin-bottom:14px; background:var(--paper); border:1px solid var(--border); border-radius:10px; color:var(--text); font-size:14px; }
-  #authBox input:focus { outline:none; border-color:var(--accent); }
-  #authBox button { width:100%; padding:10px; border:none; border-radius:10px; background:var(--accent); color:#fff; font-weight:700; font-size:13.5px; cursor:pointer; transition:filter .12s ease; }
-  #authBox button:hover { filter:brightness(0.96); }
-  #authErr { color:var(--danger); font-size:12.5px; min-height:16px; margin-bottom:2px; text-align:center; }
+  #authBox .seal {
+    display:flex; align-items:center; justify-content:center; margin:0 auto 18px;
+    width:56px; height:56px; border-radius:var(--md-shape-m);
+    background:var(--md-primary-container); color:var(--md-on-primary-container);
+  }
+  #authBox h1 { margin:0 0 6px; font-size:22px; font-weight:600; text-align:center; }
+  #authBox p.sub { margin:0 0 26px; color:var(--md-on-surface-variant); font-size:13.5px; text-align:center; }
+  #authBox label { display:block; font-size:12.5px; font-weight:500; color:var(--md-on-surface-variant); margin:0 0 7px; }
+  #authBox input {
+    width:100%; padding:14px 16px; margin-bottom:16px; background:transparent;
+    border:1px solid var(--md-outline); border-radius:var(--md-shape-xs);
+    color:var(--md-on-surface); font-size:14px; font-family:inherit; outline:none;
+    transition:border-color .12s ease, box-shadow .12s ease;
+  }
+  #authBox input:focus { border-color:var(--md-primary); box-shadow:inset 0 0 0 1px var(--md-primary); }
+  #authBox button {
+    width:100%; padding:14px; border:none; border-radius:var(--md-shape-full);
+    background:var(--md-primary); color:var(--md-on-primary);
+    font-weight:600; font-size:14px; letter-spacing:.1px; cursor:pointer;
+    transition:box-shadow .15s, filter .15s;
+  }
+  #authBox button:hover { box-shadow:var(--md-elev-1); filter:brightness(1.06); }
+  #authErr { color:var(--md-error); font-size:12.5px; min-height:18px; margin-bottom:4px; text-align:center; }
 
-  /* ---- Layout: шапка + вкладки сверху ---- */
+  /* ---- Оболочка: шапка + вкладки сверху ---- */
   #dash { display:none; height:100%; flex-direction:column; }
   #dash.active { display:flex; }
 
-  #topbar-top { flex-shrink:0; display:flex; align-items:center; justify-content:space-between; padding:16px 28px 12px; background:var(--paper); }
-  .mm-brand { display:flex; align-items:center; gap:10px; }
-  .mm-brand .dot { width:30px; height:30px; border-radius:9px; background:var(--accent); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:14px; flex-shrink:0; }
-  .mm-brand .name { font-family:var(--serif); font-weight:600; font-size:17px; color:var(--text); }
-  .mm-user { display:flex; align-items:center; gap:14px; }
+  #topbar-top {
+    flex-shrink:0; display:flex; align-items:center; justify-content:space-between;
+    padding:18px 28px 14px; background:var(--md-surface);
+  }
+  .mm-brand { display:flex; align-items:center; gap:12px; }
+  .mm-brand .dot {
+    width:40px; height:40px; border-radius:var(--md-shape-s);
+    background:var(--md-primary-container); color:var(--md-on-primary-container);
+    display:flex; align-items:center; justify-content:center; font-weight:600; font-size:16px; flex-shrink:0;
+  }
+  .mm-brand .name { font-weight:600; font-size:20px; color:var(--md-on-surface); }
+  .mm-user { display:flex; align-items:center; gap:16px; }
   .mm-user-text { text-align:right; line-height:1.35; }
-  #whoName { font-size:12.5px; font-weight:600; color:var(--text); }
-  #whoRole { font-size:11px; color:var(--muted); }
-  .mm-logout { display:flex; align-items:center; gap:6px; padding:7px 13px; border:1px solid var(--border); background:var(--panel-2); color:var(--muted); border-radius:9px; cursor:pointer; font-size:12px; font-weight:600; transition:background .12s ease, color .12s ease, border-color .12s ease; }
-  .mm-logout:hover { background:var(--danger-soft); color:var(--danger); border-color:var(--danger-soft); }
+  #whoName { font-size:13px; font-weight:500; color:var(--md-on-surface); }
+  #whoRole { font-size:11.5px; color:var(--md-on-surface-variant); }
+  .mm-logout {
+    display:flex; align-items:center; gap:8px; padding:11px 20px; border:none;
+    background:var(--md-surface-container-high); color:var(--md-on-surface-variant);
+    border-radius:var(--md-shape-full); cursor:pointer; font-size:13px; font-weight:600;
+    font-family:inherit; transition:background .13s ease, color .13s ease;
+  }
+  .mm-logout:hover { background:var(--md-error-container); color:var(--md-on-error-container); }
 
-  #tabs { flex-shrink:0; display:flex; gap:22px; padding:0 28px; border-bottom:1px solid var(--border); background:var(--paper); overflow-x:auto; }
-  .nav-item { padding:11px 2px 10px; cursor:pointer; color:var(--muted); font-weight:600; font-size:13.5px; border-bottom:2px solid transparent; white-space:nowrap; transition:color .12s ease, border-color .12s ease; }
-  .nav-item:hover { color:var(--text); }
-  .nav-item.active { color:var(--accent); border-bottom-color:var(--accent); }
+  /* Вкладки M3: подчёркивание активной */
+  #tabs {
+    flex-shrink:0; display:flex; gap:6px; padding:0 20px;
+    border-bottom:1px solid var(--md-outline-variant); background:var(--md-surface); overflow-x:auto;
+  }
+  .nav-item {
+    padding:15px 18px 13px; cursor:pointer; color:var(--md-on-surface-variant);
+    font-weight:500; font-size:13.5px; border-bottom:3px solid transparent;
+    white-space:nowrap; transition:color .13s ease, border-color .13s ease, background .13s ease;
+    border-radius:var(--md-shape-xs) var(--md-shape-xs) 0 0;
+  }
+  .nav-item:hover { color:var(--md-on-surface); background:var(--md-state-hover); }
+  .nav-item.active { color:var(--md-primary); border-bottom-color:var(--md-primary); font-weight:600; }
 
-  #main { flex:1; padding:24px 28px 28px; overflow-y:auto; min-height:0; background:var(--bg); }
+  #main { flex:1; padding:26px 28px 30px; overflow-y:auto; min-height:0; background:var(--md-surface); }
   .view { display:none; }
   .view.active { display:block; }
-  h2 { margin:0 0 18px; font-family:var(--serif); font-weight:600; font-size:19px; }
+  h2 { margin:0 0 20px; font-size:24px; font-weight:600; letter-spacing:0; }
 
-  .cards { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:20px; }
-  .card { background:var(--paper); border:1px solid var(--border); border-radius:14px; padding:16px 18px; }
-  .card .v { font-size:26px; font-weight:700; color:var(--text); }
-  .card .l { color:var(--muted); font-size:12px; margin-top:4px; }
+  .cards { display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-bottom:22px; }
+  .card { background:var(--md-surface-container-low); border:none; border-radius:var(--md-shape-l); padding:20px 24px; }
+  .card .v { font-size:32px; font-weight:600; letter-spacing:-.5px; color:var(--md-on-surface); }
+  .card .l { color:var(--md-on-surface-variant); font-size:12.5px; margin-top:5px; }
 
-  .panel { background:var(--paper); border:1px solid var(--border); border-radius:14px; padding:18px; margin-bottom:18px; }
-  .panel h3 { margin:0 0 12px; font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.4px; font-weight:700; }
-  .row-flex { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .panel { background:var(--md-surface-container-low); border:none; border-radius:var(--md-shape-l); padding:24px; margin-bottom:18px; }
+  .panel h3 { margin:0 0 14px; font-size:11.5px; color:var(--md-on-surface-variant); text-transform:uppercase; letter-spacing:.5px; font-weight:600; }
+  .row-flex { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
 
   table { width:100%; border-collapse:collapse; }
-  th { text-align:left; color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.3px; padding:9px 8px; border-bottom:1px solid var(--border); background:var(--panel-2); font-weight:700; }
-  td { padding:9px 8px; border-bottom:1px solid var(--panel-2); vertical-align:middle; }
-  tbody tr:hover { background:var(--panel-2); }
+  th {
+    text-align:left; color:var(--md-on-surface-variant); font-size:11.5px; text-transform:uppercase;
+    letter-spacing:.5px; padding:12px 10px; border-bottom:1px solid var(--md-outline-variant); font-weight:600;
+    background:var(--md-surface-container);
+  }
+  td { padding:12px 10px; border-bottom:1px solid var(--md-surface-container-high); vertical-align:middle; }
+  tbody tr:hover td { background:var(--md-surface-container); }
 
-  select, input, textarea { background:var(--paper); border:1px solid var(--border); color:var(--text); border-radius:9px; padding:8px 10px; font-size:13px; font-family:inherit; }
-  select:focus, input:focus, textarea:focus { outline:none; border-color:var(--accent); }
-  button.action { background:var(--accent); border:none; color:#fff; border-radius:9px; padding:8px 13px; cursor:pointer; font-size:12.5px; font-weight:700; transition:filter .12s ease; }
-  button.action:hover { filter:brightness(0.96); }
-  button.action.danger { background:var(--danger); }
-  button.action.ghost { background:var(--panel-2); color:var(--text); }
-  button.action:disabled { opacity:.6; cursor:not-allowed; }
+  select, input, textarea {
+    background:var(--md-surface-container-lowest); border:1px solid var(--md-outline); color:var(--md-on-surface);
+    border-radius:var(--md-shape-xs); padding:11px 14px; font-size:13.5px; font-family:inherit; outline:none;
+    transition:border-color .12s ease, box-shadow .12s ease;
+  }
+  select:focus, input:focus, textarea:focus { border-color:var(--md-primary); box-shadow:inset 0 0 0 1px var(--md-primary); }
+  input[type="checkbox"] { width:auto; padding:0; accent-color:var(--md-primary); }
+  input[type="date"] { color-scheme:light; }
 
-  #histMessages { display:flex; flex-direction:column; gap:6px; max-height:420px; overflow-y:auto; margin-top:12px; padding:12px; background:var(--panel-2); border-radius:10px; }
-  #histMessages .m { font-size:13px; }
-  #histMessages .m b { color:var(--accent-2); }
-  #histMessages .m .t { color:var(--muted); font-size:10.5px; margin-left:6px; }
+  /* Filled / tonal / text buttons M3 */
+  button.action {
+    background:var(--md-primary); border:none; color:var(--md-on-primary); border-radius:var(--md-shape-full);
+    padding:11px 20px; cursor:pointer; font-size:13px; font-weight:600; letter-spacing:.1px;
+    font-family:inherit; transition:box-shadow .15s, filter .15s, background .15s;
+  }
+  button.action:hover { box-shadow:var(--md-elev-1); filter:brightness(1.06); }
+  button.action.danger { background:var(--md-error); }
+  button.action.ghost { background:var(--md-secondary-container); color:var(--md-on-secondary-container); }
+  button.action.ghost:hover { filter:brightness(0.96); box-shadow:none; }
+  button.action:disabled { background:var(--md-surface-container-high); color:rgba(31,27,22,0.38); cursor:not-allowed; box-shadow:none; filter:none; }
 
-  #bcFeed { display:flex; flex-direction:column; gap:10px; }
-  .bc-item { background:var(--panel-2); border:1px solid var(--border); border-radius:10px; padding:11px 13px; }
-  .bc-item .who { color:var(--accent-2); font-weight:700; font-size:12.5px; }
-  .bc-item .time { color:var(--muted); font-size:10.5px; margin-left:6px; }
-  .bc-item .txt { margin-top:4px; white-space:pre-wrap; line-height:1.4; }
-  textarea#bcText { width:100%; height:80px; resize:vertical; }
+  #histMessages {
+    display:flex; flex-direction:column; gap:8px; max-height:440px; overflow-y:auto;
+    margin-top:14px; padding:16px; background:var(--md-surface-container); border-radius:var(--md-shape-m);
+  }
+  #histMessages .m { font-size:13.5px; line-height:1.5; }
+  #histMessages .m b { color:var(--md-primary); }
+  #histMessages .m .t { color:var(--md-on-surface-variant); font-size:11px; margin-left:8px; }
+
+  #bcFeed { display:flex; flex-direction:column; gap:12px; }
+  .bc-item { background:var(--md-surface-container); border:none; border-radius:var(--md-shape-m); padding:14px 16px; }
+  .bc-item .who { color:var(--md-primary); font-weight:600; font-size:13px; }
+  .bc-item .time { color:var(--md-on-surface-variant); font-size:11px; margin-left:8px; }
+  .bc-item .txt { margin-top:6px; white-space:pre-wrap; line-height:1.5; }
+  textarea#bcText { width:100%; height:96px; resize:vertical; }
 </style>
 </head>
 <body>
@@ -109,9 +215,8 @@
 <div id="authScreen">
   <div id="authBox">
     <div class="seal">
-      <svg width="32" height="32" viewBox="0 0 24 24" fill="none">
-        <circle cx="12" cy="12" r="9.5" stroke="currentColor" stroke-width="1.4"/>
-        <path d="M8 12.2l2.6 2.6L16.2 9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+      <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 8.9 8.9 0 0 1-3.8-.9L3 21l1.9-5.1A8.4 8.4 0 0 1 12 3a8.4 8.4 0 0 1 9 8.5z"/>
       </svg>
     </div>
     <h1>Искра</h1>
@@ -144,6 +249,7 @@
     <div class="nav-item" data-view="history">Переписки</div>
     <div class="nav-item" data-view="broadcast">Рассылка</div>
     <div class="nav-item" data-view="files">Файлы</div>
+    <div class="nav-item" data-view="updates">Клиенты</div>
     <div class="nav-item" data-view="logs">Логи</div>
   </div>
 
@@ -164,6 +270,20 @@
 
     <div class="view" id="view-users">
       <h2>Пользователи</h2>
+
+      <div class="panel">
+        <h3>Самостоятельная регистрация</h3>
+        <p style="color:var(--muted); font-size:12px; margin:0 0 10px;">
+          Когда включена, любой, кто дотянулся до адреса сервера, может сам завести себе учётную
+          запись и попасть в список сотрудников и в общую комнату. Для рабочей сети это обычно
+          лишнее: надёжнее выключить и заводить людей вручную кнопкой «Добавить сотрудника» ниже.
+        </p>
+        <label class="row-flex" style="cursor:pointer;">
+          <input type="checkbox" id="regOpen" onchange="saveRegistration(this.checked)">
+          <span>Разрешить сотрудникам регистрироваться самим</span>
+          <span id="regMsg" style="color:var(--muted); font-size:12px;"></span>
+        </label>
+      </div>
 
       <div class="panel">
         <h3>Отделы</h3>
@@ -265,6 +385,42 @@
       </div>
     </div>
 
+    <div class="view" id="view-updates">
+      <h2>Клиенты и обновления</h2>
+
+      <div class="panel">
+        <h3>Что выложено на сервере</h3>
+        <p style="color:var(--muted); font-size:12px; margin:0 0 10px;">
+          Версии из папок <code>updates/win7</code> и <code>updates/win10</code>. Если пусто —
+          сборки ещё не выложены, и клиенты обновляться не будут.
+        </p>
+        <div id="publishedVersions" style="display:flex; gap:18px; flex-wrap:wrap;"></div>
+      </div>
+
+      <div class="panel">
+        <h3>Кто сейчас в сети</h3>
+        <p style="color:var(--muted); font-size:12px; margin:0 0 10px;">
+          Версия видна только у тех, кто сейчас подключён. «Обновить» скачает новую версию на эту
+          машину и перезапустит приложение — сотрудник получит предупреждение за 15 секунд.
+          «Журнал» запросит с машины её локальный файл ошибок: туда попадает то, чего нет в общих
+          логах — падения окон и сбои обновления.
+        </p>
+        <div class="row-flex" style="margin-bottom:10px;">
+          <button class="action" onclick="loadClients()">Обновить список</button>
+          <span id="clientsSummary" style="color:var(--muted); font-size:12px;"></span>
+        </div>
+        <table>
+          <thead><tr><th>Сотрудник</th><th>Компьютер</th><th>Версия</th><th>Сборка</th><th>Действия</th></tr></thead>
+          <tbody id="clientsBody"></tbody>
+        </table>
+      </div>
+
+      <div class="panel" id="clientLogPanel" style="display:none;">
+        <h3 id="clientLogTitle">Журнал с машины</h3>
+        <pre id="clientLogText" style="max-height:340px; overflow:auto; background:var(--panel-2); border:1px solid var(--border); border-radius:8px; padding:10px; font-size:11.5px; white-space:pre-wrap; word-break:break-word;"></pre>
+      </div>
+    </div>
+
     <div class="view" id="view-logs">
       <h2>Логи</h2>
       <div class="panel">
@@ -358,6 +514,9 @@ document.querySelectorAll('.nav-item').forEach(item => {
     document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
     item.classList.add('active');
     document.getElementById('view-' + item.dataset.view).classList.add('active');
+    // Список подключённых меняется постоянно — перечитываем при каждом заходе в раздел, а не
+    // показываем то, что было на момент входа в панель.
+    if (item.dataset.view === 'updates') loadClients();
   };
 });
 
@@ -419,14 +578,17 @@ function renderDepts() {
       </td>
       <td>${escapeHtml(d.name)}</td>
       <td class="row-flex">
-        <button class="action ghost" onclick="renameDept(${d.id}, '${escapeHtml(d.name).replace(/'/g, "\\'")}')">Переименовать</button>
+        <button class="action ghost" onclick="renameDept(${d.id})">Переименовать</button>
         <button class="action danger" onclick="deleteDept(${d.id})">Удалить</button>
       </td>`;
     body.appendChild(tr);
   });
   document.getElementById('newDept').innerHTML = '<option value="">Без отдела</option>' + deptsCache.map(d => `<option value="${d.id}">${escapeHtml(d.name)}</option>`).join('');
 }
-async function renameDept(id, currentName) {
+// Текущее имя берём из кэша по id, а не подставляем строкой в сам onclick: подстановка ломалась
+// на любой кавычке в названии отдела (и открывала бы вставку разметки, если бы имя туда попало).
+async function renameDept(id) {
+  const currentName = deptsCache.find(d => d.id === id)?.name || '';
   const name = prompt('Новое название отдела:', currentName);
   if (!name || !name.trim() || name.trim() === currentName) return;
   try { await api(`api/admin/departments/${id}`, { method: 'PATCH', body: JSON.stringify({ name: name.trim() }) }); refreshAll(); } catch (e) { alert(e.message); }
@@ -439,15 +601,31 @@ async function moveDept(index, dir) {
   try { await api('api/admin/departments/reorder', { method: 'POST', body: JSON.stringify({ order }) }); refreshAll(); } catch (e) { alert(e.message); }
 }
 
+async function loadRegistration() {
+  try {
+    const { open } = await api('api/admin/registration');
+    document.getElementById('regOpen').checked = open;
+  } catch { /* не критично: остальная панель работает и без этого переключателя */ }
+}
+async function saveRegistration(open) {
+  const msg = document.getElementById('regMsg');
+  try {
+    await api('api/admin/registration', { method: 'PATCH', body: JSON.stringify({ open }) });
+    msg.textContent = open ? 'Регистрация разрешена' : 'Регистрация выключена';
+    setTimeout(() => { msg.textContent = ''; }, 2500);
+  } catch (e) { msg.textContent = 'Ошибка: ' + e.message; loadRegistration(); }
+}
+
 async function refreshAll() {
   usersCache = await api('api/admin/users');
   deptsCache = await api('api/departments');
   renderUsers();
   renderDepts();
-  const opts = usersCache.map(u => `<option value="${u.id}">${u.display_name}</option>`).join('');
+  const opts = usersCache.map(u => `<option value="${u.id}">${escapeHtml(u.display_name)}</option>`).join('');
   document.getElementById('histUser1').innerHTML = opts;
   document.getElementById('histUser2').innerHTML = opts;
   loadStats();
+  loadRegistration();
 }
 
 async function createUser() {
@@ -492,13 +670,23 @@ document.getElementById('histType').onchange = (e) => {
   document.getElementById('histUser2').style.display = isDm ? 'inline-block' : 'none';
 };
 
-function escapeHtml(s) { return s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
+// Экранируем И кавычки тоже: без них значение, попавшее в атрибут (например value="..." в списке
+// сотрудников), закрывало атрибут своей кавычкой и дальше писало уже разметку — то есть обычного
+// экранирования "<" и ">" для атрибутов недостаточно. String() — потому что сюда попадают и
+// значения из логов, где на месте строки может оказаться число или null, а у них нет .replace.
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
 
 function renderHistoryBox(items) {
   document.getElementById('histMessages').innerHTML = items.map(m => {
     const time = new Date(m.created_at).toLocaleString('ru-RU');
     const files = (m.files || []).map(f => ` 📎 ${escapeHtml(f.name)}${f.exists === false ? ' (удалён с диска)' : ''}`).join('');
-    return `<div class="m"><b>${m.from_user}:</b> ${escapeHtml(m.text)}${files}<span class="t">${time}</span></div>`;
+    // from_user — это отображаемое имя, которое сотрудник задаёт себе сам в клиенте. Без
+    // экранирования имя вида "<img src=x onerror=...>" выполнялось бы прямо здесь, в открытой
+    // сессии администратора, — то есть любой сотрудник мог получить доступ к панели, просто
+    // переименовавшись и дождавшись, когда админ откроет переписку.
+    return `<div class="m"><b>${escapeHtml(m.from_user)}:</b> ${escapeHtml(m.text)}${files}<span class="t">${time}</span></div>`;
   }).join('') || 'Сообщений пока нет';
 }
 
@@ -602,9 +790,9 @@ async function loadFiles() {
         <td>${f.from ? escapeHtml(f.from) : '—'}</td>
         <td>${new Date(f.created_at).toLocaleString('ru-RU')}</td>
         <td>${fmtSize(f.size)}</td>
-        <td><button class="action danger" onclick="deleteFile('${f.diskName.replace(/'/g, "\\'")}')">Удалить</button></td>
+        <td><button class="action danger" data-disk="${escapeHtml(f.diskName)}" onclick="deleteFile(this.dataset.disk)">Удалить</button></td>
       </tr>`).join('') || '<tr><td colspan="6" style="color:var(--muted)">Файлов пока нет</td></tr>';
-  } catch (e) { body.innerHTML = `<tr><td colspan="6">Ошибка: ${e.message}</td></tr>`; }
+  } catch (e) { body.innerHTML = `<tr><td colspan="6">Ошибка: ${escapeHtml(e.message)}</td></tr>`; }
 }
 async function deleteFile(diskName) {
   if (!confirm('Удалить файл с сервера без возможности восстановления?')) return;
@@ -639,14 +827,98 @@ async function loadLogs() {
           <td style="color:var(--muted); font-size:12px;">${details}</td>
         </tr>`;
     }).join('') || '<tr><td colspan="5" style="color:var(--muted)">За этот день записей нет</td></tr>';
-  } catch (e) { body.innerHTML = `<tr><td colspan="5">Ошибка: ${e.message}</td></tr>`; }
+  } catch (e) { body.innerHTML = `<tr><td colspan="5">Ошибка: ${escapeHtml(e.message)}</td></tr>`; }
+}
+
+// ---------- Клиенты и обновления ----------
+let publishedCache = {};
+
+async function loadPublishedVersions() {
+  const box = document.getElementById('publishedVersions');
+  try {
+    publishedCache = await api('api/admin/update-published');
+    const cell = (track, label) => {
+      const p = publishedCache[track];
+      return `<div><div style="color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.4px;">${label}</div>`
+        + (p ? `<div style="font-size:18px; font-weight:700;">${escapeHtml(p.version)}</div>`
+             + `<div style="color:var(--muted); font-size:11px;">${escapeHtml(p.file || '')}</div>`
+             : `<div style="font-size:14px; color:var(--warn)">не выложено</div>`)
+        + `</div>`;
+    };
+    box.innerHTML = cell('win7', 'Windows 7 / 8.1') + cell('win10', 'Windows 10+');
+  } catch (e) { box.innerHTML = `<span style="color:var(--danger)">${escapeHtml(e.message)}</span>`; }
+}
+
+async function loadClients() {
+  const body = document.getElementById('clientsBody');
+  body.innerHTML = '<tr><td colspan="5">Загрузка...</td></tr>';
+  try {
+    await loadPublishedVersions();
+    const clients = await api('api/admin/clients');
+    document.getElementById('clientsSummary').textContent =
+      clients.length ? `Машин на связи: ${clients.length}` : '';
+    body.innerHTML = clients.map(c => {
+      // Устаревшей считаем только тогда, когда есть с чем сравнивать: и версия клиента известна,
+      // и на сервере что-то выложено для его трека.
+      const pub = c.track && publishedCache[c.track] ? publishedCache[c.track].version : null;
+      const outdated = pub && c.version && pub !== c.version;
+      const verCell = c.version
+        ? `${escapeHtml(c.version)}${outdated ? ` <span style="color:var(--warn)">→ ${escapeHtml(pub)}</span>` : ''}`
+        : '<span style="color:var(--muted)">—</span>';
+      const trackLabel = { win7: 'Windows 7 / 8.1', win10: 'Windows 10+', dev: 'из исходников' }[c.track] || '—';
+      return `<tr>
+        <td>${escapeHtml(c.user)}</td>
+        <td>${escapeHtml(c.hostname)}</td>
+        <td>${verCell}</td>
+        <td style="color:var(--muted)">${escapeHtml(trackLabel)}</td>
+        <td class="row-flex">
+          <button class="action" data-uid="${c.userId}" data-host="${escapeHtml(c.hostname)}"
+            onclick="forceUpdate(this.dataset.uid, this.dataset.host)"${outdated ? '' : ' disabled title="Версия уже актуальна"'}>Обновить</button>
+          <button class="action ghost" data-uid="${c.userId}" data-host="${escapeHtml(c.hostname)}"
+            onclick="requestClientLog(this.dataset.uid, this.dataset.host)">Журнал</button>
+        </td>
+      </tr>`;
+    }).join('') || '<tr><td colspan="5" style="color:var(--muted)">Сейчас никто не подключён</td></tr>';
+  } catch (e) { body.innerHTML = `<tr><td colspan="5">Ошибка: ${escapeHtml(e.message)}</td></tr>`; }
+}
+
+async function forceUpdate(userId, host) {
+  if (!confirm(`Запустить обновление на «${host}»? Приложение у сотрудника перезапустится через 15 секунд после загрузки.`)) return;
+  try {
+    await api('api/admin/force-update', { method: 'POST', body: JSON.stringify({ userId: Number(userId), host }) });
+    alert('Команда отправлена. Обновление займёт некоторое время — список можно обновить позже.');
+  } catch (e) { alert(e.message); }
+}
+
+async function requestClientLog(userId, host) {
+  const panel = document.getElementById('clientLogPanel');
+  const text = document.getElementById('clientLogText');
+  document.getElementById('clientLogTitle').textContent = `Журнал с машины «${host}»`;
+  panel.style.display = '';
+  text.textContent = 'Запрашиваем журнал у клиента…';
+  try {
+    await api('api/admin/request-log', { method: 'POST', body: JSON.stringify({ userId: Number(userId), host }) });
+  } catch (e) { text.textContent = 'Ошибка: ' + e.message; return; }
+  // Клиент отвечает не мгновенно — журнал приходит на сервер отдельным запросом. Опрашиваем
+  // несколько раз, а не ждём один раз наугад.
+  for (let i = 0; i < 10; i++) {
+    await new Promise(r => setTimeout(r, 700));
+    try {
+      const dump = await api(`api/admin/client-log?userId=${encodeURIComponent(userId)}&host=${encodeURIComponent(host)}`);
+      if (Date.now() - dump.at < 60000) {
+        text.textContent = dump.text || '(журнал пуст)';
+        return;
+      }
+    } catch { /* ещё не пришёл — ждём дальше */ }
+  }
+  text.textContent = 'Клиент не прислал журнал. Возможно, он только что отключился.';
 }
 
 async function loadBroadcastFeed() {
   const items = await api('api/broadcasts');
   document.getElementById('bcFeed').innerHTML = items.map(b => {
     const time = new Date(b.created_at).toLocaleString('ru-RU');
-    return `<div class="bc-item"><span class="who">${b.from_user}</span><span class="time">${time}</span><div class="txt">${escapeHtml(b.text)}</div></div>`;
+    return `<div class="bc-item"><span class="who">${escapeHtml(b.from_user)}</span><span class="time">${time}</span><div class="txt">${escapeHtml(b.text)}</div></div>`;
   }).join('') || '<div style="color:var(--muted)">Рассылок пока не было</div>';
 }
 async function sendBroadcast() {
@@ -688,6 +960,7 @@ async function startDash() {
   await loadUploadSettings();
   document.getElementById('logsDay').value = todayStr();
   await loadLogs();
+  await loadClients();
   connectPresenceWs();
   setInterval(refreshAll, 30000);
 }
