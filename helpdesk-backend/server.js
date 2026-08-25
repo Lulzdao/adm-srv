@@ -17,10 +17,6 @@ const app = express();
 // Заголовок-версия Express выдаёт стек и версию сервера — снимаем.
 app.disable("x-powered-by");
 
-// Ограничение размера JSON-тела: без него любой вошедший мог отправить
-// запрос на сотни мегабайт и занять память процесса.
-app.use(express.json({ limit: "100kb" }));
-
 if (!process.env.SESSION_SECRET) {
   console.warn(
     "[внимание] SESSION_SECRET не задан в .env — используется значение по умолчанию. " +
@@ -48,12 +44,19 @@ app.use(session({
   },
 }));
 
+// Сертификаты — до общего парсера тела: PFX с цепочкой не влезает в его
+// предел, и маршрут читает тело сам (см. routes/certificates.js).
+app.use("/api/certificates", require("./routes/certificates")());
+
+// Ограничение размера JSON-тела для всего остального: без него любой вошедший
+// мог отправить запрос на сотни мегабайт и занять память процесса.
+app.use(express.json({ limit: "100kb" }));
+
 app.use("/api/auth", require("./routes/auth")(db));
 app.use("/api/tickets", require("./routes/tickets")(db));
 app.use("/api/notifications", require("./routes/notifications")(db));
 app.use("/api/admin", require("./routes/admin")(db));
 app.use("/api/departments", require("./routes/departments")());
-app.use("/api/certificates", require("./routes/certificates")());
 app.use(require("./routes/modules")());
 
 app.get("/api/health", (req, res) => res.json({ ok: true }));

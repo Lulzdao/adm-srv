@@ -895,12 +895,19 @@ async function renderAdmin(main) {
 }
 
 // ====== Сертификаты ======
-// Экран намеренно разделён на две части, потому что «сертификаты» — это две
-// разные вещи, которые легко перепутать:
-//   • сертификаты сервера — что мы ПРЕДЪЯВЛЯЕМ клиентам (хранилище общее с
-//     «Искрой»: они на одной машине; на каждый домен — свой сертификат, и
-//     сервер отдаёт тот, чьё имя клиент запросил);
-//   • доверенные корни — кому МЫ верим (доменов два, плюс сторонние на будущее).
+// Экран про «сертификаты» — это на самом деле про две разные вещи, которые
+// постоянно путают, и разница между ними определяет всю раскладку:
+//
+//   • СЕРТИФИКАТЫ СЕРВЕРА — что мы ПРЕДЪЯВЛЯЕМ клиентам. Это вся повседневная
+//     работа: продлили — загрузили. Поэтому загрузка здесь же, на видном
+//     месте, а не «положите файл вот в эту папку на сервере». Хранилище общее
+//     с «Искрой» (одна машина), на каждый домен — свой файл.
+//
+//   • ДОВЕРЕННЫЕ КОРНИ — кому верим МЫ, когда сами ходим наружу (LDAPS к
+//     контроллерам домена, проксирование в «Искру»). Клиентов это не касается
+//     совсем: они берут корни из хранилища Windows, куда те приезжают
+//     групповыми политиками. На доменной машине раздел не нужен вообще,
+//     поэтому он свёрнут и лежит внизу.
 async function renderCertificates(main) {
   main.innerHTML = `<div class="topbar"><div class="topbar-title">Сертификаты</div></div><div class="page"><div class="spinner">Загрузка…</div></div>`;
 
@@ -946,6 +953,8 @@ async function renderCertificates(main) {
           <div style="font-size:13.5px;font-weight:650;">${esc(domain || e.file)}</div>
           ${e.isDefault ? `<span class="badge" style="color:var(--ink-soft);background:var(--line-soft);">по умолчанию</span>` : ""}
           <span class="mono" style="font-size:11.5px;color:var(--ink-soft);">${esc(e.file)}</span>
+          ${entries.length > 1 && server.managedBy === "iskra"
+            ? `<button class="btn btn-ghost del-cert" data-file="${esc(e.file)}" style="margin-left:auto;">Удалить</button>` : ""}
         </div>
         ${e.error ? `<div class="warn-box">${esc(e.error)}</div>` : ""}
         ${(e.names || []).length ? `<div style="margin-bottom:10px;display:flex;gap:6px;flex-wrap:wrap;">
@@ -997,8 +1006,8 @@ async function renderCertificates(main) {
     };
 
     main.querySelector(".page").innerHTML = `
-      <div style="display:flex;gap:20px;align-items:flex-start;">
-        <div style="flex:1;min-width:0;">
+      <div style="max-width:900px;">
+        <div>
           <div class="card" style="margin-bottom:20px;">
             <div class="section-label">Сертификаты сервера — что мы предъявляем</div>
             <div style="font-size:12px;color:var(--ink-soft);margin-bottom:4px;">
@@ -1006,15 +1015,42 @@ async function renderCertificates(main) {
               свой сертификат от своего удостоверяющего центра; сервер отдаёт тот, чьё имя
               клиент запросил, поэтому чужому УЦ доверять никому не приходится.
               ${server.managedBy === "iskra"
-                ? `Файлы лежат в <span class="mono">${esc(server.sharedStore.replace(/server\.pfx$/, ""))}</span> как <span class="mono">server.pfx</span> (основной) и <span class="mono">server.&lt;домен&gt;.pfx</span>; заменять — в панели «Искры», раздел «Сертификат». Платформа перечитывает их сама, без перезапуска.`
-                : `Путь задан переменными окружения (<span class="mono">${esc(server.where || "")}</span>) — тогда сертификат один на всех, замена через .env и перезапуск.`}
+                ? `Файлы лежат в <span class="mono">${esc(server.sharedStore.replace(/server\.pfx$/, ""))}</span>; загрузить новый можно здесь же, форма ниже. Тот же каталог читает и «Искра» — отдельно ей ничего подкладывать не нужно.`
+                : `Путь задан переменными окружения (<span class="mono">${esc(server.where || "")}</span>) — тогда сертификат один на всех, загрузка из панели отключена, замена через .env и перезапуск.`}
             </div>
             ${serverCard}
+
+            ${server.managedBy === "iskra" ? `
+            <div style="margin-top:18px;padding-top:16px;border-top:1px solid var(--line-soft);">
+              <div class="section-label" style="margin-bottom:8px;">Загрузить сертификат</div>
+              <div style="font-size:12px;color:var(--ink-soft);margin-bottom:12px;">
+                PFX (.pfx или .p12) — экспортированный из удостоверяющего центра домена вместе с
+                закрытым ключом и всеми сертификатами пути. Имя файла выбирать не нужно: домен
+                определяется по самому сертификату, и если файл на этот домен уже есть, он
+                заменяется. Сертификат применяется сразу, без перезапуска.
+              </div>
+              <div class="form-row" style="margin-bottom:12px;">
+                <div>
+                  <div class="field-label">Файл</div>
+                  <input class="field-input" id="certFile" type="file" accept=".pfx,.p12" style="margin-bottom:0;padding:10px 12px;">
+                </div>
+                <div>
+                  <div class="field-label">Пароль к файлу</div>
+                  <input class="field-input" id="certPass" type="password" placeholder="если он есть" style="margin-bottom:0;">
+                </div>
+              </div>
+              <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink-soft);margin-bottom:12px;cursor:pointer;">
+                <input type="checkbox" id="certDefault">
+                Сделать основным — его получат клиенты, пришедшие с незнакомым именем
+              </label>
+              <button class="btn btn-wire" id="certUpload">Загрузить</button>
+              <div id="certMsg" style="margin-top:10px;font-size:12.5px;"></div>
+            </div>` : ""}
 
             <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--line-soft);">
               <div class="field-label">Что увидит клиент, который придёт с именем</div>
               <div style="display:flex;gap:8px;">
-                <input class="field-input" id="sniName" placeholder="p48-srv-adm01.in.local" style="flex:1;">
+                <input class="field-input" id="sniName" placeholder="p48-srv-adm01.in.local" style="margin-bottom:0;flex:1;">
                 <button class="btn btn-wire" id="sniCheck">Проверить</button>
               </div>
               <div id="sniMsg" style="margin-top:9px;font-size:12.5px;"></div>
@@ -1031,28 +1067,79 @@ async function renderCertificates(main) {
           </div>
         </div>
 
-        <div style="width:420px;flex-shrink:0;">
-          <div class="card">
-            <div class="section-label">Доверенные корни — кому верим мы</div>
-            <div style="font-size:12px;color:var(--ink-soft);margin-bottom:12px;">
-              Доменов два, поэтому корней может быть несколько; сюда же кладут сторонние.
-              Список хранится в <span class="mono">${esc(trusted.dir)}</span> и подключается
-              переменной <span class="mono">NODE_EXTRA_CA_CERTS</span> при запуске — после
-              добавления нового корня платформу нужно перезапустить.
-            </div>
-            ${trusted.roots.length ? trusted.roots.map(rootRow).join("")
-              : `<div style="font-size:12.5px;color:var(--ink-soft);">Пока пусто. Доверие берётся из хранилища сертификатов Windows (флаг --use-system-ca).</div>`}
+      </div>
 
-            <div style="margin-top:18px;padding-top:16px;border-top:1px solid var(--line-soft);">
-              <div class="field-label">Добавить корень</div>
-              <input class="field-input" id="rootName" placeholder="например domain-b-root.crt" style="margin-bottom:10px;">
-              <textarea class="input" id="rootPem" rows="5" placeholder="-----BEGIN CERTIFICATE-----" style="width:100%;font-family:var(--mono);font-size:11px;margin-bottom:10px;"></textarea>
-              <button class="btn btn-wire" id="addRoot" style="width:100%;justify-content:center;">Добавить</button>
-              <div id="rootMsg" style="margin-top:8px;font-size:12px;text-align:center;"></div>
-            </div>
+      <details class="card" style="margin-top:20px;">
+        <summary style="cursor:pointer;font-size:13px;font-weight:600;color:var(--ink-soft);">
+          Доверенные корни — кому верим мы. Обычно трогать не нужно
+        </summary>
+        <div style="font-size:12px;color:var(--ink-soft);margin:14px 0 12px;max-width:760px;">
+          Это не про клиентов: они берут корни из хранилища Windows, куда те приезжают групповыми
+          политиками, и панель на это никак не влияет. Список ниже — про исходящие соединения самой
+          платформы: LDAPS к контроллерам доменов и проверка сертификата «Искры» при
+          проксировании. На доменной машине он не нужен вовсе — платформа запускается с
+          <span class="mono">--use-system-ca</span> и доверяет тому же хранилищу Windows.
+          Раздел пригождается в трёх случаях: машина вне домена, сторонний удостоверяющий центр,
+          переходный период при смене УЦ. Файлы лежат в <span class="mono">${esc(trusted.dir)}</span>,
+          подключаются переменной <span class="mono">NODE_EXTRA_CA_CERTS</span> и начинают
+          действовать только после перезапуска платформы.
+        </div>
+        <div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap;">
+          <div style="flex:1;min-width:320px;">
+            ${trusted.roots.length ? trusted.roots.map(rootRow).join("")
+              : `<div style="font-size:12.5px;color:var(--ink-soft);">Пока пусто — и это нормальное состояние.</div>`}
+          </div>
+          <div style="width:380px;flex-shrink:0;">
+            <div class="field-label">Добавить корень</div>
+            <input class="field-input" id="rootName" placeholder="например domain-b-root.crt" style="margin-bottom:10px;">
+            <textarea class="input" id="rootPem" rows="5" placeholder="-----BEGIN CERTIFICATE-----" style="width:100%;font-family:var(--mono);font-size:11px;margin-bottom:10px;"></textarea>
+            <button class="btn btn-wire" id="addRoot" style="width:100%;justify-content:center;">Добавить</button>
+            <div id="rootMsg" style="margin-top:8px;font-size:12px;text-align:center;"></div>
           </div>
         </div>
-      </div>`;
+      </details>`;
+
+    const uploadBtn = document.getElementById("certUpload");
+    if (uploadBtn) uploadBtn.onclick = async () => {
+      const msg = document.getElementById("certMsg");
+      const input = document.getElementById("certFile");
+      const file = input.files && input.files[0];
+      if (!file) { msg.style.color = "var(--red)"; msg.textContent = "Выберите файл"; return; }
+      msg.style.color = "var(--ink-soft)"; msg.textContent = "Проверяю файл…";
+      try {
+        // Читаем в base64 на клиенте: так тело остаётся обычным JSON и не
+        // требует отдельной обработки multipart ради одного файла.
+        const b64 = await new Promise((resolve, reject) => {
+          const r = new FileReader();
+          r.onload = () => resolve(String(r.result).split(",")[1] || "");
+          r.onerror = () => reject(new Error("Файл не читается"));
+          r.readAsDataURL(file);
+        });
+        const res = await api("/certificates/server", {
+          method: "POST",
+          body: {
+            pfx: b64,
+            password: document.getElementById("certPass").value,
+            makeDefault: document.getElementById("certDefault").checked,
+          },
+        });
+        renderCertificates(main);
+        toast(res.restartRequired
+          ? `Сохранён как ${res.file}. Нужен перезапуск: включить шифрование на работающем HTTP-сервере нельзя.`
+          : `Сертификат применён (${res.file}), перезапуск не нужен.`);
+      } catch (e) { msg.style.color = "var(--red)"; msg.textContent = e.message; }
+    };
+
+    main.querySelectorAll(".del-cert").forEach(btn => {
+      btn.onclick = async () => {
+        if (!confirm(`Удалить сертификат ${btn.dataset.file}? Клиенты, приходившие с его именами, получат основной и отвергнут его.`)) return;
+        try {
+          await api(`/certificates/server/${encodeURIComponent(btn.dataset.file)}`, { method: "DELETE" });
+          renderCertificates(main);
+          toast("Сертификат удалён, копия .bak осталась на диске");
+        } catch (e) { toast(e.message, true); }
+      };
+    });
 
     const sniBtn = document.getElementById("sniCheck");
     if (sniBtn) sniBtn.onclick = async () => {

@@ -183,6 +183,12 @@ function dnsNames(leaf) {
     .map((part) => part.replace(/^(DNS|IP Address):/i, "").toLowerCase());
 }
 
+// Работающий https-сервер и каталог хранилища: их держим здесь, чтобы
+// перечитать сертификаты можно было и по событию файловой системы, и сразу
+// после загрузки файла из панели.
+let activeServer = null;
+let activeDir = SHARED_CERT_DIR;
+
 // Последнее, что удалось узнать о действующих сертификатах: панель показывает
 // это, не трогая сеть заново.
 let current = { secure: false, source: null, where: null, certificate: null, entries: [] };
@@ -325,29 +331,40 @@ function createAppServer(app, env = process.env) {
  * Меняется только контекст: уже открытые соединения доживают со старым
  * сертификатом, новые идут с новым.
  */
+async function reloadCertStore() {
+  if (!activeServer || current.source !== "shared-store") {
+    // Сертификат задан явно в .env — менять его на ходу не наше дело.
+    return { applied: false, reason: "not-shared-store" };
+  }
+  const resolved = resolveTlsOptions();
+  if (!resolved || resolved.source !== "shared-store") {
+    return { applied: false, reason: "store-empty" };
+  }
+  try {
+    tls.createSecureContext(resolved.options); // сначала убеждаемся, что файл рабочий
+    activeServer.setSecureContext(resolved.options);
+    current.where = resolved.where;
+  } catch (err) {
+    // Важно НЕ применять битый файл: старый контекст остаётся рабочим,
+    // сервис продолжает отвечать.
+    console.error(`Новый сертификат не принят, оставлен прежний: ${err.message}`);
+    return { applied: false, reason: "unreadable", error: err.message };
+  }
+  // Карту имён пересобираем в любом случае: могли добавить или убрать
+  // сертификат второго домена, не трогая основной.
+  await loadCertStore(activeDir).catch(() => { /* не смертельно: основной уже применён */ });
+  console.log("Сертификаты перечитаны из общего хранилища без перезапуска");
+  return { applied: true };
+}
+
 function watchSharedStore(server, source, dir = SHARED_CERT_DIR) {
   if (source !== "shared-store") return; // явный путь в .env менять на ходу не наше дело
+  activeServer = server;
+  activeDir = dir;
   if (!fs.existsSync(dir)) return;
 
   let timer = null;
-  const reload = () => {
-    const resolved = resolveTlsOptions();
-    if (!resolved || resolved.source !== "shared-store") return;
-    try {
-      tls.createSecureContext(resolved.options); // сначала убеждаемся, что файл рабочий
-      server.setSecureContext(resolved.options);
-      current.where = resolved.where;
-      console.log("Сертификат перечитан из общего хранилища без перезапуска");
-    } catch (err) {
-      // Важно НЕ применять битый файл: старый контекст остаётся рабочим,
-      // сервис продолжает отвечать.
-      console.error(`Новый сертификат не принят, оставлен прежний: ${err.message}`);
-      return;
-    }
-    // Карту имён пересобираем в любом случае: могли добавить или убрать
-    // сертификат второго домена, не трогая основной.
-    loadCertStore(dir).catch(() => { /* не смертельно: основной уже применён */ });
-  };
+  const reload = () => { reloadCertStore().catch(() => { /* уже залогировано */ }); };
 
   try {
     fs.watch(dir, (event, filename) => {
@@ -411,6 +428,7 @@ module.exports = {
   listTrustedRoots,
   listStoreCertificates,
   loadCertStore,
+  reloadCertStore,
   contextForName,
   TRUSTED_DIR,
   SHARED_CERT_DIR,
