@@ -3,6 +3,7 @@ const bcrypt = require("bcrypt");
 const { authenticate, LdapAuthError } = require("../services/ldapAuth");
 const { upsertFromLdap } = require("../services/userStore");
 const { detectDomain, normalizeIp } = require("../services/network");
+const { resolveTlsOptions } = require("../services/tls");
 const config = require("../config/config");
 
 // Простое ограничение частоты попыток входа, в памяти процесса. Внешний
@@ -105,7 +106,14 @@ module.exports = function authRoutes(db) {
     req.session.destroy(() => {
       // Сессию из хранилища удалили — убираем и саму куку, чтобы в браузере
       // не оставался её идентификатор.
-      res.clearCookie("helpdesk.sid", { httpOnly: true, sameSite: "lax", path: "/" });
+      // Флаги должны совпадать с теми, с которыми куку выдавали (см. server.js),
+      // иначе браузер не сочтёт это той же кукой и не удалит её.
+      res.clearCookie("helpdesk.sid", {
+        httpOnly: true,
+        sameSite: "lax",
+        path: "/",
+        secure: Boolean(resolveTlsOptions()),
+      });
       res.json({ ok: true });
     });
   });

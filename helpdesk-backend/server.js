@@ -3,9 +3,14 @@ const path = require("path");
 const session = require("express-session");
 const config = require("./config/config");
 const { initDb, ensureLocalAccounts } = require("./db/init");
+const { resolveTlsOptions, createAppServer } = require("./services/tls");
 
 const db = initDb();
 ensureLocalAccounts(db);
+
+// Узнаём про TLS ДО настройки сессии: от этого зависит флаг Secure у куки, а
+// поменять его после создания middleware уже нельзя.
+const tlsEnabled = Boolean(resolveTlsOptions());
 
 const app = express();
 
@@ -36,7 +41,10 @@ app.use(session({
     // изменяющих запросах и к платформе, и к проксируемым модулям.
     sameSite: "lax",
     maxAge: config.sessionMaxAgeDays * 24 * 60 * 60 * 1000,
-    // secure: true — включить, когда сервер будет за HTTPS/reverse proxy
+    // По HTTPS куку помечаем Secure — браузер не отправит её открытым текстом,
+    // если кто-то откроет платформу по http. По HTTP флаг ставить нельзя:
+    // браузер тогда не примет куку вовсе и вход перестанет работать.
+    secure: tlsEnabled,
   },
 }));
 
@@ -62,6 +70,7 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: "Внутренняя ошибка сервера" });
 });
 
-app.listen(config.port, () => {
-  console.log(`Сервер запущен на порту ${config.port}`);
+const { server, secure } = createAppServer(app);
+server.listen(config.port, () => {
+  console.log(`Сервер запущен: ${secure ? "https" : "http"}://localhost:${config.port}`);
 });

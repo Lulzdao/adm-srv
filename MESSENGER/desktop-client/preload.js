@@ -14,6 +14,8 @@ contextBridge.exposeInMainWorld('desktop', {
   openChat: (payload) => ipcRenderer.send('open-chat', payload),
   openBroadcast: (payload) => ipcRenderer.send('open-broadcast', payload),
   showUserMenu: (payload) => ipcRenderer.send('show-user-menu', payload),
+  // ПКМ по отделу в списке контактов — «Сообщение всему отделу».
+  showDepartmentMenu: (payload) => ipcRenderer.send('show-department-menu', payload),
   showMessageMenu: (payload) => ipcRenderer.send('show-message-menu', payload),
   windowAction: (action) => ipcRenderer.send('window-action', action),
   notify: (payload) => ipcRenderer.send('notify', payload),
@@ -33,6 +35,9 @@ contextBridge.exposeInMainWorld('desktop', {
   onToast: (cb) => ipcRenderer.on('toast', (event, payload) => cb(payload)),
   pickDownloadFolder: () => ipcRenderer.invoke('pick-download-folder'),
   getAppInfo: () => ipcRenderer.invoke('get-app-info'),
+  // Индикатор шифрования и служебное окно смены адреса в ростере (Ctrl+Shift+S).
+  getConnectionInfo: () => ipcRenderer.invoke('get-connection-info'),
+  relaunch: () => ipcRenderer.send('relaunch'),
   // Обновление приложения — см. setupUpdater в main.js.
   getUpdateState: () => ipcRenderer.invoke('get-update-state'),
   onUpdateState: (cb) => ipcRenderer.on('update-state', (event, state) => cb(state)),

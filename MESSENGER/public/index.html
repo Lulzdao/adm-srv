@@ -3,19 +3,17 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Мини-мессенджер — панель администратора</title>
+<title>Искра — панель администратора</title>
 <style>
   /* Material You (Material 3) — единая тема с платформой и остальными
      модулями. Панель открывается в iframe внутри платформы, поэтому палитра,
      скругления и типографика совпадают с helpdesk-backend/public/styles.css.
-     Вместо прежней тёмной темы — светлые тональные поверхности, «таблетки»
-     и вкладки сверху.
 
      Цвета в hex, а не в oklch: панель открывают с рабочих машин, где браузер
      может быть старше Chrome 111. Веб-шрифты не подключаются — сеть изолирована.
 
      Имена --muted, --warn, --danger и т.п. сохранены: скрипт ниже подставляет
-     их в инлайновые стили при отрисовке таблиц. */
+     их в инлайновые стили при отрисовке таблиц и статусов. */
   :root {
     --md-primary: #7D5700;
     --md-on-primary: #FFFFFF;
@@ -40,6 +38,8 @@
     --md-on-error-container: #410002;
     --md-success-container: #CDEBD5;
     --md-on-success-container: #08210F;
+    --md-warn-container: #FFDCC2;
+    --md-on-warn-container: #2E1500;
 
     --md-state-hover: rgba(31, 27, 22, 0.06);
     --md-shape-xs: 8px;
@@ -138,11 +138,11 @@
 
   /* Вкладки M3: подчёркивание активной */
   #tabs {
-    flex-shrink:0; display:flex; gap:6px; padding:0 20px;
+    flex-shrink:0; display:flex; gap:4px; padding:0 20px;
     border-bottom:1px solid var(--md-outline-variant); background:var(--md-surface); overflow-x:auto;
   }
   .nav-item {
-    padding:15px 18px 13px; cursor:pointer; color:var(--md-on-surface-variant);
+    padding:15px 16px 13px; cursor:pointer; color:var(--md-on-surface-variant);
     font-weight:500; font-size:13.5px; border-bottom:3px solid transparent;
     white-space:nowrap; transition:color .13s ease, border-color .13s ease, background .13s ease;
     border-radius:var(--md-shape-xs) var(--md-shape-xs) 0 0;
@@ -181,6 +181,7 @@
   select:focus, input:focus, textarea:focus { border-color:var(--md-primary); box-shadow:inset 0 0 0 1px var(--md-primary); }
   input[type="checkbox"] { width:auto; padding:0; accent-color:var(--md-primary); }
   input[type="date"] { color-scheme:light; }
+  input[type="file"] { border:none; padding:0; background:transparent; }
 
   /* Filled / tonal / text buttons M3 */
   button.action {
@@ -208,6 +209,27 @@
   .bc-item .time { color:var(--md-on-surface-variant); font-size:11px; margin-left:8px; }
   .bc-item .txt { margin-top:6px; white-space:pre-wrap; line-height:1.5; }
   textarea#bcText { width:100%; height:96px; resize:vertical; }
+
+  /* Выбор отделов сотрудника: сотрудник может состоять сразу в нескольких, а
+     <select multiple> с ctrl-кликом в таблице — ровно тот элемент, который
+     администратор без подсказки не осилит. Поэтому кнопка со списком отделов
+     и всплывающий список галочек. */
+  .dept-btn {
+    background:var(--md-surface-container-lowest); border:1px solid var(--md-outline); color:var(--md-on-surface);
+    border-radius:var(--md-shape-xs); padding:10px 13px; font-size:12.5px; font-family:inherit; cursor:pointer;
+    text-align:left; min-width:150px; max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    transition:border-color .12s ease;
+  }
+  .dept-btn:hover { border-color:var(--md-primary); }
+  .dept-btn.empty { color:var(--md-on-surface-variant); }
+  #deptPicker {
+    position:fixed; z-index:50; background:var(--md-surface-container-lowest); border:1px solid var(--md-outline-variant);
+    border-radius:var(--md-shape-m); padding:10px; min-width:210px; max-height:300px; overflow-y:auto;
+    box-shadow:var(--md-elev-3);
+  }
+  #deptPicker label { display:flex; align-items:center; gap:10px; padding:9px 10px; border-radius:var(--md-shape-xs); cursor:pointer; font-size:13px; }
+  #deptPicker label:hover { background:var(--md-state-hover); }
+  #deptPicker .empty { color:var(--md-on-surface-variant); font-size:12.5px; padding:8px 10px; }
 </style>
 </head>
 <body>
@@ -250,6 +272,7 @@
     <div class="nav-item" data-view="broadcast">Рассылка</div>
     <div class="nav-item" data-view="files">Файлы</div>
     <div class="nav-item" data-view="updates">Клиенты</div>
+    <div class="nav-item" data-view="tls">Сертификат</div>
     <div class="nav-item" data-view="logs">Логи</div>
   </div>
 
@@ -306,7 +329,7 @@
         <div class="row-flex">
           <input id="newUsername" placeholder="Логин">
           <input id="newPassword" placeholder="Пароль">
-          <select id="newDept"><option value="">Без отдела</option></select>
+          <button type="button" class="dept-btn empty" id="newDept" onclick="pickNewUserDepartments(this)">Без отдела</button>
           <label class="row-flex" style="gap:4px; font-size:12.5px;"><input type="checkbox" id="newUserBroadcast"> Рассылки</label>
           <label class="row-flex" style="gap:4px; font-size:12.5px;"><input type="checkbox" id="newUserAdmin"> Админка</label>
           <button class="action" onclick="createUser()">Создать</button>
@@ -315,7 +338,7 @@
       <div class="panel">
         <input id="userSearch" placeholder="Поиск по логину или имени..." style="width:100%; margin-bottom:12px;" oninput="renderUsers()">
         <table>
-          <thead><tr><th>Логин</th><th>Отображаемое имя</th><th>Отдел</th><th>Рассылки</th><th>Админка</th><th>Сброс пароля</th><th></th></tr></thead>
+          <thead><tr><th>Логин</th><th>Отображаемое имя</th><th>Отделы</th><th>Рассылки</th><th>Админка</th><th>Сброс пароля</th><th></th></tr></thead>
           <tbody id="usersBody"></tbody>
         </table>
       </div>
@@ -421,6 +444,49 @@
       </div>
     </div>
 
+    <div class="view" id="view-tls">
+      <h2>Сертификат сервера</h2>
+
+      <div class="panel">
+        <h3>Что сейчас действует</h3>
+        <p style="color:var(--muted); font-size:12px; margin:0 0 10px;">
+          Пока сертификата нет, пароли, переписка и файлы идут по сети открытым текстом — их видит
+          любой, кто может слушать сеть между сотрудником и сервером.
+        </p>
+        <div id="tlsState">Загрузка…</div>
+      </div>
+
+      <div class="panel">
+        <h3>Заменить сертификат</h3>
+        <p style="color:var(--muted); font-size:12px; margin:0 0 10px;">
+          Файл <code>.pfx</code> или <code>.p12</code> — тот, что выдаёт удостоверяющий центр
+          домена. Конвертировать ничего не нужно. Файл сначала проверяется (пароль, срок, цепочка)
+          и только потом заменяет действующий: испортить работающий сервер загрузкой не того файла
+          нельзя.
+        </p>
+        <div id="tlsInsecureWarn" style="display:none; margin:0 0 10px; padding:8px 10px; border:1px solid var(--warn); border-radius:8px; color:var(--warn); font-size:12px;">
+          Эта страница открыта по <b>http</b>. Закрытый ключ уйдёт на сервер незашифрованным — его
+          сможет перехватить любой, кто слушает сеть. Для самой первой установки это допустимо
+          (иначе её не сделать), дальше — открывайте панель по https.
+        </div>
+        <div class="row-flex" style="flex-wrap:wrap; gap:10px;">
+          <input type="file" id="tlsFile" accept=".pfx,.p12">
+          <input type="password" id="tlsPassword" placeholder="Пароль к файлу" style="width:200px;">
+          <button class="action" onclick="uploadTls()">Загрузить и применить</button>
+        </div>
+        <div id="tlsUploadResult" style="margin-top:10px; font-size:12.5px;"></div>
+      </div>
+
+      <div class="panel">
+        <h3>Убрать сертификат</h3>
+        <p style="color:var(--muted); font-size:12px; margin:0 0 10px;">
+          Удаляет файл из хранилища сервера. Работающий сервер останется на https до перезапуска —
+          выключить шифрование на ходу нельзя. Нужно, только если сертификат положили по ошибке.
+        </p>
+        <button class="action ghost" onclick="removeTls()">Удалить из хранилища</button>
+      </div>
+    </div>
+
     <div class="view" id="view-logs">
       <h2>Логи</h2>
       <div class="panel">
@@ -517,6 +583,7 @@ document.querySelectorAll('.nav-item').forEach(item => {
     // Список подключённых меняется постоянно — перечитываем при каждом заходе в раздел, а не
     // показываем то, что было на момент входа в панель.
     if (item.dataset.view === 'updates') loadClients();
+    if (item.dataset.view === 'tls') loadTls();
   };
 });
 
@@ -544,7 +611,8 @@ function renderUsers() {
   if (!filtered.length) { body.innerHTML = '<tr><td colspan="7" style="color:var(--muted); text-align:center;">Никого не найдено</td></tr>'; return; }
   filtered.forEach(u => {
     const tr = document.createElement('tr');
-    const deptSelect = `<select onchange="changeDept(${u.id}, this.value)"><option value="">Без отдела</option>${deptsCache.map(d => `<option value="${d.id}" ${u.department_id === d.id ? 'selected' : ''}>${escapeHtml(d.name)}</option>`).join('')}</select>`;
+    const deptNames = (u.departments || []).map(d => d.name).join(', ');
+    const deptSelect = `<button type="button" class="dept-btn${deptNames ? '' : ' empty'}" title="${escapeHtml(deptNames || 'Без отдела')}" onclick="pickUserDepartments(${u.id}, this)">${escapeHtml(deptNames || 'Без отдела')}</button>`;
     tr.innerHTML = `<td>${escapeHtml(u.username)}</td>
       <td><div class="row-flex"><input type="text" value="${escapeHtml(u.display_name)}" id="dn-${u.id}" style="width:130px"><button class="action ghost" onclick="renameUser(${u.id})">✓</button></div></td>
       <td>${deptSelect}</td>
@@ -583,7 +651,7 @@ function renderDepts() {
       </td>`;
     body.appendChild(tr);
   });
-  document.getElementById('newDept').innerHTML = '<option value="">Без отдела</option>' + deptsCache.map(d => `<option value="${d.id}">${escapeHtml(d.name)}</option>`).join('');
+  renderNewUserDepartments(); // кнопка выбора отделов у формы "новый пользователь" — см. ниже
 }
 // Текущее имя берём из кэша по id, а не подставляем строкой в сам onclick: подстановка ломалась
 // на любой кавычке в названии отдела (и открывала бы вставку разметки, если бы имя туда попало).
@@ -631,20 +699,94 @@ async function refreshAll() {
 async function createUser() {
   const username = document.getElementById('newUsername').value.trim();
   const password = document.getElementById('newPassword').value;
-  const department_id = document.getElementById('newDept').value || null;
+  const department_ids = [...newUserDepartments];
   const can_broadcast = document.getElementById('newUserBroadcast').checked;
   const can_admin = document.getElementById('newUserAdmin').checked;
   if (!username || !password) return alert('Укажите логин и пароль');
   try {
-    await api('api/admin/users', { method: 'POST', body: JSON.stringify({ username, password, department_id, can_broadcast, can_admin }) });
+    await api('api/admin/users', { method: 'POST', body: JSON.stringify({ username, password, department_ids, can_broadcast, can_admin }) });
     document.getElementById('newUsername').value = '';
     document.getElementById('newPassword').value = '';
+    newUserDepartments = [];
+    renderNewUserDepartments();
     document.getElementById('newUserBroadcast').checked = false;
     document.getElementById('newUserAdmin').checked = false;
     refreshAll();
   } catch (e) { alert(e.message); }
 }
-async function changeDept(id, department_id) { try { const r = await api(`api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify({ department_id: department_id || null, version: userVersion(id) }) }); applyUserVersion(id, r.version); } catch (e) { alert(e.message); refreshAll(); } }
+// ---------- Выбор отделов ----------
+// Один всплывающий список на всю страницу, а не свой у каждой строки: строк может быть двести.
+let newUserDepartments = []; // отделы, выбранные в форме "новый пользователь", до её отправки
+
+function closeDeptPicker() {
+  const el = document.getElementById('deptPicker');
+  if (el) el.remove();
+}
+document.addEventListener('mousedown', (e) => {
+  const picker = document.getElementById('deptPicker');
+  if (picker && !picker.contains(e.target) && !e.target.classList.contains('dept-btn')) closeDeptPicker();
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDeptPicker(); });
+
+function openDeptPicker(anchor, selectedIds, onToggle) {
+  closeDeptPicker();
+  const picker = document.createElement('div');
+  picker.id = 'deptPicker';
+  if (!deptsCache.length) {
+    picker.innerHTML = '<div class="empty">Отделов пока нет — создайте их выше</div>';
+  } else {
+    picker.innerHTML = deptsCache.map(d =>
+      `<label><input type="checkbox" value="${d.id}" ${selectedIds.includes(d.id) ? 'checked' : ''}>${escapeHtml(d.name)}</label>`
+    ).join('');
+  }
+  document.body.appendChild(picker);
+  const rect = anchor.getBoundingClientRect();
+  // Ниже кнопки, а если там не помещается (нижние строки длинной таблицы) — выше неё.
+  const height = picker.offsetHeight;
+  picker.style.left = Math.min(rect.left, window.innerWidth - picker.offsetWidth - 8) + 'px';
+  picker.style.top = (rect.bottom + height + 8 < window.innerHeight ? rect.bottom + 4 : Math.max(8, rect.top - height - 4)) + 'px';
+  picker.querySelectorAll('input[type=checkbox]').forEach(cb => {
+    cb.onchange = () => {
+      const ids = [...picker.querySelectorAll('input[type=checkbox]')].filter(x => x.checked).map(x => Number(x.value));
+      onToggle(ids);
+    };
+  });
+}
+
+function pickUserDepartments(id, anchor) {
+  const user = usersCache.find(u => u.id === id);
+  if (!user) return;
+  openDeptPicker(anchor, (user.departments || []).map(d => d.id), async (ids) => {
+    try {
+      const r = await api(`api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify({ department_ids: ids, version: userVersion(id) }) });
+      applyUserVersion(id, r.version);
+      // Обновляем кэш и кнопку на месте: перерисовка всей таблицы закрыла бы список галочек,
+      // а отделов обычно отмечают сразу несколько.
+      user.departments = ids.map(i => deptsCache.find(d => d.id === i)).filter(Boolean).map(d => ({ id: d.id, name: d.name }));
+      const names = user.departments.map(d => d.name).join(', ');
+      anchor.textContent = names || 'Без отдела';
+      anchor.title = names || 'Без отдела';
+      anchor.classList.toggle('empty', !names);
+    } catch (e) { alert(e.message); refreshAll(); }
+  });
+}
+
+function renderNewUserDepartments() {
+  const btn = document.getElementById('newDept');
+  if (!btn) return;
+  newUserDepartments = newUserDepartments.filter(id => deptsCache.some(d => d.id === id)); // отдел могли удалить
+  const names = newUserDepartments.map(id => deptsCache.find(d => d.id === id)?.name).filter(Boolean).join(', ');
+  btn.textContent = names || 'Без отдела';
+  btn.title = names || 'Без отдела';
+  btn.classList.toggle('empty', !names);
+}
+
+function pickNewUserDepartments(anchor) {
+  openDeptPicker(anchor, newUserDepartments, (ids) => {
+    newUserDepartments = ids;
+    renderNewUserDepartments();
+  });
+}
 async function resetPassword(id) {
   const val = document.getElementById(`pw-${id}`).value;
   if (!val) return;
@@ -804,6 +946,109 @@ function todayStr() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 const LEVEL_COLOR = { INFO: 'var(--muted)', WARN: 'var(--warn)', ERROR: 'var(--danger)' };
+// ---------- Сертификат сервера ----------
+// Раздел нужен не для красоты: сертификат домена выдаётся на два года, корневой — на десять.
+// Оба когда-нибудь придётся заменить, и делать это правкой переменных окружения на сервере
+// неудобно ровно в тот момент, когда это срочно.
+const TLS_SOURCE_LABEL = {
+  store: 'загружен через эту панель',
+  'env-pfx': 'задан переменной TLS_PFX при запуске сервера',
+  'env-pem': 'задан переменными TLS_CERT/TLS_KEY при запуске сервера',
+};
+
+function tlsCertRows(cert) {
+  if (!cert) return '';
+  if (cert.error) return `<div style="color:var(--danger)">Файл не читается: ${escapeHtml(cert.error)}</div>`;
+  // Срок показываем цветом, а не только числом: "осталось 20 дней" в общем списке цифр
+  // проскакивают мимо глаз, а красная строка — нет.
+  const days = cert.daysLeft;
+  const dayColor = days === null ? 'var(--muted)' : days <= 0 ? 'var(--danger)' : days <= 30 ? 'var(--warn)' : 'var(--muted)';
+  const dayText = days === null ? '' : days <= 0 ? ' — срок истёк' : ` — осталось ${days} дн.`;
+  const row = (k, v, color) => `<tr><td style="color:var(--muted); width:190px;">${k}</td><td${color ? ` style="color:${color}"` : ''}>${v}</td></tr>`;
+  return `<table style="margin-top:10px;">
+    ${row('Кому выдан', escapeHtml(cert.subject || '—'))}
+    ${row('Имена (SAN)', escapeHtml(cert.san || '—'))}
+    ${row('Кем выдан', escapeHtml(cert.issuer || '—'))}
+    ${row('Действует до', escapeHtml(cert.validTo || '—') + dayText, dayColor)}
+    ${row('Сертификатов в цепочке', String(cert.certificates))}
+    ${row('Отпечаток', `<code style="font-size:11px;">${escapeHtml(cert.fingerprint || '—')}</code>`)}
+  </table>`;
+}
+
+function tlsWarnBox(text) {
+  return `<div style="margin-top:10px; padding:8px 10px; border:1px solid var(--warn); border-radius:8px; color:var(--warn); font-size:12.5px;">${text}</div>`;
+}
+
+async function loadTls() {
+  const box = document.getElementById('tlsState');
+  box.innerHTML = 'Загрузка…';
+  try {
+    const s = await api('api/admin/tls');
+    document.getElementById('tlsInsecureWarn').style.display = s.requestSecure ? 'none' : '';
+
+    let html = s.enabled
+      ? `<div style="font-size:15px; color:var(--online)">🔒 Шифрование включено — соединения идут по https</div>`
+      : `<div style="font-size:15px; color:var(--danger)">⚠ Шифрования нет — всё идёт открытым текстом</div>`;
+    if (s.source) html += `<div style="color:var(--muted); font-size:12px; margin-top:4px;">Сертификат ${escapeHtml(TLS_SOURCE_LABEL[s.source] || s.source)}</div>`;
+
+    html += tlsCertRows(s.certificate);
+
+    // Файл в хранилище есть, а действует не он — так бывает ровно в одном случае: сертификат
+    // загрузили на сервер, работавший по http. Молчать об этом нельзя, иначе администратор
+    // уверен, что всё включилось.
+    if (s.restartRequired) {
+      html += tlsWarnBox('Сертификат загружен, но ещё не действует: включить шифрование на работающем http-сервере нельзя. <b>Перезапустите сервер.</b>')
+           + `<div style="margin-top:10px; color:var(--muted); font-size:12px;">Что лежит в хранилище и заработает после перезапуска:</div>`
+           + tlsCertRows(s.stored);
+    }
+    if (s.certificate && s.certificate.chainComplete === false) {
+      html += tlsWarnBox('Сервер отдаёт не всю цепочку — в ней нет промежуточных удостоверяющих центров. Браузеры это иногда прощают, а автообновление клиента — нет: обновления будут молча не идти. Экспортируйте сертификат заново, вместе со всеми сертификатами пути.');
+    }
+    if (s.rootMatchesClient === false) {
+      html += tlsWarnBox('Сервер подписан <b>не тем</b> корневым центром, который вшит в сборку клиента. Клиенты перестанут доверять серверу. Замените <code>desktop-client/rosstat-root-ca.crt</code> новым корневым сертификатом и пересоберите установщики.');
+    }
+    box.innerHTML = html;
+  } catch (e) {
+    box.innerHTML = `<span style="color:var(--danger)">Ошибка: ${escapeHtml(e.message)}</span>`;
+  }
+}
+
+async function uploadTls() {
+  const input = document.getElementById('tlsFile');
+  const result = document.getElementById('tlsUploadResult');
+  const file = input.files && input.files[0];
+  if (!file) { result.innerHTML = '<span style="color:var(--warn)">Выберите файл</span>'; return; }
+  if (file.size > 200 * 1024) { result.innerHTML = '<span style="color:var(--danger)">Это слишком большой файл для сертификата — похоже, выбран не тот</span>'; return; }
+  if (!confirm(`Заменить действующий сертификат на «${file.name}»?`)) return;
+
+  result.textContent = 'Проверяем файл…';
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    let bin = '';
+    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    const data = await api('api/admin/tls', {
+      method: 'POST',
+      body: JSON.stringify({ pfx: btoa(bin), password: document.getElementById('tlsPassword').value }),
+    });
+    document.getElementById('tlsPassword').value = ''; // пароль от закрытого ключа не оставляем в поле
+    input.value = '';
+    result.innerHTML = data.applied
+      ? '<span style="color:var(--online)">Сертификат заменён и уже действует. Перезапуск не нужен: новые соединения идут с новым сертификатом.</span>'
+      : '<span style="color:var(--warn)">Файл принят и сохранён, но чтобы шифрование включилось, сервер нужно перезапустить.</span>';
+    loadTls();
+  } catch (e) {
+    result.innerHTML = `<span style="color:var(--danger)">${escapeHtml(e.message)}</span>`;
+  }
+}
+
+async function removeTls() {
+  if (!confirm('Удалить сертификат из хранилища сервера? После перезапуска сервер будет работать без шифрования, если сертификат не задан переменными окружения.')) return;
+  try {
+    await api('api/admin/tls', { method: 'DELETE' });
+    loadTls();
+  } catch (e) { alert(e.message); }
+}
+
 async function loadLogs() {
   const day = document.getElementById('logsDay').value || todayStr();
   document.getElementById('logsDay').value = day;
@@ -915,10 +1160,13 @@ async function requestClientLog(userId, host) {
 }
 
 async function loadBroadcastFeed() {
-  const items = await api('api/broadcasts');
+  // all=1 — панель показывает и объявления всей организации, и сообщения отдельным отделам:
+  // сотрудник видит только свои, администратор по своей задаче видит всё.
+  const items = await api('api/broadcasts?all=1');
   document.getElementById('bcFeed').innerHTML = items.map(b => {
     const time = new Date(b.created_at).toLocaleString('ru-RU');
-    return `<div class="bc-item"><span class="who">${escapeHtml(b.from_user)}</span><span class="time">${time}</span><div class="txt">${escapeHtml(b.text)}</div></div>`;
+    const dept = b.department ? `<span class="time">отдел: ${escapeHtml(b.department)}</span>` : '';
+    return `<div class="bc-item"><span class="who">${escapeHtml(b.from_user)}</span><span class="time">${time}</span>${dept}<div class="txt">${escapeHtml(b.text)}</div></div>`;
   }).join('') || '<div style="color:var(--muted)">Рассылок пока не было</div>';
 }
 async function sendBroadcast() {
@@ -953,7 +1201,7 @@ async function startDash() {
   document.getElementById('dash').classList.add('active');
   document.getElementById('whoName').textContent = me.display_name || me.username;
   await refreshAll();
-  document.getElementById('whoRole').textContent = me.department_id ? (deptsCache.find(d => d.id === me.department_id)?.name || '') : '';
+  document.getElementById('whoRole').textContent = (me.departments || []).map(d => d.name).join(', ');
   await loadHistory();
   await loadBroadcastFeed();
   await loadFiles();

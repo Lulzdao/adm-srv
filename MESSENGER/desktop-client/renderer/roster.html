@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<title>Мессенджер</title>
+<title>Искра</title>
 <link rel="stylesheet" href="theme.css">
 <style>
   /* chat.html/broadcast.html задают это у себя, а здесь этого объявления не было — из-за чего body
@@ -32,6 +32,14 @@
   #auth .caps-hint.show { display: flex; }
   #auth .caps-hint svg { flex-shrink: 0; }
 
+  /* Индикатор шифрования канала. Пароль уходит на сервер именно с этого экрана, поэтому состояние
+     соединения показывается здесь, а не только в настройках. Защищённое — спокойная серая строка,
+     незащищённое — заметная: молчать о том, что пароль идёт открытым текстом, нельзя, а пугать
+     каждый раз, когда всё в порядке, незачем. */
+  #auth .conn-hint { display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 11px; color: var(--muted); margin-top: 10px; }
+  #auth .conn-hint.insecure { color: var(--danger); }
+  #auth .conn-hint svg { flex-shrink: 0; }
+
   /* ---- Заголовок ---- */
   .wintitlebar .title { font-weight: 600; font-size: 12px; letter-spacing: .3px; display: flex; align-items: center; gap: 6px; flex-shrink: 0; -webkit-app-region: drag; }
   .wintitlebar .title .brand-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
@@ -56,6 +64,13 @@
   #me-bar.searching { opacity: 0; pointer-events: none; }
   /* Шестерёнка вместо стрелки — крутится (не просто разворачивается) при открытии/закрытии панели
      настроек, см. #me-bar.open ниже. */
+  /* Значок "без шифрования" в строке профиля: виден всё время, пока связь незащищена, и исчезает
+     совсем, когда всё в порядке. Постоянный зелёный замочек рядом с именем быстро стал бы фоновым
+     шумом — а нужно заметить именно неисправность. */
+  #me-bar .insecure-badge { margin-left: auto; display: none; align-items: center; gap: 4px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px; color: var(--danger); border: 1px solid var(--danger); border-radius: 20px; padding: 2px 7px; flex-shrink: 0; }
+  #me-bar .insecure-badge.show { display: flex; }
+  #me-bar .insecure-badge + .gear { margin-left: 8px; }
+
   #me-bar .gear { margin-left: auto; color: var(--muted); display: flex; flex-shrink: 0; transform: rotate(0deg); transition: transform .35s cubic-bezier(.4, 0, .2, 1), color .15s; }
   #me-bar.open .gear { transform: rotate(180deg); color: var(--text); }
   .avatar { width: 26px; height: 26px; border-radius: 50%; background: linear-gradient(135deg, var(--accent), #8f6ee8); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 10.5px; font-weight: 700; flex-shrink: 0; position: relative; }
@@ -220,7 +235,7 @@
 <body>
 
 <div class="wintitlebar">
-  <span class="title"><span class="brand-dot"></span>Мессенджер</span>
+  <span class="title"><span class="brand-dot"></span>Искра</span>
   <div class="wctl">
     <button class="icon-btn" id="wcMin"></button>
     <button class="icon-btn" id="wcMax"></button>
@@ -240,6 +255,7 @@
     <button class="primary" type="submit">Войти</button>
   </form>
   <div class="switch" id="switchMode" onclick="toggleMode()">Нет аккаунта? Зарегистрироваться</div>
+  <div class="conn-hint" id="connHint"></div>
 </div>
 
 <div id="app">
@@ -247,6 +263,7 @@
     <div id="me-bar">
       <div class="avatar" id="meAvatar"><span class="dot active" id="meDot" title="В сети"></span></div>
       <div class="name" id="meName"></div>
+      <span class="insecure-badge" id="insecureBadge" title="Соединение с сервером не шифруется">без шифрования</span>
       <span class="gear"></span>
     </div>
     <div id="searchBar"></div>
@@ -315,6 +332,14 @@
           <div id="ppDownloadPathLabel"></div>
           <button id="ppPickFolderBtn" class="icon-btn" title="Выбрать папку">Выбрать</button>
           <button id="ppClearFolderBtn" class="icon-btn" title="Спрашивать каждый раз"></button>
+        </div>
+      </div>
+
+      <div class="section-title">Соединение с сервером</div>
+      <div class="theme-row" style="flex-direction:column; align-items:stretch; gap:4px;">
+        <div class="info">
+          <div class="t" id="ppConnState">—</div>
+          <div class="d" id="ppConnDetail"></div>
         </div>
       </div>
 
@@ -408,6 +433,8 @@ document.addEventListener('keydown', async (e) => {
   const next = value.trim();
   if (!next || next === serverUrl) return;
   serverUrl = await desktop.setServerUrl(next);
+  connectionInfo = await desktop.getConnectionInfo();
+  refreshConnectionIndicator();
   uiToast('Адрес сервера сохранён: ' + serverUrl);
 });
 
@@ -472,7 +499,9 @@ function connectWs() {
     }
     if (data.type === 'broadcast') {
       desktop.notify({
-        title: '📢 Рассылка от ' + data.from_user,
+        title: data.department
+          ? `📢 Отдел «${data.department}» — ${data.from_user}`
+          : '📢 Рассылка от ' + data.from_user,
         body: data.text || `📎 ${(data.files || []).length} файл(ов)`,
         openPayload: { type: 'broadcast', id: 'broadcast', label: 'Объявления', token, serverUrl, file: 'broadcast.html' },
       });
@@ -531,6 +560,10 @@ desktop.onIdleState(({ state, idleSeconds }) => {
 });
 
 desktop.onShowAlert(({ message, title }) => uiAlert(message, title));
+// В отличие от chat.html и broadcast.html, здесь этой подписки раньше не было вовсе — все toast-
+// сообщения для ростера (например, предупреждение о запущенном администратором обновлении) уходили
+// в никуда: канал слушать было некому.
+desktop.onToast(({ message, error }) => uiToast(message, { error }));
 
 document.getElementById('historyRowIcon').innerHTML = uiIcon('megaphone');
 document.querySelector('#capsHint span').innerHTML = uiIcon('capsLock');
@@ -842,7 +875,7 @@ function updatePresenceOnly() {
   });
   document.querySelectorAll('#list .section[data-dept]').forEach((section) => {
     const key = section.dataset.dept;
-    const users = usersCache.filter((u) => (u.department || 'Без отдела') === key);
+    const users = usersCache.filter((u) => departmentKeysOf(u).includes(key));
     const countEl = section.querySelector('.scount');
     if (countEl) countEl.textContent = deptOnlineCount(users);
   });
@@ -993,11 +1026,15 @@ function renderList() {
     return;
   }
 
+  // Сотрудник может состоять в нескольких отделах — тогда он показывается в каждом из них.
+  // Это осознанное дублирование строки, а не ошибка: человек, который работает и на бухгалтерию,
+  // и на статистику, должен находиться там, где его ищут.
   const groups = new Map();
   allUsers.forEach(u => {
-    const key = u.department || 'Без отдела';
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(u);
+    for (const key of departmentKeysOf(u)) {
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(u);
+    }
   });
 
   // Порядок — как задан на сервере (веб-панель, стрелки ↑↓), "Без отдела" всегда в самом низу;
@@ -1020,8 +1057,18 @@ function renderList() {
     section.className = 'section' + (collapsed ? ' collapsed' : '');
     section.dataset.dept = key;
     section.title = collapsed ? 'Показать сотрудников отдела' : 'Скрыть сотрудников отдела';
-    section.innerHTML = `<span class="chev">${uiIcon('chevron')}</span><span class="stitle">${key}</span><span class="scount">${deptOnlineCount(users)}</span>`;
+    section.innerHTML = `<span class="chev">${uiIcon('chevron')}</span><span class="stitle">${escapeHtml(key)}</span><span class="scount">${deptOnlineCount(users)}</span>`;
     section.onclick = () => toggleDept(key, section);
+    // ПКМ по отделу — «Сообщение всему отделу». У псевдо-отдела "Без отдела" адресатов нет как
+    // группы, поэтому меню там не появляется вовсе, а не появляется неработающим.
+    const dept = deptsCache.find((d) => d.name === key);
+    if (dept) {
+      section.oncontextmenu = (e) => {
+        e.preventDefault();
+        desktop.showDepartmentMenu({ departmentId: dept.id, departmentName: dept.name, token, serverUrl, me: JSON.stringify(me) });
+      };
+      section.title += ' · ПКМ — написать всему отделу';
+    }
     list.appendChild(section);
 
     const rowsWrap = document.createElement('div');
@@ -1033,6 +1080,16 @@ function renderList() {
 }
 
 let deptOrderCache = []; // имена отделов в порядке, заданном на сервере (стрелками ↑↓ в веб-панели)
+let deptsCache = [];     // они же целиком — id нужен для "Сообщение всему отделу" (ПКМ по отделу)
+
+// Отделы сотрудника: массив имён, пусто — "Без отдела". Сервер отдаёт departments массивом; поле
+// department (первый отдел строкой) он присылает для совместимости, и если клиент окажется новее
+// сервера, работать будем по нему.
+function departmentKeysOf(u) {
+  const names = Array.isArray(u.departments) ? u.departments.map((d) => d.name).filter(Boolean) : [];
+  if (names.length) return names;
+  return [u.department || 'Без отдела'];
+}
 
 // Раз в 20 секунд (см. setInterval ниже) плюс по каждому 'users-changed' от WS — при росте штата
 // гонять список целиком на каждый пустой тик расточительно. Сервер отдаёт ETag на основе версии
@@ -1058,7 +1115,8 @@ async function refreshUsers() {
     const dres = await fetch(serverUrl + '/api/departments', { headers: dHeaders });
     if (dres.ok && dres.status !== 304) {
       deptsEtag = dres.headers.get('ETag');
-      deptOrderCache = (await dres.json()).map((d) => d.name);
+      deptsCache = await dres.json();
+      deptOrderCache = deptsCache.map((d) => d.name);
       changed = true;
     }
   } catch { /* не критично — останется прошлый порядок или алфавитный */ }
@@ -1184,8 +1242,127 @@ async function startApp() {
   setInterval(refreshUsers, 20000);
 }
 
+// ---------- Индикатор шифрования канала ----------
+// Понять, шифруется ли связь, по внешнему виду приложения невозможно — а разница принципиальная:
+// по http пароль и вся переписка идут открытым текстом. Показываем в трёх местах: на экране входа
+// (там уходит пароль), в строке профиля (видно всегда) и в настройках (там подробности).
+let connectionInfo = { url: '', builtIn: '', fromOverride: false };
+
+function refreshConnectionIndicator() {
+  const address = connectionInfo.url || serverUrl || '';
+  const secure = /^https:/i.test(address);
+
+  const hint = document.getElementById('connHint');
+  if (hint) {
+    hint.className = 'conn-hint' + (secure ? '' : ' insecure');
+    hint.innerHTML = secure
+      ? `${uiIcon('lock')}<span>Соединение защищено</span>`
+      : `${uiIcon('warn')}<span>Соединение без шифрования</span>`;
+  }
+
+  const badge = document.getElementById('insecureBadge');
+  if (badge) badge.classList.toggle('show', !secure);
+
+  const state = document.getElementById('ppConnState');
+  const detail = document.getElementById('ppConnDetail');
+  if (state && detail) {
+    state.textContent = secure ? 'Защищено (https)' : 'Без шифрования (http)';
+    state.style.color = secure ? '' : 'var(--danger)';
+    let text = secure
+      ? `${address} — пароль, переписка и файлы шифруются по дороге до сервера.`
+      : `${address} — пароль, переписка и файлы идут по сети открытым текстом. Сообщите администратору.`;
+    if (connectionInfo.fromOverride) text += ` Адрес задан вручную на этом компьютере (в сборке — ${connectionInfo.builtIn}).`;
+    detail.textContent = text;
+  }
+}
+
+// Служебное окно смены адреса сервера — Ctrl+Shift+S при открытой панели настроек.
+// Такое же скрытое, как Ctrl+S на экране входа, и по той же причине: рядовому сотруднику здесь
+// делать нечего. Комбинация другая не из вредности — Ctrl+A в Windows везде означает "выделить
+// всё", и перехватывать его значило бы сломать привычное поведение в полях ввода. Ctrl+Shift+S
+// рифмуется с Ctrl+S на экране входа: то же самое, тот же смысл.
+//
+// Отдельного переключателя "http/https" тут нет намеренно: протокол — часть адреса, и менять его
+// в отрыве от порта бессмысленно (3000 и 443 — разные вещи). Кнопки протокола просто правят начало
+// строки, а сохраняется всегда адрес целиком.
+function openConnectionDialog() {
+  if (document.getElementById('connDialogOverlay')) return;
+  const overlay = document.createElement('div');
+  overlay.className = 'ui-modal-overlay';
+  overlay.id = 'connDialogOverlay';
+  const box = document.createElement('div');
+  box.className = 'ui-modal-box';
+  box.innerHTML = `
+    <div class="ui-modal-title">Адрес сервера</div>
+    <div class="ui-modal-msg">Служебная настройка. Адрес должен совпадать с именем в сертификате сервера, иначе защищённое соединение не установится. После сохранения приложение перезапустится.</div>
+    <div style="display:flex; gap:6px; margin-bottom:10px;">
+      <button class="ui-btn-ghost" id="connHttp" style="flex:1;">http</button>
+      <button class="ui-btn-ghost" id="connHttps" style="flex:1;">https</button>
+    </div>
+    <input id="connUrlInput" spellcheck="false" style="width:100%; padding:9px 11px; margin-bottom:6px; background:var(--panel-2); border:1px solid var(--border); border-radius:8px; color:var(--text); font-size:13px;">
+    <div id="connDialogNote" style="font-size:11px; color:var(--muted); margin-bottom:14px; min-height:15px;"></div>
+    <div class="ui-modal-actions">
+      <button class="ui-btn-ghost" id="connCancel">Отмена</button>
+      <button class="ui-btn-primary" id="connSave">Сохранить</button>
+    </div>
+  `;
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+
+  const input = box.querySelector('#connUrlInput');
+  const note = box.querySelector('#connDialogNote');
+  input.value = connectionInfo.url || serverUrl || '';
+  input.focus();
+  input.select();
+
+  const refreshNote = () => {
+    const value = input.value.trim();
+    const secure = /^https:/i.test(value);
+    box.querySelector('#connHttp').className = secure ? 'ui-btn-ghost' : 'ui-btn-primary';
+    box.querySelector('#connHttps').className = secure ? 'ui-btn-primary' : 'ui-btn-ghost';
+    note.textContent = secure ? '' : 'Без шифрования: пароль и переписка пойдут открытым текстом.';
+    note.style.color = secure ? 'var(--muted)' : 'var(--danger)';
+  };
+  const setScheme = (scheme) => {
+    input.value = input.value.trim().replace(/^\s*[a-z]+:\/\//i, '') || '';
+    input.value = `${scheme}://${input.value}`;
+    refreshNote();
+    input.focus();
+  };
+  box.querySelector('#connHttp').onclick = () => setScheme('http');
+  box.querySelector('#connHttps').onclick = () => setScheme('https');
+  input.addEventListener('input', refreshNote);
+  refreshNote();
+
+  const close = () => overlay.remove();
+  box.querySelector('#connCancel').onclick = close;
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') close();
+    if (e.key === 'Enter') box.querySelector('#connSave').click();
+  });
+  box.querySelector('#connSave').onclick = async () => {
+    const next = input.value.trim();
+    if (!next) return;
+    if (!/^https?:\/\/.+/i.test(next)) { note.textContent = 'Адрес должен начинаться с http:// или https://'; note.style.color = 'var(--danger)'; return; }
+    if (next === (connectionInfo.url || serverUrl)) { close(); return; }
+    await desktop.setServerUrl(next);
+    close();
+    uiToast('Адрес сохранён, приложение перезапускается');
+    setTimeout(() => desktop.relaunch(), 600);
+  };
+}
+
+document.addEventListener('keydown', (e) => {
+  if (!e.ctrlKey || !e.shiftKey || String(e.key).toLowerCase() !== 's') return;
+  if (!document.getElementById('profilePanel').classList.contains('open')) return; // только из настроек
+  e.preventDefault();
+  openConnectionDialog();
+});
+
 (async function init() {
   serverUrl = await desktop.getServerUrl();
+  connectionInfo = await desktop.getConnectionInfo();
+  refreshConnectionIndicator();
   if (token && me) startApp();
 })();
 </script>

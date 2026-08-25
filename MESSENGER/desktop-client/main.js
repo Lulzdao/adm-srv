@@ -4,8 +4,50 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const https = require('https');
+const tls = require('tls');
 const { SERVER_URL } = require('./config');
 const { autoUpdater } = require('electron-updater');
+
+// ---------- Доверие к корневому удостоверяющему центру организации ----------
+// Внутри клиента два независимых сетевых стека, и это ключевой момент. Окна (чат, ростер,
+// объявления) ходят через Chromium — он читает хранилище сертификатов Windows, куда корневой
+// сертификат домена уже попал через групповые политики, там делать нечего. А ГЛАВНЫЙ процесс
+// (автообновление через electron-updater и отправка файлов правым кликом через httpPostBuffer)
+// работает через Node, и вот он хранилище Windows НЕ читает — групповые политики на него не
+// действуют вовсе. Без этой правки после перехода сервера на https получилась бы крайне
+// запутанная картина: переписка работает, а обновления и отправка файлов молча отваливаются
+// с UNABLE_TO_VERIFY_LEAF_SIGNATURE.
+//
+// В rosstat-root-ca.crt лежит ПУБЛИЧНЫЙ корневой сертификат домена (rosstat-CA-SRV-CA01-CA):
+// приватного ключа в нём нет, это просто якорь доверия, который и так роздан на все машины.
+// Поэтому его безопасно держать в репозитории и вшивать в сборку.
+//
+// Важно, что здесь именно ДОБАВЛЯЕТСЯ доверие к одному конкретному УЦ, а не отключается
+// проверка: 144 публичных корня остаются на месте, а сертификат с чужим именем по-прежнему
+// отвергается. Соблазнительный "быстрый" вариант — обработчик certificate-error с игнорированием
+// ошибки — уничтожил бы защиту полностью: соединение осталось бы шифрованным, но подменить
+// сервер смог бы любой в сети, и выглядело бы всё исправно.
+//
+// Используется только публичный API (options.ca + tls.rootCertificates), без внутреннего
+// context.context.addCACert: сборка win7 работает на Node 16 внутри Electron 22, win10 — на
+// заметно более новом, и полагаться на внутренности там нельзя.
+const ORG_CA_PATH = path.join(__dirname, 'rosstat-root-ca.crt');
+function trustOrganizationCa() {
+  let pem;
+  try {
+    pem = fs.readFileSync(ORG_CA_PATH, 'utf8');
+  } catch {
+    return; // файла нет — ничего не меняем (например, сервер ещё работает по http)
+  }
+  const createSecureContext = tls.createSecureContext;
+  tls.createSecureContext = (options = {}) => {
+    // Если вызывающий явно передал свой список УЦ — не вмешиваемся, иначе сломаем чужую
+    // осознанную настройку.
+    if (!options.ca) options = { ...options, ca: [...tls.rootCertificates, pem] };
+    return createSecureContext(options);
+  };
+}
+trustOrganizationCa();
 // Иконка окна/панели задач — в собранном .exe она и так встроена (см. build.win.icon в
 // package.json), но при разработке через `npm start` (без сборки) без этого показывался бы
 // стандартный логотип Electron вместо своего.
@@ -71,9 +113,27 @@ const DEFAULT_SETTINGS = {
   broadcastSize: null,
   serverUrlOverride: null,   // переопределяет SERVER_URL из config.js без пересборки — см. Ctrl+S на экране входа
   autoUpdate: true,          // сама качать вышедшие обновления (ставятся при выходе) — см. setupUpdater
+  lastSeenVersion: null,     // версия на предыдущем запуске — чтобы показать "обновлено до X" один раз после установки
 };
 
+// Приложение раньше называлось mini-messenger-desktop, и папка с настройками была своя на это имя.
+// После переименования в «Искру» Electron стал класть данные в другую папку — переносим настройки
+// один раз, чтобы у людей не сбросился, в частности, адрес сервера, заданный вручную по Ctrl+S.
+// Токен входа сюда не попадает (он в localStorage окна, а его так просто не перенести) — один раз
+// придётся войти заново, это ожидаемо и происходит однократно.
+const LEGACY_APP_DIR = 'mini-messenger-desktop';
+function migrateLegacySettings() {
+  if (fs.existsSync(SETTINGS_PATH)) return;
+  const legacy = path.join(app.getPath('appData'), LEGACY_APP_DIR, 'settings.json');
+  try {
+    if (!fs.existsSync(legacy)) return;
+    fs.mkdirSync(path.dirname(SETTINGS_PATH), { recursive: true });
+    fs.copyFileSync(legacy, SETTINGS_PATH);
+  } catch { /* не перенеслось — приложение просто запустится с настройками по умолчанию */ }
+}
+
 function loadSettings() {
+  migrateLegacySettings();
   try { return { ...DEFAULT_SETTINGS, ...JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf8')) }; }
   catch { return { ...DEFAULT_SETTINGS }; }
 }
@@ -369,7 +429,7 @@ function createTray() {
     console.warn('Иконка трея не найдена или пуста:', iconPath);
   }
   tray = new Tray(icon);
-  tray.setToolTip('Мини-мессенджер');
+  tray.setToolTip('Искра');
   const menu = Menu.buildFromTemplate([
     { label: 'Открыть', click: () => { rosterWin.show(); rosterWin.focus(); } },
     { type: 'separator' },
@@ -546,7 +606,14 @@ function setupUpdater() {
       // человек может печатать, — но и отменить он это не может: решение принято не им.
       // Небольшой паузы хватает, чтобы дописать фразу и понять, что происходит.
       sendToWindow(rosterWin, 'toast', { message: `Администратор запустил обновление до ${info.version}. Перезапуск через 15 секунд…` });
-      setTimeout(() => { isQuitting = true; autoUpdater.quitAndInstall(); }, 15000);
+      // (true, true) = тихая установка + автозапуск после нее. Без первого true NSIS-инсталлятор
+      // запускается БЕЗ флага /S — то есть показывает полный мастер установки (приветствие, выбор
+      // папки, прогресс, финиш), тот же самый, что при установке с нуля. Именно это и выглядело
+      // "как простая переустановка" — раньше здесь стоял quitAndInstall() без аргументов, а у него
+      // isSilent по умолчанию false (см. BaseUpdater.js в electron-updater). С флагом NSIS ставит
+      // обновление в фоне без единого окна, и после установки сам перезапускает приложение — второй
+      // true как раз про это.
+      setTimeout(() => { isQuitting = true; autoUpdater.quitAndInstall(true, true); }, 15000);
     }
   });
   autoUpdater.on('error', (err) => {
@@ -557,6 +624,24 @@ function setupUpdater() {
   });
 
   checkForUpdates(); // разовая проверка на старте; дальше — только по кнопке в настройках
+}
+
+// Приветствие после обновления: раньше единственным видимым следом того, что обновление вообще
+// произошло, было закрытие и повторное открытие приложения — никакого "готово, вот что изменилось".
+// Сверяем версию с тем, что запомнили на предыдущем запуске: если она выросла — значит, только что
+// обновились (сами, по кнопке или принудительно администратором, неважно каким путём), и стоит
+// сказать об этом прямо. Если lastSeenVersion пуст — это первая установка вообще, а не обновление,
+// тогда молчим и просто запоминаем версию.
+function announceVersionIfUpdated() {
+  const current = app.getVersion();
+  const previous = settings.lastSeenVersion;
+  if (previous && previous !== current) {
+    sendToWindow(rosterWin, 'toast', { message: `Искра обновлена до версии ${current}` });
+  }
+  if (previous !== current) {
+    settings.lastSeenVersion = current;
+    saveSettings();
+  }
 }
 
 function checkForUpdates() {
@@ -590,7 +675,10 @@ ipcMain.on('install-update', () => {
   // отменит закрытие и спрячет окно в трей (см. createRoster), приложение не выйдет,
   // и установка не начнётся.
   isQuitting = true;
-  autoUpdater.quitAndInstall();
+  // (true, true) — см. подробный комментарий у второго вызова quitAndInstall выше: без первого
+  // true это была бы полноценная переустановка с мастером Windows, без второго — пришлось бы
+  // запускать приложение вручную после того, как установщик тихо закончит работу.
+  autoUpdater.quitAndInstall(true, true);
 });
 
 ipcMain.on('open-chat', (event, payload) => {
@@ -599,6 +687,20 @@ ipcMain.on('open-chat', (event, payload) => {
 
 ipcMain.on('open-broadcast', (event, payload) => {
   createWindow('broadcast', 'broadcast.html', payload, { width: 420, height: 520, minWidth: 360, minHeight: 400 });
+});
+
+// ПКМ по отделу в списке контактов. Окно то же самое, что у объявлений (broadcast.html) — оно уже
+// умеет файлы, перетаскивание и поиск по дням; отличается только круг адресатов, см. departmentId.
+// Ключ окна свой на каждый отдел, чтобы окна разных отделов и общие объявления не подменяли друг друга.
+ipcMain.on('show-department-menu', (event, payload) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const menu = Menu.buildFromTemplate([
+    {
+      label: `Сообщение всему отделу «${payload.departmentName}»`,
+      click: () => createWindow(`broadcast:dept:${payload.departmentId}`, 'broadcast.html', payload, { width: 420, height: 520, minWidth: 360, minHeight: 400 }),
+    },
+  ]);
+  menu.popup({ window: win });
 });
 
 ipcMain.on('show-user-menu', (event, payload) => {
@@ -686,6 +788,25 @@ ipcMain.handle('set-server-url', (event, url) => {
   saveSettings();
   return settings.serverUrlOverride || SERVER_URL;
 });
+// Чем именно окна связаны с сервером — для индикатора шифрования в ростере. Отдельный канал, а не
+// расширение get-server-url: тот возвращает голую строку и используется во всех трёх окнах при
+// подключении, а это нужно одному ростеру и раз в сеанс.
+ipcMain.handle('get-connection-info', () => ({
+  url: settings.serverUrlOverride || SERVER_URL,
+  builtIn: SERVER_URL,                              // что зашито в config.js при сборке
+  fromOverride: Boolean(settings.serverUrlOverride), // адрес переопределён на этой машине
+}));
+
+// Перезапуск приложения после смены адреса сервера. Можно было бы переподключать окна на лету, но
+// адрес читают все три окна независимо, каждое в своём рендерере и в свой момент — половина
+// состояния осталась бы от старого адреса. Смена адреса — операция редкая и служебная, честный
+// перезапуск здесь надёжнее любой ловкости.
+ipcMain.on('relaunch', () => {
+  app.relaunch();
+  isQuitting = true; // иначе обработчик close у ростера свернёт окно в трей вместо выхода
+  app.quit();
+});
+
 // Строка "что именно у меня установлено" для панели настроек — см. BUILD_TRACK выше.
 ipcMain.handle('get-app-info', () => ({
   version: app.getVersion(),
@@ -775,6 +896,9 @@ app.whenReady().then(() => {
   createTray();
   startIdleWatch();
   setupUpdater();
+  // once, а не на каждый did-finish-load: сказать "обновлено" нужно один раз за запуск, а не
+  // при каждой перезагрузке страницы (например, после выхода из аккаунта — см. logout).
+  rosterWin.webContents.once('did-finish-load', announceVersionIfUpdated);
 
   // Рендерер вылетел целиком (не просто JS-исключение внутри страницы, а сам процесс окна) —
   // в этот момент он уже не может сам отправить лог на сервер, поэтому только локально.

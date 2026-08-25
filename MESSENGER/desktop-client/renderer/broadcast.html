@@ -72,6 +72,8 @@
   .item { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; min-width: 0; }
   .item .who { color: var(--accent-2); font-weight: 700; font-size: 12px; }
   .item .time { color: var(--muted); font-size: 10.5px; margin-left: 6px; }
+  /* Метка отдела в общей ленте: сообщение видит не вся организация, и это должно быть видно сразу. */
+  .item .dept-chip { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 20px; font-size: 10px; font-weight: 700; color: var(--accent-2); border: 1px solid var(--accent-2); vertical-align: 1px; }
   .item .txt { margin-top: 4px; white-space: pre-wrap; word-break: break-word; line-height: 1.4; }
   /* Подсветка совпадений при поиске по истории — см. highlightHtml/runSearch. */
   mark.hl { background: var(--accent); color: #fff; border-radius: 3px; padding: 0 1px; }
@@ -195,6 +197,14 @@ const token = params.get('token');
 const serverUrl = params.get('serverUrl');
 const me = JSON.parse(params.get('me') || 'null');
 installErrorReporting(serverUrl, token, 'broadcast'); // см. ui-kit.js
+
+// Это же окно работает в двух режимах. Без параметров — привычные объявления всей организации.
+// С departmentId — сообщение одному отделу (ПКМ по отделу в списке контактов): тот же composer, та
+// же лента, та же история, отличается только круг адресатов. Отдельного окна для этого нет
+// намеренно — вся работа с файлами, перетаскиванием, поиском по дням тут уже сделана.
+const departmentId = Number(params.get('departmentId')) || null;
+const departmentName = params.get('departmentName') || '';
+const deptQuery = departmentId ? `&departmentId=${departmentId}` : '';
 // Право на рассылки может быть выдано лично человеку ИЛИ всему его отделу — сервер уже считает
 // итоговое (эффективное) значение и отдаёт его прямо в /api/me, отдельно спрашивать не нужно.
 let canCompose = false;
@@ -206,7 +216,17 @@ async function checkComposeAccess() {
   } catch { return false; }
 }
 
-document.getElementById('ttl').innerHTML = `${uiIcon('megaphone')} Объявления`;
+document.getElementById('ttl').innerHTML = departmentId
+  ? `${uiIcon('group')} Отдел «${escapeHtml(departmentName)}»`
+  : `${uiIcon('megaphone')} Объявления`;
+if (departmentId) {
+  // Право "Рассылки" здесь ни при чём: оно про объявление всей организации. Написать своему отделу
+  // может любой — написать каждому из них по одному он и так может, список людей открыт.
+  document.querySelector('#composer p').textContent = `Сообщение получат только сотрудники отдела «${departmentName}» — уведомлением на компьютер и в их ленту объявлений.`;
+  document.getElementById('text').placeholder = 'Текст сообщения отделу...';
+  document.getElementById('sendBtn').textContent = 'Отправить отделу';
+  document.querySelector('#dropOverlay .dtext').textContent = 'Отпустите, чтобы прикрепить к сообщению';
+}
 document.getElementById('historyBtn').querySelector('span').innerHTML = uiIcon('history');
 document.getElementById('historyBtn').title = 'Найти рассылку по дате или по тексту';
 document.querySelector('#dropOverlay span').innerHTML = uiIcon('attach');
@@ -237,12 +257,12 @@ function setComposerOpen(open) {
 }
 
 (async () => {
-  canCompose = await checkComposeAccess();
+  canCompose = departmentId ? true : await checkComposeAccess();
   if (!canCompose) return;
   const btn = document.getElementById('composeBtn');
   btn.style.display = 'flex';
   btn.querySelector('span').innerHTML = uiIcon('send');
-  btn.title = 'Написать рассылку';
+  btn.title = departmentId ? 'Написать отделу' : 'Написать рассылку';
   btn.addEventListener('click', () => {
     if (document.getElementById('historyPanel').classList.contains('visible')) closeHistoryPanel();
     const open = !document.getElementById('composer').classList.contains('open');
@@ -255,6 +275,9 @@ function setComposerOpen(open) {
     addPendingFiles(Array.from(e.target.files || []));
     e.target.value = '';
   });
+
+  // Окно отдела открывают, чтобы написать, — форма сразу открыта, а не спрятана за кнопкой.
+  if (departmentId) { setComposerOpen(true); hideFeedSmoothly(); }
 
   // ---------- Drag-and-drop: перетащили файлы прямо из проводника в окно рассылки ----------
   let dragCounter = 0;
@@ -422,7 +445,10 @@ function itemHtml(b, query) {
     filesHtml += `<div class="file-row"><a class="file" href="#" data-url="${escapeAttr(f.url)}" data-name="${escapeAttr(f.name || 'файл')}"><span class="fi"><span class="fi-file">${uiIcon('file')}</span><span class="fi-download">${uiIcon('download')}</span><span class="fi-progress"><svg viewBox="0 0 24 24"><circle class="ring-bg" cx="12" cy="12" r="10"></circle><circle class="ring-bar" cx="12" cy="12" r="10"></circle></svg><span class="fi-pct"></span></span><span class="fi-check">${uiIcon('check')}</span></span><span class="fmeta"><span class="fn">${escapeHtml(f.name || 'файл')}</span><span class="fs">${fmtSize(f.size)}</span></span></a></div>`;
   });
   const txtHtml = b.text ? `<div class="txt selectable" data-raw-text="${escapeAttr(b.text)}">${highlightHtml(b.text, query)}</div>` : '';
-  return `<div class="item"><span class="who">${escapeHtml(b.from_user)}</span><span class="time">${time}</span>${txtHtml}${filesHtml}</div>`;
+  // В общей ленте сообщение отделу помечаем — иначе непонятно, почему коллега его не получил.
+  // В окне самого отдела метка не нужна: там всё до одного адресовано этому отделу.
+  const deptHtml = (!departmentId && b.department) ? `<span class="dept-chip">${escapeHtml(b.department)}</span>` : '';
+  return `<div class="item"><span class="who">${escapeHtml(b.from_user)}</span><span class="time">${time}</span>${deptHtml}${txtHtml}${filesHtml}</div>`;
 }
 
 // Лента "сегодняшних" рассылок — обнуляется каждый день, как и в чате. Вся история доступна
@@ -438,7 +464,9 @@ function todayRange() {
 // не было вообще (loadFeed() просто отрисовывал всё как есть). ID последнего показанного объявления
 // хранится в localStorage (переживает закрытие окна, в отличие от переменных в памяти) — при
 // загрузке ленты всё, что новее этой метки, тоже помечается разделителем.
-const LAST_SEEN_KEY = 'broadcastLastSeenId';
+// Своя метка на каждый отдел: одна общая означала бы, что открытое окно отдела гасит разделитель
+// "новые" в объявлениях всей организации и наоборот.
+const LAST_SEEN_KEY = departmentId ? `broadcastLastSeenId:dept:${departmentId}` : 'broadcastLastSeenId';
 function getLastSeenId() { return Number(localStorage.getItem(LAST_SEEN_KEY)) || 0; }
 function setLastSeenId(id) { if (id) localStorage.setItem(LAST_SEEN_KEY, String(id)); }
 let maxKnownBroadcastId = getLastSeenId(); // растёт по мере отрисовки/получения объявлений в этой сессии
@@ -446,7 +474,17 @@ function unreadDividerHtml() { return `<div class="unread-divider" id="unreadDiv
 
 async function loadFeed() {
   const { since, until } = todayRange();
-  const items = await api(`/api/broadcasts?since=${since}&until=${until}`);
+  let items;
+  try {
+    items = await api(`/api/broadcasts?since=${since}&until=${until}${deptQuery}`);
+  } catch (e) {
+    // Написать отделу может кто угодно, а вот читать его переписку — только его сотрудники
+    // (см. departmentScope в server.js). Для постороннего окно остаётся формой отправки.
+    const denied = document.getElementById('feed');
+    denied.classList.add('empty-state');
+    denied.innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`;
+    return;
+  }
   const feed = document.getElementById('feed');
   feed.classList.toggle('empty-state', !items.length);
   const lastSeenId = getLastSeenId();
@@ -481,15 +519,15 @@ async function send() {
     // Файлы уже загружены на сервер (см. addPendingFiles/startUpload) — здесь просто собираем
     // сообщение из готовых { url, name, size }, повторно ничего не грузим.
     const files = pendingFiles.map((e) => e.uploaded);
-    await api('/api/broadcast', { method: 'POST', body: JSON.stringify({ text, files }) });
+    await api('/api/broadcast', { method: 'POST', body: JSON.stringify({ text, files, departmentId }) });
     el.value = '';
     pendingFiles = [];
     renderComposerFiles();
     document.getElementById('composer').classList.remove('open');
     document.getElementById('composeBtn').classList.remove('active');
-    document.getElementById('composeBtn').title = 'Написать рассылку';
+    document.getElementById('composeBtn').title = departmentId ? 'Написать отделу' : 'Написать рассылку';
     showFeedSmoothly();
-    uiToast('Рассылка успешно отправлена');
+    uiToast(departmentId ? `Сообщение отправлено отделу «${departmentName}»` : 'Рассылка успешно отправлена');
     // Живое обновление придёт по тому же WS, что и всем остальным (эхо собственного отправленного
     // сообщения) — отдельно перезапрашивать ленту не нужно, иначе будет два одинаковых пузыря.
   } catch (e) { uiAlert(e.message); } finally { sendBtn.disabled = pendingFiles.some((e) => e.status === 'uploading'); }
@@ -634,7 +672,7 @@ document.getElementById('historyBtn').addEventListener('click', () => {
 
 async function loadDays() {
   const offsetMinutes = -new Date().getTimezoneOffset();
-  daysCache = await api(`/api/broadcasts/days?offsetMinutes=${offsetMinutes}`);
+  daysCache = await api(`/api/broadcasts/days?offsetMinutes=${offsetMinutes}${deptQuery}`);
   const box = document.getElementById('hpDays');
   box.innerHTML = '';
   if (!daysCache.length) return;
@@ -675,7 +713,7 @@ async function selectDay(day) {
   document.getElementById('hpSearch').value = '';
   [...document.querySelectorAll('#hpDays .dbtn')].forEach(b => b.classList.toggle('active', b.dataset.day === day));
   const { since, until } = dayRange(day);
-  const items = await api(`/api/broadcasts?since=${since}&until=${until}`);
+  const items = await api(`/api/broadcasts?since=${since}&until=${until}${deptQuery}`);
   renderHistoryItems(items);
 }
 
@@ -688,7 +726,7 @@ function debounceSearch(e) {
 }
 async function runSearch(text) {
   [...document.querySelectorAll('#hpDays .dbtn')].forEach(b => b.classList.remove('active'));
-  const items = await api(`/api/broadcasts?q=${encodeURIComponent(text)}`);
+  const items = await api(`/api/broadcasts?q=${encodeURIComponent(text)}${deptQuery}`);
   renderHistoryItems(items, text);
 }
 
@@ -707,6 +745,8 @@ let programmaticScroll = false; // чтобы наш собственный ав
 let unreadClearTimer = null;
 
 function addLiveBroadcast(b) {
+  // Сервер шлёт человеку всё, что тот вправе видеть; окно отдела из этого потока берёт только своё.
+  if (departmentId && Number(b.department_id) !== departmentId) return;
   const feed = document.getElementById('feed');
   feed.querySelector('.empty')?.remove();
   feed.classList.remove('empty-state');

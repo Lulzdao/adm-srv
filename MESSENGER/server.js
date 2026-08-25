@@ -1,4 +1,4 @@
-// Мини-мессенджер для организации — сервер на Node.js
+// Искра — корпоративный мессенджер Липецкстата, сервер на Node.js
 // Стек: Express (HTTP+статика) + ws (реалтайм) + better-sqlite3 (хранилище) + JWT (авторизация)
 //
 // ВАЖНО: это единственный рабочий сервер проекта. Раньше в desktop-client/ лежала ещё одна копия
@@ -12,6 +12,8 @@ const Database = require('better-sqlite3');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const http = require('http');
+const https = require('https'); // используется, только если сервер настроен на TLS — см. createAppServer
+const tls = require('tls');     // тем же: проверка того, что сервер реально отдаёт клиенту
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -117,6 +119,14 @@ db.exec(`
     created_by INTEGER NOT NULL,
     created_at INTEGER NOT NULL
   );
+  -- Сотрудник может состоять сразу в нескольких отделах (совместители, а чаще — люди, которые
+  -- фактически работают на два подразделения). Раньше отдел был один, колонкой users.department_id;
+  -- она осталась ради совместимости и хранит ПЕРВЫЙ из отделов, но источник истины — эта таблица.
+  CREATE TABLE IF NOT EXISTS user_departments (
+    user_id INTEGER NOT NULL,
+    department_id INTEGER NOT NULL,
+    PRIMARY KEY (user_id, department_id)
+  );
   CREATE TABLE IF NOT EXISTS group_members (
     group_id INTEGER NOT NULL,
     user_id INTEGER NOT NULL,
@@ -146,6 +156,10 @@ db.exec(`
 {
   const cols = db.prepare("PRAGMA table_info(broadcasts)").all().map((c) => c.name);
   if (!cols.includes('files_json')) db.exec('ALTER TABLE broadcasts ADD COLUMN files_json TEXT');
+  // NULL — объявление всей организации (как было всегда), число — сообщение одному отделу.
+  // Отдельной таблицы не заводим: это то же самое объявление, отличается только кругом адресатов,
+  // и вся инфраструктура ленты/истории/поиска работает для него без единой правки.
+  if (!cols.includes('department_id')) db.exec('ALTER TABLE broadcasts ADD COLUMN department_id INTEGER');
 }
 
 // Права — два независимых флага прямо на пользователе: can_broadcast (может рассылать всем) и
@@ -192,6 +206,18 @@ db.exec(`
     setSettingRaw('migrated_caps_from_roles', '1');
   }
 }
+// Однократный перенос единственного отдела из users.department_id в user_departments — чтобы при
+// обновлении сервера никто не остался без отдела в ростере.
+{
+  if (!getSettingRaw('migrated_user_departments')) {
+    const rows = db.prepare('SELECT id, department_id FROM users WHERE department_id IS NOT NULL').all();
+    const link = db.prepare('INSERT OR IGNORE INTO user_departments (user_id, department_id) VALUES (?, ?)');
+    const run = db.transaction(() => { for (const r of rows) link.run(r.id, r.department_id); });
+    run();
+    setSettingRaw('migrated_user_departments', '1');
+  }
+}
+
 function getSettingRaw(key) {
   const row = db.prepare('SELECT value FROM app_settings WHERE key = ?').get(key);
   return row ? row.value : null;
@@ -309,18 +335,58 @@ const getUserByName = db.prepare('SELECT * FROM users WHERE username = ?');
 // было выдать право сразу всему отделу; отказались от этого в пользу простоты — только "Пользователи").
 const getUserById = db.prepare('SELECT id, username, display_name, department_id, can_broadcast, can_admin FROM users WHERE id = ?');
 const countUsers = db.prepare('SELECT COUNT(*) AS c FROM users');
-const listUsersFull = db.prepare(`
-  SELECT u.id, u.username, u.display_name, u.department_id, u.can_broadcast, u.can_admin, u.version, d.name AS department
-  FROM users u LEFT JOIN departments d ON d.id = u.department_id
-  ORDER BY u.display_name
+const listUsersFullStmt = db.prepare(`
+  SELECT u.id, u.username, u.display_name, u.can_broadcast, u.can_admin, u.version
+  FROM users u ORDER BY u.display_name
 `);
-const listUsersBasic = db.prepare(`
-  SELECT u.id, u.username, u.display_name, d.name AS department
-  FROM users u LEFT JOIN departments d ON d.id = u.department_id
-  ORDER BY u.display_name
+const listUsersBasicStmt = db.prepare(`
+  SELECT u.id, u.username, u.display_name FROM users u ORDER BY u.display_name
 `);
+// Отделы каждого сотрудника одним запросом на всех, а не подзапросом на строку: список людей
+// отдаётся целиком и часто (ростер опрашивает его раз в 20 секунд), и N+1 запросов здесь ни к чему.
+const listAllUserDepartments = db.prepare(`
+  SELECT ud.user_id, d.id, d.name
+  FROM user_departments ud JOIN departments d ON d.id = ud.department_id
+  ORDER BY d.sort_order, d.id
+`);
+function departmentsByUser() {
+  const map = new Map();
+  for (const row of listAllUserDepartments.all()) {
+    if (!map.has(row.user_id)) map.set(row.user_id, []);
+    map.get(row.user_id).push({ id: row.id, name: row.name });
+  }
+  return map;
+}
+// departments — массив; поле department (первый отдел строкой) оставлено для совместимости со
+// старыми сборками клиента, которые ещё не знают про несколько отделов.
+function withDepartments(rows) {
+  const map = departmentsByUser();
+  return rows.map((u) => {
+    const departments = map.get(u.id) || [];
+    return { ...u, departments, department: departments.length ? departments[0].name : null };
+  });
+}
+const listUsersFull = { all: () => withDepartments(listUsersFullStmt.all()) };
+const listUsersBasic = { all: () => withDepartments(listUsersBasicStmt.all()) };
+const listDepartmentsOfUser = db.prepare(`
+  SELECT d.id, d.name FROM user_departments ud JOIN departments d ON d.id = ud.department_id
+  WHERE ud.user_id = ? ORDER BY d.sort_order, d.id
+`);
+const listUserIdsInDepartment = db.prepare('SELECT user_id FROM user_departments WHERE department_id = ?');
 const updateUserCaps = db.prepare('UPDATE users SET can_broadcast = ?, can_admin = ? WHERE id = ?');
+const clearUserDepartments = db.prepare('DELETE FROM user_departments WHERE user_id = ?');
+const linkUserDepartment = db.prepare('INSERT OR IGNORE INTO user_departments (user_id, department_id) VALUES (?, ?)');
 const updateUserDept = db.prepare('UPDATE users SET department_id = ? WHERE id = ?');
+// Единственное место, где меняется состав отделов сотрудника. Транзакция — чтобы человек ни на
+// мгновение не оказался вообще без отделов, если запрос оборвётся на середине.
+const setUserDepartments = db.transaction((userId, ids) => {
+  const valid = [...new Set((Array.isArray(ids) ? ids : []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+  clearUserDepartments.run(userId);
+  for (const id of valid) linkUserDepartment.run(userId, id);
+  // users.department_id больше ни на что не влияет, но пусть остаётся осмысленной: держим в ней
+  // первый отдел, а не устаревшее значение с прошлого раза.
+  updateUserDept.run(valid.length ? valid[0] : null, userId);
+});
 const updateUserPassword = db.prepare('UPDATE users SET password_hash = ? WHERE id = ?');
 const updateDisplayName = db.prepare('UPDATE users SET display_name = ? WHERE id = ?');
 const bumpUserVersion = db.prepare('UPDATE users SET version = version + 1 WHERE id = ?');
@@ -445,10 +511,29 @@ const dmHistoryDays = db.prepare(`
   FROM messages m WHERE (m.from_id = ? AND m.to_id = ?) OR (m.from_id = ? AND m.to_id = ?) GROUP BY day ORDER BY day DESC
 `);
 
-const insertBroadcast = db.prepare('INSERT INTO broadcasts (from_id, text, files_json, created_at) VALUES (?, ?, ?, ?)');
+const insertBroadcast = db.prepare('INSERT INTO broadcasts (from_id, text, files_json, department_id, created_at) VALUES (?, ?, ?, ?, ?)');
+// Какие объявления попадают в выборку. @department = NULL — обычная лента: объявления всей
+// организации плюс сообщения отделов, в которых человек состоит. @department = число — лента
+// одного отдела (окно "Сообщение отделу"); право её видеть проверяется в маршруте.
+// Список отделов параметром не передаём — база и так его знает, а подставлять список переменной
+// длины в IN (...) пришлось бы динамическим SQL.
+// @all = 1 — вообще без ограничений: это веб-панель администратора, которая по своей задаче видит
+// всю переписку организации (см. раздел "Чего здесь нет" в README сервера).
+const BROADCAST_SCOPE = `(
+  @all = 1
+  OR (@department IS NULL AND (
+    b.department_id IS NULL
+    OR b.from_id = @viewer          -- своё написанное человек видит всегда, даже если писал в чужой отдел
+    OR b.department_id IN (SELECT department_id FROM user_departments WHERE user_id = @viewer)
+  ))
+  OR (@department IS NOT NULL AND b.department_id = @department)
+)`;
+const BROADCAST_COLUMNS = `b.id, b.text, b.created_at, b.files_json, b.department_id, d.name AS department, u.display_name AS from_user`;
+const BROADCAST_FROM = `FROM broadcasts b JOIN users u ON u.id = b.from_id LEFT JOIN departments d ON d.id = b.department_id`;
+
 const recentBroadcasts = db.prepare(`
-  SELECT b.id, b.text, b.created_at, b.files_json, u.display_name AS from_user
-  FROM broadcasts b JOIN users u ON u.id = b.from_id
+  SELECT ${BROADCAST_COLUMNS} ${BROADCAST_FROM}
+  WHERE ${BROADCAST_SCOPE}
   ORDER BY b.id DESC LIMIT 50
 `);
 // LIMIT 300 + вложенный DESC/ASC: без ограничения тяжёлый день (например, стресс-тест рассылок)
@@ -457,20 +542,21 @@ const recentBroadcasts = db.prepare(`
 // привычном хронологическом порядке (внешний ASC), чтобы клиент, как и раньше, не пересортировывал.
 const broadcastsRange = db.prepare(`
   SELECT * FROM (
-    SELECT b.id, b.text, b.created_at, b.files_json, u.display_name AS from_user
-    FROM broadcasts b JOIN users u ON u.id = b.from_id
-    WHERE b.created_at >= ? AND b.created_at < ? ORDER BY b.id DESC LIMIT 300
+    SELECT ${BROADCAST_COLUMNS} ${BROADCAST_FROM}
+    WHERE b.created_at >= @since AND b.created_at < @until AND ${BROADCAST_SCOPE} ORDER BY b.id DESC LIMIT 300
   ) ORDER BY id ASC
 `);
 const broadcastsSearch = db.prepare(`
-  SELECT b.id, b.text, b.created_at, b.files_json, u.display_name AS from_user
-  FROM broadcasts b JOIN users u ON u.id = b.from_id
-  WHERE lower_ru(b.text) LIKE '%' || lower_ru(?) || '%' ORDER BY b.id DESC LIMIT 200
+  SELECT ${BROADCAST_COLUMNS} ${BROADCAST_FROM}
+  WHERE lower_ru(b.text) LIKE '%' || lower_ru(@q) || '%' AND ${BROADCAST_SCOPE} ORDER BY b.id DESC LIMIT 200
 `);
 const broadcastsDays = db.prepare(`
-  SELECT strftime('%Y-%m-%d', datetime(b.created_at/1000, 'unixepoch', ?)) AS day, COUNT(*) AS count
-  FROM broadcasts b GROUP BY day ORDER BY day DESC
+  SELECT strftime('%Y-%m-%d', datetime(b.created_at/1000, 'unixepoch', @tz)) AS day, COUNT(*) AS count
+  ${BROADCAST_FROM} WHERE ${BROADCAST_SCOPE} GROUP BY day ORDER BY day DESC
 `);
+const isDepartmentMember = db.prepare('SELECT 1 FROM user_departments WHERE user_id = ? AND department_id = ?');
+const getDepartment = db.prepare('SELECT id, name FROM departments WHERE id = ?');
+
 const messagesCount = db.prepare('SELECT COUNT(*) AS c FROM messages');
 const departmentsCount = db.prepare('SELECT COUNT(*) AS c FROM departments');
 
@@ -815,7 +901,7 @@ app.get('/api/admin/client-log', auth, requireCapability('can_admin'), (req, res
 });
 
 // ---------- Профиль (свой аккаунт) ----------
-app.get('/api/me', auth, (req, res) => res.json(req.user));
+app.get('/api/me', auth, (req, res) => res.json({ ...req.user, departments: listDepartmentsOfUser.all(req.user.id) }));
 app.patch('/api/me', auth, (req, res) => {
   const displayName = String((req.body || {}).display_name || '').trim();
   if (!displayName) return res.status(400).json({ error: 'Введите отображаемое имя' });
@@ -978,22 +1064,80 @@ app.get('/api/unread-dms', auth, (req, res) => {
 });
 
 // ---------- Рассылки ----------
+// Лента отдела видна только его сотрудникам: отправитель, пишущий в "Бухгалтерию", рассчитывает,
+// что читает это бухгалтерия, а не все подряд. Написать отделу может кто угодно (см. POST ниже) —
+// а вот листать чужую переписку незачем.
+function departmentScope(req, res) {
+  const raw = req.query.departmentId;
+  // Панель администратора просит всю ленту целиком — но только если права действительно есть.
+  const all = req.query.all === '1' && !!req.user.can_admin ? 1 : 0;
+  if (raw === undefined || raw === '') return { department: null, all };
+  const department = Number(raw);
+  if (!Number.isInteger(department) || department <= 0) {
+    res.status(400).json({ error: 'Неверный отдел' });
+    return null;
+  }
+  if (!isDepartmentMember.get(req.user.id, department) && !req.user.can_admin) {
+    res.status(403).json({ error: 'Лента отдела видна только его сотрудникам' });
+    return null;
+  }
+  return { department, all };
+}
+
 app.get('/api/broadcasts', auth, (req, res) => {
+  const scope = departmentScope(req, res);
+  if (!scope) return;
+  const base = { viewer: req.user.id, department: scope.department, all: scope.all };
   const { since, until, q } = req.query;
-  if (q) return res.json(broadcastsSearch.all(q).reverse().map(normalizeRow));
-  if (since && until) return res.json(broadcastsRange.all(Number(since), Number(until)).map(normalizeRow)); // уже ASC из SQL
-  res.json(recentBroadcasts.all().reverse().map(normalizeRow));
+  if (q) return res.json(broadcastsSearch.all({ ...base, q: String(q) }).reverse().map(normalizeRow));
+  if (since && until) return res.json(broadcastsRange.all({ ...base, since: Number(since), until: Number(until) }).map(normalizeRow)); // уже ASC из SQL
+  res.json(recentBroadcasts.all(base).reverse().map(normalizeRow));
 });
-app.get('/api/broadcasts/days', auth, (req, res) => res.json(broadcastsDays.all(tzModifier(req))));
-app.post('/api/broadcast', auth, requireCapability('can_broadcast'), (req, res) => {
+app.get('/api/broadcasts/days', auth, (req, res) => {
+  const scope = departmentScope(req, res);
+  if (!scope) return;
+  res.json(broadcastsDays.all({ viewer: req.user.id, department: scope.department, all: scope.all, tz: tzModifier(req) }));
+});
+
+// Объявление всей организации — по-прежнему право can_broadcast. Сообщение отделу — доступно всем:
+// новой досягаемости оно не даёт (написать каждому сотруднику отдела по одному человек и так может,
+// список людей открыт), а экономит десяток одинаковых сообщений. Отправитель везде подписан именем.
+app.post('/api/broadcast', auth, (req, res) => {
   const text = String((req.body || {}).text || '').slice(0, 4000).trim();
   const files = normalizeIncomingFiles((req.body || {}).files);
+  const rawDepartment = (req.body || {}).departmentId;
   if (!text && !files.length) return res.status(400).json({ error: 'Пустая рассылка' });
+
+  let department = null;
+  if (rawDepartment !== undefined && rawDepartment !== null && rawDepartment !== '') {
+    department = Number(rawDepartment);
+    if (!Number.isInteger(department) || department <= 0 || !getDepartment.get(department)) {
+      return res.status(400).json({ error: 'Такого отдела нет' });
+    }
+  } else if (!req.user.can_broadcast) {
+    return res.status(403).json({ error: 'Нет права на рассылку всей организации' });
+  }
+
   const now = Date.now();
   const filesJson = files.length ? JSON.stringify(files) : null;
-  insertBroadcast.run(req.user.id, text, filesJson, now);
-  const payload = JSON.stringify({ type: 'broadcast', from_user: req.user.display_name, text, files, created_at: now });
-  sendToAll(payload);
+  insertBroadcast.run(req.user.id, text, filesJson, department, now);
+  const payload = JSON.stringify({
+    type: 'broadcast',
+    from_user: req.user.display_name,
+    text, files, created_at: now,
+    department_id: department,
+    department: department ? getDepartment.get(department).name : null,
+  });
+  if (department) {
+    // Отправителю — тоже: он мог написать в отдел, в котором сам не состоит, и без этого его
+    // собственное сообщение не появилось бы у него в ленте до перезагрузки окна.
+    const recipients = new Set(listUserIdsInDepartment.all(department).map((r) => r.user_id));
+    recipients.add(req.user.id);
+    for (const userId of recipients) sendToUser(userId, payload);
+    logServer('INFO', 'department_broadcast', { fromId: req.user.id, departmentId: department, recipients: recipients.size });
+  } else {
+    sendToAll(payload);
+  }
   res.json({ ok: true });
 });
 
@@ -1012,13 +1156,16 @@ app.patch('/api/admin/registration', auth, requireCapability('can_admin'), (req,
 });
 
 app.post('/api/admin/users', auth, requireCapability('can_admin'), (req, res) => {
-  const { username, password, department_id, can_broadcast, can_admin } = req.body || {};
+  const { username, password, department_id, department_ids, can_broadcast, can_admin } = req.body || {};
   if (!username || !password || password.length < 4) return res.status(400).json({ error: 'Логин и пароль (мин. 4 символа) обязательны' });
   try {
     const hash = bcrypt.hashSync(password, 10);
     const info = insertUser.run(username, hash, username, can_broadcast ? 1 : 0, can_admin ? 1 : 0, Date.now());
     invalidateUserIdsCache();
-    if (department_id) updateUserDept.run(department_id, info.lastInsertRowid);
+    // department_id — старая форма запроса (один отдел); принимаем обе, чтобы не ломать ничего,
+    // что обращается к API напрямую.
+    const ids = Array.isArray(department_ids) ? department_ids : (department_id ? [department_id] : []);
+    if (ids.length) setUserDepartments(info.lastInsertRowid, ids);
     broadcastUsersChanged();
     res.json({ ok: true, id: info.lastInsertRowid });
   } catch {
@@ -1028,7 +1175,7 @@ app.post('/api/admin/users', auth, requireCapability('can_admin'), (req, res) =>
 
 app.patch('/api/admin/users/:id', auth, requireCapability('can_admin'), (req, res) => {
   const id = Number(req.params.id);
-  const { department_id, password, display_name, can_broadcast, can_admin, version } = req.body || {};
+  const { department_id, department_ids, password, display_name, can_broadcast, can_admin, version } = req.body || {};
   const current = db.prepare('SELECT can_broadcast, can_admin, version FROM users WHERE id = ?').get(id);
   if (!current) return res.status(404).json({ error: 'Пользователь не найден' });
   // Оптимистичная блокировка: панель присылает версию строки, которую видела при загрузке. Если она
@@ -1044,7 +1191,8 @@ app.patch('/api/admin/users/:id', auth, requireCapability('can_admin'), (req, re
       id,
     );
   }
-  if (department_id !== undefined) updateUserDept.run(department_id || null, id);
+  if (department_ids !== undefined) setUserDepartments(id, department_ids);
+  else if (department_id !== undefined) setUserDepartments(id, department_id ? [department_id] : []);
   if (password) {
     if (password.length < 4) return res.status(400).json({ error: 'Пароль слишком короткий' });
     updateUserPassword.run(bcrypt.hashSync(password, 10), id);
@@ -1062,6 +1210,9 @@ app.patch('/api/admin/users/:id', auth, requireCapability('can_admin'), (req, re
 app.delete('/api/admin/users/:id', auth, requireCapability('can_admin'), (req, res) => {
   const id = Number(req.params.id);
   if (id === req.user.id) return res.status(400).json({ error: 'Нельзя удалить свою же учётку' });
+  // Внешние ключи в SQLite здесь не включены (PRAGMA foreign_keys), поэтому связи чистим руками —
+  // иначе строки в user_departments пережили бы самого сотрудника и всплыли бы у нового с тем же id.
+  clearUserDepartments.run(id);
   deleteUserStmt.run(id);
   invalidateUserIdsCache();
   broadcastUsersChanged();
@@ -1082,7 +1233,9 @@ app.post('/api/admin/departments', auth, requireCapability('can_admin'), (req, r
 });
 
 app.delete('/api/admin/departments/:id', auth, requireCapability('can_admin'), (req, res) => {
-  deleteDepartmentStmt.run(Number(req.params.id));
+  const id = Number(req.params.id);
+  db.prepare('DELETE FROM user_departments WHERE department_id = ?').run(id); // см. комментарий у удаления сотрудника
+  deleteDepartmentStmt.run(id);
   broadcastUsersChanged();
   res.json({ ok: true });
 });
@@ -1287,6 +1440,155 @@ app.post('/api/admin/request-log', auth, requireCapability('can_admin'), (req, r
   res.json({ ok: true });
 });
 
+// ---------- Сертификат сервера (раздел "Сертификат" в панели) ----------
+// Сертификат домена выдаётся на два года, корневой — на десять. Раз менять их всё равно придётся,
+// пусть это делается там же, где видно, что сейчас установлено, — а не правкой переменных
+// окружения на сервере по инструкции из README, которую в этот момент никто не найдёт.
+app.get('/api/admin/tls', auth, requireCapability('can_admin'), async (req, res) => {
+  const clientRoot = clientRootFingerprint();
+  const inStore = fs.existsSync(CERT_STORE_PFX);
+  // Что лежит в хранилище — отдельно от того, что действует сейчас. Эти две вещи расходятся ровно
+  // в одном случае: сертификат загрузили на сервер, работающий по http. Файл принят, но включится
+  // он только с перезапуском — и об этом администратору надо сказать прямо, а не показать пустоту.
+  let stored = null;
+  if (inStore) {
+    try {
+      stored = await inspectTlsOptions(resolveTlsOptions().options);
+    } catch (err) {
+      stored = { error: String((err && err.message) || err) };
+    }
+  }
+  const active = currentCertificate;
+  res.json({
+    enabled: server instanceof https.Server,
+    source: tlsSource,                              // store | env-pfx | env-pem | null
+    storeHasCertificate: inStore,
+    restartRequired: inStore && tlsSource !== 'store',
+    requestSecure: Boolean(req.secure),             // сама панель сейчас открыта по https или нет
+    certificate: active,
+    stored,
+    clientRootFingerprint: clientRoot,
+    rootMatchesClient: clientRoot && active && active.rootFingerprint
+      ? clientRoot === active.rootFingerprint
+      : null,
+  });
+});
+
+// Замена сертификата. Файл сначала разбирается (в том числе проверяется пароль и срок), и только
+// потом попадает на диск: испортить работающий сервер загрузкой не того файла нельзя.
+app.post('/api/admin/tls', auth, requireCapability('can_admin'), async (req, res) => {
+  const { pfx, password } = req.body || {};
+  if (!pfx || typeof pfx !== 'string') return res.status(400).json({ error: 'Файл не передан' });
+
+  let buffer;
+  try {
+    buffer = Buffer.from(pfx, 'base64');
+  } catch {
+    return res.status(400).json({ error: 'Файл повреждён при передаче' });
+  }
+  if (!buffer.length) return res.status(400).json({ error: 'Файл пустой' });
+
+  const options = { pfx: buffer };
+  if (password) options.passphrase = String(password);
+
+  let info;
+  try {
+    info = await inspectTlsOptions(options);
+  } catch (err) {
+    const raw = String((err && err.message) || err);
+    logServer('WARN', 'tls_upload_rejected', { adminId: req.user.id, error: raw });
+    // "mac verify failure" означает ровно одно — пароль не тот (или файл не PFX). Показывать
+    // администратору эту фразу бессмысленно, он не обязан знать, что такое MAC.
+    if (/mac verify failure/i.test(raw)) {
+      return res.status(400).json({ error: password ? 'Неверный пароль к файлу' : 'Файл защищён паролем — укажите его' });
+    }
+    return res.status(400).json({ error: 'Это не похоже на PFX-файл с сертификатом и ключом' });
+  }
+
+  if (info.daysLeft !== null && info.daysLeft < 0) {
+    return res.status(400).json({ error: `Срок действия этого сертификата истёк ${info.validTo}` });
+  }
+
+  // Загрузка закрытого ключа по незашифрованному каналу — ровно тот случай, когда его может
+  // перехватить кто угодно в сети. Запретить нельзя (первую установку иначе и не сделать), но
+  // и промолчать нельзя: пусть останется в журнале.
+  if (!req.secure) {
+    logServer('WARN', 'tls_upload_over_http', {
+      adminId: req.user.id,
+      ip: req.ip,
+      hint: 'Закрытый ключ передан по незашифрованному каналу. Если сеть недоверенная — перевыпустите сертификат',
+    });
+  }
+
+  try {
+    ensureCertsDir();
+    // Один шаг назад на случай, если новый файл окажется не тем: старый не затирается насовсем.
+    if (fs.existsSync(CERT_STORE_PFX)) fs.copyFileSync(CERT_STORE_PFX, CERT_STORE_PFX + '.bak');
+    if (fs.existsSync(CERT_STORE_PASS)) fs.copyFileSync(CERT_STORE_PASS, CERT_STORE_PASS + '.bak');
+    fs.writeFileSync(CERT_STORE_PFX, buffer, { mode: 0o600 });
+    if (password) fs.writeFileSync(CERT_STORE_PASS, String(password), { mode: 0o600 });
+    else if (fs.existsSync(CERT_STORE_PASS)) fs.unlinkSync(CERT_STORE_PASS);
+  } catch (err) {
+    logServer('ERROR', 'tls_store_write_failed', { error: String((err && err.message) || err) });
+    return res.status(500).json({ error: 'Не удалось сохранить файл на диск сервера' });
+  }
+
+  // Уже работающему https-серверу сертификат можно заменить на ходу: новые соединения пойдут с
+  // новым, уже открытые доживут со старым. Перезапуск нужен только при первой установке —
+  // http-сервер превратить в https без него нельзя.
+  let applied = false;
+  if (server instanceof https.Server && typeof server.setSecureContext === 'function') {
+    try {
+      server.setSecureContext(options);
+      applied = true;
+      tlsSource = 'store';
+      currentCertificate = info;
+    } catch (err) {
+      logServer('ERROR', 'tls_apply_failed', { error: String((err && err.message) || err) });
+    }
+  }
+
+  logServer('INFO', 'tls_certificate_replaced', {
+    adminId: req.user.id,
+    subject: info.subject,
+    san: info.san,
+    issuer: info.issuer,
+    valid_to: info.validTo,
+    days_left: info.daysLeft,
+    certificates: info.certificates,
+    applied,
+  });
+
+  const clientRoot = clientRootFingerprint();
+  res.json({
+    ok: true,
+    applied,                       // false — файл сохранён, но нужен перезапуск сервера
+    certificate: info,
+    rootMatchesClient: clientRoot && info.rootFingerprint ? clientRoot === info.rootFingerprint : null,
+  });
+});
+
+// Убрать сертификат из хранилища. Работающий сервер при этом остаётся на https до перезапуска —
+// выключить шифрование на ходу нельзя, да и не нужно.
+app.delete('/api/admin/tls', auth, requireCapability('can_admin'), (req, res) => {
+  try {
+    for (const file of [CERT_STORE_PFX, CERT_STORE_PASS]) {
+      if (fs.existsSync(file)) fs.unlinkSync(file);
+    }
+  } catch (err) {
+    return res.status(500).json({ error: 'Не удалось удалить файл: ' + String((err && err.message) || err) });
+  }
+  logServer('WARN', 'tls_certificate_removed', { adminId: req.user.id });
+  res.json({ ok: true });
+});
+
+// PFX больше стандартного лимита express.json() — ответ должен остаться JSON, иначе панель
+// покажет кусок HTML вместо понятной ошибки.
+app.use('/api/admin/tls', (err, req, res, next) => {
+  if (err) return res.status(413).json({ error: 'Файл слишком большой для загрузки через панель' });
+  next();
+});
+
 app.get('/api/admin/stats', auth, requireCapability('can_admin'), (req, res) => {
   const onlineUserIds = new Set();
   for (const meta of connMeta.values()) onlineUserIds.add(meta.userId);
@@ -1350,8 +1652,240 @@ app.get('/api/admin/logs', auth, requireCapability('can_admin'), (req, res) => {
   res.json({ entries: entries.slice(0, LOG_VIEW_LIMIT), truncated: entries.length > LOG_VIEW_LIMIT, total: entries.length });
 });
 
-// ---------- WebSocket (реалтайм + presence) ----------
-const server = http.createServer(app);
+// ---------- HTTPS ----------
+// TLS разворачивает сам сервер — обратного прокси перед ним нет намеренно. Так не остаётся
+// параллельного незашифрованного порта, про который легко забыть (а он обнулил бы весь смысл),
+// не нужно отдельно пробрасывать WebSocket, и req.ip остаётся настоящим адресом сотрудника,
+// от которого зависит защита от подбора пароля.
+//
+// Шифрование включается САМО, как только задан сертификат, — отдельного переключателя нет,
+// чтобы не было состояния "сертификат положили, а включить забыли". Ничего не задано — сервер
+// работает по http, как раньше (нужно для локальной разработки и до момента установки сертификата).
+//
+// Три способа задать сертификат, работает любой (проверяются в этом же порядке):
+//
+//   1. Хранилище certs/ — сюда кладёт файл веб-панель, раздел "Сертификат". Основной способ:
+//      сертификат домена живёт два года, корневой — десять, менять их придётся, и лезть за этим
+//      на сервер в консоль не нужно.
+//
+//   2. PFX (.pfx / .p12) из переменных окружения — то, что выдаёт удостоверяющий центр
+//      Windows-домена как есть. Конвертировать ничего не нужно, Node читает этот формат сам:
+//
+//        set TLS_PFX=C:\iskra\server.pfx
+//        set TLS_PFX_PASSWORD=пароль-которым-защищён-файл
+//        npm start
+//
+//   3. PEM — отдельно сертификат и ключ (обычный вариант для Linux):
+//
+//        TLS_CERT=/etc/iskra/fullchain.crt TLS_KEY=/etc/iskra/server.key npm start
+//
+//      Здесь TLS_CERT — обязательно ПОЛНАЯ цепочка (сертификат сервера + промежуточные УЦ), а не
+//      только сертификат сервера, и ключ должен быть без пароля, иначе сервер не поднимется без
+//      ручного ввода при каждом запуске.
+//
+// Пароль от PFX — в переменной окружения, в скрипте запуска или в хранилище certs/ рядом с самим
+// файлом; в репозитории ему не место (certs/ и *.pfx внесены в .gitignore).
+const TLS_PFX = process.env.TLS_PFX;
+const TLS_PFX_PASSWORD = process.env.TLS_PFX_PASSWORD;
+const TLS_CERT = process.env.TLS_CERT;
+const TLS_KEY = process.env.TLS_KEY;
+
+// Хранилище сертификата, которым управляет веб-панель (раздел "Сертификат"). Сертификат домена
+// выдаётся на два года, а корневой — на десять: рано или поздно и тот и другой придётся менять, и
+// делать это через правку переменных окружения на сервере неудобно ровно тогда, когда это нужно.
+// Приоритет у хранилища, а не у переменных окружения: администратор, заменивший сертификат из
+// панели, вправе рассчитывать, что заменился именно он. Чтобы это не превратилось в "поменял
+// переменную, а ничего не изменилось", источник пишется в журнал при каждом запуске и виден в
+// панели.
+const certsDir = path.join(__dirname, 'certs');
+const CERT_STORE_PFX = path.join(certsDir, 'server.pfx');
+const CERT_STORE_PASS = path.join(certsDir, 'server.pass');
+
+// Внутри .pfx лежит закрытый ключ. Права на папку — только владельцу процесса; на Windows chmod
+// почти ничего не значит (там ACL), поэтому это подстраховка для Linux, а не полная защита.
+function ensureCertsDir() {
+  if (!fs.existsSync(certsDir)) fs.mkdirSync(certsDir, { recursive: true, mode: 0o700 });
+  try { fs.chmodSync(certsDir, 0o700); } catch { /* Windows — здесь правами управляют ACL */ }
+}
+
+// Откуда брать сертификат. Возвращает null, если его нет нигде — тогда сервер работает по http.
+function resolveTlsOptions() {
+  if (fs.existsSync(CERT_STORE_PFX)) {
+    const options = { pfx: fs.readFileSync(CERT_STORE_PFX) };
+    if (fs.existsSync(CERT_STORE_PASS)) options.passphrase = fs.readFileSync(CERT_STORE_PASS, 'utf8');
+    return { options, source: 'store', where: CERT_STORE_PFX };
+  }
+  if (TLS_PFX) {
+    const options = { pfx: fs.readFileSync(TLS_PFX) };
+    if (TLS_PFX_PASSWORD) options.passphrase = TLS_PFX_PASSWORD;
+    return { options, source: 'env-pfx', where: TLS_PFX };
+  }
+  if (TLS_CERT && TLS_KEY) {
+    return {
+      options: { cert: fs.readFileSync(TLS_CERT), key: fs.readFileSync(TLS_KEY) },
+      source: 'env-pem',
+      where: TLS_CERT,
+    };
+  }
+  return null;
+}
+
+let tlsSource = null; // что реально сейчас используется — показывается в панели
+
+function createAppServer() {
+  let resolved;
+  try {
+    resolved = resolveTlsOptions();
+  } catch (err) {
+    logServer('ERROR', 'tls_unreadable', { error: String((err && err.message) || err) });
+    throw err;
+  }
+  if (!resolved) {
+    logServer('WARN', 'tls_disabled', { reason: 'сертификат не задан — трафик идёт открытым текстом' });
+    return http.createServer(app);
+  }
+  // Пароль не подошёл или файл битый — это выясняется здесь, при запуске, а не при первом
+  // подключении сотрудника.
+  try {
+    tls.createSecureContext(resolved.options);
+  } catch (err) {
+    logServer('ERROR', 'tls_pfx_unreadable', {
+      source: resolved.source,
+      where: resolved.where,
+      reason: resolved.options.passphrase
+        ? 'файл не читается — вероятно, неверный пароль'
+        : 'файл не читается — вероятно, он защищён паролем, а пароль не задан',
+      error: String((err && err.message) || err),
+    });
+    throw err;
+  }
+  tlsSource = resolved.source;
+  logServer('INFO', 'tls_enabled', { source: resolved.source, where: resolved.where });
+  return https.createServer(resolved.options, app);
+}
+
+// ---------- Что сервер РЕАЛЬНО отдаёт клиенту ----------
+// Из PFX содержимое цепочки снаружи не видно, а в PEM легко положить лишнее — поэтому смотрим не в
+// файл, а на результат: поднимаем сертификат в настоящем TLS-сервере, подключаемся к нему и
+// разбираем то, что он предъявил. Так же проверяется и файл, который администратор только что
+// загрузил в панель, — ещё до того, как он станет действующим.
+function describeChain(peer) {
+  const chain = [];
+  let cert = peer;
+  while (cert && cert.fingerprint256 && !chain.some((c) => c.fingerprint256 === cert.fingerprint256)) {
+    chain.push(cert);
+    cert = cert.issuerCertificate;
+  }
+  const leaf = chain[0] || {};
+  const last = chain[chain.length - 1] || {};
+  const selfSignedRoot = Boolean(last.subject && last.issuer && JSON.stringify(last.subject) === JSON.stringify(last.issuer));
+  const validTo = leaf.valid_to ? new Date(leaf.valid_to) : null;
+  return {
+    subject: (leaf.subject && leaf.subject.CN) || null,
+    san: leaf.subjectaltname || null,
+    issuer: (leaf.issuer && leaf.issuer.CN) || null,
+    validFrom: leaf.valid_from || null,
+    validTo: leaf.valid_to || null,
+    daysLeft: validTo ? Math.round((validTo - Date.now()) / 86400000) : null,
+    fingerprint: leaf.fingerprint256 || null,
+    rootSubject: (last.subject && last.subject.CN) || null,
+    rootFingerprint: last.fingerprint256 || null,
+    certificates: chain.length,
+    chainComplete: selfSignedRoot,
+  };
+}
+
+// Разбор произвольного сертификата (например, только что загруженного) без его установки.
+function inspectTlsOptions(options) {
+  return new Promise((resolve, reject) => {
+    let probe;
+    try {
+      probe = tls.createServer(options, (socket) => socket.end());
+    } catch (err) { return reject(err); }
+    const fail = (err) => { try { probe.close(); } catch { /* уже закрыт */ } reject(err); };
+    probe.on('error', fail);
+    probe.listen(0, '127.0.0.1', () => {
+      const socket = tls.connect({ host: '127.0.0.1', port: probe.address().port, rejectUnauthorized: false }, () => {
+        let info;
+        try { info = describeChain(socket.getPeerCertificate(true)); } catch (err) { socket.destroy(); return fail(err); }
+        socket.destroy();
+        probe.close(() => resolve(info));
+      });
+      socket.on('error', fail);
+    });
+  });
+}
+
+// Последнее, что удалось узнать о действующем сертификате: панель показывает это, не трогая сеть.
+let currentCertificate = null;
+
+// Корневой сертификат, вшитый в сборку клиента. Если сервер подписан уже другим корнем, клиенты
+// перестанут ему доверять — а выяснится это только тогда, когда у людей перестанет открываться
+// приложение. Поэтому сравниваем сами и показываем в панели.
+function clientRootFingerprint() {
+  const file = path.join(__dirname, '..', 'desktop-client', 'rosstat-root-ca.crt');
+  try {
+    return new crypto.X509Certificate(fs.readFileSync(file)).fingerprint256;
+  } catch {
+    return null; // на боевом сервере папки клиента может не быть — это не ошибка
+  }
+}
+
+// Смысл проверки при старте — в двух вещах, каждая из которых иначе всплывает сильно позже и не
+// там, где причина:
+//   * имя в SAN должно дословно совпадать с адресом в desktop-client/config.js, иначе клиент
+//     отвергнет соединение по несовпадению имени;
+//   * если цепочка обрывается на сертификате, который сам себя не подписывал, значит промежуточных
+//     УЦ в ней не хватает. Браузеры на доменных машинах иногда дотягивают недостающее сами, а Node
+//     (то есть автообновление клиента) — никогда: в браузере всё выглядит исправно, а обновления
+//     молча не идут.
+async function reportTlsCertificate() {
+  try {
+    const resolved = resolveTlsOptions();
+    if (!resolved) return;
+    currentCertificate = await inspectTlsOptions(resolved.options);
+    logServer('INFO', 'tls_certificate', {
+      subject: currentCertificate.subject,
+      san: currentCertificate.san,
+      issuer: currentCertificate.issuer,
+      valid_to: currentCertificate.validTo,
+      days_left: currentCertificate.daysLeft,
+      certificates: currentCertificate.certificates,
+    });
+    if (!currentCertificate.chainComplete) {
+      logServer('WARN', 'tls_chain_incomplete', {
+        certificates: currentCertificate.certificates,
+        hint: 'Сервер не отдаёт полную цепочку до корневого УЦ. Для PFX — экспортируйте его вместе со всеми сертификатами пути; для PEM — cat server.crt chain.crt > fullchain.crt',
+      });
+    }
+    const clientRoot = clientRootFingerprint();
+    if (clientRoot && currentCertificate.rootFingerprint && clientRoot !== currentCertificate.rootFingerprint) {
+      logServer('WARN', 'tls_root_differs_from_client', {
+        server_root: currentCertificate.rootSubject,
+        hint: 'Сервер подписан не тем корневым УЦ, который вшит в сборку клиента. Замените desktop-client/rosstat-root-ca.crt и пересоберите установщики, иначе клиенты перестанут доверять серверу',
+      });
+    }
+    warnIfExpiring();
+  } catch (err) {
+    logServer('WARN', 'tls_check_failed', { error: String((err && err.message) || err) });
+  }
+}
+
+// Автопродления нет: сертификат перевыпускают руками, и единственный способ не проспать это —
+// напоминать заранее. Раз в сутки, начиная за 30 дней.
+function warnIfExpiring() {
+  if (!currentCertificate || currentCertificate.daysLeft === null) return;
+  if (currentCertificate.daysLeft > 30) return;
+  logServer(currentCertificate.daysLeft <= 0 ? 'ERROR' : 'WARN', 'tls_certificate_expiring', {
+    subject: currentCertificate.subject,
+    valid_to: currentCertificate.validTo,
+    days_left: currentCertificate.daysLeft,
+    hint: 'Выпустите новый сертификат в удостоверяющем центре домена и загрузите его в панели, раздел "Сертификат"',
+  });
+}
+setInterval(warnIfExpiring, 24 * 60 * 60 * 1000).unref();
+
+const server = createAppServer();
 const wss = new WebSocketServer({ server });
 
 const online = new Map();   // userId -> Set(ws)              — для маршрутизации сообщений
@@ -1721,5 +2255,7 @@ app.use((err, req, res, next) => {
 
 server.listen(PORT, () => {
   ensureBootstrapAdmin();
-  console.log(`Мини-мессенджер запущен: http://localhost:${PORT}`);
+  const scheme = server instanceof https.Server ? 'https' : 'http';
+  console.log(`Искра запущена: ${scheme}://localhost:${PORT}`);
+  if (scheme === 'https') reportTlsCertificate();
 });
