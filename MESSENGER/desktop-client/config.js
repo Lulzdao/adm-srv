@@ -13,5 +13,5 @@
 //  разрешаться на всех рабочих местах.
 // ============================================================================
 module.exports = {
-  SERVER_URL: 'https://p48-srv-adm01.rosstat.local:3000',
+  SERVER_URL: 'https://p48-srv-adm01.rosstat.local:3103',
 };

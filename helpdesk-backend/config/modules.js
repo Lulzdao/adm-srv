@@ -42,10 +42,11 @@ module.exports = [
   //    127.0.0.1: по адресу проверка имени в сертификате не пройдёт и модуль
   //    не откроется. Имя и порт держите в согласии с тем, что реально слушает
   //    «Искра» (её PORT, по умолчанию 3000) и что вшито в сборку клиента
-  //    (MESSENGER/desktop-client/config.js).
+  //    (MESSENGER/desktop-client/config.js). Платформа и «Искра» стоят на
+  //    одной машине, поэтому порт у неё 3103 — 3000 занят самой платформой.
   {
     id: "messenger", label: "Искра", path: "/modules/messenger",
-    target: process.env.MODULE_MESSENGER_URL || "https://p48-srv-adm01.rosstat.local:3000",
+    target: process.env.MODULE_MESSENGER_URL || "https://p48-srv-adm01.rosstat.local:3103",
     roles: ["it"],
     views: [{ id: "root", label: "Искра", sub: "" }],
   },
