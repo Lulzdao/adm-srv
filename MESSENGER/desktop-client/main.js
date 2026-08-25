@@ -31,23 +31,90 @@ const { autoUpdater } = require('electron-updater');
 // Используется только публичный API (options.ca + tls.rootCertificates), без внутреннего
 // context.context.addCACert: сборка win7 работает на Node 16 внутри Electron 22, win10 — на
 // заметно более новом, и полагаться на внутренности там нельзя.
+//
+// ГЛАВНЫЙ источник доверия — хранилище сертификатов Windows, а НЕ вшитый файл. Это принципиально
+// для бесперебойности: когда домен меняет корневой УЦ, новый корень приезжает на все машины
+// групповыми политиками сам (иначе в домене отвалилось бы всё сразу — Kerberos, LDAPS, шары).
+// Клиент, читающий хранилище, подхватывает смену без пересборки и без обхода сотни рабочих мест.
+// Вшитый rosstat-root-ca.crt остаётся запасным вариантом на случай, если хранилище прочитать не
+// удалось (нет PowerShell, урезаны права, машина вне домена).
+//
+// Почему через PowerShell, а не флагом: --use-system-ca появился только в Node 22, а сборка под
+// Windows 7 живёт на Node 16 внутри Electron 22 — там его нет. Один способ на обе сборки надёжнее
+// двух разных. Нативные модули не годятся по той же причине (две разные версии Electron).
 const ORG_CA_PATH = path.join(__dirname, 'rosstat-root-ca.crt');
-function trustOrganizationCa() {
-  let pem;
+const EXTRA_CA_DIR = path.join(__dirname, 'ca'); // сюда можно доложить .crt на время смены УЦ
+
+function pemFromBase64(b64) {
+  const body = String(b64).replace(/\s+/g, '').match(/.{1,64}/g);
+  return body ? `-----BEGIN CERTIFICATE-----\n${body.join('\n')}\n-----END CERTIFICATE-----\n` : null;
+}
+
+// Корни из хранилища Windows (LocalMachine\Root — именно туда групповые политики кладут корневые
+// сертификаты домена). Синхронно и один раз при старте: список нужен до первого сетевого запроса.
+function readWindowsRootStore() {
+  if (process.platform !== 'win32') return [];
   try {
-    pem = fs.readFileSync(ORG_CA_PATH, 'utf8');
-  } catch {
-    return; // файла нет — ничего не меняем (например, сервер ещё работает по http)
+    const { execFileSync } = require('child_process');
+    const out = execFileSync(
+      'powershell',
+      ['-NoProfile', '-NonInteractive', '-Command',
+        "Get-ChildItem Cert:\\LocalMachine\\Root | ForEach-Object { [Convert]::ToBase64String($_.RawData) }"],
+      // Таймаут обязателен: заблокированный политиками или зависший PowerShell не должен
+      // задерживать запуск приложения дольше, чем на несколько секунд.
+      { timeout: 20000, windowsHide: true, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 }
+    );
+    return String(out).split(/\r?\n/).map((l) => l.trim()).filter(Boolean).map(pemFromBase64).filter(Boolean);
+  } catch (err) {
+    logLocal('win_ca_store_unreadable', { message: String((err && err.message) || err) });
+    return [];
   }
+}
+
+function readCaFile(file) {
+  try { return fs.readFileSync(file, 'utf8'); } catch { return null; }
+}
+
+function collectTrustAnchors() {
+  const anchors = [];
+
+  const fromStore = readWindowsRootStore();
+  anchors.push(...fromStore);
+
+  // Вшитый корень — запасной вариант и страховка на время, пока новый корень ещё не доехал
+  // по политикам. Лишним он не бывает: доверие только ДОБАВЛЯЕТСЯ.
+  const baked = readCaFile(ORG_CA_PATH);
+  if (baked) anchors.push(baked);
+
+  // Папка ca/ рядом с приложением — чтобы доложить корень руками, не пересобирая .exe.
+  try {
+    for (const name of fs.readdirSync(EXTRA_CA_DIR)) {
+      if (!/\.(crt|cer|pem)$/i.test(name)) continue;
+      const pem = readCaFile(path.join(EXTRA_CA_DIR, name));
+      if (pem) anchors.push(pem);
+    }
+  } catch { /* папки нет — обычное дело */ }
+
+  // Корни из машинной политики (см. readMachinePolicy ниже): их раздают groupwise через GPO,
+  // это рычаг на случай, когда всё остальное уже не работает.
+  for (const pem of machinePolicy.extraCa) anchors.push(pem);
+
+  logLocal('ca_anchors_loaded', { fromWindowsStore: fromStore.length, total: anchors.length });
+  return anchors;
+}
+
+function trustOrganizationCa() {
+  const anchors = collectTrustAnchors();
+  if (!anchors.length) return; // ничего не набралось — оставляем поведение Node как есть
+
   const createSecureContext = tls.createSecureContext;
   tls.createSecureContext = (options = {}) => {
     // Если вызывающий явно передал свой список УЦ — не вмешиваемся, иначе сломаем чужую
     // осознанную настройку.
-    if (!options.ca) options = { ...options, ca: [...tls.rootCertificates, pem] };
+    if (!options.ca) options = { ...options, ca: [...tls.rootCertificates, ...anchors] };
     return createSecureContext(options);
   };
 }
-trustOrganizationCa();
 // Иконка окна/панели задач — в собранном .exe она и так встроена (см. build.win.icon в
 // package.json), но при разработке через `npm start` (без сборки) без этого показывался бы
 // стандартный логотип Electron вместо своего.
@@ -97,6 +164,69 @@ process.on('unhandledRejection', (reason) => {
   logLocal('main_unhandled_rejection', { reason: reason instanceof Error ? reason.stack : String(reason) });
 });
 
+// ---------- Машинная политика (рычаг администратора на все ПК разом) ----------
+// Файл C:\ProgramData\Iskra\config.json раздаётся групповыми политиками так же, как всё остальное
+// в домене, — то есть НЕ через наш сервер. Это принципиально: если сервер недоступен или его
+// сертификат перестал приниматься, обычные каналы (автообновление, панель) не работают, а этот
+// продолжает. Одним действием в GPO можно перевести все машины на другой адрес, доложить корневой
+// сертификат или, в крайнем случае, разрешить работу без шифрования.
+//
+// Политика ПЕРЕКРЫВАЕТ пользовательские настройки (settings.json) — в этом и смысл политики:
+// сотрудник не должен иметь возможности отменить её локально, а администратор не должен обходить
+// сто рабочих мест.
+//
+// ДВА ДОМЕНА. Сервер один, но у каждого домена своё имя для него и свой удостоверяющий центр:
+// rosstat.local (10.148.12.0/22) и in.local (192.168.254.0/23). Сборка клиента при этом ОДНА:
+// имя своего домена машина получает из serverUrl этой политики, по политике на домен. Сервер
+// предъявит сертификат, выданный УЦ того домена, чьё имя запросил клиент (SNI), а его корень
+// уже лежит в хранилище Windows этой машины — тоже из групповых политик. Поэтому доверять
+// чужому УЦ не нужно ни одной стороне, и смена УЦ в одном домене второй не задевает.
+//
+// Права на папку: ProgramData по умолчанию доступна на запись только администраторам, обычный
+// пользователь файл подменить не может. Если раздавать его через GPO, права выставит сама политика.
+const MACHINE_POLICY_PATH = process.platform === 'win32'
+  ? path.join(process.env.ProgramData || 'C:\\ProgramData', 'Iskra', 'config.json')
+  : '/etc/iskra/config.json';
+
+function readMachinePolicy() {
+  const empty = { serverUrl: null, allowInsecureHttp: false, extraCa: [], source: null };
+  let raw;
+  try { raw = fs.readFileSync(MACHINE_POLICY_PATH, 'utf8'); } catch { return empty; }
+
+  let cfg;
+  try { cfg = JSON.parse(raw); } catch { return empty; }
+
+  const extraCa = [];
+  // Корни можно задать и текстом прямо в файле, и путями к .crt — второе удобнее для GPO,
+  // которая обычно кладёт рядом готовые файлы.
+  for (const pem of [].concat(cfg.extraCaPem || [])) {
+    if (typeof pem === 'string' && pem.includes('BEGIN CERTIFICATE')) extraCa.push(pem);
+  }
+  for (const file of [].concat(cfg.extraCaFiles || [])) {
+    if (typeof file !== 'string') continue;
+    try { extraCa.push(fs.readFileSync(file, 'utf8')); } catch { /* файла нет — пропускаем */ }
+  }
+
+  return {
+    serverUrl: typeof cfg.serverUrl === 'string' && cfg.serverUrl.trim() ? cfg.serverUrl.trim() : null,
+    // Работа без шифрования — только явным решением администратора и только через политику.
+    // Автоматического отката при ошибке сертификата нет намеренно: иначе любой в сети смог бы
+    // уронить TLS и заставить клиентов самих перейти на открытый канал.
+    allowInsecureHttp: cfg.allowInsecureHttp === true,
+    extraCa,
+    source: MACHINE_POLICY_PATH,
+  };
+}
+
+const machinePolicy = readMachinePolicy();
+
+// Доверие настраиваем здесь, а не выше по файлу: нужны и logLocal, и уже прочитанная политика.
+trustOrganizationCa();
+
+if (machinePolicy.serverUrl) {
+  logLocal('machine_policy_server_url', { url: machinePolicy.serverUrl, from: machinePolicy.source });
+}
+
 const SETTINGS_PATH = path.join(app.getPath('userData'), 'settings.json');
 
 const DEFAULT_SETTINGS = {
@@ -141,6 +271,33 @@ function saveSettings() {
   try { fs.writeFileSync(SETTINGS_PATH, JSON.stringify(settings)); } catch { /* не критично */ }
 }
 let settings = loadSettings();
+
+// Единственное место, где решается, куда клиент подключается. Порядок приоритета:
+//   1) машинная политика — раздаётся администратором через GPO, перекрывает всё;
+//   2) локальное переопределение (Ctrl+S на экране входа) — на одну машину;
+//   3) адрес, зашитый в config.js при сборке.
+// Раньше это выражение было продублировано в четырёх местах, и добавить политику означало не
+// забыть ни одно из них.
+function effectiveServerUrl() {
+  // Адрес из политики принимается как есть: это осознанное решение администратора, в том числе
+  // и переход на http, когда надо срочно восстановить работу.
+  if (machinePolicy.serverUrl) return machinePolicy.serverUrl;
+
+  // А вот локальную настройку проверяем. settings.json лежит в профиле пользователя и доступен
+  // ему на запись — то есть подменить адрес может и сам сотрудник, и что угодно, запущенное от
+  // его имени. Молча уехать с https на http по такой настройке нельзя: соединение стало бы
+  // открытым, а выглядело бы всё исправно. Разрешаем такой перевод только явной политикой.
+  const local = settings.serverUrlOverride;
+  if (local) {
+    const downgrade = /^http:\/\//i.test(local) && /^https:\/\//i.test(String(SERVER_URL));
+    if (downgrade && !machinePolicy.allowInsecureHttp) {
+      logLocal('insecure_override_rejected', { attempted: local });
+      return SERVER_URL;
+    }
+    return local;
+  }
+  return SERVER_URL;
+}
 
 let rosterWin = null;
 let tray = null;
@@ -545,7 +702,7 @@ function updateFeedUrl() {
   // Адрес берём тот, к которому клиент реально подключён СЕЙЧАС, а не зашитый при сборке: на
   // конкретной машине его могли поменять по Ctrl+S, да и сам сервер мог переехать. Иначе клиент
   // искал бы обновления там, где сервера уже нет.
-  const base = String(settings.serverUrlOverride || SERVER_URL).replace(/\/+$/, '');
+  const base = String(effectiveServerUrl()).replace(/\/+$/, '');
   return `${base}/updates/${BUILD_TRACK}`;
 }
 
@@ -782,17 +939,17 @@ ipcMain.handle('pick-download-folder', async (event) => {
 // пересобирать .exe ради смены IP. serverUrlOverride (в settings.json, тот же файл, что и остальные
 // настройки) даёт возможность переопределить его без пересборки — скрытое поле на экране входа,
 // вызываемое Ctrl+S (см. roster.html), сохраняет туда через set-server-url.
-ipcMain.handle('get-server-url', () => settings.serverUrlOverride || SERVER_URL);
+ipcMain.handle('get-server-url', () => effectiveServerUrl());
 ipcMain.handle('set-server-url', (event, url) => {
   settings.serverUrlOverride = String(url || '').trim() || null;
   saveSettings();
-  return settings.serverUrlOverride || SERVER_URL;
+  return effectiveServerUrl();
 });
 // Чем именно окна связаны с сервером — для индикатора шифрования в ростере. Отдельный канал, а не
 // расширение get-server-url: тот возвращает голую строку и используется во всех трёх окнах при
 // подключении, а это нужно одному ростеру и раз в сеанс.
 ipcMain.handle('get-connection-info', () => ({
-  url: settings.serverUrlOverride || SERVER_URL,
+  url: effectiveServerUrl(),
   builtIn: SERVER_URL,                              // что зашито в config.js при сборке
   fromOverride: Boolean(settings.serverUrlOverride), // адрес переопределён на этой машине
 }));

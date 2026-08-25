@@ -53,6 +53,7 @@ app.use("/api/tickets", require("./routes/tickets")(db));
 app.use("/api/notifications", require("./routes/notifications")(db));
 app.use("/api/admin", require("./routes/admin")(db));
 app.use("/api/departments", require("./routes/departments")());
+app.use("/api/certificates", require("./routes/certificates")());
 app.use(require("./routes/modules")());
 
 app.get("/api/health", (req, res) => res.json({ ok: true }));

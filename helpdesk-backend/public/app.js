@@ -5,6 +5,7 @@ const ICON_PATHS = {
   plus: '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
   chart: '<line x1="5" y1="20" x2="5" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="19" y1="20" x2="19" y2="14"/>',
   sliders: '<line x1="4" y1="6" x2="20" y2="6"/><circle cx="9" cy="6" r="1.8"/><line x1="4" y1="12" x2="20" y2="12"/><circle cx="15" cy="12" r="1.8"/><line x1="4" y1="18" x2="20" y2="18"/><circle cx="11" cy="18" r="1.8"/>',
+  shield: '<path d="M12 3l7 3v6c0 4.2-2.9 7.7-7 9-4.1-1.3-7-4.8-7-9V6l7-3z"/><path d="M9 12.2l2.1 2.1L15.3 10"/>',
   logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>',
   chevron: '<polyline points="9 6 15 12 9 18"/>',
   search: '<circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>',
@@ -283,6 +284,7 @@ function renderShell() {
       { id: "create", label: "Новая заявка", icon: "plus" },
       { id: "dashboard", label: "Статистика", icon: "chart" },
       { id: "admin", label: "Администрирование", icon: "sliders" },
+      { id: "certs", label: "Сертификаты", icon: "shield" },
     ];
     navHtml = navGroupHtml("tickets", "Заявки", "folder", totalUnread, subItems);
   } else if (isExecutor) {
@@ -354,6 +356,7 @@ function renderShell() {
   else if (state.view === "detail") renderDetail(main, state.currentTicket);
   else if (state.view === "dashboard") renderDashboard(main);
   else if (state.view === "admin") renderAdmin(main);
+  else if (state.view === "certs") renderCertificates(main);
   else if (state.view.startsWith("module:")) {
     const [, modId, viewId] = state.view.split(":");
     const mod = state.modules.find(m => m.id === modId);
@@ -886,6 +889,219 @@ async function renderAdmin(main) {
         msg.style.display = "block"; setTimeout(() => msg.style.display = "none", 2500);
       } catch (e) { toast(e.message, true); }
     };
+  } catch (e) {
+    main.querySelector(".page").innerHTML = `<div class="empty-state">Не удалось загрузить: ${esc(e.message)}</div>`;
+  }
+}
+
+// ====== Сертификаты ======
+// Экран намеренно разделён на две части, потому что «сертификаты» — это две
+// разные вещи, которые легко перепутать:
+//   • сертификаты сервера — что мы ПРЕДЪЯВЛЯЕМ клиентам (хранилище общее с
+//     «Искрой»: они на одной машине; на каждый домен — свой сертификат, и
+//     сервер отдаёт тот, чьё имя клиент запросил);
+//   • доверенные корни — кому МЫ верим (доменов два, плюс сторонние на будущее).
+async function renderCertificates(main) {
+  main.innerHTML = `<div class="topbar"><div class="topbar-title">Сертификаты</div></div><div class="page"><div class="spinner">Загрузка…</div></div>`;
+
+  const days = (n) => {
+    if (n === null || n === undefined) return "";
+    if (n < 0) return `<span class="badge" style="color:var(--red);background:var(--red-soft);">истёк ${-n} дн. назад</span>`;
+    if (n < 30) return `<span class="badge" style="color:var(--amber);background:var(--amber-soft);">осталось ${n} дн.</span>`;
+    return `<span class="badge" style="color:var(--green);background:var(--green-soft);">осталось ${n} дн.</span>`;
+  };
+  const row = (label, value) => `
+    <div class="field-mini"><div class="field-mini-label">${esc(label)}</div>
+    <div class="field-mini-value">${value}</div></div>`;
+
+  try {
+    const [server, trusted, mods] = await Promise.all([
+      api("/certificates/server"), api("/certificates/trusted"), api("/certificates/modules"),
+    ]);
+
+    // Один сертификат на домен. Показываем каждый отдельной карточкой с
+    // именами, за которые он отвечает: главный вопрос при двух доменах —
+    // «какой из них увидит клиент вон оттуда», и отвечать на него должен
+    // экран, а не догадка.
+    const certDetails = (c) => `
+      ${row("Кому выдан", esc(c.subject || "—"))}
+      ${row("Имена в сертификате (SAN)", `<span class="mono" style="font-size:12px;">${esc(c.san || "—")}</span>`)}
+      ${row("Кем выдан", esc(c.issuer || "—"))}
+      ${row("Действителен до", `${esc(c.validTo || "—")} ${days(c.daysLeft)}`)}
+      ${row("Корень цепочки", esc(c.rootSubject || "—"))}
+      ${row("Цепочка", c.chainComplete
+         ? `<span class="badge" style="color:var(--green);background:var(--green-soft);">полная (${c.certificates} серт.)</span>`
+         : `<span class="badge" style="color:var(--amber);background:var(--amber-soft);">неполная — клиент может не достроить доверие</span>`)}
+      ${row("Отпечаток", `<span class="mono" style="font-size:11px;word-break:break-all;">${esc(c.fingerprint || "—")}</span>`)}`;
+
+    const entries = server.entries && server.entries.length
+      ? server.entries
+      : (server.certificate ? [{ file: server.where || "", isDefault: true, names: server.certificate.names || [], certificate: server.certificate }] : []);
+
+    const entryCard = (e) => {
+      const domain = (e.names || []).filter(n => !/^[0-9.:]+$/.test(n)).map(n => n.split(".").slice(1).join("."))[0];
+      return `
+      <div style="padding:14px 0;border-top:1px solid var(--line-soft);">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+          <div style="font-size:13.5px;font-weight:650;">${esc(domain || e.file)}</div>
+          ${e.isDefault ? `<span class="badge" style="color:var(--ink-soft);background:var(--line-soft);">по умолчанию</span>` : ""}
+          <span class="mono" style="font-size:11.5px;color:var(--ink-soft);">${esc(e.file)}</span>
+        </div>
+        ${e.error ? `<div class="warn-box">${esc(e.error)}</div>` : ""}
+        ${(e.names || []).length ? `<div style="margin-bottom:10px;display:flex;gap:6px;flex-wrap:wrap;">
+          ${e.names.map(n => `<span class="badge mono" style="font-size:11px;color:var(--ink-soft);background:var(--line-soft);">${esc(n)}</span>`).join("")}
+        </div>` : ""}
+        ${e.certificate ? certDetails(e.certificate) : ""}
+      </div>`;
+    };
+
+    const serverCard = !server.secure
+      ? `<div class="warn-box">Платформа работает по HTTP — сертификат не задан. Пароли и переписка идут открытым текстом.</div>`
+      : entries.length
+        ? entries.map(entryCard).join("")
+        : `<div style="font-size:12.5px;color:var(--ink-soft);">Сертификат применён, подробности ещё читаются…</div>`;
+
+    const rootRow = (r) => `
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 0;border-top:1px solid var(--line-soft);">
+        <div style="min-width:0;">
+          <div style="font-size:13px;font-weight:600;">${esc(r.subject || r.file)}</div>
+          <div style="font-size:11.5px;color:var(--ink-soft);">
+            <span class="mono">${esc(r.file)}</span>${r.error ? ` · <span style="color:var(--red);">${esc(r.error)}</span>` : ""}
+            ${r.warning ? ` · <span style="color:var(--amber);">${esc(r.warning)}</span>` : ""}
+            ${r.selfSigned === false ? " · промежуточный, не корень" : ""}
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;">
+          ${r.daysLeft !== undefined && r.daysLeft !== null ? days(r.daysLeft) : ""}
+          <button class="btn btn-ghost del-root" data-file="${esc(r.file)}">Удалить</button>
+        </div>
+      </div>`;
+
+    const modRow = (m) => {
+      let status;
+      if (!m.secure) status = `<span class="badge" style="color:var(--ink-soft);background:var(--line-soft);">без шифрования</span>`;
+      else if (m.error) status = `<span class="badge" style="color:var(--red);background:var(--red-soft);">${esc(m.error)}</span>`;
+      else if (!m.authorized) status = `<span class="badge" style="color:var(--red);background:var(--red-soft);">не проходит проверку: ${esc(m.authorizationError || "")}</span>`;
+      else status = `<span class="badge" style="color:var(--green);background:var(--green-soft);">проверку проходит</span>`;
+      return `
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 0;border-top:1px solid var(--line-soft);">
+          <div style="min-width:0;">
+            <div style="font-size:13px;font-weight:600;">${esc(m.label)}</div>
+            <div class="mono" style="font-size:11.5px;color:var(--ink-soft);">${esc(m.target)}</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;">
+            ${m.certificate && m.certificate.daysLeft !== null ? days(m.certificate.daysLeft) : ""}
+            ${status}
+          </div>
+        </div>`;
+    };
+
+    main.querySelector(".page").innerHTML = `
+      <div style="display:flex;gap:20px;align-items:flex-start;">
+        <div style="flex:1;min-width:0;">
+          <div class="card" style="margin-bottom:20px;">
+            <div class="section-label">Сертификаты сервера — что мы предъявляем</div>
+            <div style="font-size:12px;color:var(--ink-soft);margin-bottom:4px;">
+              Хранилище общее для платформы и «Искры»: они на одной машине. На каждый домен —
+              свой сертификат от своего удостоверяющего центра; сервер отдаёт тот, чьё имя
+              клиент запросил, поэтому чужому УЦ доверять никому не приходится.
+              ${server.managedBy === "iskra"
+                ? `Файлы лежат в <span class="mono">${esc(server.sharedStore.replace(/server\.pfx$/, ""))}</span> как <span class="mono">server.pfx</span> (основной) и <span class="mono">server.&lt;домен&gt;.pfx</span>; заменять — в панели «Искры», раздел «Сертификат». Платформа перечитывает их сама, без перезапуска.`
+                : `Путь задан переменными окружения (<span class="mono">${esc(server.where || "")}</span>) — тогда сертификат один на всех, замена через .env и перезапуск.`}
+            </div>
+            ${serverCard}
+
+            <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--line-soft);">
+              <div class="field-label">Что увидит клиент, который придёт с именем</div>
+              <div style="display:flex;gap:8px;">
+                <input class="field-input" id="sniName" placeholder="p48-srv-adm01.in.local" style="flex:1;">
+                <button class="btn btn-wire" id="sniCheck">Проверить</button>
+              </div>
+              <div id="sniMsg" style="margin-top:9px;font-size:12.5px;"></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="section-label">Модули — что предъявляют они</div>
+            <div style="font-size:12px;color:var(--ink-soft);margin-bottom:6px;">
+              Платформа проверяет сертификат модуля по-настоящему, поэтому модуль должен быть
+              адресован именем из его сертификата, а не по IP.
+            </div>
+            ${mods.modules.map(modRow).join("")}
+          </div>
+        </div>
+
+        <div style="width:420px;flex-shrink:0;">
+          <div class="card">
+            <div class="section-label">Доверенные корни — кому верим мы</div>
+            <div style="font-size:12px;color:var(--ink-soft);margin-bottom:12px;">
+              Доменов два, поэтому корней может быть несколько; сюда же кладут сторонние.
+              Список хранится в <span class="mono">${esc(trusted.dir)}</span> и подключается
+              переменной <span class="mono">NODE_EXTRA_CA_CERTS</span> при запуске — после
+              добавления нового корня платформу нужно перезапустить.
+            </div>
+            ${trusted.roots.length ? trusted.roots.map(rootRow).join("")
+              : `<div style="font-size:12.5px;color:var(--ink-soft);">Пока пусто. Доверие берётся из хранилища сертификатов Windows (флаг --use-system-ca).</div>`}
+
+            <div style="margin-top:18px;padding-top:16px;border-top:1px solid var(--line-soft);">
+              <div class="field-label">Добавить корень</div>
+              <input class="field-input" id="rootName" placeholder="например domain-b-root.crt" style="margin-bottom:10px;">
+              <textarea class="input" id="rootPem" rows="5" placeholder="-----BEGIN CERTIFICATE-----" style="width:100%;font-family:var(--mono);font-size:11px;margin-bottom:10px;"></textarea>
+              <button class="btn btn-wire" id="addRoot" style="width:100%;justify-content:center;">Добавить</button>
+              <div id="rootMsg" style="margin-top:8px;font-size:12px;text-align:center;"></div>
+            </div>
+          </div>
+        </div>
+      </div>`;
+
+    const sniBtn = document.getElementById("sniCheck");
+    if (sniBtn) sniBtn.onclick = async () => {
+      const msg = document.getElementById("sniMsg");
+      const name = document.getElementById("sniName").value.trim().toLowerCase();
+      if (!name) return;
+      msg.style.color = "var(--ink-soft)"; msg.textContent = "Проверяю…";
+      try {
+        const r = await api(`/certificates/server/for/${encodeURIComponent(name)}`);
+        const cert = r.entry && r.entry.certificate;
+        if (r.matched) {
+          msg.style.color = "var(--green)";
+          msg.innerHTML = `Отдадим <span class="mono">${esc(r.entry.file)}</span> — выдан «${esc((cert && cert.issuer) || "—")}». Клиент должен доверять корню «${esc((cert && cert.rootSubject) || "—")}».`;
+        } else {
+          // Несовпадение имени — самая частая причина «сертификат не подходит»:
+          // клиент получит основной, и браузер откажется его принимать.
+          msg.style.color = "var(--amber)";
+          msg.innerHTML = r.entry
+            ? `Этого имени нет ни в одном сертификате — уедет основной <span class="mono">${esc(r.entry.file)}</span>, и клиент отвергнет его как «выдан другому имени».`
+            : "Сертификатов в хранилище нет.";
+        }
+      } catch (e) { msg.style.color = "var(--red)"; msg.textContent = e.message; }
+    };
+
+    document.getElementById("addRoot").onclick = async () => {
+      const msg = document.getElementById("rootMsg");
+      msg.style.color = "var(--ink-soft)"; msg.textContent = "Проверяю…";
+      try {
+        await api("/certificates/trusted", {
+          method: "POST",
+          body: {
+            name: document.getElementById("rootName").value.trim(),
+            pem: document.getElementById("rootPem").value,
+          },
+        });
+        renderCertificates(main);
+        toast("Корень добавлен. Перезапустите платформу, чтобы он начал действовать.");
+      } catch (e) { msg.style.color = "var(--red)"; msg.textContent = e.message; }
+    };
+
+    main.querySelectorAll(".del-root").forEach(btn => {
+      btn.onclick = async () => {
+        if (!confirm(`Удалить ${btn.dataset.file} из доверенных?`)) return;
+        try {
+          await api(`/certificates/trusted/${encodeURIComponent(btn.dataset.file)}`, { method: "DELETE" });
+          renderCertificates(main);
+        } catch (e) { toast(e.message, true); }
+      };
+    });
   } catch (e) {
     main.querySelector(".page").innerHTML = `<div class="empty-state">Не удалось загрузить: ${esc(e.message)}</div>`;
   }
