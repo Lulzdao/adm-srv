@@ -55,6 +55,18 @@ PORT = int(os.environ.get('SMDR_PORT', '23000'))
 LOGIN = (os.environ.get('SMDR_LOGIN', 'SMDR') + '\r\n').encode()
 PASSWORD = (os.environ.get('SMDR_PASSWORD', '') + '\r\n').encode()
 
+# Через сколько минут молчания считать соединение мёртвым и переподключиться.
+# Записи приходят только по завершении разговора, поэтому ночью тишина в
+# несколько часов — норма, и просто так рвать связь незачем. Но обрыв бывает
+# «тихим»: АТС ушла в перезагрузку, межсетевой экран выкинул простаивающую
+# сессию — TCP при этом не закрывается, recv молча ждёт вечно, и коллектор
+# выглядит работающим, ничего не принимая. Пересоединение стоит секунду,
+# невыявленный обрыв — рабочий день без журнала.
+IDLE_RECONNECT_MIN = int(os.environ.get('SMDR_IDLE_RECONNECT_MIN', '30'))
+# Как часто отмечать в журнале, что связь жива, а звонков просто нет. Без этой
+# строки по логу не отличить «всё в порядке» от «висим».
+IDLE_NOTE_MIN = int(os.environ.get('SMDR_IDLE_NOTE_MIN', '5'))
+
 if not HOST or not os.environ.get('SMDR_PASSWORD'):
     raise SystemExit(
         'Не заданы SMDR_HOST и/или SMDR_PASSWORD.\n'
@@ -159,9 +171,36 @@ def parse_line(line):
     }
 
 
+def enable_keepalive(sock):
+    """Попросить систему саму проверять, жива ли АТС.
+
+    Без этого разрыв, о котором нам не сказали (перезагрузка АТС, сброс сессии
+    на межсетевом экране), не обнаруживается никогда: данных нет, но и ошибки
+    нет. С keepalive ядро само шлёт пробы и рвёт соединение, а мы получаем
+    исключение и переподключаемся.
+    """
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+    except OSError:
+        return
+    # Интервалы задаются по-разному: на Windows одним вызовом ioctl, на Linux
+    # тремя опциями. Ни то ни другое не критично — если не вышло, останутся
+    # системные умолчания (на Windows это 2 часа, долго, но лучше, чем ничего).
+    try:
+        if hasattr(socket, 'SIO_KEEPALIVE_VALS'):        # Windows
+            sock.ioctl(socket.SIO_KEEPALIVE_VALS, (1, 60_000, 10_000))
+        else:                                            # Linux и прочие
+            for opt, value in (('TCP_KEEPIDLE', 60), ('TCP_KEEPINTVL', 10), ('TCP_KEEPCNT', 6)):
+                if hasattr(socket, opt):
+                    sock.setsockopt(socket.IPPROTO_TCP, getattr(socket, opt), value)
+    except OSError as e:
+        logging.warning(f"Не удалось настроить keepalive: {e}")
+
+
 def connect_and_listen(conn):
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(30)
+    enable_keepalive(sock)
     sock.connect((HOST, PORT))
     logging.info("Подключились к АТС")
 
@@ -173,11 +212,14 @@ def connect_and_listen(conn):
     logging.info("Авторизовались")
 
     buf = b''
+    last_data = time.monotonic()
+    last_note = last_data
     while True:
         try:
             data = sock.recv(4096)
             if not data:
                 raise ConnectionError("АТС закрыла соединение")
+            last_data = last_note = time.monotonic()
             buf += data
             while b'\r\n' in buf:
                 line, buf = buf.split(b'\r\n', 1)
@@ -210,6 +252,17 @@ def connect_and_listen(conn):
                 conn.commit()
                 logging.info(f"CALL: {text}")
         except socket.timeout:
+            # Записи приходят только по завершении разговора, так что тишина
+            # сама по себе не признак поломки. Отмечаем её в журнале и рвём
+            # связь, только когда молчание затянулось сверх всякой меры.
+            idle = time.monotonic() - last_data
+            if time.monotonic() - last_note >= IDLE_NOTE_MIN * 60:
+                last_note = time.monotonic()
+                logging.info(f"Тишина {int(idle // 60)} мин — соединение с АТС держим, звонков нет")
+            if IDLE_RECONNECT_MIN and idle >= IDLE_RECONNECT_MIN * 60:
+                raise ConnectionError(
+                    f"нет записей {int(idle // 60)} мин — переподключаемся на случай тихого обрыва"
+                )
             continue
 
 
