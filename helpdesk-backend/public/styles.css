@@ -145,6 +145,12 @@ a { color: var(--md-primary); }
    государственный символ, а не инициал. Подложки нет намеренно — герб рисуется
    прямо на поверхности, как на бланках. */
 .brand-emblem { flex-shrink: 0; color: var(--md-primary); display: block; }
+/* Подпись системы и ведомство под ней. Строки прижаты друг к другу (line-height
+   1.2), иначе на 32-пиксельном гербе они разъезжаются и блок перестаёт
+   читаться как один заголовок. */
+.brand-text { min-width: 0; line-height: 1.2; }
+.brand-name { font-family: var(--serif); font-weight: 600; font-size: 14.5px; color: var(--md-on-surface); }
+.brand-org { font-size: 11.5px; color: var(--md-on-surface-variant); letter-spacing: 0.2px; margin-top: 2px; }
 .login-title { font-weight: 600; font-size: 22px; letter-spacing: 0; }
 .login-sub { font-size: 13.5px; color: var(--md-on-surface-variant); margin-bottom: 28px; }
 .tab-group { display: flex; gap: 4px; margin-bottom: 22px; background: var(--md-surface-container-high); padding: 4px; border-radius: var(--md-shape-full); }

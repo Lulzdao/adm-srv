@@ -69,6 +69,9 @@ function emblem(size) {
 // звонков и «Искра». Письма о заявках подписаны по-прежнему службой заявок —
 // они и правда про заявки, а не про платформу (см. services/notifications.js).
 const APP_NAME = "ИТ-сервисы";
+// Ведомство — второй строкой под подписью. На экране входа оно уже стоит в
+// строке «Липецкстат · внутренняя система», поэтому там не дублируется.
+const APP_ORG = "Липецкстат";
 const TITLE_MAX = 50;
 const DESCRIPTION_MAX = 140;
 // Цвета — тональные пары Material 3 (насыщенный тон для точки/текста,
@@ -372,7 +375,12 @@ function renderShell() {
   root.innerHTML = `
     <div class="app-shell">
       <div class="sidebar">
-        <div class="sidebar-head">${emblem(30)}<div style="font-family:var(--serif);font-weight:600;font-size:14.5px;">${APP_NAME}</div></div>
+        <div class="sidebar-head">${emblem(32)}
+          <div class="brand-text">
+            <div class="brand-name">${APP_NAME}</div>
+            <div class="brand-org">${APP_ORG}</div>
+          </div>
+        </div>
         <div class="sidebar-nav">${navHtml}</div>
         <div class="sidebar-foot">
           <div class="user-row">
