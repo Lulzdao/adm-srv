@@ -204,12 +204,23 @@ def connect_and_listen(conn):
     sock.connect((HOST, PORT))
     logging.info("Подключились к АТС")
 
-    sock.recv(4096)
+    # Что ответила АТС на каждом шаге — в лог. Раньше здесь безусловно писалось
+    # «Авторизовались», хотя ответ никто не смотрел: при неверном логине или
+    # пароле АТС просто не начинает слать записи, а в журнале стояло, что вход
+    # выполнен. Отличить «пароль не тот» от «звонков нет» было невозможно.
+    # Сам пароль не логируем — только приглашение и ответ АТС.
+    def short(data):
+        return data.decode(errors='replace').strip().replace('\r', ' ').replace('\n', ' ')[:120]
+
+    prompt = sock.recv(4096)
     sock.sendall(LOGIN)
     time.sleep(0.3)
-    sock.recv(4096)
+    after_login = sock.recv(4096)
     sock.sendall(PASSWORD)
-    logging.info("Авторизовались")
+    logging.info(
+        f"Отправили учётные данные (логин {os.environ.get('SMDR_LOGIN', 'SMDR')!r}). "
+        f"АТС до логина: {short(prompt)!r}; после логина: {short(after_login)!r}"
+    )
 
     buf = b''
     last_data = time.monotonic()
