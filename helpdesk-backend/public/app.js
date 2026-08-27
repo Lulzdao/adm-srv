@@ -17,14 +17,55 @@ const ICON_PATHS = {
   // модулей, которые подключат позже.
   seal: '<circle cx="12" cy="9" r="5.5"/><path d="M8.6 13.5L7.2 21 12 18.6 16.8 21l-1.4-7.5"/>',
   phone: '<path d="M21.5 16.9v2.6a2 2 0 0 1-2.2 2 19.4 19.4 0 0 1-8.5-3 19.1 19.1 0 0 1-5.9-5.9 19.4 19.4 0 0 1-3-8.6 2 2 0 0 1 2-2.2h2.6a2 2 0 0 1 2 1.7c.1.9.3 1.7.6 2.5a2 2 0 0 1-.5 2.1L7.5 9.4a15.6 15.6 0 0 0 5.9 5.9l1.3-1.1a2 2 0 0 1 2.1-.5c.8.3 1.6.5 2.5.6a2 2 0 0 1 1.7 2z"/>',
-  message: '<path d="M20.5 11.7a8 8 0 0 1-8.6 8 8.7 8.7 0 0 1-3.6-.9L3.5 20.5l1.7-4.8a8.7 8.7 0 0 1-.9-3.6 8 8 0 0 1 8-8.6 8 8 0 0 1 8.2 8.2z"/>',
+  // Искра — та же четырёхлучевая вспышка, что нарисована на иконке
+  // десктоп-клиента (MESSENGER/desktop-client/build/icon.png): длинные лучи по
+  // осям, короткие по диагоналям.
+  spark: '<line x1="12" y1="1.5" x2="12" y2="22.5"/><line x1="1.5" y1="12" x2="22.5" y2="12"/><line x1="7.6" y1="7.6" x2="9.9" y2="9.9"/><line x1="16.4" y1="7.6" x2="14.1" y2="9.9"/><line x1="7.6" y1="16.4" x2="9.9" y2="14.1"/><line x1="16.4" y1="16.4" x2="14.1" y2="14.1"/>',
 };
 function icon(name, size) {
   size = size || 16;
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">${ICON_PATHS[name] || ""}</svg>`;
 }
 
+// Государственный герб — фирменный знак системы вместо прежней плитки с
+// буквой. Рисуется заливкой, а не контуром, поэтому мимо icon().
+//
+// Это УПРОЩЁННОЕ изображение: точное геральдическое (всадник на щитке, перья,
+// детали корон) на 28 пикселях всё равно превращается в кашу, а мелкая
+// неточность в государственном символе хуже честной стилизации. Если нужен
+// официальный рисунок — положите его .svg рядом и подставьте сюда, вся
+// остальная вёрстка не изменится.
+//
+// Щиток на груди сделан дыркой в тулове (fill-rule="evenodd"), а не белой
+// заплаткой поверх: заплатка пришлось бы перекрашивать под каждый фон, на
+// котором герб окажется.
+const EMBLEM_BODY = "M24 18.9c2.6 0 4.5 1.5 4.5 4.1v6.6c0 3-1.7 5.4-4.5 6.9-2.8-1.5-4.5-3.9-4.5-6.9v-6.6c0-2.6 1.9-4.1 4.5-4.1z";
+const EMBLEM_SHIELD_OUTER = "M24 21c1.7 0 3 .5 3.8 1v4.6c0 2.4-1.5 4.2-3.8 5.2-2.3-1-3.8-2.8-3.8-5.2v-4.6c.8-.5 2.1-1 3.8-1z";
+function emblem(size) {
+  size = size || 28;
+  return `<svg class="brand-emblem" width="${size}" height="${size}" viewBox="0 0 48 48" fill="currentColor" aria-hidden="true">
+    <path d="M19.6 20.8c-4.4-1.4-9.2-1.2-13.9 1.6 3.1-.5 5.6.1 7.6 1.2-3.6.2-6.6 1.8-8.9 4.7 2.9-1.4 5.5-1.8 7.9-1.2-3.3 1-5.8 3-7.4 6.1 2.9-2 5.7-2.8 8.4-2.4 2 .3 4-.5 5.9-2.2z"/>
+    <path d="M28.4 20.8c4.4-1.4 9.2-1.2 13.9 1.6-3.1-.5-5.6.1-7.6 1.2 3.6.2 6.6 1.8 8.9 4.7-2.9-1.4-5.5-1.8-7.9-1.2 3.3 1 5.8 3 7.4 6.1-2.9-2-5.7-2.8-8.4-2.4-2 .3-4-.5-5.9-2.2z"/>
+    <path d="M15.6 12.4c2.5 0 4.4 1.9 4.4 4.4 0 1.2-.5 2.3-1.2 3.1l1.6 1.9-3.2.5-1.6-1.1c-2.4-.2-4.2-2.1-4.2-4.4 0-2.5 1.7-4.4 4.2-4.4z"/>
+    <path d="M11.5 15.9l-3.8.5 3.5 1.6z"/>
+    <path d="M32.4 12.4c-2.5 0-4.4 1.9-4.4 4.4 0 1.2.5 2.3 1.2 3.1l-1.6 1.9 3.2.5 1.6-1.1c2.4-.2 4.2-2.1 4.2-4.4 0-2.5-1.7-4.4-4.2-4.4z"/>
+    <path d="M36.5 15.9l3.8.5-3.5 1.6z"/>
+    <path d="M20.2 9.4h7.6l-.6-3.8-2.1 1.6L24 4.4l-1.1 2.8-2.1-1.6z"/>
+    <path d="M23.5 1.2h1v1.2h1.2v1h-1.2v1.3h-1V3.4h-1.2v-1h1.2z"/>
+    <path d="M12.4 11.6h6.4l-.5-3.2-1.8 1.3-.9-2.4-.9 2.4-1.8-1.3z"/>
+    <path d="M29.2 11.6h6.4l-.5-3.2-1.8 1.3-.9-2.4-.9 2.4-1.8-1.3z"/>
+    <path d="M19.9 10.5c-.2 1.2-.7 2.1-1.6 2.8l-.9-1.1c.7-.5 1.1-1.2 1.3-2.1zM28.1 10.5c.2 1.2.7 2.1 1.6 2.8l.9-1.1c-.7-.5-1.1-1.2-1.3-2.1z"/>
+    <path fill-rule="evenodd" d="${EMBLEM_BODY} ${EMBLEM_SHIELD_OUTER}"/>
+    <path d="M18.1 30.9l-4 1.9.7 1.4 3.9-1.9zM29.9 30.9l4 1.9-.7 1.4-3.9-1.9z"/>
+    <path d="M24 35.8c2.1 1.5 3.5 3.9 4 6.8-1.3-.9-2.6-1.3-4-1.3s-2.7.4-4 1.3c.5-2.9 1.9-5.3 4-6.8z"/>
+    <path d="M24 22.1c1.3 0 2.3.4 2.9.8v3.7c0 1.9-1.2 3.3-2.9 4.1-1.7-.8-2.9-2.2-2.9-4.1v-3.7c.6-.4 1.6-.8 2.9-.8z"/>
+  </svg>`;
+}
+
 // ====== Константы ======
+// Название системы. Здесь же, чтобы поменять его в одном месте, а не искать по
+// разметке; заголовок вкладки задан отдельно в index.html.
+const APP_NAME = "Служба заявок";
 const TITLE_MAX = 50;
 const DESCRIPTION_MAX = 140;
 // Цвета — тональные пары Material 3 (насыщенный тон для точки/текста,
@@ -118,7 +159,7 @@ async function renderLogin(errorMsg) {
   root.innerHTML = `
     <div class="login-screen">
       <div class="login-card">
-        <div class="login-logo"><div class="login-logo-icon">С</div><div class="login-title">Служба заявок</div></div>
+        <div class="login-logo">${emblem(44)}<div class="login-title">${APP_NAME}</div></div>
         <div class="login-sub">Липецкстат · внутренняя система</div>
         <div id="networkNote" class="note-box">Определяем вашу сеть…</div>
         <div id="manualSwitch" style="display:none;margin-bottom:16px;"></div>
@@ -276,7 +317,7 @@ const MODULE_VIEW_ICONS = { log: "inbox", stats: "chart", directory: "folder", r
 // Иконка пункта меню по идентификатору модуля из config/modules.js. Ключ — тот
 // же id, что и на сервере; для незнакомого модуля остаётся общий «ящик», так
 // что подключение нового ничего здесь не ломает.
-const MODULE_ICONS = { certs: "seal", smdr: "phone", messenger: "message" };
+const MODULE_ICONS = { certs: "seal", smdr: "phone", messenger: "spark" };
 const moduleIcon = (id) => MODULE_ICONS[id] || "box";
 
 function renderShell() {
@@ -328,7 +369,7 @@ function renderShell() {
   root.innerHTML = `
     <div class="app-shell">
       <div class="sidebar">
-        <div class="sidebar-head"><div class="login-logo-icon">С</div><div style="font-family:var(--serif);font-weight:600;font-size:14.5px;">Служба заявок</div></div>
+        <div class="sidebar-head">${emblem(30)}<div style="font-family:var(--serif);font-weight:600;font-size:14.5px;">${APP_NAME}</div></div>
         <div class="sidebar-nav">${navHtml}</div>
         <div class="sidebar-foot">
           <div class="user-row">

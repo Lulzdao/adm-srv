@@ -95,6 +95,28 @@
   --mono: "Cascadia Mono", Consolas, "Roboto Mono", Menlo, monospace;
 }
 
+/* --- Полоса прокрутки ---
+   Штатная светло-серая полоса Chromium выбивалась из тёплой палитры и
+   выглядела как чужая деталь на каждом экране. Стилизуем через
+   ::-webkit-scrollbar: этот набор псевдоэлементов понимают все Chromium,
+   включая 109-й, который стоит на рабочих машинах. Стандартные
+   scrollbar-width/scrollbar-color появились только в Chrome 121, поэтому они
+   идут ниже отдельно и лишь повторяют тот же вид в новых браузерах и Firefox.
+   Прозрачная рамка с background-clip даёт отступ от края, чтобы полоса не
+   липла к содержимому. */
+::-webkit-scrollbar { width: 12px; height: 12px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--md-outline-variant);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  border-radius: var(--md-shape-full);
+}
+::-webkit-scrollbar-thumb:hover { background: var(--md-outline); background-clip: padding-box; }
+::-webkit-scrollbar-corner { background: transparent; }
+/* scrollbar-width/-color наследуются, поэтому достаточно корня. */
+html { scrollbar-width: thin; scrollbar-color: var(--md-outline-variant) transparent; }
+
 * { box-sizing: border-box; }
 html, body { height: 100%; }
 body {
@@ -119,11 +141,10 @@ a { color: var(--md-primary); }
   padding: 40px 36px; box-shadow: var(--md-elev-3);
 }
 .login-logo { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
-.login-logo-icon {
-  width: 44px; height: 44px; border-radius: var(--md-shape-m); background: var(--md-primary-container);
-  display: flex; align-items: center; justify-content: center; color: var(--md-on-primary-container);
-  font-weight: 700; font-size: 18px;
-}
+/* Герб вместо прежней плитки с буквой: у ведомственной системы уместнее
+   государственный символ, а не инициал. Подложки нет намеренно — герб рисуется
+   прямо на поверхности, как на бланках. */
+.brand-emblem { flex-shrink: 0; color: var(--md-primary); display: block; }
 .login-title { font-weight: 600; font-size: 22px; letter-spacing: 0; }
 .login-sub { font-size: 13.5px; color: var(--md-on-surface-variant); margin-bottom: 28px; }
 .tab-group { display: flex; gap: 4px; margin-bottom: 22px; background: var(--md-surface-container-high); padding: 4px; border-radius: var(--md-shape-full); }

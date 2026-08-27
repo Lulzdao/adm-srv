@@ -64,6 +64,26 @@
   --shadow: rgba(31, 27, 22, 0.10);
 }
 
+/* --- Полоса прокрутки ---
+   Штатная светло-серая полоса Chromium выбивалась из тёплой палитры. Стилизуем
+   через ::-webkit-scrollbar: эти псевдоэлементы понимают все Chromium, включая
+   109-й на рабочих машинах. Стандартные scrollbar-width/scrollbar-color
+   появились только в Chrome 121 — они ниже и лишь повторяют тот же вид в новых
+   браузерах и в Firefox. Прозрачная рамка с background-clip даёт отступ от
+   края, чтобы полоса не липла к содержимому. */
+::-webkit-scrollbar { width: 12px; height: 12px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--md-outline-variant);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  border-radius: var(--md-shape-full);
+}
+::-webkit-scrollbar-thumb:hover { background: var(--md-outline); background-clip: padding-box; }
+::-webkit-scrollbar-corner { background: transparent; }
+/* scrollbar-width/-color наследуются, поэтому достаточно корня. */
+html { scrollbar-width: thin; scrollbar-color: var(--md-outline-variant) transparent; }
+
 html { height: 100%; }
 body {
   font-family: var(--sans);
