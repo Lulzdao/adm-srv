@@ -4,7 +4,8 @@ const path = require("path");
 const fs = require("fs");
 const config = require("../config/config");
 const { requireAuth } = require("../middleware/auth");
-const { notify } = require("../services/notifications");
+const { emit } = require("../services/notifications");
+const { ticketNewKind } = require("../config/notifications");
 
 const ALLOWED_MIME = new Set([
   "image/png", "image/jpeg", "image/webp", "image/gif",
@@ -54,6 +55,53 @@ const DEPT_PREFIX = Object.fromEntries(departments.map((d) => [d.name, d.prefix]
 const DEPT_ROLE = Object.fromEntries(departments.map((d) => [d.name, d.role]));
 const ROLE_DEPT = Object.fromEntries(departments.filter((d) => d.role !== "it").map((d) => [d.role, d.name]));
 const DEFAULT_DEPARTMENT = departments[0].name;
+
+// --- Оповещения по заявке ---------------------------------------------------
+//
+// Подстановки для писем собираются в одном месте: если каждая категория
+// выбирала бы поля сама, набор {{переменных}} между письмами разъехался бы, и
+// редактор шаблонов начал бы обещать то, чего в payload нет.
+
+const PRIORITY_LABEL = { low: "низкая", medium: "обычная", high: "высокая", critical: "критическая" };
+const STATUS_LABEL = {
+  new: "новая", progress: "в работе", waiting: "ожидание",
+  resolved: "выполнена", closed: "закрыта", cancelled: "отменена",
+};
+// Завершающие статусы: у них своё письмо — «ваша заявка выполнена» читается
+// совсем не так, как «статус изменён на в работе».
+const DONE_STATUSES = new Set(["resolved", "closed"]);
+
+function ticketPayload(db, ticketId) {
+  const t = db.prepare(`
+    SELECT t.display_id, t.title, t.description, t.room, t.priority, t.status,
+           c.name AS category, creator.full_name AS created_by_name,
+           assignee.full_name AS assigned_to_name
+    FROM tickets t
+    LEFT JOIN categories c ON c.id = t.category_id
+    LEFT JOIN users creator ON creator.id = t.created_by
+    LEFT JOIN users assignee ON assignee.id = t.assigned_to
+    WHERE t.id = ?
+  `).get(ticketId);
+  if (!t) return {};
+  return {
+    "номер": t.display_id,
+    "тема": t.title,
+    "описание": t.description || "",
+    "автор": t.created_by_name || "",
+    "кабинет": t.room || "—",
+    "важность": PRIORITY_LABEL[t.priority] || t.priority,
+    "отдел": t.category || "",
+    "статус": STATUS_LABEL[t.status] || t.status,
+    "исполнитель": t.assigned_to_name || "не назначен",
+  };
+}
+
+const ticketSubject = (payload) => `${payload["номер"]} — ${payload["тема"]}`;
+
+// Кому зажечь бейдж у «Входящих заявок». Это персональная отметка, поэтому
+// исполнителей ищем по роли отдела: очередь разбирает любой из них.
+const deptUserIds = (db, role, exceptId) =>
+  db.prepare("SELECT id FROM users WHERE role = ? AND id != ?").all(role, exceptId || 0).map((u) => u.id);
 
 // Единое правило видимости конкретной заявки, используется во всех местах,
 // где нужно решить "может ли этот человек её увидеть/менять":
@@ -232,7 +280,17 @@ module.exports = function ticketRoutes(db) {
 
     const ticketId = info.lastInsertRowid;
 
-    notify(db, { ticketId, type: "new_ticket", toRole: DEPT_ROLE[cat.name] || "it", excludeUserId: user.id });
+    const deptRole = DEPT_ROLE[cat.name] || "it";
+    const newPayload = ticketPayload(db, ticketId);
+    emit(db, {
+      kind: ticketNewKind(deptRole),
+      subject: ticketSubject(newPayload),
+      ticketId,
+      dedupKey: `ticket_new:${ticketId}`,
+      payload: newPayload,
+      department: deptRole,
+      inappUserIds: deptUserIds(db, deptRole, user.id),
+    });
 
     res.status(201).json(getTicketDetail(db, ticketId));
   });
@@ -309,7 +367,10 @@ module.exports = function ticketRoutes(db) {
     }
 
     if (status && status !== ticket.status) {
-      db.prepare("INSERT INTO status_history (ticket_id, old_status, new_status, changed_by) VALUES (?, ?, ?, ?)")
+      // Идентификатор записи в истории служит ключом от повторов: статус может
+      // ходить туда-обратно (в работу → ожидание → в работу), и каждый переход
+      // заслуживает своего письма, а вот один переход — ровно одного.
+      const hist = db.prepare("INSERT INTO status_history (ticket_id, old_status, new_status, changed_by) VALUES (?, ?, ?, ?)")
         .run(ticket.id, ticket.status, status, user.id);
       db.prepare("UPDATE tickets SET status = ?, updated_at = datetime('now'), closed_at = CASE WHEN ? IN ('closed','cancelled','resolved') THEN datetime('now') ELSE closed_at END WHERE id = ?")
         .run(status, status, ticket.id);
@@ -319,7 +380,21 @@ module.exports = function ticketRoutes(db) {
         db.prepare("UPDATE tickets SET assigned_to = ? WHERE id = ?").run(user.id, ticket.id);
       }
 
-      notify(db, { ticketId: ticket.id, type: "status_changed", toUserId: ticket.created_by, excludeUserId: user.id });
+      const statusPayload = ticketPayload(db, ticket.id);
+      const byAuthor = ticket.created_by === user.id;
+      emit(db, {
+        kind: DONE_STATUSES.has(status) ? "ticket_resolved" : "ticket_status",
+        subject: ticketSubject(statusPayload),
+        ticketId: ticket.id,
+        dedupKey: `ticket_status:${ticket.id}:${hist.lastInsertRowid}`,
+        payload: statusPayload,
+        department: DEPT_ROLE[ticket.category] || "it",
+        // Автор закрыл собственную заявку — писать ему об этом незачем. Событие
+        // в ленте при этом остаётся: история не должна зависеть от того, кто
+        // нажал кнопку.
+        authorUserId: byAuthor ? null : ticket.created_by,
+        inappUserIds: byAuthor ? [] : [ticket.created_by],
+      });
     }
 
     if (assigned_to !== undefined) {
@@ -365,8 +440,31 @@ module.exports = function ticketRoutes(db) {
     db.prepare("UPDATE tickets SET updated_at = datetime('now') WHERE id = ?").run(ticket.id);
 
     if (!internal) {
-      const notifyTarget = user.id === ticket.created_by ? ticket.assigned_to : ticket.created_by;
-      if (notifyTarget) notify(db, { ticketId: ticket.id, type: "new_comment", toUserId: notifyTarget });
+      // Раньше здесь адресатом был ticket.assigned_to, когда комментировал
+      // автор. У неразобранной заявки исполнитель ещё не назначен — там NULL,
+      // и `if (notifyTarget)` тихо проглатывал уведомление. Заявитель дописывал
+      // уточнение к новой заявке, и об этом не узнавал никто.
+      //
+      // Теперь правило без исключений: написал автор — уходит тем, кто получил
+      // саму заявку; написал кто угодно другой — уходит автору.
+      const fromAuthor = user.id === ticket.created_by;
+      const deptRole = DEPT_ROLE[ticket.category] || "it";
+      const payload = ticketPayload(db, ticket.id);
+      payload["текст"] = text.trim();
+      payload["автор_комментария"] = user.full_name || user.ad_login;
+
+      emit(db, {
+        kind: fromAuthor ? "ticket_comment_in" : "ticket_comment_out",
+        subject: ticketSubject(payload),
+        ticketId: ticket.id,
+        dedupKey: `ticket_comment:${info.lastInsertRowid}`,
+        payload,
+        department: deptRole,
+        authorUserId: fromAuthor ? null : ticket.created_by,
+        inappUserIds: fromAuthor
+          ? (ticket.assigned_to ? [ticket.assigned_to] : deptUserIds(db, deptRole, user.id))
+          : [ticket.created_by],
+      });
     }
 
     res.status(201).json({ id: info.lastInsertRowid });

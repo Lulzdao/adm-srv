@@ -92,3 +92,70 @@ CREATE INDEX IF NOT EXISTS idx_notifications_user_unread ON notifications(user_i
 
 -- Отделы-исполнители (ИТ/ХОЗ/ЕГРПО и то, что вы добавите) заполняются
 -- из config/departments.js при каждом старте сервера — см. db/init.js.
+
+-- ============================================================================
+--  Оповещения
+--
+--  Факт и доставка разнесены намеренно. Одно событие («истекает сертификат»)
+--  уезжает стольким людям, сколько адресов в списке; если хранить это одной
+--  таблицей, как делала старая notifications, то на семь адресов в ленте
+--  окажется семь строк об одном и том же сертификате.
+--
+--  Старая таблица notifications оставлена в схеме: db/init.js переносит из неё
+--  строки в новую пару и больше в неё не пишет.
+-- ============================================================================
+
+-- Что произошло. Одна строка на факт.
+CREATE TABLE IF NOT EXISTS notification_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind TEXT NOT NULL,           -- ключ из config/notifications.js
+  source TEXT NOT NULL,         -- helpdesk | certs | smdr
+  subject TEXT,                 -- человекочитаемо: «ИТ-0148 — не работает принтер»
+  -- Заявка, если событие про заявку. ИМЕННО NULLABLE: у оповещения про
+  -- сертификат заявки нет и быть не может, а прежняя таблица требовала
+  -- ticket_id NOT NULL — из-за этого в неё нечего было писать, кроме заявок.
+  ticket_id INTEGER REFERENCES tickets(id) ON DELETE CASCADE,
+  subject_ref TEXT,             -- id внутри источника для не-заявок: uuid МЧД, отпечаток серта
+  -- Гарантия «ровно один раз». Планировщик обходит сроки хоть каждый час;
+  -- вставка идёт как ON CONFLICT DO NOTHING, поэтому повторное событие по тому
+  -- же порогу того же документа просто не создаётся.
+  dedup_key TEXT NOT NULL UNIQUE,
+  severity TEXT NOT NULL DEFAULT 'info' CHECK (severity IN ('info', 'warn', 'crit')),
+  payload TEXT,                 -- JSON с подстановками для шаблона
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+
+-- Куда ушло. Одна строка на каждый адрес и каждый канал.
+CREATE TABLE IF NOT EXISTS notification_deliveries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id INTEGER NOT NULL REFERENCES notification_events(id) ON DELETE CASCADE,
+  channel TEXT NOT NULL CHECK (channel IN ('inapp', 'email')),
+  user_id INTEGER REFERENCES users(id),  -- канал inapp: чей бейдж
+  address TEXT,                          -- канал email: куда слали
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'sent', 'failed')),
+  error TEXT,                            -- ответ SMTP, если не ушло
+  is_read INTEGER NOT NULL DEFAULT 0,    -- только для inapp
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  sent_at TEXT
+);
+
+-- Настройки категории. Здесь только то, что настраивается; сам перечень
+-- категорий живёт в config/notifications.js и в базе не дублируется.
+CREATE TABLE IF NOT EXISTS notification_settings (
+  kind TEXT PRIMARY KEY,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  emails TEXT,        -- адреса, по одному на строку; пусто у категорий author/borrow
+  thresholds TEXT,    -- «30,20,10,5» — только у категорий со сроками
+  subject_tpl TEXT,
+  body_tpl TEXT,
+  updated_at TEXT,
+  updated_by TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_notif_events_created ON notification_events(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_notif_events_ticket ON notification_events(ticket_id);
+CREATE INDEX IF NOT EXISTS idx_notif_deliv_event ON notification_deliveries(event_id);
+-- Бейдж «непрочитанные» спрашивает ровно это: свои непрочитанные в ленте.
+CREATE INDEX IF NOT EXISTS idx_notif_deliv_inapp ON notification_deliveries(user_id, is_read) WHERE channel = 'inapp';
+-- Повтор неудачных отправок на следующем тике планировщика.
+CREATE INDEX IF NOT EXISTS idx_notif_deliv_pending ON notification_deliveries(status) WHERE status = 'pending';
