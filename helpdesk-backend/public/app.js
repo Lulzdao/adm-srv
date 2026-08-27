@@ -1547,8 +1547,8 @@ function templateCardHtml(k) {
 // ---- Вкладка «Отправка» ----------------------------------------------------
 
 async function renderNotifSmtp(page, kinds) {
-  const [{ smtp }, { deliveries }] = await Promise.all([
-    api("/notifications/smtp"), api("/notifications/deliveries"),
+  const [{ smtp }, { deliveries }, schedule] = await Promise.all([
+    api("/notifications/smtp"), api("/notifications/deliveries"), api("/notifications/schedule"),
   ]);
 
   const withList = kinds.filter(k => k.recipients === "list");
@@ -1589,6 +1589,31 @@ async function renderNotifSmtp(page, kinds) {
           <button class="btn btn-ghost" id="smTest">Проверить и отправить себе</button>
           <span id="smMsg" style="font-size:12px;"></span>
         </div>
+      </div>
+
+      <div class="card" style="margin-bottom:20px;">
+        <div class="section-label">Проверка по расписанию</div>
+        <div style="font-size:12px;color:var(--ink-soft);margin-bottom:14px;">
+          Сроки и минуты платформа проверяет сама: обход раз в час, задания выполняются
+          не чаще одного раза за своё окно — сутки или месяц. Пропущенные дни не теряются:
+          порог считается от даты документа, а не от того, сколько раз мы на него посмотрели.
+        </div>
+
+        <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:16px;">
+          <div style="width:210px;">
+            <div class="field-label">Час ежедневной проверки</div>
+            <input class="input" id="schHour" type="number" min="0" max="23" value="${esc(String(schedule.hour))}" style="width:100%;" />
+          </div>
+          <button class="btn btn-ghost" id="schSave">Сохранить час</button>
+          <span id="schMsg" style="font-size:12px;"></span>
+        </div>
+
+        ${schedule.jobs.map(jobRowHtml).join("")}
+        ${schedule.startedOn ? `<div style="font-size:11.5px;color:var(--ink-soft);margin-top:12px;">
+          Служба оповещений впервые запущена <span class="mono">${esc(schedule.startedOn)}</span>.
+          Документы, просроченные более чем за месяц до этой даты, писем не порождают —
+          иначе в первый же день уехала бы пачка «срочно выпустить новый» про архив.
+        </div>` : ""}
       </div>
 
       <div class="card" style="margin-bottom:20px;">
@@ -1658,6 +1683,34 @@ async function renderNotifSmtp(page, kinds) {
     } catch (e) { msg.style.color = "var(--red)"; msg.textContent = e.message; }
   };
 
+  const schMsg = page.querySelector("#schMsg");
+  page.querySelector("#schSave").onclick = async () => {
+    schMsg.style.color = "var(--ink-soft)"; schMsg.textContent = "Сохраняю…";
+    try {
+      await api("/notifications/schedule", { method: "PUT", body: { hour: Number(page.querySelector("#schHour").value) } });
+      schMsg.style.color = "var(--green)"; schMsg.textContent = "Сохранено";
+    } catch (e) { schMsg.style.color = "var(--red)"; schMsg.textContent = e.message; }
+  };
+
+  page.querySelectorAll(".job-run").forEach(btn => {
+    btn.onclick = async () => {
+      const note = btn.parentElement.querySelector(".job-msg");
+      note.style.color = "var(--ink-soft)"; note.textContent = "Проверяю…";
+      try {
+        // Обход не глядя на час и на отметку о сегодняшнем выполнении. Повторов
+        // это не создаёт: от них защищает ключ события, а не расписание.
+        const r = await api(`/notifications/schedule/${encodeURIComponent(btn.dataset.job)}/run`, { method: "POST", body: {} });
+        if (r.ok) {
+          note.style.color = "var(--green)";
+          note.textContent = jobDetailText(r.detail);
+          setTimeout(() => renderNotifications(page.closest("main") || page.parentElement, "smtp"), 2600);
+        } else {
+          note.style.color = "var(--red)"; note.textContent = r.error || r.skipped || "не выполнено";
+        }
+      } catch (e) { note.style.color = "var(--red)"; note.textContent = e.message; }
+    };
+  });
+
   const retryMsg = page.querySelector("#smRetryMsg");
   page.querySelector("#smRetry").onclick = async () => {
     retryMsg.style.color = "var(--ink-soft)"; retryMsg.textContent = "Отправляю…";
@@ -1696,12 +1749,42 @@ async function renderNotifSmtp(page, kinds) {
   });
 }
 
+// Сводка обхода — то, что вернул адаптер: «документов 42, истекает 3». Показываем
+// как есть, парами «ключ: значение»: набор полей у заданий разный, и подгонять
+// его под общий шаблон значило бы однажды потерять то, что важно именно здесь.
+function jobDetailText(detail) {
+  if (!detail || typeof detail !== "object") return "выполнено";
+  const value = (v) => (typeof v === "boolean" ? (v ? "да" : "нет") : v);
+  return Object.entries(detail).map(([k, v]) => `${k}: ${value(v)}`).join(", ");
+}
+
+function jobRowHtml(job) {
+  const last = job.last;
+  let state;
+  if (!last) state = `<span style="color:var(--ink-soft);">ещё не выполнялось</span>`;
+  else if (last.ok) state = `<span style="color:var(--green);">${esc(jobDetailText(last.detail))}</span>`;
+  else state = `<span style="color:var(--red);">${esc(last.error || "ошибка")}</span>`;
+
+  return `
+    <div style="padding:11px 0;border-top:1px solid var(--line-soft);">
+      <div style="display:flex;gap:12px;align-items:baseline;flex-wrap:wrap;">
+        <span style="font-size:13px;font-weight:600;min-width:210px;">${esc(job.label)}</span>
+        <span class="badge" style="color:var(--ink-soft);background:var(--line-soft);flex-shrink:0;">
+          ${job.period === "monthly" ? "раз в месяц" : "раз в сутки"}</span>
+        <span style="flex:1;min-width:180px;font-size:12px;">${state}</span>
+        <button class="btn btn-ghost job-run" data-job="${esc(job.id)}" style="flex-shrink:0;">Проверить сейчас</button>
+        <span class="job-msg" style="font-size:12px;"></span>
+      </div>
+      ${last ? `<div class="mono" style="font-size:11px;color:var(--ink-soft);margin-top:3px;">последний обход: ${esc(String(last.at).replace("T", " ").slice(0, 19))}</div>` : ""}
+    </div>`;
+}
+
 function recipientCardHtml(k) {
   return `
     <div class="rcp-card" data-kind="${esc(k.kind)}" style="padding:14px 0;border-top:1px solid var(--line-soft);">
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px;">
         <span style="font-size:13.5px;font-weight:600;">${esc(k.label)}</span>
-        ${k.scheduled ? `<span class="badge" style="color:var(--amber);background:var(--amber-soft);">рассылка появится с планировщиком</span>` : ""}
+        ${k.scheduled ? `<span class="badge" style="color:var(--ink-soft);background:var(--line-soft);">${k.trigger === "monthly" ? "раз в месяц" : "ежедневная проверка"}</span>` : ""}
         <label style="margin-left:auto;display:flex;align-items:center;gap:6px;font-size:12.5px;cursor:pointer;">
           <input type="checkbox" class="rcp-on" ${k.enabled ? "checked" : ""} /> включено
         </label>
@@ -1725,7 +1808,7 @@ function derivedRowHtml(k) {
     <div style="padding:11px 0;border-top:1px solid var(--line-soft);display:flex;gap:12px;align-items:baseline;flex-wrap:wrap;">
       <span style="font-size:13px;font-weight:600;min-width:180px;">${esc(k.label)}</span>
       <span style="font-size:12px;color:var(--ink-soft);flex:1;min-width:200px;">${where}</span>
-      ${k.scheduled ? `<span class="badge" style="color:var(--amber);background:var(--amber-soft);">ждёт планировщика</span>` : ""}
+      ${k.scheduled ? `<span class="badge" style="color:var(--ink-soft);background:var(--line-soft);">${k.trigger === "monthly" ? "раз в месяц" : "ежедневная проверка"}</span>` : ""}
     </div>`;
 }
 

@@ -74,6 +74,11 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: "Внутренняя ошибка сервера" });
 });
 
+// Планировщик оповещений — после того, как маршруты собраны: первый обход он
+// делает сразу при старте, и к этому моменту всё, чем он пользуется, должно
+// быть готово.
+require("./services/scheduler").start(db);
+
 const { server, secure } = createAppServer(app);
 server.listen(config.port, () => {
   console.log(`Сервер запущен: ${secure ? "https" : "http"}://localhost:${config.port}`);

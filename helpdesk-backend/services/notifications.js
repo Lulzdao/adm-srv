@@ -184,6 +184,47 @@ function writeOutcome(db, deliveryId, result) {
 }
 
 /**
+ * Разослать по событиям, у которых на момент создания не было ни одного адреса.
+ *
+ * Ловушка первой настройки. Планировщик делает первый обход сразу при старте
+ * платформы — то есть заведомо раньше, чем администратор успел вписать
+ * получателей. События создаются, писем ноль, и создать их заново уже нельзя:
+ * dedup_key для того и нужен. Снаружи это выглядит как «всё настроил, и ничего
+ * не пришло».
+ *
+ * Поэтому при сохранении списка адресов добираем то, что осталось без
+ * доставок. Окно в 30 дней взято по самому раннему порогу: события старше него
+ * всё равно уже неактуальны.
+ */
+async function backfillDeliveries(db, kind, { days = 30 } = {}) {
+  const s = settingsFor(db, kind);
+  if (!s) return 0;
+
+  const events = db.prepare(`
+    SELECT e.id, e.payload FROM notification_events e
+    WHERE e.kind = ?
+      AND e.created_at >= datetime('now','localtime',?)
+      AND NOT EXISTS (SELECT 1 FROM notification_deliveries d WHERE d.event_id = e.id AND d.channel = 'email')
+    ORDER BY e.id
+  `).all(kind, `-${days} days`);
+  if (!events.length) return 0;
+
+  // Категории со списком и заимствующие его не зависят от конкретного события,
+  // поэтому адреса достаточно вычислить один раз.
+  const addresses = [...new Set(resolveEmails(db, kind, {}))];
+  if (!addresses.length) return 0;
+
+  const addDelivery = db.prepare(
+    "INSERT INTO notification_deliveries (event_id, channel, address, status) VALUES (?, 'email', ?, 'pending')"
+  );
+  for (const ev of events) {
+    for (const address of addresses) addDelivery.run(ev.id, address);
+  }
+  await retryPending(db, { limit: events.length * addresses.length });
+  return events.length;
+}
+
+/**
  * Повторить отправку того, что осталось в pending. Пригодится планировщику:
  * почтовый сервер бывает недоступен ровно в ту минуту, когда создали заявку,
  * и терять из-за этого письмо не нужно.
@@ -212,4 +253,4 @@ async function retryPending(db, { includeFailed = false, limit = 100 } = {}) {
   return rows.length;
 }
 
-module.exports = { emit, settingsFor, resolveEmails, render, retryPending };
+module.exports = { emit, settingsFor, resolveEmails, render, retryPending, backfillDeliveries };

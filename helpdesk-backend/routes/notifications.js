@@ -1,8 +1,10 @@
 const express = require("express");
 const { requireAuth, requireRole } = require("../middleware/auth");
 const { KINDS, byKind, RECIPIENTS } = require("../config/notifications");
-const { settingsFor, resolveEmails, render, retryPending } = require("../services/notifications");
+const { settingsFor, resolveEmails, render, retryPending, backfillDeliveries } = require("../services/notifications");
+const { setSetting } = require("../services/settings");
 const mailer = require("../services/mailer");
+const scheduler = require("../services/scheduler");
 
 module.exports = function notificationRoutes(db) {
   const router = express.Router();
@@ -132,7 +134,7 @@ module.exports = function notificationRoutes(db) {
 
   // Ключ настройки берём только из справочника, а не из параметра запроса:
   // иначе через него можно записать любую строку в notification_settings.
-  router.put("/kinds/:kind", it, (req, res) => {
+  router.put("/kinds/:kind", it, async (req, res) => {
     const kind = req.params.kind;
     if (!KNOWN_KINDS.has(kind)) return res.status(404).json({ error: "Неизвестная категория оповещений" });
 
@@ -192,11 +194,22 @@ module.exports = function notificationRoutes(db) {
       req.session.user.ad_login
     );
 
+    // Список появился там, где его не было, — доберём события, оставшиеся без
+    // адресатов, вместе с теми категориями, которые берут этот же список.
+    let backfilled = 0;
+    if (emails !== undefined && emails && !cur.emails) {
+      const borrowers = KINDS.filter((k) => k.borrowFrom === kind).map((k) => k.kind);
+      for (const target of [kind, ...borrowers]) {
+        backfilled += await backfillDeliveries(db, target);
+      }
+    }
+
     // Наружу отдаём только настраиваемое: сам справочник фронтенд уже получил
     // из /kinds, дублировать его в каждом ответе незачем.
     const saved = settingsFor(db, kind);
     res.json({
       ok: true,
+      backfilled,
       settings: {
         enabled: saved.enabled, emails: saved.emails, thresholds: saved.thresholds,
         subjectTpl: saved.subjectTpl, bodyTpl: saved.bodyTpl,
@@ -215,6 +228,29 @@ module.exports = function notificationRoutes(db) {
     const subjectTpl = (req.body && req.body.subjectTpl) || s.subjectTpl;
     const bodyTpl = (req.body && req.body.bodyTpl) || s.bodyTpl;
     res.json({ subject: render(subjectTpl, sample), body: render(bodyTpl, sample), sample });
+  });
+
+  // ---- Планировщик ---------------------------------------------------------
+
+  router.get("/schedule", it, (req, res) => res.json(scheduler.status(db)));
+
+  router.put("/schedule", it, (req, res) => {
+    const hour = Number((req.body || {}).hour);
+    if (!Number.isInteger(hour) || hour < 0 || hour > 23) {
+      return res.status(400).json({ error: "Час — целое число от 0 до 23" });
+    }
+    setSetting(db, "notif_daily_hour", String(hour));
+    res.json({ ok: true, schedule: scheduler.status(db) });
+  });
+
+  // «Проверить сейчас» — тот же обход, но не глядя на час и на отметку о
+  // сегодняшнем выполнении. Повторов это не создаёт: от них защищает dedup_key,
+  // а не расписание.
+  router.post("/schedule/:id/run", it, async (req, res) => {
+    const job = scheduler.JOBS.find((j) => j.id === req.params.id);
+    if (!job) return res.status(404).json({ error: "Неизвестное задание" });
+    const result = await scheduler.runJob(db, job, { force: true });
+    res.json({ ...result, schedule: scheduler.status(db) });
   });
 
   // ---- Настройки почты -----------------------------------------------------
