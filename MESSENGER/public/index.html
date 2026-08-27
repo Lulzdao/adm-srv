@@ -109,37 +109,32 @@
   #authBox button:hover { box-shadow:var(--md-elev-1); filter:brightness(1.06); }
   #authErr { color:var(--md-error); font-size:12.5px; min-height:18px; margin-bottom:4px; text-align:center; }
 
-  /* ---- Оболочка: шапка + вкладки сверху ---- */
+  /* ---- Оболочка: одна строка вкладок сверху ----
+     Отдельной шапки с названием нет намеренно: панель открывают из платформы,
+     где название модуля уже написано в её меню и в заголовке страницы, а сама
+     шапка была того же тона, что и фон, — то есть занимала место, ничего не
+     разделяя. Кто вошёл и кнопка выхода переехали к вкладкам. */
   #dash { display:none; height:100%; flex-direction:column; }
   #dash.active { display:flex; }
 
-  #topbar-top {
-    flex-shrink:0; display:flex; align-items:center; justify-content:space-between;
-    padding:18px 28px 14px; background:var(--md-surface);
-  }
-  .mm-brand { display:flex; align-items:center; gap:12px; }
-  .mm-brand .dot {
-    width:40px; height:40px; border-radius:var(--md-shape-s);
-    background:var(--md-primary-container); color:var(--md-on-primary-container);
-    display:flex; align-items:center; justify-content:center; font-weight:600; font-size:16px; flex-shrink:0;
-  }
-  .mm-brand .name { font-weight:600; font-size:20px; color:var(--md-on-surface); }
-  .mm-user { display:flex; align-items:center; gap:16px; }
-  .mm-user-text { text-align:right; line-height:1.35; }
+  .mm-user { display:flex; align-items:center; gap:14px; margin-left:auto; padding-left:20px; flex-shrink:0; }
+  .mm-user-text { text-align:right; line-height:1.3; }
   #whoName { font-size:13px; font-weight:500; color:var(--md-on-surface); }
   #whoRole { font-size:11.5px; color:var(--md-on-surface-variant); }
   .mm-logout {
-    display:flex; align-items:center; gap:8px; padding:11px 20px; border:none;
+    display:flex; align-items:center; gap:8px; padding:8px 18px; border:none;
     background:var(--md-surface-container-high); color:var(--md-on-surface-variant);
-    border-radius:var(--md-shape-full); cursor:pointer; font-size:13px; font-weight:600;
+    border-radius:var(--md-shape-full); cursor:pointer; font-size:12.5px; font-weight:600;
     font-family:inherit; transition:background .13s ease, color .13s ease;
   }
   .mm-logout:hover { background:var(--md-error-container); color:var(--md-on-error-container); }
 
-  /* Вкладки M3: подчёркивание активной */
+  /* Вкладки M3: подчёркивание активной. Полоса белая — иначе она сливалась бы
+     с фоном страницы и граница между навигацией и содержимым пропадала. */
   #tabs {
-    flex-shrink:0; display:flex; gap:4px; padding:0 20px;
-    border-bottom:1px solid var(--md-outline-variant); background:var(--md-surface); overflow-x:auto;
+    flex-shrink:0; display:flex; align-items:center; gap:4px; padding:0 20px;
+    border-bottom:1px solid var(--md-outline-variant);
+    background:var(--md-surface-container-lowest); overflow-x:auto;
   }
   .nav-item {
     padding:15px 16px 13px; cursor:pointer; color:var(--md-on-surface-variant);
@@ -257,16 +252,6 @@
 </div>
 
 <div id="dash">
-  <div id="topbar-top">
-    <div class="mm-brand"><span class="dot">И</span><span class="name">Искра</span></div>
-    <div class="mm-user">
-      <div class="mm-user-text">
-        <div id="whoName"></div>
-        <div id="whoRole"></div>
-      </div>
-      <button class="mm-logout" onclick="logout()">Выйти</button>
-    </div>
-  </div>
   <div id="tabs">
     <div class="nav-item active" data-view="overview">Обзор</div>
     <div class="nav-item" data-view="users">Пользователи</div>
@@ -276,6 +261,13 @@
     <div class="nav-item" data-view="updates">Клиенты</div>
     <div class="nav-item" data-view="tls">Сертификат</div>
     <div class="nav-item" data-view="logs">Логи</div>
+    <div class="mm-user">
+      <div class="mm-user-text">
+        <div id="whoName"></div>
+        <div id="whoRole"></div>
+      </div>
+      <button class="mm-logout" onclick="logout()">Выйти</button>
+    </div>
   </div>
 
   <div id="main">
