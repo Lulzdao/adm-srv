@@ -11,11 +11,36 @@ from pathlib import Path
 # репозиторий вместе с кодом. Теперь берём их из окружения или из соседнего
 # файла .env (он в .gitignore). Разбираем .env вручную, без python-dotenv:
 # на закрытом контуре ставить пакеты неоткуда, а формат тут простейший.
+def read_env_text(env_path):
+    """Прочитать .env, не полагаясь на то, в какой кодировке его сохранили.
+
+    Файл правят Блокнотом, а он на Windows по умолчанию пишет в кодировке
+    системы (для русской — cp1251). Один русский символ в комментарии — и
+    строгое чтение в utf-8 роняло коллектор с UnicodeDecodeError ещё до того,
+    как он успевал что-то сказать про настройки. Кодировка комментария к делу
+    не относится: значения здесь — адрес, порт и пароль, то есть латиница.
+
+    utf-8-sig, а не utf-8: он заодно снимает BOM, который Блокнот дописывает в
+    начало файла. Без этого первый ключ читался бы как "\ufeffSMDR_HOST" и
+    молча не находился — а это ошибка куда неприятнее падения, потому что
+    выглядит как "переменную не задали".
+    """
+    data = env_path.read_bytes()
+    for encoding in ('utf-8-sig', 'cp1251'):
+        try:
+            return data.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    # Ни то ни другое — читаем как получится, лишь бы добраться до значений:
+    # испорченным окажется только нечитаемый комментарий.
+    return data.decode('utf-8', errors='replace')
+
+
 def load_env():
     env_path = Path(__file__).with_name('.env')
     if not env_path.exists():
         return
-    for raw in env_path.read_text(encoding='utf-8').splitlines():
+    for raw in read_env_text(env_path).splitlines():
         line = raw.strip()
         if not line or line.startswith('#') or '=' not in line:
             continue
