@@ -19,14 +19,18 @@
 
 module.exports = [
   {
-    id: "certs", label: "Сертвивер", path: "/modules/certs", target: "http://127.0.0.1:3101", roles: ["it"],
+    id: "certs", label: "Сертвивер", path: "/modules/certs",
+    // Адрес переопределяется переменной: модуль не обязан стоять на этой же
+    // машине, а тестам нужен свободный порт вместо занятого рабочим процессом.
+    target: process.env.MODULE_CERTS_URL || "http://127.0.0.1:3101", roles: ["it"],
     views: [
       { id: "certs", label: "Сертификаты", sub: "" },
       { id: "mchd", label: "МЧД", sub: "mchd" },
     ],
   },
   {
-    id: "smdr", label: "Журнал звонков", path: "/modules/smdr", target: "http://127.0.0.1:3102", roles: ["it"],
+    id: "smdr", label: "Журнал звонков", path: "/modules/smdr",
+    target: process.env.MODULE_SMDR_URL || "http://127.0.0.1:3102", roles: ["it"],
     views: [
       { id: "log", label: "Журнал", sub: "" },
       { id: "stats", label: "Статистика", sub: "stats" },

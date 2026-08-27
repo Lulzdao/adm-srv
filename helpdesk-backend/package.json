@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node --use-system-ca server.js",
     "dev": "node --use-system-ca --watch server.js",
-    "initdb": "node db/init.js"
+    "initdb": "node db/init.js",
+    "test": "node --test"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",
