@@ -51,6 +51,9 @@ module.exports = function certificateRoutes() {
       // "store" — файл в общем хранилище, его можно заменить прямо здесь.
       // "env" — путь прописан в .env, тогда замена только через .env и перезапуск.
       managedBy: state.source === "shared-store" ? "store" : "env",
+      // Куда платформа смотрит за общим хранилищем. Нужно как раз в случае
+      // "env": по этому пути видно, найдёт ли она «Искру», если убрать TLS_PFX.
+      storeDir: path.dirname(SHARED_PFX),
       certificate: state.certificate,
     });
   });

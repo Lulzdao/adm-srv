@@ -1060,8 +1060,18 @@ async function renderCertificates(main) {
               Сертификат один на обе службы: платформа и «Искра» стоят на одной машине и отвечают
               на одно имя. ${server.managedBy === "store"
                 ? `Файл лежит в <span class="mono">${esc(server.sharedStore)}</span>; загрузить новый можно здесь же (форма ниже) или в панели «Искры» — разницы нет, файл тот же. Обе службы перечитывают его сами, без перезапуска.`
-                : `Путь задан переменными окружения (<span class="mono">${esc(server.where || "")}</span>) — загрузка из панели при этом отключена, замена через .env и перезапуск.`}
+                : `Сейчас путь задан переменными окружения: <span class="mono">${esc(server.where || "")}</span>. Тогда сертификат <b>не общий</b> с «Искрой» — она читает своё хранилище и может предъявлять другой файл, — а загрузка из панели отключена.`}
             </div>
+            ${server.managedBy === "env" ? `<div class="warn-box" style="margin-bottom:14px;">
+              <div>
+              Чтобы вернуть общий сертификат и загрузку отсюда: уберите <span class="mono">TLS_PFX</span>
+              (или <span class="mono">TLS_CERT</span>/<span class="mono">TLS_KEY</span>) из
+              <span class="mono">.env</span> и укажите путь к каталогу <span class="mono">certs</span>
+              работающей «Искры»: <span class="mono">SHARED_CERT_DIR=&lt;папка Искры&gt;\\certs</span>.
+              Сейчас платформа ищет хранилище в <span class="mono">${esc(server.storeDir || "")}</span> —
+              если «Искра» стоит не там, сертификат она не найдёт. После правки нужен перезапуск.
+              </div>
+            </div>` : ""}
             ${serverCard}
 
             ${server.managedBy === "store" ? `

@@ -18,7 +18,11 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 
-const PORT = process.env.PORT || 3000;
+// 3103, а не 3000: «Искра» стоит на одной машине с платформой, и 3000 занят
+// платформой. Тот же порт вшит в сборку клиента (desktop-client/config.js) и
+// прописан у модуля в helpdesk-backend/config/modules.js — менять надо во всех
+// трёх местах сразу.
+const PORT = process.env.PORT || 3103;
 const IDLE_AFTER_MS = 30 * 60 * 1000; // 30 минут бездействия = AFK (страховка на стороне сервера)
 
 // ---------- Логирование ----------
