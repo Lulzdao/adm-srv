@@ -198,6 +198,56 @@
   input[type="date"] { color-scheme:light; }
   input[type="file"] { border:none; padding:0; background:transparent; }
 
+  /* ---- Список пользователей ----
+     Раньше это была таблица, где каждое действие занимало свою колонку: поле
+     переименования, две галочки прав, поле пароля, кнопка удаления. Строка из
+     семи элементов управления читалась плохо и не помещалась, а искать
+     человека приходилось глазами по первой колонке. Теперь строка отвечает на
+     вопрос «кто это и что с ним сейчас», а всё, что с ним можно сделать,
+     убрано в меню справа. */
+  .user-row {
+    display:grid; align-items:center; gap:14px;
+    grid-template-columns: minmax(180px,1.2fr) minmax(120px,0.9fr) minmax(150px,1fr) auto 36px;
+    padding:12px 14px; border-radius:var(--md-shape-m); background:var(--md-surface-container-lowest);
+    margin-bottom:8px;
+  }
+  .user-row:hover { background:var(--md-surface-container-low); }
+  .user-id { display:flex; align-items:center; gap:10px; min-width:0; }
+  .user-dot { width:9px; height:9px; border-radius:50%; flex-shrink:0; }
+  .user-dot.active { background:#1F6B37; }
+  .user-dot.idle { background:#8A5300; }
+  .user-dot.offline { background:var(--md-outline-variant); }
+  .user-login { font-weight:600; font-size:13.5px; }
+  .user-sub { font-size:11.5px; color:var(--md-on-surface-variant); margin-top:2px; }
+  .user-cell { min-width:0; font-size:12.5px; color:var(--md-on-surface-variant); }
+  .user-hosts { font-family:var(--mono); font-size:11.5px; }
+  .user-caps { display:flex; gap:6px; flex-wrap:wrap; }
+  .cap-chip {
+    font-size:11px; font-weight:600; padding:3px 9px; border-radius:var(--md-shape-full);
+    background:var(--md-secondary-container); color:var(--md-on-secondary-container); white-space:nowrap;
+  }
+  .user-menu-btn {
+    width:32px; height:32px; border:none; border-radius:50%; background:transparent; cursor:pointer;
+    color:var(--md-on-surface-variant); font-size:17px; line-height:1; letter-spacing:1px;
+    transition:background .13s ease;
+  }
+  .user-menu-btn:hover { background:var(--md-state-hover); color:var(--md-on-surface); }
+  #userMenu {
+    position:fixed; z-index:60; min-width:210px; padding:6px;
+    background:var(--md-surface-container-lowest); border:1px solid var(--md-outline-variant);
+    border-radius:var(--md-shape-m); box-shadow:0 6px 18px rgba(31,27,22,.16);
+  }
+  #userMenu button {
+    display:flex; align-items:center; justify-content:space-between; gap:12px; width:100%;
+    padding:9px 12px; border:none; background:transparent; border-radius:var(--md-shape-xs);
+    font:inherit; font-size:13px; color:var(--md-on-surface); text-align:left; cursor:pointer;
+  }
+  #userMenu button:hover { background:var(--md-state-hover); }
+  #userMenu button.danger { color:var(--md-error); }
+  #userMenu button.danger:hover { background:var(--md-error-container); }
+  #userMenu .menu-sep { height:1px; background:var(--md-outline-variant); margin:5px 8px; }
+  #userMenu .menu-state { font-size:11.5px; color:var(--md-on-surface-variant); }
+
   /* Filled / tonal / text buttons M3 */
   button.action {
     background:var(--md-primary); border:none; color:var(--md-on-primary); border-radius:var(--md-shape-full);
@@ -348,11 +398,11 @@
         </div>
       </div>
       <div class="panel">
-        <input id="userSearch" placeholder="Поиск по логину или имени..." style="width:100%; margin-bottom:12px;" oninput="renderUsers()">
-        <table>
-          <thead><tr><th>Логин</th><th>Отображаемое имя</th><th>Отделы</th><th>Рассылки</th><th>Админка</th><th>Сброс пароля</th><th></th></tr></thead>
-          <tbody id="usersBody"></tbody>
-        </table>
+        <div class="row-flex" style="margin-bottom:14px;">
+          <input id="userSearch" placeholder="Поиск по логину, имени или имени ПК..." style="flex:1;" oninput="renderUsers()">
+          <span id="usersCount" style="color:var(--muted); font-size:12.5px; white-space:nowrap;"></span>
+        </div>
+        <div id="usersList"></div>
       </div>
     </div>
 
@@ -599,6 +649,10 @@ document.querySelectorAll('.nav-item').forEach(item => {
     // показываем то, что было на момент входа в панель.
     if (item.dataset.view === 'updates') loadClients();
     if (item.dataset.view === 'tls') loadTls();
+    // Статусы в списке пользователей обновляем, только пока раздел открыт:
+    // держать опрос постоянно незачем.
+    if (item.dataset.view === 'users') startPresencePolling();
+    else stopPresencePolling();
   };
 });
 
@@ -616,38 +670,165 @@ async function loadStats() {
   document.getElementById('statUptime').textContent = fmtUptime(s.uptimeSeconds);
 }
 
+// Присутствие: кто в сети и с каких машин. Берём по HTTP, а не только из
+// WebSocket, потому что панель открывают и через прокси платформы, где апгрейд
+// до WS не пробрасывается, — статус должен показываться в любом случае.
+let presenceCache = {};
+let presenceTimer = null;
+
+async function loadPresence() {
+  try {
+    const { users } = await api('api/admin/presence');
+    presenceCache = users || {};
+    renderUsers();
+  } catch { /* не критично: список пользователей покажется без статусов */ }
+}
+
+// Опрос идёт, только пока вкладка открыта: держать его постоянно незачем.
+function startPresencePolling() {
+  stopPresencePolling();
+  loadPresence();
+  presenceTimer = setInterval(loadPresence, 15000);
+}
+function stopPresencePolling() {
+  if (presenceTimer) { clearInterval(presenceTimer); presenceTimer = null; }
+}
+
+const PRESENCE_LABEL = { active: 'в сети', idle: 'отошёл', offline: 'не в сети' };
+
+function sinceText(ts) {
+  if (!ts) return '';
+  const min = Math.floor((Date.now() - ts) / 60000);
+  if (min < 1) return 'только что';
+  if (min < 60) return `${min} мин`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `${h} ч`;
+  return `${Math.floor(h / 24)} дн`;
+}
+
 function renderUsers() {
-  const body = document.getElementById('usersBody');
+  const list = document.getElementById('usersList');
+  if (!list) return;
   const q = (document.getElementById('userSearch')?.value || '').trim().toLowerCase();
-  const filtered = q
-    ? usersCache.filter(u => u.username.toLowerCase().includes(q) || u.display_name.toLowerCase().includes(q))
-    : usersCache;
-  body.innerHTML = '';
-  if (!filtered.length) { body.innerHTML = '<tr><td colspan="7" style="color:var(--muted); text-align:center;">Никого не найдено</td></tr>'; return; }
-  filtered.forEach(u => {
-    const tr = document.createElement('tr');
-    const deptNames = (u.departments || []).map(d => d.name).join(', ');
-    const deptSelect = `<button type="button" class="dept-btn${deptNames ? '' : ' empty'}" title="${escapeHtml(deptNames || 'Без отдела')}" onclick="pickUserDepartments(${u.id}, this)">${escapeHtml(deptNames || 'Без отдела')}</button>`;
-    tr.innerHTML = `<td>${escapeHtml(u.username)}</td>
-      <td><div class="row-flex"><input type="text" value="${escapeHtml(u.display_name)}" id="dn-${u.id}" style="width:130px"><button class="action ghost" onclick="renameUser(${u.id})">✓</button></div></td>
-      <td>${deptSelect}</td>
-      <td><input type="checkbox" ${u.can_broadcast ? 'checked' : ''} onchange="toggleUserCap(${u.id}, 'can_broadcast', this.checked)"></td>
-      <td><input type="checkbox" ${u.can_admin ? 'checked' : ''} onchange="toggleUserCap(${u.id}, 'can_admin', this.checked)"></td>
-      <td><div class="row-flex"><input type="text" placeholder="Новый пароль" id="pw-${u.id}" style="width:120px"><button class="action ghost" onclick="resetPassword(${u.id})">Сохранить</button></div></td>
-      <td><button class="action danger" onclick="deleteUser(${u.id})">Удалить</button></td>`;
-    body.appendChild(tr);
+  const matches = (u) => {
+    if (!q) return true;
+    const hosts = (presenceCache[u.id]?.hosts || []).join(' ').toLowerCase();
+    return u.username.toLowerCase().includes(q)
+      || (u.display_name || '').toLowerCase().includes(q)
+      || hosts.includes(q);   // искать по имени ПК — привычнее, когда звонит «человек с PC-209»
+  };
+  const filtered = usersCache.filter(matches);
+
+  const count = document.getElementById('usersCount');
+  if (count) {
+    const online = usersCache.filter(u => (presenceCache[u.id]?.state || 'offline') !== 'offline').length;
+    count.textContent = `${filtered.length} из ${usersCache.length}, в сети ${online}`;
+  }
+
+  if (!filtered.length) {
+    list.innerHTML = '<div style="color:var(--muted); text-align:center; padding:22px;">Никого не найдено</div>';
+    return;
+  }
+
+  list.innerHTML = filtered.map(u => {
+    const p = presenceCache[u.id] || { state: 'offline', hosts: [], since: null };
+    const depts = (u.departments || []).map(d => d.name).join(', ');
+    // Машин может быть несколько — человек сидит и за своим ПК, и за чужим;
+    // показываем все, иначе непонятно, откуда он на самом деле.
+    const hosts = (p.hosts || []).length ? p.hosts.map(escapeHtml).join(', ') : '—';
+    const caps = [];
+    if (u.can_admin) caps.push('админка');
+    if (u.can_broadcast) caps.push('рассылки');
+    return `<div class="user-row">
+      <div class="user-id">
+        <span class="user-dot ${p.state}" title="${PRESENCE_LABEL[p.state]}"></span>
+        <div style="min-width:0;">
+          <div class="user-login">${escapeHtml(u.username)}</div>
+          <div class="user-sub">${escapeHtml(u.display_name || '')}</div>
+        </div>
+      </div>
+      <div class="user-cell">${PRESENCE_LABEL[p.state]}${p.since ? ` · ${sinceText(p.since)}` : ''}</div>
+      <div class="user-cell user-hosts" title="${escapeHtml((p.hosts || []).join(', '))}">${hosts}</div>
+      <div class="user-cell">
+        <div>${escapeHtml(depts || 'Без отдела')}</div>
+        ${caps.length ? `<div class="user-caps" style="margin-top:4px;">${caps.map(c => `<span class="cap-chip">${c}</span>`).join('')}</div>` : ''}
+      </div>
+      <button class="user-menu-btn" title="Действия" onclick="openUserMenu(${u.id}, this)">···</button>
+    </div>`;
+  }).join('');
+}
+
+function closeUserMenu() {
+  const m = document.getElementById('userMenu');
+  if (m) m.remove();
+}
+document.addEventListener('click', (e) => {
+  const m = document.getElementById('userMenu');
+  if (m && !m.contains(e.target) && !e.target.classList.contains('user-menu-btn')) closeUserMenu();
+});
+
+// Всё, что можно сделать с человеком, — здесь. В строке этих действий больше
+// нет: они занимали пять колонок и мешали читать сам список.
+function openUserMenu(id, anchor) {
+  const existed = document.getElementById('userMenu');
+  closeUserMenu();
+  if (existed && existed.dataset.forUser === String(id)) return; // повторный клик закрывает
+  const u = usersCache.find(x => x.id === id);
+  if (!u) return;
+
+  const menu = document.createElement('div');
+  menu.id = 'userMenu';
+  menu.dataset.forUser = String(id);
+  menu.innerHTML = `
+    <button data-act="rename">Переименовать</button>
+    <button data-act="depts">Отделы<span class="menu-state">${escapeHtml((u.departments || []).map(d => d.name).join(', ') || 'нет')}</span></button>
+    <div class="menu-sep"></div>
+    <button data-act="broadcast">Рассылки<span class="menu-state">${u.can_broadcast ? 'включены' : 'выключены'}</span></button>
+    <button data-act="admin">Админка<span class="menu-state">${u.can_admin ? 'включена' : 'выключена'}</span></button>
+    <div class="menu-sep"></div>
+    <button data-act="password">Сбросить пароль</button>
+    <button data-act="delete" class="danger">Удалить</button>`;
+  document.body.appendChild(menu);
+
+  const r = anchor.getBoundingClientRect();
+  menu.style.left = Math.min(r.right - menu.offsetWidth, window.innerWidth - menu.offsetWidth - 8) + 'px';
+  menu.style.top = (r.bottom + menu.offsetHeight + 8 < window.innerHeight
+    ? r.bottom + 4
+    : Math.max(8, r.top - menu.offsetHeight - 4)) + 'px';
+
+  menu.querySelectorAll('button').forEach(b => {
+    b.onclick = async () => {
+      const act = b.dataset.act;
+      if (act === 'depts') { pickUserDepartments(id, anchor); closeUserMenu(); return; }
+      closeUserMenu();
+      if (act === 'rename') return renameUser(id);
+      if (act === 'broadcast') return toggleUserCap(id, 'can_broadcast', !u.can_broadcast);
+      if (act === 'admin') return toggleUserCap(id, 'can_admin', !u.can_admin);
+      if (act === 'password') return resetPassword(id);
+      if (act === 'delete') return deleteUser(id);
+    };
   });
 }
+
 function userVersion(id) { return usersCache.find(u => u.id === id)?.version; }
 function applyUserVersion(id, version) { const u = usersCache.find(x => x.id === id); if (u && version !== undefined) u.version = version; }
 
 async function renameUser(id) {
-  const val = document.getElementById(`dn-${id}`).value.trim();
-  if (!val) return alert('Имя не может быть пустым');
+  const u = usersCache.find(x => x.id === id);
+  const val = (prompt('Отображаемое имя:', u ? (u.display_name || '') : '') || '').trim();
+  if (!val || (u && val === u.display_name)) return;
   try { await api(`api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify({ display_name: val, version: userVersion(id) }) }); refreshAll(); } catch (e) { alert(e.message); refreshAll(); }
 }
 async function toggleUserCap(id, cap, checked) {
-  try { const r = await api(`api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify({ [cap]: checked, version: userVersion(id) }) }); applyUserVersion(id, r.version); } catch (e) { alert(e.message); refreshAll(); }
+  try {
+    const r = await api(`api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify({ [cap]: checked, version: userVersion(id) }) });
+    applyUserVersion(id, r.version);
+    // Право видно в строке значком, поэтому список надо перерисовать: раньше
+    // состояние держала галочка, и обновлять было нечего.
+    const u = usersCache.find(x => x.id === id);
+    if (u) u[cap] = checked;
+    renderUsers();
+  } catch (e) { alert(e.message); refreshAll(); }
 }
 
 function renderDepts() {
@@ -803,8 +984,10 @@ function pickNewUserDepartments(anchor) {
   });
 }
 async function resetPassword(id) {
-  const val = document.getElementById(`pw-${id}`).value;
+  const u = usersCache.find(x => x.id === id);
+  const val = prompt(`Новый пароль для ${u ? u.username : 'пользователя'} (минимум 4 символа):`, '');
   if (!val) return;
+  if (val.length < 4) return alert('Пароль короче четырёх символов сервер не примет');
   try { await api(`api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify({ password: val, version: userVersion(id) }) }); alert('Пароль обновлён'); refreshAll(); } catch (e) { alert(e.message); refreshAll(); }
 }
 async function deleteUser(id) {

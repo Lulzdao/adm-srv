@@ -1159,6 +1159,14 @@ app.post('/api/broadcast', auth, (req, res) => {
 // ---------- Админка ----------
 app.get('/api/admin/users', auth, requireCapability('can_admin'), (req, res) => res.json(listUsersFull.all()));
 
+// Кто сейчас в сети и с каких машин. То же самое рассылается по WebSocket, но
+// панель администратора открывают и через прокси платформы, где апгрейд до WS
+// не пробрасывается, — а список пользователей должен показывать статус в любом
+// случае. Отдаём снимок целиком: он маленький и считается по памяти процесса.
+app.get('/api/admin/presence', auth, requireCapability('can_admin'), (req, res) => {
+  res.json({ users: presenceSnapshot() });
+});
+
 // Включение/выключение самостоятельной регистрации (см. registrationOpen выше).
 app.get('/api/admin/registration', auth, requireCapability('can_admin'), (req, res) => {
   res.json({ open: registrationOpen() });
