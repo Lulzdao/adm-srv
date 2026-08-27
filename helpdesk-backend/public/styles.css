@@ -209,6 +209,16 @@ a { color: var(--md-primary); }
   padding: 22px 22px 18px;
   display: flex; align-items: center; gap: 12px; flex-shrink: 0;
 }
+/* Кнопка раздела прямо в шапке: сертификаты относятся ко всей платформе, а не
+   к заявкам, и в их группе выглядели случайным пунктом. */
+.head-action {
+  margin-left: auto; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px;
+  border: none; border-radius: 50%; background: transparent; color: var(--md-on-surface-variant);
+  cursor: pointer; transition: background 0.13s ease, color 0.13s ease;
+}
+.head-action:hover { background: var(--md-state-hover); color: var(--md-on-surface); }
+.head-action.active { background: var(--md-primary-container); color: var(--md-on-primary-container); }
 .sidebar-nav { padding: 4px 12px 12px; flex: 1; min-height: 0; overflow-y: auto; }
 /* Пункт меню в M3 — «таблетка» на всю ширину */
 .nav-btn {
@@ -296,6 +306,51 @@ select, .input {
   transition: border-color 0.12s ease, box-shadow 0.12s ease;
 }
 select:focus, .input:focus { border-color: var(--md-primary); box-shadow: inset 0 0 0 1px var(--md-primary); }
+
+/* --- Выпадающий список ---
+   Системный <select> нельзя оформить: стрелка рисуется браузером, прижата к
+   краю, а раскрытый список берёт вид от системы и в тёплую палитру не
+   попадает совсем. Поэтому настоящий select остаётся в разметке (скрытый) —
+   ради него работает весь код, который читает .value, — а видимую часть
+   рисуем сами. Ставится ко всем select автоматически, см. enhanceSelects. */
+.select-wrap { position: relative; display: inline-block; vertical-align: middle; }
+.select-wrap > select {
+  position: absolute; opacity: 0; pointer-events: none; width: 0; height: 0; padding: 0; border: 0;
+}
+.select-btn {
+  display: inline-flex; align-items: center; gap: 10px; width: 100%;
+  padding: 11px 14px 11px 16px; font-size: 13.5px; font-family: inherit; text-align: left;
+  border: 1px solid var(--md-outline-variant); border-radius: var(--md-shape-full);
+  background: var(--md-surface-container-lowest); color: var(--md-on-surface);
+  cursor: pointer; transition: border-color 0.12s ease, background 0.13s ease;
+}
+.select-btn:hover { background: var(--md-surface-container-low); }
+.select-wrap.open .select-btn { border-color: var(--md-primary); }
+.select-btn .select-value { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Стрелка не прижата к грани: у системного select между ней и краем не было
+   ничего, и поле выглядело обрезанным. */
+.select-btn .select-chevron {
+  display: inline-flex; flex-shrink: 0; color: var(--md-on-surface-variant);
+  transform: rotate(90deg); transition: transform 0.18s ease;
+}
+.select-wrap.open .select-btn .select-chevron { transform: rotate(-90deg); }
+.select-menu {
+  position: absolute; z-index: 40; top: calc(100% + 6px); left: 0; min-width: 100%;
+  padding: 6px; border-radius: var(--md-shape-m); background: var(--md-surface-container-lowest);
+  box-shadow: var(--md-elev-3); max-height: 300px; overflow-y: auto;
+}
+.select-option {
+  padding: 10px 14px; border-radius: var(--md-shape-xs); font-size: 13.5px; cursor: pointer;
+  white-space: nowrap; transition: background 0.1s ease;
+}
+.select-option:hover, .select-option.active { background: var(--md-state-hover); }
+.select-option.selected {
+  background: var(--md-primary-container); color: var(--md-on-primary-container); font-weight: 600;
+}
+/* Поле формы (в карточке) — прямоугольное, как соседние текстовые поля;
+   «таблетка» уместна только среди фильтров. */
+.select-wrap.select-field { display: block; }
+.select-wrap.select-field .select-btn { border-radius: var(--md-shape-xs); border-color: var(--md-outline); }
 textarea.input { font-family: inherit; resize: vertical; }
 
 /* --- List screen --- */
@@ -317,8 +372,13 @@ textarea.input { font-family: inherit; resize: vertical; }
 .search-wrap input:focus { border-color: var(--md-primary); box-shadow: none; }
 .search-icon { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: var(--md-on-surface-variant); display: flex; }
 
-/* Список заявок: карточки на тональной поверхности вместо линованной таблицы */
-.ticket-table { background: transparent; border: none; border-radius: 0; overflow: visible; }
+/* Список заявок: карточки на тональной поверхности вместо линованной таблицы.
+   Колонки фиксированной ширины, поэтому при узком окне сетка не помещается.
+   Раньше строка оставалась шириной с окно, а содержимое вылезало за её фон —
+   текст висел на пустом месте. Теперь строка растёт до ширины содержимого
+   (max-content), а прокручивается вся таблица целиком. */
+.ticket-table { background: transparent; border: none; border-radius: 0; overflow-x: auto; }
+.ticket-row-head, .ticket-row { width: max-content; min-width: 100%; }
 .ticket-row-head, .ticket-row {
   display: grid; grid-template-columns: 96px 1fr 130px 130px 150px 140px 24px;
   column-gap: 18px; align-items: center; font-size: 13.5px;

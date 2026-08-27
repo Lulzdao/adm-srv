@@ -74,6 +74,94 @@ function emblemFallback(size) {
   </svg>`;
 }
 
+// ====== Выпадающий список ======
+//
+// Системный <select> оформить нельзя: стрелку рисует браузер, она прижата к
+// краю, а раскрытый перечень берёт вид от системы и в палитру не попадает.
+// Поэтому настоящий select остаётся в разметке (скрытый), и весь код, который
+// читает и пишет .value, продолжает работать как раньше, — а видимую часть
+// рисуем сами и держим в согласии с ним в обе стороны.
+//
+// Навешивается автоматически на каждый появившийся select (см. observeSelects
+// в boot), чтобы про это не нужно было помнить в каждом экране.
+function enhanceSelect(sel) {
+  if (sel.dataset.enhanced) return;
+  sel.dataset.enhanced = "1";
+
+  const wrap = document.createElement("div");
+  wrap.className = "select-wrap";
+  // Поле в форме и фильтр выглядят по-разному: у фильтра «таблетка» под стать
+  // переключателю рядом, у поля — прямоугольник под стать соседним полям.
+  if (sel.closest(".card") || sel.classList.contains("field-select")) wrap.classList.add("select-field");
+  if (sel.style.width) wrap.style.width = sel.style.width;
+  else if (sel.classList.contains("select-field")) wrap.style.width = "100%";
+  sel.parentNode.insertBefore(wrap, sel);
+  wrap.appendChild(sel);
+
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "select-btn";
+  btn.innerHTML = `<span class="select-value"></span><span class="select-chevron">${icon("chevron", 15)}</span>`;
+  wrap.appendChild(btn);
+
+  const menu = document.createElement("div");
+  menu.className = "select-menu";
+  menu.hidden = true;
+  wrap.appendChild(menu);
+
+  const label = btn.querySelector(".select-value");
+  const syncLabel = () => {
+    const opt = sel.options[sel.selectedIndex];
+    label.textContent = opt ? opt.textContent : "";
+  };
+  const close = () => { wrap.classList.remove("open"); menu.hidden = true; };
+  const open = () => {
+    // Перечень строим при открытии: у списка исполнителей варианты
+    // подгружаются позже, и построенный заранее оказался бы пустым.
+    menu.innerHTML = "";
+    [...sel.options].forEach((opt, i) => {
+      const row = document.createElement("div");
+      row.className = "select-option" + (i === sel.selectedIndex ? " selected" : "");
+      row.textContent = opt.textContent;
+      row.onclick = () => {
+        sel.selectedIndex = i;
+        syncLabel();
+        close();
+        // Событие обязательно: обработчики висят на самом select (onchange).
+        sel.dispatchEvent(new Event("change", { bubbles: true }));
+      };
+      menu.appendChild(row);
+    });
+    wrap.classList.add("open");
+    menu.hidden = false;
+    const sel_ = menu.querySelector(".selected");
+    if (sel_) sel_.scrollIntoView({ block: "nearest" });
+  };
+
+  btn.onclick = (e) => { e.stopPropagation(); menu.hidden ? open() : close(); };
+  btn.onkeydown = (e) => {
+    if (e.key === "Escape") close();
+    else if (e.key === "ArrowDown" && menu.hidden) { e.preventDefault(); open(); }
+  };
+  // Значение могли поменять из кода (например, сбросом фильтров) — подпись
+  // должна следовать за ним, иначе покажет уже не то, что выбрано.
+  sel.addEventListener("change", syncLabel);
+  document.addEventListener("click", (e) => { if (!wrap.contains(e.target)) close(); });
+  syncLabel();
+}
+
+function enhanceSelects(root) {
+  (root || document).querySelectorAll("select:not([data-enhanced])").forEach(enhanceSelect);
+}
+
+// Экраны перерисовываются целиком, и вызывать enhanceSelects из каждого
+// значило бы однажды забыть. Наблюдатель делает это сам.
+function observeSelects() {
+  enhanceSelects(document);
+  new MutationObserver(() => enhanceSelects(document))
+    .observe(document.body, { childList: true, subtree: true });
+}
+
 // ====== Константы ======
 // Подпись системы. Здесь же, чтобы поменять её в одном месте, а не искать по
 // разметке; заголовок вкладки задан отдельно в index.html. «Служба заявок» уже
@@ -160,6 +248,7 @@ function toast(msg, isError) {
 const root = document.getElementById("root");
 
 async function boot() {
+  observeSelects();
   try {
     const { user } = await api("/auth/me");
     state.user = user;
@@ -354,7 +443,6 @@ function renderShell() {
       { id: "create", label: "Новая заявка", icon: "plus" },
       { id: "dashboard", label: "Статистика", icon: "chart" },
       { id: "admin", label: "Администрирование", icon: "sliders" },
-      { id: "certs", label: "Сертификаты", icon: "shield" },
     ];
     navHtml = navGroupHtml("tickets", "Заявки", "folder", totalUnread, subItems);
   } else if (isExecutor) {
@@ -392,6 +480,8 @@ function renderShell() {
             <div class="brand-name">${APP_NAME}</div>
             <div class="brand-org">${APP_ORG}</div>
           </div>
+          ${isIT ? `<button class="head-action${state.view === "certs" ? " active" : ""}" id="certsBtn"
+            title="Сертификаты">${icon("shield", 18)}</button>` : ""}
         </div>
         <div class="sidebar-nav">${navHtml}</div>
         <div class="sidebar-foot">
@@ -408,6 +498,9 @@ function renderShell() {
       </div>
       <div class="main" id="mainArea"></div>
     </div>`;
+
+  const certsBtn = document.getElementById("certsBtn");
+  if (certsBtn) certsBtn.onclick = () => setView("certs");
 
   root.querySelectorAll(".nav-btn").forEach(btn => btn.onclick = () => setView(btn.dataset.view));
   root.querySelectorAll(".nav-group-header").forEach(btn => btn.onclick = () => {
@@ -473,9 +566,11 @@ async function renderList(main, opts = {}) {
 
   // Тема занимает всё свободное место (1fr), а не упирается в 260px:
   // на широком экране заголовок заявки иначе обрезался посреди слова.
+  // Последней колонки со стрелкой больше нет: строка и так кликается целиком,
+  // а стрелка только занимала место и намекала на несуществующее действие.
   const gridCols = isPrivileged
-    ? "92px minmax(220px,1fr) 150px 80px 130px 150px 140px 24px"
-    : "92px minmax(220px,1fr) 130px 150px 140px 24px";
+    ? "92px minmax(220px,1fr) 150px 80px 130px 150px 140px"
+    : "92px minmax(220px,1fr) 130px 150px 140px";
 
   main.innerHTML = `
     <div class="topbar">
@@ -501,7 +596,7 @@ async function renderList(main, opts = {}) {
         <div class="ticket-row-head" style="grid-template-columns:${gridCols};">
           <div>Номер</div><div>Тема</div>
           ${isPrivileged ? `<div>От кого</div><div>Кабинет</div>` : ""}
-          <div>Статус</div><div>Исполнитель</div><div>Обновлено</div><div></div>
+          <div>Статус</div><div>Исполнитель</div><div>Обновлено</div>
         </div>
         <div id="ticketRows"><div class="spinner">Загрузка заявок…</div></div>
       </div>
@@ -546,7 +641,6 @@ async function renderList(main, opts = {}) {
           <div><span class="badge" style="color:${sc};background:${ss};">${sLabel}</span></div>
           <div class="cell-wrap" style="color:var(--ink-soft);font-size:13px;">${esc(t.assigned_to || "—")}</div>
           <div class="cell-ellipsis" style="color:var(--ink-soft);font-size:12px;">${fmtDate(t.updated_at)}</div>
-          <div class="row-arrow">${icon("chevron", 15)}</div>
         </div>`;
       }).join("");
       rowsEl.querySelectorAll(".ticket-row").forEach(row => {
