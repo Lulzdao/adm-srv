@@ -248,6 +248,36 @@
   #userMenu .menu-sep { height:1px; background:var(--md-outline-variant); margin:5px 8px; }
   #userMenu .menu-state { font-size:11.5px; color:var(--md-on-surface-variant); }
 
+  /* --- Выпадающий список (см. одноимённый скрипт) --- */
+  .select-wrap { position: relative; display: inline-block; vertical-align: middle; }
+  .select-wrap > select { position: absolute; opacity: 0; pointer-events: none; width: 0; height: 0; padding: 0; border: 0; }
+  .select-btn {
+    display: inline-flex; align-items: center; gap: 10px; width: 100%;
+    padding: 11px 14px 11px 16px; font-size: 13.5px; font-family: inherit; text-align: left;
+    border: 1px solid var(--md-outline); border-radius: var(--md-shape-xs);
+    background: var(--md-surface-container-lowest); color: var(--md-on-surface); cursor: pointer;
+    transition: border-color .12s ease, background .13s ease;
+  }
+  .select-btn:hover { background: var(--md-surface-container-low); }
+  .select-wrap.open .select-btn { border-color: var(--md-primary); }
+  .select-btn .select-value { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .select-btn .select-chevron {
+    display: inline-flex; flex-shrink: 0; color: var(--md-on-surface-variant);
+    transform: rotate(90deg); transition: transform .18s ease;
+  }
+  .select-wrap.open .select-btn .select-chevron { transform: rotate(-90deg); }
+  .select-menu {
+    position: absolute; z-index: 40; top: calc(100% + 6px); left: 0; min-width: 100%;
+    padding: 6px; border-radius: var(--md-shape-m); background: var(--md-surface-container-lowest);
+    box-shadow: var(--md-elev-1), 0 6px 18px rgba(31,27,22,.16); max-height: 300px; overflow-y: auto;
+  }
+  .select-option {
+    padding: 10px 14px; border-radius: var(--md-shape-xs); font-size: 13.5px; cursor: pointer;
+    white-space: nowrap; transition: background .1s ease;
+  }
+  .select-option:hover { background: var(--md-state-hover); }
+  .select-option.selected { background: var(--md-primary-container); color: var(--md-on-primary-container); font-weight: 600; }
+
   /* Filled / tonal / text buttons M3 */
   button.action {
     background:var(--md-primary); border:none; color:var(--md-on-primary); border-radius:var(--md-shape-full);
@@ -598,6 +628,75 @@
 </div>
 
 <script>
+/* --- Выпадающий список ---
+   Системный <select> оформить нельзя: стрелку рисует браузер, она прижата к
+   краю, а раскрытый перечень берёт вид от системы и в палитру не попадает.
+   Настоящий select остаётся в разметке скрытым — весь код, который читает и
+   пишет .value, работает как раньше, — а видимую часть рисуем сами.
+   Тот же приём, что и в панели платформы; общей сборки у сервисов нет,
+   поэтому код продублирован сознательно. */
+(function () {
+  var CHEVRON = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"'
+    + ' stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>';
+
+  function enhance(sel) {
+    if (sel.dataset.enhanced) return;
+    sel.dataset.enhanced = '1';
+    var wrap = document.createElement('div');
+    wrap.className = 'select-wrap';
+    if (sel.style.width) wrap.style.width = sel.style.width;
+    sel.parentNode.insertBefore(wrap, sel);
+    wrap.appendChild(sel);
+
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'select-btn';
+    btn.innerHTML = '<span class="select-value"></span><span class="select-chevron">' + CHEVRON + '</span>';
+    wrap.appendChild(btn);
+
+    var menu = document.createElement('div');
+    menu.className = 'select-menu';
+    menu.hidden = true;
+    wrap.appendChild(menu);
+
+    var label = btn.querySelector('.select-value');
+    function syncLabel() {
+      var opt = sel.options[sel.selectedIndex];
+      label.textContent = opt ? opt.textContent : '';
+    }
+    function close() { wrap.classList.remove('open'); menu.hidden = true; }
+    function open() {
+      menu.innerHTML = '';
+      Array.prototype.forEach.call(sel.options, function (opt, i) {
+        var row = document.createElement('div');
+        row.className = 'select-option' + (i === sel.selectedIndex ? ' selected' : '');
+        row.textContent = opt.textContent;
+        row.onclick = function () {
+          sel.selectedIndex = i;
+          syncLabel();
+          close();
+          sel.dispatchEvent(new Event('change', { bubbles: true }));
+        };
+        menu.appendChild(row);
+      });
+      wrap.classList.add('open');
+      menu.hidden = false;
+    }
+    btn.onclick = function (e) { e.stopPropagation(); menu.hidden ? open() : close(); };
+    sel.addEventListener('change', syncLabel);
+    document.addEventListener('click', function (e) { if (!wrap.contains(e.target)) close(); });
+    syncLabel();
+  }
+
+  function enhanceAll() {
+    document.querySelectorAll('select:not([data-enhanced])').forEach(enhance);
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', enhanceAll);
+  else enhanceAll();
+  // Экраны перерисовываются, поэтому следим за появлением новых select.
+  new MutationObserver(enhanceAll).observe(document.documentElement, { childList: true, subtree: true });
+})();
+
 let token = localStorage.getItem('admin_token');
 let me = JSON.parse(localStorage.getItem('admin_me') || 'null');
 let usersCache = [], deptsCache = [];

@@ -231,3 +231,33 @@ th.sortable.sort-desc::after { content: ' ▼'; font-size: 10px; color: var(--md
 .page-btn:hover { filter: brightness(0.96); }
 .page-btn.disabled { background: var(--md-surface-container-high); color: rgba(31,27,22,0.38); cursor: not-allowed; filter: none; }
 .page-info { color: var(--md-on-surface-variant); }
+
+/* --- Выпадающий список (см. одноимённый скрипт) --- */
+.select-wrap { position: relative; display: inline-block; vertical-align: middle; }
+.select-wrap > select { position: absolute; opacity: 0; pointer-events: none; width: 0; height: 0; padding: 0; border: 0; }
+.select-btn {
+  display: inline-flex; align-items: center; gap: 10px; width: 100%;
+  padding: 11px 14px 11px 16px; font-size: 13.5px; font-family: inherit; text-align: left;
+  border: 1px solid var(--md-outline); border-radius: var(--md-shape-xs);
+  background: var(--md-surface-container-lowest); color: var(--md-on-surface); cursor: pointer;
+  transition: border-color .12s ease, background .13s ease;
+}
+.select-btn:hover { background: var(--md-surface-container-low); }
+.select-wrap.open .select-btn { border-color: var(--md-primary); }
+.select-btn .select-value { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.select-btn .select-chevron {
+  display: inline-flex; flex-shrink: 0; color: var(--md-on-surface-variant);
+  transform: rotate(90deg); transition: transform .18s ease;
+}
+.select-wrap.open .select-btn .select-chevron { transform: rotate(-90deg); }
+.select-menu {
+  position: absolute; z-index: 40; top: calc(100% + 6px); left: 0; min-width: 100%;
+  padding: 6px; border-radius: var(--md-shape-m); background: var(--md-surface-container-lowest);
+  box-shadow: var(--md-elev-1), 0 6px 18px rgba(31,27,22,.16); max-height: 300px; overflow-y: auto;
+}
+.select-option {
+  padding: 10px 14px; border-radius: var(--md-shape-xs); font-size: 13.5px; cursor: pointer;
+  white-space: nowrap; transition: background .1s ease;
+}
+.select-option:hover { background: var(--md-state-hover); }
+.select-option.selected { background: var(--md-primary-container); color: var(--md-on-primary-container); font-weight: 600; }
