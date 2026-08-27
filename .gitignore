@@ -3,6 +3,15 @@ node_modules/
 # Секреты — только .env.example коммитится в репозиторий
 .env
 
+# Сертификаты серверов: внутри закрытый ключ. В репозиторий им нельзя ни при
+# каких обстоятельствах. certs/ — хранилище, которым управляет панель «Искры».
+certs/
+*.pfx
+*.p12
+*.key
+*.pem
+!MESSENGER/desktop-client/rosstat-root-ca.crt
+
 # Рантайм-данные (базы SQLite, логи, загруженные файлы) — не часть исходников
 *.db
 *.db-shm
@@ -12,3 +21,10 @@ helpdesk-backend/uploads/*
 !helpdesk-backend/uploads/.gitkeep
 helpdesk-backend/data/*
 !helpdesk-backend/data/.gitkeep
+
+# MESSENGER — стартовый админ с паролем открытым текстом, сборки клиента, файловые логи сервера
+MESSENGER/bootstrap-admin.js
+MESSENGER/desktop-client/dist/
+MESSENGER/logs/
+# Готовые установщики клиента, которые сервер раздаёт на автообновление
+MESSENGER/updates/

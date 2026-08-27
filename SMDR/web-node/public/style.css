@@ -1,36 +1,109 @@
+/* Material You (Material 3) — единая тема с платформой и остальными модулями.
+   Модуль открывается в iframe внутри платформы, поэтому палитра, скругления и
+   типографика совпадают с helpdesk-backend/public/styles.css.
+
+   Цвета в hex, а не в oklch: журнал открывают с рабочих машин, где браузер
+   может быть старше Chrome 111. Веб-шрифты не подключаются — сеть изолирована,
+   до fonts.googleapis.com запрос не уйдёт. */
+
 * { box-sizing: border-box; }
 
 :root {
-  --bg: #ffffff;
-  --text: #1c2733;
-  --muted: #5b6b7d;
-  --accent: #c39a5b;
-  --accent-dark: #a97f45;
-  --panel-bg: #fff;
-  --panel-border: #dde3ea;
-  --th-bg: #f1f4f8;
-  --row-border: #e6eaf0;
-  --row-hover: #f7f9fc;
-  --input-border: #cfd8e2;
-  --shadow: rgba(20,40,63,0.08);
+  --md-primary: #7D5700;
+  --md-on-primary: #FFFFFF;
+  --md-primary-container: #FFDEA6;
+  --md-on-primary-container: #281900;
+  --md-secondary-container: #F0E0C8;
+  --md-on-secondary-container: #251A04;
+
+  --md-surface: #FFF8F3;
+  --md-surface-container-lowest: #FFFFFF;
+  --md-surface-container-low: #FBF1E9;
+  --md-surface-container: #F5ECE3;
+  --md-surface-container-high: #F0E6DE;
+  --md-surface-container-highest: #EAE1D9;
+  --md-on-surface: #1F1B16;
+  --md-on-surface-variant: #4F453A;
+  --md-outline: #817567;
+  --md-outline-variant: #D8CCBE;
+
+  --md-error: #8C1D18;
+  --md-error-container: #FFDAD6;
+  --md-on-error-container: #410002;
+  --md-info-container: #DCE3F9;
+  --md-on-info-container: #101C33;
+  --md-success-container: #CDEBD5;
+  --md-on-success-container: #08210F;
+  --md-tertiary-container: #EADDFF;
+  --md-on-tertiary-container: #21005D;
+  --md-neutral-container: #EFE5DB;
+  --md-on-neutral-container: #302A24;
+
+  --md-state-hover: rgba(31, 27, 22, 0.06);
+  --md-shape-xs: 8px;
+  --md-shape-s: 12px;
+  --md-shape-m: 16px;
+  --md-shape-l: 20px;
+  --md-shape-full: 100px;
+  --md-elev-1: 0 1px 2px rgba(31, 27, 22, 0.10);
+
+  --sans: Roboto, "Segoe UI", system-ui, -apple-system, Arial, sans-serif;
+
+  /* Имена, на которые ссылаются шаблоны .ejs */
+  --bg: var(--md-surface);
+  --text: var(--md-on-surface);
+  --muted: var(--md-on-surface-variant);
+  --accent: var(--md-primary);
+  --accent-dark: var(--md-on-primary-container);
+  --panel-bg: var(--md-surface-container-lowest);
+  --panel-border: var(--md-outline-variant);
+  --th-bg: var(--md-surface-container);
+  --row-border: var(--md-surface-container-high);
+  --row-hover: var(--md-surface-container-low);
+  --input-border: var(--md-outline);
+  --shadow: rgba(31, 27, 22, 0.10);
 }
+
+/* --- Полоса прокрутки ---
+   Штатная светло-серая полоса Chromium выбивалась из тёплой палитры. Стилизуем
+   через ::-webkit-scrollbar: эти псевдоэлементы понимают все Chromium, включая
+   109-й на рабочих машинах. Стандартные scrollbar-width/scrollbar-color
+   появились только в Chrome 121 — они ниже и лишь повторяют тот же вид в новых
+   браузерах и в Firefox. Прозрачная рамка с background-clip даёт отступ от
+   края, чтобы полоса не липла к содержимому. */
+::-webkit-scrollbar { width: 12px; height: 12px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--md-outline-variant);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  border-radius: var(--md-shape-full);
+}
+::-webkit-scrollbar-thumb:hover { background: var(--md-outline); background-clip: padding-box; }
+::-webkit-scrollbar-corner { background: transparent; }
+/* scrollbar-width/-color наследуются, поэтому достаточно корня. */
+html { scrollbar-width: thin; scrollbar-color: var(--md-outline-variant) transparent; }
 
 html { height: 100%; }
 body {
-  font-family: 'Segoe UI', Arial, sans-serif;
-  background: var(--bg);
-  color: var(--text);
+  font-family: var(--sans);
+  /* Белый — как контентная область платформы: модуль встроен в неё через
+     iframe, и любой другой тон читался бы как чужая вставка. Тональные
+     поверхности из палитры остаются на таблице и карточках. */
+  background: var(--md-surface-container-lowest);
+  color: var(--md-on-surface);
   margin: 0;
   padding: 24px;
   font-size: 16px;
+  -webkit-font-smoothing: antialiased;
 }
-.container { max-width: 1300px; margin: 0 auto; }
+.container { max-width: 1400px; margin: 0 auto; }
 
 /* Страница журнала (dashboard.ejs) — верх (фильтры + пагинация) закреплён,
    скроллится только сама таблица. Остальные страницы модуля скроллятся
    как обычно, им эта разметка не нужна. */
 body.dashboard-page {
-  height: 100%; overflow: hidden; padding: 16px 24px;
+  height: 100%; overflow: hidden; padding: 18px 24px;
   display: flex; flex-direction: column;
 }
 body.dashboard-page .container {
@@ -41,127 +114,150 @@ body.dashboard-page .filters,
 body.dashboard-page .pagination { flex-shrink: 0; }
 body.dashboard-page .table-wrap {
   flex: 1; min-height: 0; overflow-x: hidden; overflow-y: scroll;
-  scrollbar-gutter: stable; border: 1px solid var(--panel-border); border-radius: 10px;
+  scrollbar-gutter: stable; border: none; border-radius: var(--md-shape-l);
+  background: var(--md-surface-container-low);
 }
 body.dashboard-page .table-wrap table { border-radius: 0; padding-right: 6px; }
 body.dashboard-page .table-wrap th:last-child,
-body.dashboard-page .table-wrap td:last-child { padding-right: 20px; }
+body.dashboard-page .table-wrap td:last-child { padding-right: 22px; }
 body.dashboard-page th { position: sticky; top: 0; z-index: 2; }
 
 .refresh-status {
-  font-size: 13px; color: var(--muted);
-  display: flex; align-items: center; gap: 12px; align-self: center;
+  font-size: 13px; color: var(--md-on-surface-variant);
+  display: flex; align-items: center; gap: 14px; align-self: center;
 }
-.refresh-status label { display: flex; align-items: center; gap: 5px; cursor: pointer; }
+.refresh-status label { display: flex; align-items: center; gap: 7px; cursor: pointer; }
 
-h1 { font-size: 21px; }
+h1 { font-size: 24px; font-weight: 600; letter-spacing: 0; }
 
-.login-page { display: flex; align-items: center; justify-content: center; height: 100vh; }
-.login-box {
-  background: var(--panel-bg); padding: 34px; border-radius: 14px;
-  border: 1px solid var(--panel-border); box-shadow: 0 4px 16px var(--shadow);
-  display: flex; flex-direction: column; gap: 14px; width: 300px;
-}
-.login-box h2 { color: var(--text); margin: 0 0 4px; }
-.login-box input {
-  padding: 8px 12px; font-size: 13.5px;
-  border: 1px solid var(--input-border); border-radius: 8px;
-  background: var(--panel-bg); color: var(--text);
-}
-.login-box input:focus { outline: none; border-color: var(--accent); }
-.login-box button {
-  padding: 8px 16px; font-size: 13px; font-weight: 600; cursor: pointer;
-  border: 1px solid var(--accent-dark); background: var(--panel-bg); color: var(--accent-dark); border-radius: 8px;
-  transition: background 0.15s, color 0.15s;
-}
-.login-box button:hover { background: var(--accent-dark); color: #fff; }
-.error { color: #a83a3a; font-size: 13px; }
+.error { color: var(--md-error); font-size: 13px; }
 
-.cards { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
+/* Карточки-сводки */
+.cards { display: flex; gap: 14px; margin-bottom: 22px; flex-wrap: wrap; }
 .card {
-  background: var(--panel-bg); border: 1px solid var(--panel-border); border-radius: 12px; padding: 14px 20px;
-  min-width: 130px;
+  background: var(--md-surface-container); border: none; border-radius: var(--md-shape-l);
+  padding: 18px 24px; min-width: 140px;
 }
-.card .num { font-size: 26px; font-weight: 700; }
-.card .label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
-.card.out .num { color: #2563eb; } .card.in .num { color: #16a34a; } .card.internal .num { color: #9333ea; }
+.card .num { font-size: 30px; font-weight: 600; letter-spacing: -0.5px; }
+.card .label { font-size: 11.5px; color: var(--md-on-surface-variant); text-transform: uppercase; letter-spacing: .5px; font-weight: 500; }
+.card.out .num { color: #1E4B8F; }
+.card.in .num { color: #1F6B37; }
+.card.internal .num { color: #5B3BA8; }
 
+/* Фильтры */
 .filters {
-  padding: 4px 0 16px;
+  padding: 6px 0 18px;
   display: flex; gap: 14px; flex-wrap: wrap; align-items: end;
 }
-.filters label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 8px; }
+.filters label { display: block; font-size: 12.5px; font-weight: 500; color: var(--md-on-surface-variant); margin-bottom: 8px; }
 .filters input, .filters select {
-  padding: 8px 12px; border: 1px solid var(--input-border); border-radius: 8px;
-  background: var(--panel-bg); color: var(--text); font-size: 13.5px;
+  padding: 11px 14px; border: 1px solid var(--md-outline); border-radius: var(--md-shape-xs);
+  background: var(--md-surface-container-lowest); color: var(--md-on-surface); font-size: 13.5px;
+  font-family: inherit; transition: border-color .12s ease, box-shadow .12s ease;
 }
-.filters input:focus, .filters select:focus { outline: none; border-color: var(--accent); }
+.filters input:focus, .filters select:focus {
+  outline: none; border-color: var(--md-primary); box-shadow: inset 0 0 0 1px var(--md-primary);
+}
 .filters input[type="date"],
-.filters input[type="time"] {
-  color-scheme: light;
-}
+.filters input[type="time"] { color-scheme: light; }
+/* Filled button M3 */
 .filters button {
-  padding: 8px 16px; font-size: 13px; font-weight: 600; cursor: pointer;
-  border: 1px solid var(--accent-dark); background: var(--panel-bg); color: var(--accent-dark); border-radius: 8px;
-  transition: background 0.15s, color 0.15s;
+  padding: 12px 22px; font-size: 13.5px; font-weight: 600; letter-spacing: .1px; cursor: pointer;
+  border: none; background: var(--md-primary); color: var(--md-on-primary); border-radius: var(--md-shape-full);
+  transition: box-shadow .15s, filter .15s;
 }
-.filters button:hover { background: var(--accent-dark); color: #fff; }
+.filters button:hover { box-shadow: var(--md-elev-1); filter: brightness(1.06); }
+/* Text button M3 */
 .btn-reset {
-  display: inline-flex; align-items: center; padding: 8px 16px;
-  background: transparent; color: var(--muted); border: 1px solid var(--input-border); border-radius: 8px;
-  cursor: pointer; font-size: 13px; text-decoration: none; transition: all .15s;
+  display: inline-flex; align-items: center; padding: 12px 20px;
+  background: transparent; color: var(--md-on-surface-variant); border: none; border-radius: var(--md-shape-full);
+  cursor: pointer; font-size: 13.5px; font-weight: 600; text-decoration: none; transition: background .13s ease, color .13s ease;
 }
-.btn-reset:hover { border-color: var(--accent-dark); color: var(--accent-dark); }
+.btn-reset:hover { background: var(--md-state-hover); color: var(--md-on-surface); }
 
 table {
-  width: 100%; border-collapse: collapse; background: var(--panel-bg); font-size: 14px;
+  width: 100%; border-collapse: collapse; background: transparent; font-size: 14px;
 }
 th {
-  background: var(--th-bg); text-align: left; padding: 11px 14px;
-  font-size: 12.5px; color: var(--muted); text-transform: uppercase;
-  letter-spacing: .4px; border-bottom: 1px solid var(--row-border); font-weight: 600;
+  background: var(--md-surface-container-high); text-align: left; padding: 13px 16px;
+  font-size: 11.5px; color: var(--md-on-surface-variant); text-transform: uppercase;
+  letter-spacing: .5px; border-bottom: 1px solid var(--md-outline-variant); font-weight: 600;
 }
-td { padding: 11px 14px; border-bottom: 1px solid var(--row-border); }
-tr:hover td { background: var(--row-hover); }
+td { padding: 13px 16px; border-bottom: 1px solid var(--md-surface-container-high); }
+tr:hover td { background: var(--md-surface-container); }
+tbody tr:last-child td { border-bottom: none; }
 
-.badge { display: inline-block; padding: 3px 11px; border-radius: 999px; font-size: 12px; font-weight: 600; }
-.badge.outgoing { background: #dbeafe; color: #1e40af; }
-.badge.incoming { background: #dcfce7; color: #166534; }
-.badge.internal { background: #f3e8ff; color: #6b21a8; }
-.badge.missed { background: #fee2e2; color: #991b1b; }
-.badge.unknown { background: #f3f4f6; color: #6b7280; }
-.muted { color: var(--muted); }
+/* Chip M3 — тональные пары под направление звонка */
+.badge { display: inline-block; padding: 5px 12px; border-radius: var(--md-shape-xs); font-size: 12px; font-weight: 500; }
+.badge.outgoing { background: var(--md-info-container); color: var(--md-on-info-container); }
+.badge.incoming { background: var(--md-success-container); color: var(--md-on-success-container); }
+.badge.internal { background: var(--md-tertiary-container); color: var(--md-on-tertiary-container); }
+.badge.missed { background: var(--md-error-container); color: var(--md-on-error-container); }
+.badge.unknown { background: var(--md-neutral-container); color: var(--md-on-neutral-container); }
+.muted { color: var(--md-on-surface-variant); }
 
-.dir-table { border: 1px solid var(--panel-border); }
+/* Справочник */
+.dir-table { border: none; border-radius: var(--md-shape-l); overflow: hidden; background: var(--md-surface-container-low); }
 .dir-table input[type="text"] {
-  padding: 8px 12px; border: 1px solid var(--input-border); border-radius: 8px;
-  background: var(--panel-bg); color: var(--text); font-size: 13.5px;
-  width: 100%; max-width: 280px; transition: border-color .15s;
+  padding: 11px 14px; border: 1px solid var(--md-outline); border-radius: var(--md-shape-xs);
+  background: var(--md-surface-container-lowest); color: var(--md-on-surface); font-size: 13.5px;
+  font-family: inherit; width: 100%; max-width: 300px; transition: border-color .12s ease, box-shadow .12s ease;
 }
-.dir-table input[type="text"]:focus { border-color: var(--accent); outline: none; }
+.dir-table input[type="text"]:focus { border-color: var(--md-primary); box-shadow: inset 0 0 0 1px var(--md-primary); outline: none; }
 .dir-table button {
-  padding: 8px 16px; font-size: 13px; font-weight: 600; cursor: pointer;
-  border: 1px solid var(--accent-dark); background: var(--panel-bg); color: var(--accent-dark); border-radius: 8px;
-  transition: background 0.15s, color 0.15s;
+  padding: 11px 20px; font-size: 13.5px; font-weight: 600; cursor: pointer;
+  border: none; background: var(--md-secondary-container); color: var(--md-on-secondary-container);
+  border-radius: var(--md-shape-full); transition: filter .15s;
 }
-.dir-table button:hover { background: var(--accent-dark); color: #fff; }
+.dir-table button:hover { filter: brightness(0.96); }
 .ext-cell { font-weight: 600; }
 
 th.sortable { cursor: pointer; user-select: none; position: relative; white-space: nowrap; }
-th.sortable:hover { color: var(--text); }
-th.sortable.sort-asc::after { content: ' ▲'; font-size: 10px; color: var(--accent-dark); }
-th.sortable.sort-desc::after { content: ' ▼'; font-size: 10px; color: var(--accent-dark); }
+th.sortable:hover { color: var(--md-on-surface); }
+th.sortable.sort-asc::after { content: ' ▲'; font-size: 10px; color: var(--md-primary); }
+th.sortable.sort-desc::after { content: ' ▼'; font-size: 10px; color: var(--md-primary); }
 
 .pagination {
   display: flex; align-items: center; gap: 16px;
-  padding: 4px 0 14px; font-size: 13px;
+  padding: 6px 0 16px; font-size: 13px;
 }
 .pagination-controls { display: flex; align-items: center; gap: 16px; margin: 0 auto; }
+/* Tonal button M3 */
 .page-btn {
-  padding: 7px 16px; font-size: 13px; font-weight: 600;
-  border: 1px solid var(--accent-dark); background: var(--panel-bg); color: var(--accent-dark); border-radius: 8px;
-  text-decoration: none; transition: background .15s, color .15s;
+  padding: 10px 20px; font-size: 13.5px; font-weight: 600;
+  border: none; background: var(--md-secondary-container); color: var(--md-on-secondary-container);
+  border-radius: var(--md-shape-full); text-decoration: none; transition: filter .15s;
 }
-.page-btn:hover { background: var(--accent-dark); color: #fff; }
-.page-btn.disabled { border-color: var(--row-border); background: var(--panel-bg); color: var(--muted); cursor: not-allowed; }
-.page-info { color: var(--muted); }
+.page-btn:hover { filter: brightness(0.96); }
+.page-btn.disabled { background: var(--md-surface-container-high); color: rgba(31,27,22,0.38); cursor: not-allowed; filter: none; }
+.page-info { color: var(--md-on-surface-variant); }
+
+/* --- Выпадающий список (см. одноимённый скрипт) --- */
+.select-wrap { position: relative; display: inline-block; vertical-align: middle; }
+.select-wrap > select { position: absolute; opacity: 0; pointer-events: none; width: 0; height: 0; padding: 0; border: 0; }
+.select-btn {
+  display: inline-flex; align-items: center; gap: 10px; width: 100%;
+  padding: 11px 14px 11px 16px; font-size: 13.5px; font-family: inherit; text-align: left;
+  border: 1px solid var(--md-outline); border-radius: var(--md-shape-xs);
+  background: var(--md-surface-container-lowest); color: var(--md-on-surface); cursor: pointer;
+  transition: border-color .12s ease, background .13s ease;
+}
+.select-btn:hover { background: var(--md-surface-container-low); }
+.select-wrap.open .select-btn { border-color: var(--md-primary); }
+.select-btn .select-value { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.select-btn .select-chevron {
+  display: inline-flex; flex-shrink: 0; color: var(--md-on-surface-variant);
+  transform: rotate(90deg); transition: transform .18s ease;
+}
+.select-wrap.open .select-btn .select-chevron { transform: rotate(-90deg); }
+.select-menu {
+  position: absolute; z-index: 40; top: calc(100% + 6px); left: 0; min-width: 100%;
+  padding: 6px; border-radius: var(--md-shape-m); background: var(--md-surface-container-lowest);
+  box-shadow: var(--md-elev-1), 0 6px 18px rgba(31,27,22,.16); max-height: 300px; overflow-y: auto;
+}
+.select-option {
+  padding: 10px 14px; border-radius: var(--md-shape-xs); font-size: 13.5px; cursor: pointer;
+  white-space: nowrap; transition: background .1s ease;
+}
+.select-option:hover { background: var(--md-state-hover); }
+.select-option.selected { background: var(--md-primary-container); color: var(--md-on-primary-container); font-weight: 600; }

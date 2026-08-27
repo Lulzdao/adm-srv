@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<title>Реестр машиночитаемых доверенностей</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+<main>
+  <div class="toolbar-row">
+    <div class="search-wrap-cv">
+      <input id="searchInput" type="search" placeholder="Поиск по ФИО или номеру доверенности..." autocomplete="off" />
+      <span id="resultCount"></span>
+    </div>
+    <div class="add-cert-wrap">
+      <span class="dnd-hint">или перетащите архив на страницу</span>
+      <input type="file" id="fileInput" multiple accept=".zip" />
+      <button type="button" class="add-cert-btn" id="addBtn">+ Загрузить архив из ЕИС</button>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th class="sortable" data-key="full_name">ФИО представителя</th>
+          <th class="sortable" data-key="reg_number">Номер доверенности</th>
+          <th class="sortable" data-key="valid_from">Действует с</th>
+          <th class="sortable" data-key="valid_to">Действует до</th>
+          <th class="sortable" data-key="days">Осталось дней</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="tableBody"></tbody>
+    </table>
+  </div>
+</main>
+
+<div id="status"></div>
+<div id="dropOverlay">Отпустите архив — разберём и добавим</div>
+
+<script>
+// ============================================================================
+//  Реестр машиночитаемых доверенностей.
+//
+//  Устроен как реестр сертификатов на соседней странице и намеренно повторяет
+//  его повадки: та же таблица с сортировкой, тот же поиск, то же перетаскивание
+//  файла на страницу. Разница в том, ЧТО загружают: сюда — архив .zip, как его
+//  скачали из ЕИС, целиком, без распаковки руками.
+//
+//  Показываем только ФИО, номер и срок. Паспорт, СНИЛС, ИНН и данные
+//  организации в архиве есть, но на сервере не сохраняются вовсе — см.
+//  комментарий в mchd.js.
+// ============================================================================
+
+let rows = [];
+let sortKey = 'valid_to';   // по сроку: ближайшие к истечению сверху — ради этого список и нужен
+let sortAsc = true;
+
+const el = (id) => document.getElementById(id);
+
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function fmtDate(iso) {
+  if (!iso) return '—';
+  const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[3]}.${m[2]}.${m[1]}` : iso;
+}
+
+// Дни до конца срока. Считаем по календарным датам, без часов: доверенность
+// действует весь последний день, и «осталось 0» должно означать «истекает
+// сегодня», а не «уже вчера».
+function daysLeft(iso) {
+  if (!iso) return null;
+  const d = new Date(iso + 'T00:00:00');
+  if (isNaN(d)) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return Math.round((d - today) / 86400000);
+}
+
+function status(text, kind) {
+  const s = el('status');
+  s.textContent = text;
+  s.className = kind || '';
+  if (text) setTimeout(() => { if (s.textContent === text) { s.textContent = ''; s.className = ''; } }, 6000);
+}
+
+async function load() {
+  try {
+    const r = await fetch('api/mchd');
+    if (r.status === 401) { location.href = 'login'; return; }
+    rows = await r.json();
+    render();
+  } catch (e) {
+    status('Не удалось загрузить список: ' + e.message, 'error');
+  }
+}
+
+function render() {
+  const q = el('searchInput').value.trim().toLowerCase();
+  let list = rows.filter((r) =>
+    !q || (r.full_name || '').toLowerCase().includes(q) || (r.reg_number || '').toLowerCase().includes(q));
+
+  list.sort((a, b) => {
+    let va, vb;
+    if (sortKey === 'days') { va = daysLeft(a.valid_to); vb = daysLeft(b.valid_to); }
+    else { va = a[sortKey] || ''; vb = b[sortKey] || ''; }
+    if (va == null) va = Infinity;
+    if (vb == null) vb = Infinity;
+    const c = va < vb ? -1 : va > vb ? 1 : 0;
+    return sortAsc ? c : -c;
+  });
+
+  el('resultCount').textContent = q ? `Найдено: ${list.length} из ${rows.length}` : `Всего: ${rows.length}`;
+
+  el('tableBody').innerHTML = list.map((r) => {
+    const left = daysLeft(r.valid_to);
+    // Те же три состояния, что и у сертификатов: истекла, истекает скоро,
+    // в порядке. Порог в 30 дней взят оттуда же — чтобы два реестра читались
+    // одинаково и не приходилось помнить разные правила.
+    let cls = '';
+    if (left !== null && left < 0) cls = 'expired';
+    else if (left !== null && left <= 30) cls = 'soon';
+    const leftText = left === null ? '—' : left < 0 ? `истекла ${-left} дн. назад` : `${left}`;
+    return `<tr class="${cls}">
+      <td>${escapeHtml(r.full_name)}</td>
+      <td class="ext-cell">${escapeHtml(r.reg_number)}</td>
+      <td>${fmtDate(r.valid_from)}</td>
+      <td>${fmtDate(r.valid_to)}</td>
+      <td>${leftText}</td>
+      <td><button class="del-btn" data-id="${r.id}">Удалить</button></td>
+    </tr>`;
+  }).join('');
+
+  el('tableBody').querySelectorAll('.del-btn').forEach((b) => {
+    b.onclick = async () => {
+      if (!confirm('Удалить доверенность из реестра?')) return;
+      const r = await fetch('api/mchd/' + b.dataset.id, { method: 'DELETE' });
+      if (r.ok) { status('Удалено', 'ok'); load(); }
+      else status('Не удалось удалить', 'error');
+    };
+  });
+}
+
+async function upload(files) {
+  const zips = [...files].filter((f) => /\.zip$/i.test(f.name));
+  if (!zips.length) return status('Нужен архив .zip, скачанный из ЕИС', 'error');
+
+  const fd = new FormData();
+  zips.forEach((f) => fd.append('archives', f));
+  status('Разбираю архив…');
+  try {
+    const r = await fetch('api/mchd/upload', { method: 'POST', body: fd });
+    if (r.status === 401) { location.href = 'login'; return; }
+    const data = await r.json();
+    if (data.errors && data.errors.length) {
+      // Показываем причину по каждому файлу: «не загрузилось» без объяснения
+      // заставляет гадать, что не так именно с этим архивом.
+      status(data.errors.map((e) => `${e.file}: ${e.error}`).join('; '), 'error');
+    } else {
+      status(`Добавлено доверенностей: ${data.inserted}`, 'ok');
+    }
+    load();
+  } catch (e) {
+    status('Ошибка загрузки: ' + e.message, 'error');
+  }
+}
+
+el('addBtn').onclick = () => el('fileInput').click();
+el('fileInput').onchange = (e) => { upload(e.target.files); e.target.value = ''; };
+el('searchInput').oninput = render;
+
+document.querySelectorAll('th.sortable').forEach((th) => {
+  th.onclick = () => {
+    const key = th.dataset.key;
+    if (sortKey === key) sortAsc = !sortAsc;
+    else { sortKey = key; sortAsc = true; }
+    document.querySelectorAll('th.sortable').forEach((t) => t.classList.remove('sort-asc', 'sort-desc'));
+    th.classList.add(sortAsc ? 'sort-asc' : 'sort-desc');
+    render();
+  };
+});
+
+// Перетаскивание на всю страницу — так же, как в реестре сертификатов.
+let dragDepth = 0;
+window.addEventListener('dragenter', (e) => { e.preventDefault(); if (++dragDepth === 1) el('dropOverlay').classList.add('active'); });
+window.addEventListener('dragover', (e) => e.preventDefault());
+window.addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; el('dropOverlay').classList.remove('active'); } });
+window.addEventListener('drop', (e) => {
+  e.preventDefault();
+  dragDepth = 0;
+  el('dropOverlay').classList.remove('active');
+  if (e.dataTransfer && e.dataTransfer.files.length) upload(e.dataTransfer.files);
+});
+
+load();
+</script>
+</body>
+</html>

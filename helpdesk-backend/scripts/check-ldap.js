@@ -1,12 +1,17 @@
 // Диагностика подключения к AD, шаг за шагом.
+// Это ДИАГНОСТИЧЕСКАЯ утилита, а не тест. Раньше файл назывался
+// test-ldap.js, и встроенный запускатель тестов (node --test) подхватывал
+// его как набор тестов: он честно пытался соединиться с контроллером
+// домена и падал на любой машине, где домена нет.
+//
 //
 // Использование:
-//   node scripts/test-ldap.js A                      — проверить сеть + bind сервисной учётки для домена А
-//   node scripts/test-ldap.js A d.volkov              — плюс поиск конкретного пользователя и его memberOf
-//   node scripts/test-ldap.js A d.volkov "пароль"     — плюс полная проверка входа этим пользователем
+//   node scripts/check-ldap.js A                      — проверить сеть + bind сервисной учётки для домена А
+//   node scripts/check-ldap.js A d.volkov              — плюс поиск конкретного пользователя и его memberOf
+//   node scripts/check-ldap.js A d.volkov "пароль"     — плюс полная проверка входа этим пользователем
 //
 // Если сертификат AD CS не проходит проверку доверия, повторите с флагом:
-//   node --use-system-ca scripts/test-ldap.js A
+//   node --use-system-ca scripts/check-ldap.js A
 // (тот же флаг уже используется в "npm start", см. package.json)
 //
 // Каждый шаг печатается отдельно с ОК/ОШИБКА, чтобы сразу было видно,
@@ -23,7 +28,7 @@ const testLogin = process.argv[3];
 const testPassword = process.argv[4];
 
 if (!domainKey || !["A", "B"].includes(domainKey)) {
-  console.error("Укажите домен: node scripts/test-ldap.js A|B [логин] [пароль]");
+  console.error("Укажите домен: node scripts/check-ldap.js A|B [логин] [пароль]");
   process.exit(1);
 }
 
@@ -111,7 +116,7 @@ async function main() {
         console.log(`  Варианты, по приоритету:`);
         console.log(`  а) запустить с флагом --use-system-ca (уже включён в "npm start" —`);
         console.log(`     если видите эту ошибку именно через этот скрипт, повторите:`);
-        console.log(`     node --use-system-ca scripts/test-ldap.js ${domainKey} ${testLogin || ""}`);
+        console.log(`     node --use-system-ca scripts/check-ldap.js ${domainKey} ${testLogin || ""}`);
         console.log(`     Сработает, если сервер в домене и сертификат уже в доверенных Windows.`);
         console.log(`  б) экспортировать корневой/промежуточный сертификат AD CS в .pem и указать`);
         console.log(`     путь в NODE_EXTRA_CA_CERTS в .env;`);
@@ -192,7 +197,7 @@ async function main() {
       fail(`Ошибка поиска: ${err.message}`);
     }
   } else {
-    console.log(`\n(Чтобы проверить конкретного пользователя, добавьте логин: node scripts/test-ldap.js ${domainKey} d.volkov)`);
+    console.log(`\n(Чтобы проверить конкретного пользователя, добавьте логин: node scripts/check-ldap.js ${domainKey} d.volkov)`);
   }
 
   await client.unbind().catch(() => {});

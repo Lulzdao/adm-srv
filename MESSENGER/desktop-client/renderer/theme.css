@@ -1,0 +1,99 @@
+/* Общая тема клиента — подключается на каждой странице. Переключение темы = смена
+   атрибута data-theme на <html>, все цвета берутся из переменных ниже. */
+
+:root, [data-theme="dark"] {
+  --bg: #191b20; --panel: #21242b; --panel-2: #262a33; --border: #2f333d;
+  --accent: #5b8def; --accent-2: #7aa5ff; --text: #eef0f4; --muted: #8b91a3;
+  --online: #3ddc84; --afk: #f5b942; --offline: #565c6b; --danger: #e0566a;
+  --bubble: #262a33; --own: #3a5ba0; --hover: #ffffff14; --overlay: rgba(8, 9, 12, .55);
+  --tb-grad-1: #23283a; --tb-grad-2: #1c2430;
+  --shadow: 0 12px 32px rgba(0, 0, 0, .45);
+}
+
+[data-theme="light"] {
+  --bg: #f3f4f7; --panel: #ffffff; --panel-2: #eef0f5; --border: #dde1e8;
+  --accent: #3f6fd6; --accent-2: #5b8def; --text: #1b1e24; --muted: #6b7280;
+  --online: #1fae66; --afk: #b9790b; --offline: #a3a9b5; --danger: #d1435a;
+  --bubble: #eef0f5; --own: #dbe6ff; --hover: #00000010; --overlay: rgba(20, 22, 30, .35);
+  --tb-grad-1: #eef1f8; --tb-grad-2: #e2e6f0;
+  --shadow: 0 12px 28px rgba(30, 34, 44, .18);
+}
+
+/* На Windows 7 нет системного эмодзи-шрифта вообще — там, где эмодзи рисуются НЕ картинкой (см.
+   .twemoji/emojiHtml ниже), а обычным текстом (в первую очередь — поле ввода: <textarea> физически
+   не умеет показывать <img> внутри своего значения, только текст шрифтом ОС), многие символы
+   превращались в пустые квадраты ("тофу" — в шрифтах Win7 для них просто нет глифа). Noto Emoji —
+   открытый (SIL OFL) чёрно-белый шрифт именно с эмодзи-глифами, добавлен последним в стек шрифтов:
+   для обычных букв ни на что не влияет (использ. Segoe UI и т.п.), а для символов, для которых их
+   не нашлось ни в одном из перечисленных выше шрифтов, браузер возьмёт глиф уже отсюда — вместо
+   квадрата будет видно хотя бы чёрно-белое изображение символа. */
+@font-face {
+  font-family: 'Noto Emoji';
+  src: url('fonts/NotoEmoji-Regular.woff2') format('woff2');
+  font-display: swap;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; overflow: hidden; }
+body {
+  background: var(--bg); color: var(--text);
+  font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif, "Noto Emoji";
+  font-size: 13px; overflow: hidden; user-select: none;
+  border: 1px solid var(--border);
+}
+
+/* Эмодзи в тексте — картинкой (twemoji), а не системным шрифтом, см. ui-kit.js/emojiHtml. Размер
+   в em — масштабируется вместе с окружающим текстом; небольшой отрицательный vertical-align —
+   чтобы картинка визуально сидела на строке так же, как обычный символ, а не проваливалась вниз. */
+/* 1.4em — заметно крупнее и живее символа (было 1.2em, жаловались, что мелко), но всё ещё
+   не выше межстрочного интервала обычного текста сообщений (line-height:1.4), чтобы соседние
+   строки не наезжали друг на друга, если emoji стоит посреди многострочного сообщения. */
+.twemoji { width: 1.4em; height: 1.4em; vertical-align: -0.25em; }
+
+/* Тонкий скроллбар, единый для всех окон (списки, чаты, панели) */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 8px; }
+::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+
+/* Стандартная шапка окна (свернуть/закрыть) */
+.wintitlebar { -webkit-app-region: drag; height: 38px; display: flex; align-items: center; justify-content: space-between; padding: 0 6px 0 14px; flex-shrink: 0; background: linear-gradient(135deg, var(--tb-grad-1), var(--tb-grad-2)); border-bottom: 1px solid var(--border); gap: 6px; }
+.wintitlebar .wctl { -webkit-app-region: no-drag; display: flex; gap: 4px; flex-shrink: 0; }
+.wintitlebar .wctl button, .icon-btn { width: 27px; height: 27px; border: none; background: transparent; color: var(--muted); border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.wintitlebar .wctl button:hover, .icon-btn:hover { background: var(--hover); color: var(--text); }
+.wintitlebar .wctl button.close:hover { background: var(--danger); color: #fff; }
+.icon-btn svg { display: block; }
+
+/* ---- Кастомные модальные окна (замена alert/confirm/showErrorBox) ---- */
+.ui-modal-overlay { position: fixed; inset: 0; background: var(--overlay); display: flex; align-items: center; justify-content: center; z-index: 999; -webkit-app-region: no-drag; animation: ui-fade .12s ease-out; }
+@keyframes ui-fade { from { opacity: 0; } to { opacity: 1; } }
+.ui-modal-box { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 18px; width: min(300px, 86%); box-shadow: var(--shadow); }
+.ui-modal-box .ui-modal-title { font-weight: 700; font-size: 13.5px; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+.ui-modal-box .ui-modal-title svg { color: var(--danger); flex-shrink: 0; }
+.ui-modal-box .ui-modal-msg { font-size: 12.5px; color: var(--text); line-height: 1.5; margin-bottom: 16px; white-space: pre-wrap; }
+.ui-modal-box .ui-modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+/* Три действия в ряд из окна шириной 300px не помещаются — раскладываем столбиком, самое нужное
+   сверху (см. showConnectionLostModal в ui-kit.js). */
+.ui-modal-box .ui-modal-actions.stacked { flex-direction: column; }
+.ui-modal-box .ui-modal-actions.stacked button { width: 100%; }
+.ui-modal-box button { padding: 8px 14px; border-radius: 8px; border: none; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.ui-btn-primary { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff; }
+.ui-btn-danger { background: var(--danger); color: #fff; }
+.ui-btn-ghost { background: var(--panel-2); color: var(--text); }
+
+/* Тосты (uiToast) — короткие ненавязчивые уведомления типа "Файл скачан", "Скопировано в буфер
+   обмена". Не блокируют интерфейс (в отличие от uiAlert/uiConfirm), сами исчезают через пару секунд. */
+#uiToastContainer { position: fixed; left: 0; right: 0; bottom: 14px; display: flex; flex-direction: column; align-items: center; gap: 6px; z-index: 1000; pointer-events: none; }
+.ui-toast { display: flex; align-items: center; gap: 8px; background: var(--panel); border: 1px solid var(--border); box-shadow: var(--shadow); color: var(--text); font-size: 12px; font-weight: 600; padding: 9px 14px; border-radius: 20px; opacity: 0; transform: translateY(6px); transition: opacity .18s ease, transform .18s ease; -webkit-app-region: no-drag; }
+.ui-toast.visible { opacity: 1; transform: translateY(0); }
+.ui-toast svg { color: var(--online); flex-shrink: 0; }
+.ui-toast.ui-toast-error svg { color: var(--danger); }
+
+/* Текст сообщений/рассылок должен выделяться и копироваться, несмотря на общий user-select:none
+   на body (он нужен, чтобы случайный драг по интерфейсу не выделял всё подряд как текст).
+   Раньше здесь был ещё и -webkit-app-region: no-drag — избыточный (текст сообщений и так лежит
+   внутри прокручиваемой ленты, а не в области с -webkit-app-region: drag, так что оверрайдить
+   нечего) и, похоже, вредный: у Chromium/Electron drag-регионы плохо совместимы с элементами
+   внутри overflow:auto — при определённой прокрутке (когда крупное сообщение оказывается на границе
+   видимой области) окно переставало перетаскиваться за титульную панель. Убрали. */
+.selectable, .selectable * { user-select: text; }

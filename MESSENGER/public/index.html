@@ -1,0 +1,1544 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Искра — панель администратора</title>
+<style>
+  /* Material You (Material 3) — единая тема с платформой и остальными
+     модулями. Панель открывается в iframe внутри платформы, поэтому палитра,
+     скругления и типографика совпадают с helpdesk-backend/public/styles.css.
+
+     Цвета в hex, а не в oklch: панель открывают с рабочих машин, где браузер
+     может быть старше Chrome 111. Веб-шрифты не подключаются — сеть изолирована.
+
+     Имена --muted, --warn, --danger и т.п. сохранены: скрипт ниже подставляет
+     их в инлайновые стили при отрисовке таблиц и статусов. */
+  :root {
+    --md-primary: #7D5700;
+    --md-on-primary: #FFFFFF;
+    --md-primary-container: #FFDEA6;
+    --md-on-primary-container: #281900;
+    --md-secondary-container: #F0E0C8;
+    --md-on-secondary-container: #251A04;
+
+    --md-surface: #FFF8F3;
+    --md-surface-container-lowest: #FFFFFF;
+    --md-surface-container-low: #FBF1E9;
+    --md-surface-container: #F5ECE3;
+    --md-surface-container-high: #F0E6DE;
+    --md-surface-container-highest: #EAE1D9;
+    --md-on-surface: #1F1B16;
+    --md-on-surface-variant: #4F453A;
+    --md-outline: #817567;
+    --md-outline-variant: #D8CCBE;
+
+    --md-error: #8C1D18;
+    --md-error-container: #FFDAD6;
+    --md-on-error-container: #410002;
+    --md-success-container: #CDEBD5;
+    --md-on-success-container: #08210F;
+    --md-warn-container: #FFDCC2;
+    --md-on-warn-container: #2E1500;
+
+    --md-state-hover: rgba(31, 27, 22, 0.06);
+    --md-shape-xs: 8px;
+    --md-shape-s: 12px;
+    --md-shape-m: 16px;
+    --md-shape-l: 20px;
+    --md-shape-xl: 28px;
+    --md-shape-full: 100px;
+    --md-elev-1: 0 1px 2px rgba(31, 27, 22, 0.10);
+    --md-elev-3: 0 6px 18px rgba(31, 27, 22, 0.12);
+
+    --sans: Roboto, "Segoe UI", system-ui, -apple-system, Arial, sans-serif;
+
+    /* Имена, на которые ссылается script ниже */
+    --bg: var(--md-surface);
+    --panel: var(--md-surface-container-lowest);
+    --panel-2: var(--md-surface-container-high);
+    --border: var(--md-outline-variant);
+    --accent: var(--md-primary);
+    --accent-2: var(--md-on-primary-container);
+    --text: var(--md-on-surface);
+    --muted: var(--md-on-surface-variant);
+    --online: #1F6B37;
+    --danger: var(--md-error);
+    --warn: #8A4600;
+  }
+  * { box-sizing: border-box; }
+  html, body { height:100%; }
+  body {
+    margin:0; background:var(--md-surface-container-lowest); color:var(--md-on-surface);
+    font-family: var(--sans); font-size:14px; overflow:hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+  /* --- Полоса прокрутки ---
+     Штатная светло-серая полоса Chromium выбивалась из тёплой палитры. Стилизуем
+     через ::-webkit-scrollbar: эти псевдоэлементы понимают все Chromium, включая
+     109-й на рабочих машинах. Стандартные scrollbar-width/scrollbar-color
+     появились только в Chrome 121 — они ниже и лишь повторяют тот же вид в новых
+     браузерах и в Firefox. Прозрачная рамка с background-clip даёт отступ от
+     края, чтобы полоса не липла к содержимому. */
+  ::-webkit-scrollbar { width: 12px; height: 12px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: var(--md-outline-variant);
+    border: 3px solid transparent;
+    background-clip: padding-box;
+    border-radius: var(--md-shape-full);
+  }
+  ::-webkit-scrollbar-thumb:hover { background: var(--md-outline); background-clip: padding-box; }
+  ::-webkit-scrollbar-corner { background: transparent; }
+  /* scrollbar-width/-color наследуются, поэтому достаточно корня. */
+  html { scrollbar-width: thin; scrollbar-color: var(--md-outline-variant) transparent; }
+
+
+  /* ---- Логин ---- */
+  #authScreen {
+    height:100%; display:flex; align-items:center; justify-content:center;
+    background: var(--md-surface-container);
+  }
+  #authBox {
+    width:380px; background:var(--md-surface-container-lowest); border:none;
+    border-radius:var(--md-shape-xl); padding:40px 36px; box-shadow:var(--md-elev-3);
+  }
+  #authBox .seal {
+    display:flex; align-items:center; justify-content:center; margin:0 auto 18px;
+    width:56px; height:56px; border-radius:var(--md-shape-m);
+    background:var(--md-primary-container); color:var(--md-on-primary-container);
+  }
+  #authBox h1 { margin:0 0 6px; font-size:22px; font-weight:600; text-align:center; }
+  #authBox p.sub { margin:0 0 26px; color:var(--md-on-surface-variant); font-size:13.5px; text-align:center; }
+  #authBox label { display:block; font-size:12.5px; font-weight:500; color:var(--md-on-surface-variant); margin:0 0 7px; }
+  #authBox input {
+    width:100%; padding:14px 16px; margin-bottom:16px; background:transparent;
+    border:1px solid var(--md-outline); border-radius:var(--md-shape-xs);
+    color:var(--md-on-surface); font-size:14px; font-family:inherit; outline:none;
+    transition:border-color .12s ease, box-shadow .12s ease;
+  }
+  #authBox input:focus { border-color:var(--md-primary); box-shadow:inset 0 0 0 1px var(--md-primary); }
+  #authBox button {
+    width:100%; padding:14px; border:none; border-radius:var(--md-shape-full);
+    background:var(--md-primary); color:var(--md-on-primary);
+    font-weight:600; font-size:14px; letter-spacing:.1px; cursor:pointer;
+    transition:box-shadow .15s, filter .15s;
+  }
+  #authBox button:hover { box-shadow:var(--md-elev-1); filter:brightness(1.06); }
+  #authErr { color:var(--md-error); font-size:12.5px; min-height:18px; margin-bottom:4px; text-align:center; }
+
+  /* ---- Оболочка: одна строка вкладок сверху ----
+     Отдельной шапки с названием нет намеренно: панель открывают из платформы,
+     где название модуля уже написано в её меню и в заголовке страницы, а сама
+     шапка была того же тона, что и фон, — то есть занимала место, ничего не
+     разделяя. Кто вошёл и кнопка выхода переехали к вкладкам. */
+  #dash { display:none; height:100%; flex-direction:column; }
+  #dash.active { display:flex; }
+
+  .mm-user { display:flex; align-items:center; gap:14px; margin-left:auto; padding-left:20px; flex-shrink:0; }
+  .mm-user-text { text-align:right; line-height:1.3; }
+  #whoName { font-size:13px; font-weight:500; color:var(--md-on-surface); }
+  #whoRole { font-size:11.5px; color:var(--md-on-surface-variant); }
+  .mm-logout {
+    display:flex; align-items:center; gap:8px; padding:8px 18px; border:none;
+    background:var(--md-surface-container-high); color:var(--md-on-surface-variant);
+    border-radius:var(--md-shape-full); cursor:pointer; font-size:12.5px; font-weight:600;
+    font-family:inherit; transition:background .13s ease, color .13s ease;
+  }
+  .mm-logout:hover { background:var(--md-error-container); color:var(--md-on-error-container); }
+
+  /* Вкладки M3: подчёркивание активной. Полоса белая — иначе она сливалась бы
+     с фоном страницы и граница между навигацией и содержимым пропадала. */
+  #tabs {
+    flex-shrink:0; display:flex; align-items:center; gap:4px; padding:0 20px;
+    border-bottom:1px solid var(--md-outline-variant);
+    background:var(--md-surface-container-lowest); overflow-x:auto;
+  }
+  .nav-item {
+    padding:15px 16px 13px; cursor:pointer; color:var(--md-on-surface-variant);
+    font-weight:500; font-size:13.5px; border-bottom:3px solid transparent;
+    white-space:nowrap; transition:color .13s ease, border-color .13s ease, background .13s ease;
+    border-radius:var(--md-shape-xs) var(--md-shape-xs) 0 0;
+  }
+  .nav-item:hover { color:var(--md-on-surface); background:var(--md-state-hover); }
+  .nav-item.active { color:var(--md-primary); border-bottom-color:var(--md-primary); font-weight:600; }
+
+  /* Белый — как контентная область платформы: панель встроена в неё через
+     iframe. Тон из палитры остаётся на карточках и панелях внутри. */
+  #main { flex:1; padding:26px 28px 30px; overflow-y:auto; min-height:0; background:var(--md-surface-container-lowest); }
+  .view { display:none; }
+  .view.active { display:block; }
+  h2 { margin:0 0 20px; font-size:24px; font-weight:600; letter-spacing:0; }
+
+  .cards { display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-bottom:22px; }
+  .card { background:var(--md-surface-container); border:none; border-radius:var(--md-shape-l); padding:20px 24px; }
+  .card .v { font-size:32px; font-weight:600; letter-spacing:-.5px; color:var(--md-on-surface); }
+  .card .l { color:var(--md-on-surface-variant); font-size:12.5px; margin-top:5px; }
+
+  .panel { background:var(--md-surface-container); border:none; border-radius:var(--md-shape-l); padding:24px; margin-bottom:18px; }
+  .panel h3 { margin:0 0 14px; font-size:11.5px; color:var(--md-on-surface-variant); text-transform:uppercase; letter-spacing:.5px; font-weight:600; }
+  .row-flex { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+
+  table { width:100%; border-collapse:collapse; }
+  th {
+    text-align:left; color:var(--md-on-surface-variant); font-size:11.5px; text-transform:uppercase;
+    letter-spacing:.5px; padding:12px 10px; border-bottom:1px solid var(--md-outline-variant); font-weight:600;
+    background:var(--md-surface-container);
+  }
+  td { padding:12px 10px; border-bottom:1px solid var(--md-surface-container-high); vertical-align:middle; }
+  tbody tr:hover td { background:var(--md-surface-container); }
+
+  select, input, textarea {
+    background:var(--md-surface-container-lowest); border:1px solid var(--md-outline); color:var(--md-on-surface);
+    border-radius:var(--md-shape-xs); padding:11px 14px; font-size:13.5px; font-family:inherit; outline:none;
+    transition:border-color .12s ease, box-shadow .12s ease;
+  }
+  select:focus, input:focus, textarea:focus { border-color:var(--md-primary); box-shadow:inset 0 0 0 1px var(--md-primary); }
+  input[type="checkbox"] { width:auto; padding:0; accent-color:var(--md-primary); }
+  input[type="date"] { color-scheme:light; }
+  input[type="file"] { border:none; padding:0; background:transparent; }
+
+  /* ---- Список пользователей ----
+     Раньше это была таблица, где каждое действие занимало свою колонку: поле
+     переименования, две галочки прав, поле пароля, кнопка удаления. Строка из
+     семи элементов управления читалась плохо и не помещалась, а искать
+     человека приходилось глазами по первой колонке. Теперь строка отвечает на
+     вопрос «кто это и что с ним сейчас», а всё, что с ним можно сделать,
+     убрано в меню справа. */
+  .user-row {
+    display:grid; align-items:center; gap:14px;
+    grid-template-columns: minmax(180px,1.2fr) minmax(120px,0.9fr) minmax(150px,1fr) auto 36px;
+    padding:12px 14px; border-radius:var(--md-shape-m); background:var(--md-surface-container-lowest);
+    margin-bottom:8px;
+  }
+  .user-row:hover { background:var(--md-surface-container-low); }
+  .user-id { display:flex; align-items:center; gap:10px; min-width:0; }
+  .user-dot { width:9px; height:9px; border-radius:50%; flex-shrink:0; }
+  .user-dot.active { background:#1F6B37; }
+  .user-dot.idle { background:#8A5300; }
+  .user-dot.offline { background:var(--md-outline-variant); }
+  .user-login { font-weight:600; font-size:13.5px; }
+  .user-sub { font-size:11.5px; color:var(--md-on-surface-variant); margin-top:2px; }
+  .user-cell { min-width:0; font-size:12.5px; color:var(--md-on-surface-variant); }
+  .user-hosts { font-family:var(--mono); font-size:11.5px; }
+  .user-caps { display:flex; gap:6px; flex-wrap:wrap; }
+  .cap-chip {
+    font-size:11px; font-weight:600; padding:3px 9px; border-radius:var(--md-shape-full);
+    background:var(--md-secondary-container); color:var(--md-on-secondary-container); white-space:nowrap;
+  }
+  .user-menu-btn {
+    width:32px; height:32px; border:none; border-radius:50%; background:transparent; cursor:pointer;
+    color:var(--md-on-surface-variant); font-size:17px; line-height:1; letter-spacing:1px;
+    transition:background .13s ease;
+  }
+  .user-menu-btn:hover { background:var(--md-state-hover); color:var(--md-on-surface); }
+  #userMenu {
+    position:fixed; z-index:60; min-width:210px; padding:6px;
+    background:var(--md-surface-container-lowest); border:1px solid var(--md-outline-variant);
+    border-radius:var(--md-shape-m); box-shadow:0 6px 18px rgba(31,27,22,.16);
+  }
+  #userMenu button {
+    display:flex; align-items:center; justify-content:space-between; gap:12px; width:100%;
+    padding:9px 12px; border:none; background:transparent; border-radius:var(--md-shape-xs);
+    font:inherit; font-size:13px; color:var(--md-on-surface); text-align:left; cursor:pointer;
+  }
+  #userMenu button:hover { background:var(--md-state-hover); }
+  #userMenu button.danger { color:var(--md-error); }
+  #userMenu button.danger:hover { background:var(--md-error-container); }
+  #userMenu .menu-sep { height:1px; background:var(--md-outline-variant); margin:5px 8px; }
+  #userMenu .menu-state { font-size:11.5px; color:var(--md-on-surface-variant); }
+
+  /* --- Выпадающий список (см. одноимённый скрипт) --- */
+  .select-wrap { position: relative; display: inline-block; vertical-align: middle; }
+  .select-wrap > select { position: absolute; opacity: 0; pointer-events: none; width: 0; height: 0; padding: 0; border: 0; }
+  .select-btn {
+    display: inline-flex; align-items: center; gap: 10px; width: 100%;
+    padding: 11px 14px 11px 16px; font-size: 13.5px; font-family: inherit; text-align: left;
+    border: 1px solid var(--md-outline); border-radius: var(--md-shape-xs);
+    background: var(--md-surface-container-lowest); color: var(--md-on-surface); cursor: pointer;
+    transition: border-color .12s ease, background .13s ease;
+  }
+  .select-btn:hover { background: var(--md-surface-container-low); }
+  .select-wrap.open .select-btn { border-color: var(--md-primary); }
+  .select-btn .select-value { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .select-btn .select-chevron {
+    display: inline-flex; flex-shrink: 0; color: var(--md-on-surface-variant);
+    transform: rotate(90deg); transition: transform .18s ease;
+  }
+  .select-wrap.open .select-btn .select-chevron { transform: rotate(-90deg); }
+  .select-menu {
+    position: absolute; z-index: 40; top: calc(100% + 6px); left: 0; min-width: 100%;
+    padding: 6px; border-radius: var(--md-shape-m); background: var(--md-surface-container-lowest);
+    box-shadow: var(--md-elev-1), 0 6px 18px rgba(31,27,22,.16); max-height: 300px; overflow-y: auto;
+  }
+  .select-option {
+    padding: 10px 14px; border-radius: var(--md-shape-xs); font-size: 13.5px; cursor: pointer;
+    white-space: nowrap; transition: background .1s ease;
+  }
+  .select-option:hover { background: var(--md-state-hover); }
+  .select-option.selected { background: var(--md-primary-container); color: var(--md-on-primary-container); font-weight: 600; }
+
+  /* Filled / tonal / text buttons M3 */
+  button.action {
+    background:var(--md-primary); border:none; color:var(--md-on-primary); border-radius:var(--md-shape-full);
+    padding:11px 20px; cursor:pointer; font-size:13px; font-weight:600; letter-spacing:.1px;
+    font-family:inherit; transition:box-shadow .15s, filter .15s, background .15s;
+  }
+  button.action:hover { box-shadow:var(--md-elev-1); filter:brightness(1.06); }
+  button.action.danger { background:var(--md-error); }
+  button.action.ghost { background:var(--md-secondary-container); color:var(--md-on-secondary-container); }
+  button.action.ghost:hover { filter:brightness(0.96); box-shadow:none; }
+  button.action:disabled { background:var(--md-surface-container-high); color:rgba(31,27,22,0.38); cursor:not-allowed; box-shadow:none; filter:none; }
+
+  #histMessages {
+    display:flex; flex-direction:column; gap:8px; max-height:440px; overflow-y:auto;
+    margin-top:14px; padding:16px; background:var(--md-surface-container); border-radius:var(--md-shape-m);
+  }
+  #histMessages .m { font-size:13.5px; line-height:1.5; }
+  #histMessages .m b { color:var(--md-primary); }
+  #histMessages .m .t { color:var(--md-on-surface-variant); font-size:11px; margin-left:8px; }
+
+  #bcFeed { display:flex; flex-direction:column; gap:12px; }
+  .bc-item { background:var(--md-surface-container); border:none; border-radius:var(--md-shape-m); padding:14px 16px; }
+  .bc-item .who { color:var(--md-primary); font-weight:600; font-size:13px; }
+  .bc-item .time { color:var(--md-on-surface-variant); font-size:11px; margin-left:8px; }
+  .bc-item .txt { margin-top:6px; white-space:pre-wrap; line-height:1.5; }
+  textarea#bcText { width:100%; height:96px; resize:vertical; }
+
+  /* Выбор отделов сотрудника: сотрудник может состоять сразу в нескольких, а
+     <select multiple> с ctrl-кликом в таблице — ровно тот элемент, который
+     администратор без подсказки не осилит. Поэтому кнопка со списком отделов
+     и всплывающий список галочек. */
+  .dept-btn {
+    background:var(--md-surface-container-lowest); border:1px solid var(--md-outline); color:var(--md-on-surface);
+    border-radius:var(--md-shape-xs); padding:10px 13px; font-size:12.5px; font-family:inherit; cursor:pointer;
+    text-align:left; min-width:150px; max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    transition:border-color .12s ease;
+  }
+  .dept-btn:hover { border-color:var(--md-primary); }
+  .dept-btn.empty { color:var(--md-on-surface-variant); }
+  #deptPicker {
+    position:fixed; z-index:50; background:var(--md-surface-container-lowest); border:1px solid var(--md-outline-variant);
+    border-radius:var(--md-shape-m); padding:10px; min-width:210px; max-height:300px; overflow-y:auto;
+    box-shadow:var(--md-elev-3);
+  }
+  #deptPicker label { display:flex; align-items:center; gap:10px; padding:9px 10px; border-radius:var(--md-shape-xs); cursor:pointer; font-size:13px; }
+  #deptPicker label:hover { background:var(--md-state-hover); }
+  #deptPicker .empty { color:var(--md-on-surface-variant); font-size:12.5px; padding:8px 10px; }
+</style>
+</head>
+<body>
+
+<div id="authScreen">
+  <div id="authBox">
+    <div class="seal">
+      <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 8.9 8.9 0 0 1-3.8-.9L3 21l1.9-5.1A8.4 8.4 0 0 1 12 3a8.4 8.4 0 0 1 9 8.5z"/>
+      </svg>
+    </div>
+    <h1>Искра</h1>
+    <p class="sub">Панель администратора</p>
+    <div id="authErr"></div>
+    <form id="authForm" onsubmit="event.preventDefault(); doLogin();">
+      <label for="username">Логин</label>
+      <input id="username" placeholder="Логин">
+      <label for="password">Пароль</label>
+      <input id="password" type="password" placeholder="Пароль">
+      <button type="submit">Войти</button>
+    </form>
+  </div>
+</div>
+
+<div id="dash">
+  <div id="tabs">
+    <div class="nav-item active" data-view="overview">Обзор</div>
+    <div class="nav-item" data-view="users">Пользователи</div>
+    <div class="nav-item" data-view="history">Переписки</div>
+    <div class="nav-item" data-view="broadcast">Рассылка</div>
+    <div class="nav-item" data-view="files">Файлы</div>
+    <div class="nav-item" data-view="updates">Клиенты</div>
+    <div class="nav-item" data-view="tls">Сертификат</div>
+    <div class="nav-item" data-view="logs">Логи</div>
+    <div class="mm-user">
+      <div class="mm-user-text">
+        <div id="whoName"></div>
+        <div id="whoRole"></div>
+      </div>
+      <button class="mm-logout" onclick="logout()">Выйти</button>
+    </div>
+  </div>
+
+  <div id="main">
+    <div class="view active" id="view-overview">
+      <h2>Обзор</h2>
+      <div class="cards">
+        <div class="card"><div class="v" id="statUsers">—</div><div class="l">Всего пользователей</div></div>
+        <div class="card"><div class="v" id="statOnline">—</div><div class="l">Сейчас в сети</div></div>
+        <div class="card"><div class="v" id="statDepts">—</div><div class="l">Отделов</div></div>
+        <div class="card"><div class="v" id="statMsgs">—</div><div class="l">Сообщений отправлено</div></div>
+      </div>
+      <div class="panel">
+        <h3>Сервер</h3>
+        <div id="statUptime" style="color:var(--muted); font-size:13px;">—</div>
+      </div>
+    </div>
+
+    <div class="view" id="view-users">
+      <h2>Пользователи</h2>
+
+      <div class="panel">
+        <h3>Самостоятельная регистрация</h3>
+        <p style="color:var(--muted); font-size:12px; margin:0 0 10px;">
+          Когда включена, любой, кто дотянулся до адреса сервера, может сам завести себе учётную
+          запись и попасть в список сотрудников и в общую комнату. Для рабочей сети это обычно
+          лишнее: надёжнее выключить и заводить людей вручную кнопкой «Добавить сотрудника» ниже.
+        </p>
+        <label class="row-flex" style="cursor:pointer;">
+          <input type="checkbox" id="regOpen" onchange="saveRegistration(this.checked)">
+          <span>Разрешить сотрудникам регистрироваться самим</span>
+          <span id="regMsg" style="color:var(--muted); font-size:12px;"></span>
+        </label>
+      </div>
+
+      <div class="panel">
+        <h3>Отделы</h3>
+        <p style="color:var(--muted); font-size:12px; margin:0 0 10px;">
+          Права (рассылки/админка) выдаются только персонально — ниже, каждому пользователю. Здесь
+          только название отдела и порядок отображения (стрелки ↑↓).
+        </p>
+        <div class="row-flex">
+          <input id="newDeptName" placeholder="Название отдела">
+          <button class="action" onclick="createDept()">Добавить</button>
+        </div>
+        <table style="margin-top:12px;">
+          <thead><tr><th style="width:60px"></th><th>Название</th><th style="width:190px"></th></tr></thead>
+          <tbody id="deptsBody"></tbody>
+        </table>
+      </div>
+
+      <div class="panel">
+        <h3>Новый пользователь</h3>
+        <div class="row-flex">
+          <input id="newUsername" placeholder="Логин">
+          <input id="newPassword" placeholder="Пароль">
+          <button type="button" class="dept-btn empty" id="newDept" onclick="pickNewUserDepartments(this)">Без отдела</button>
+          <label class="row-flex" style="gap:4px; font-size:12.5px;"><input type="checkbox" id="newUserBroadcast"> Рассылки</label>
+          <label class="row-flex" style="gap:4px; font-size:12.5px;"><input type="checkbox" id="newUserAdmin"> Админка</label>
+          <button class="action" onclick="createUser()">Создать</button>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="row-flex" style="margin-bottom:14px;">
+          <input id="userSearch" placeholder="Поиск по логину, имени или имени ПК..." style="flex:1;" oninput="renderUsers()">
+          <span id="usersCount" style="color:var(--muted); font-size:12.5px; white-space:nowrap;"></span>
+        </div>
+        <div id="usersList"></div>
+      </div>
+    </div>
+
+    <div class="view" id="view-history">
+      <h2>Переписки</h2>
+      <div class="panel">
+        <div class="row-flex">
+          <select id="histType">
+            <option value="room">Общая комната</option>
+            <option value="dm">Личная переписка</option>
+          </select>
+          <select id="histUser1" style="display:none"></select>
+          <select id="histUser2" style="display:none"></select>
+          <button class="action" onclick="loadHistory()">Показать</button>
+          <button class="action ghost" onclick="exportHistory()">Экспорт в .txt</button>
+        </div>
+        <div id="histMessages"></div>
+        <div class="row-flex" id="histMoreRow" style="display:none; margin-top:8px;">
+          <button class="action ghost" onclick="loadMoreHistory()" id="histMoreBtn">Показать более ранние</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="view" id="view-files">
+      <h2>Файлы на сервере</h2>
+
+      <div class="panel">
+        <h3>Ограничения на загрузку</h3>
+        <p style="color:var(--muted); font-size:12.5px; margin:0 0 12px;">
+          Действует сразу для всех — без перезапуска сервера. «Запрещённые» — список того, что нельзя
+          прислать (всё остальное можно); «Разрешённые» — наоборот, можно только то, что в списке.
+          Расширения — через запятую или пробел, без точки (exe, bat, zip...).
+        </p>
+        <div class="row-flex" style="margin-bottom:10px;">
+          <select id="uploadExtMode">
+            <option value="block">Запрещённые расширения</option>
+            <option value="allow">Разрешённые расширения</option>
+          </select>
+          <label class="row-flex" style="gap:6px; font-size:12.5px; color:var(--muted);">
+            Макс. размер файла (МБ)
+            <input type="number" id="uploadMaxMb" min="1" style="width:80px">
+          </label>
+        </div>
+        <textarea id="uploadExtList" style="width:100%; height:60px;" placeholder="exe, bat, cmd, ..."></textarea>
+        <div class="row-flex" style="margin-top:10px;">
+          <button class="action" onclick="saveUploadSettings()">Сохранить</button>
+          <span id="uploadSettingsMsg" style="color:var(--muted); font-size:12px;"></span>
+        </div>
+      </div>
+
+      <div class="panel">
+        <p style="color:var(--muted); font-size:12.5px; margin:0 0 4px;">
+          Все файлы, которые когда-либо отправляли через личную переписку, общую комнату или рассылки.
+          Удаление стирает файл с диска сервера навсегда — ссылка на него в старой переписке перестанет открываться,
+          но само сообщение никуда не денется.
+        </p>
+        <div class="row-flex" style="margin:10px 0;">
+          <button class="action ghost" onclick="loadFiles()">Обновить список</button>
+          <span id="filesSummary" style="color:var(--muted); font-size:12px;"></span>
+        </div>
+        <table>
+          <thead><tr><th>Имя файла</th><th>Откуда</th><th>От кого</th><th>Когда</th><th>Размер</th><th></th></tr></thead>
+          <tbody id="filesBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="view" id="view-updates">
+      <h2>Клиенты и обновления</h2>
+
+      <div class="panel">
+        <h3>Что выложено на сервере</h3>
+        <p style="color:var(--muted); font-size:12px; margin:0 0 10px;">
+          Версии из папок <code>updates/win7</code> и <code>updates/win10</code>. Если пусто —
+          сборки ещё не выложены, и клиенты обновляться не будут.
+        </p>
+        <div id="publishedVersions" style="display:flex; gap:18px; flex-wrap:wrap;"></div>
+      </div>
+
+      <div class="panel">
+        <h3>Кто сейчас в сети</h3>
+        <p style="color:var(--muted); font-size:12px; margin:0 0 10px;">
+          Версия видна только у тех, кто сейчас подключён. «Обновить» скачает новую версию на эту
+          машину и перезапустит приложение — сотрудник получит предупреждение за 15 секунд.
+          «Журнал» запросит с машины её локальный файл ошибок: туда попадает то, чего нет в общих
+          логах — падения окон и сбои обновления.
+        </p>
+        <div class="row-flex" style="margin-bottom:10px;">
+          <button class="action" onclick="loadClients()">Обновить список</button>
+          <span id="clientsSummary" style="color:var(--muted); font-size:12px;"></span>
+        </div>
+        <table>
+          <thead><tr><th>Сотрудник</th><th>Компьютер</th><th>Версия</th><th>Сборка</th><th>Действия</th></tr></thead>
+          <tbody id="clientsBody"></tbody>
+        </table>
+      </div>
+
+      <div class="panel" id="clientLogPanel" style="display:none;">
+        <h3 id="clientLogTitle">Журнал с машины</h3>
+        <pre id="clientLogText" style="max-height:340px; overflow:auto; background:var(--panel-2); border:1px solid var(--border); border-radius:8px; padding:10px; font-size:11.5px; white-space:pre-wrap; word-break:break-word;"></pre>
+      </div>
+    </div>
+
+    <div class="view" id="view-tls">
+      <h2>Сертификат сервера</h2>
+
+      <div class="panel">
+        <h3>Что сейчас действует</h3>
+        <p style="color:var(--muted); font-size:12px; margin:0 0 10px;">
+          Пока сертификата нет, пароли, переписка и файлы идут по сети открытым текстом — их видит
+          любой, кто может слушать сеть между сотрудником и сервером.
+        </p>
+        <div id="tlsState">Загрузка…</div>
+      </div>
+
+      <div class="panel">
+        <h3>Заменить сертификат</h3>
+        <p style="color:var(--muted); font-size:12px; margin:0 0 10px;">
+          Файл <code>.pfx</code> или <code>.p12</code> — тот, что выдаёт удостоверяющий центр
+          домена. Конвертировать ничего не нужно. Файл сначала проверяется (пароль, срок, цепочка)
+          и только потом заменяет действующий: испортить работающий сервер загрузкой не того файла
+          нельзя.
+        </p>
+        <div id="tlsInsecureWarn" style="display:none; margin:0 0 10px; padding:8px 10px; border:1px solid var(--warn); border-radius:8px; color:var(--warn); font-size:12px;">
+          Эта страница открыта по <b>http</b>. Закрытый ключ уйдёт на сервер незашифрованным — его
+          сможет перехватить любой, кто слушает сеть. Для самой первой установки это допустимо
+          (иначе её не сделать), дальше — открывайте панель по https.
+        </div>
+        <div class="row-flex" style="flex-wrap:wrap; gap:10px;">
+          <input type="file" id="tlsFile" accept=".pfx,.p12">
+          <input type="password" id="tlsPassword" placeholder="Пароль к файлу" style="width:200px;">
+          <button class="action" onclick="uploadTls()">Загрузить и применить</button>
+        </div>
+        <div id="tlsUploadResult" style="margin-top:10px; font-size:12.5px;"></div>
+      </div>
+
+      <div class="panel">
+        <h3>Убрать сертификат</h3>
+        <p style="color:var(--muted); font-size:12px; margin:0 0 10px;">
+          Удаляет файл <b>только из хранилища</b> (папка <code>certs/</code>). Работающий сервер
+          останется на https до перезапуска — выключить шифрование на ходу нельзя. И главное: если
+          сертификат задан ещё и переменной окружения в скрипте запуска, после перезапуска сервер
+          возьмёт его оттуда и останется на https. Тогда шифрование выключается не здесь, а
+          удалением этой переменной. Что именно действует сейчас — написано выше.
+        </p>
+        <button class="action ghost" onclick="removeTls()">Удалить из хранилища</button>
+      </div>
+    </div>
+
+    <div class="view" id="view-logs">
+      <h2>Логи</h2>
+      <div class="panel">
+        <p style="color:var(--muted); font-size:12.5px; margin:0 0 10px;">
+          Входы/выходы, срабатывания защиты от подбора пароля и ошибки сервера — плюс ошибки,
+          присланные с рабочих мест сотрудников (сбои в приложении на их ПК). Хранится по дням в
+          файлах на сервере (папка logs/), здесь — только просмотр.
+        </p>
+        <div class="row-flex">
+          <input type="date" id="logsDay">
+          <select id="logsType">
+            <option value="all">Сервер и клиенты</option>
+            <option value="server">Только сервер</option>
+            <option value="client">Только клиенты</option>
+          </select>
+          <select id="logsLevel">
+            <option value="all">Все уровни</option>
+            <option value="ERROR">Только ошибки</option>
+            <option value="WARN">Предупреждения и ошибки</option>
+          </select>
+          <button class="action" onclick="loadLogs()">Показать</button>
+          <span id="logsSummary" style="color:var(--muted); font-size:12px;"></span>
+        </div>
+        <table style="margin-top:12px;">
+          <thead><tr><th style="width:80px">Время</th><th style="width:70px">Уровень</th><th style="width:60px">Откуда</th><th style="width:150px">Событие</th><th>Подробности</th></tr></thead>
+          <tbody id="logsBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="view" id="view-broadcast">
+      <h2>Рассылка всем</h2>
+      <div class="panel">
+        <p style="color:var(--muted); font-size:12.5px; margin:0 0 10px;">Сообщение придёт всем сотрудникам сразу — уведомлением на компьютер и в историю рассылок.</p>
+        <textarea id="bcText" placeholder="Текст рассылки..."></textarea>
+        <div style="margin-top:8px;"><button class="action" onclick="sendBroadcast()">Отправить всем</button></div>
+      </div>
+      <div class="panel">
+        <h3>Лента рассылок</h3>
+        <div id="bcFeed"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* --- Выпадающий список ---
+   Системный <select> оформить нельзя: стрелку рисует браузер, она прижата к
+   краю, а раскрытый перечень берёт вид от системы и в палитру не попадает.
+   Настоящий select остаётся в разметке скрытым — весь код, который читает и
+   пишет .value, работает как раньше, — а видимую часть рисуем сами.
+   Тот же приём, что и в панели платформы; общей сборки у сервисов нет,
+   поэтому код продублирован сознательно. */
+(function () {
+  var CHEVRON = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"'
+    + ' stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>';
+
+  function enhance(sel) {
+    if (sel.dataset.enhanced) return;
+    sel.dataset.enhanced = '1';
+    var wrap = document.createElement('div');
+    wrap.className = 'select-wrap';
+    if (sel.style.width) wrap.style.width = sel.style.width;
+    sel.parentNode.insertBefore(wrap, sel);
+    wrap.appendChild(sel);
+
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'select-btn';
+    btn.innerHTML = '<span class="select-value"></span><span class="select-chevron">' + CHEVRON + '</span>';
+    wrap.appendChild(btn);
+
+    var menu = document.createElement('div');
+    menu.className = 'select-menu';
+    menu.hidden = true;
+    wrap.appendChild(menu);
+
+    var label = btn.querySelector('.select-value');
+    function syncLabel() {
+      var opt = sel.options[sel.selectedIndex];
+      label.textContent = opt ? opt.textContent : '';
+    }
+    function close() { wrap.classList.remove('open'); menu.hidden = true; }
+    function open() {
+      menu.innerHTML = '';
+      Array.prototype.forEach.call(sel.options, function (opt, i) {
+        var row = document.createElement('div');
+        row.className = 'select-option' + (i === sel.selectedIndex ? ' selected' : '');
+        row.textContent = opt.textContent;
+        row.onclick = function () {
+          sel.selectedIndex = i;
+          syncLabel();
+          close();
+          sel.dispatchEvent(new Event('change', { bubbles: true }));
+        };
+        menu.appendChild(row);
+      });
+      wrap.classList.add('open');
+      menu.hidden = false;
+    }
+    btn.onclick = function (e) { e.stopPropagation(); menu.hidden ? open() : close(); };
+    sel.addEventListener('change', syncLabel);
+    document.addEventListener('click', function (e) { if (!wrap.contains(e.target)) close(); });
+    syncLabel();
+  }
+
+  function enhanceAll() {
+    document.querySelectorAll('select:not([data-enhanced])').forEach(enhance);
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', enhanceAll);
+  else enhanceAll();
+  // Экраны перерисовываются, поэтому следим за появлением новых select.
+  new MutationObserver(enhanceAll).observe(document.documentElement, { childList: true, subtree: true });
+})();
+
+let token = localStorage.getItem('admin_token');
+let me = JSON.parse(localStorage.getItem('admin_me') || 'null');
+let usersCache = [], deptsCache = [];
+// path/oldestId/hasMore — курсор постраничной подгрузки (см. loadMoreHistory): admin/history/*
+// в server.js режет ответ по HISTORY_PAGE_SIZE (200) — в старом активном диалоге этого может не
+// хватить, дальше 200 сообщений назад без подгрузки было не прокрутить.
+let lastHistory = { type: 'room', path: null, items: [], oldestId: null, hasMore: false };
+
+async function api(path, opts) {
+  const res = await fetch(path, {
+    ...opts,
+    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', ...(opts?.headers || {}) },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Ошибка запроса');
+  return data;
+}
+
+async function doLogin() {
+  const username = document.getElementById('username').value.trim();
+  const password = document.getElementById('password').value;
+  const errEl = document.getElementById('authErr');
+  errEl.textContent = '';
+  try {
+    const res = await fetch('api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }) });
+    const data = await res.json();
+    if (!res.ok) { errEl.textContent = data.error || 'Ошибка входа'; return; }
+    if (!data.user.can_admin) { errEl.textContent = 'Эта панель только для администраторов. Используйте приложение для Windows.'; return; }
+    token = data.token; me = data.user;
+    localStorage.setItem('admin_token', token);
+    localStorage.setItem('admin_me', JSON.stringify(me));
+    startDash();
+  } catch { errEl.textContent = 'Сервер недоступен'; }
+}
+
+function logout() {
+  localStorage.removeItem('admin_token');
+  localStorage.removeItem('admin_me');
+  location.reload();
+}
+
+document.querySelectorAll('.nav-item').forEach(item => {
+  item.onclick = () => {
+    document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    item.classList.add('active');
+    document.getElementById('view-' + item.dataset.view).classList.add('active');
+    // Список подключённых меняется постоянно — перечитываем при каждом заходе в раздел, а не
+    // показываем то, что было на момент входа в панель.
+    if (item.dataset.view === 'updates') loadClients();
+    if (item.dataset.view === 'tls') loadTls();
+    // Статусы в списке пользователей обновляем, только пока раздел открыт:
+    // держать опрос постоянно незачем.
+    if (item.dataset.view === 'users') startPresencePolling();
+    else stopPresencePolling();
+  };
+});
+
+function fmtUptime(sec) {
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60);
+  return `Работает без перезапуска: ${h} ч ${m} мин`;
+}
+
+async function loadStats() {
+  const s = await api('api/admin/stats');
+  document.getElementById('statUsers').textContent = s.usersTotal;
+  document.getElementById('statOnline').textContent = s.onlineNow;
+  document.getElementById('statDepts').textContent = s.departmentsTotal;
+  document.getElementById('statMsgs').textContent = s.messagesTotal;
+  document.getElementById('statUptime').textContent = fmtUptime(s.uptimeSeconds);
+}
+
+// Присутствие: кто в сети и с каких машин. Берём по HTTP, а не только из
+// WebSocket, потому что панель открывают и через прокси платформы, где апгрейд
+// до WS не пробрасывается, — статус должен показываться в любом случае.
+let presenceCache = {};
+let presenceTimer = null;
+
+async function loadPresence() {
+  try {
+    const { users } = await api('api/admin/presence');
+    presenceCache = users || {};
+    renderUsers();
+  } catch { /* не критично: список пользователей покажется без статусов */ }
+}
+
+// Опрос идёт, только пока вкладка открыта: держать его постоянно незачем.
+function startPresencePolling() {
+  stopPresencePolling();
+  loadPresence();
+  presenceTimer = setInterval(loadPresence, 15000);
+}
+function stopPresencePolling() {
+  if (presenceTimer) { clearInterval(presenceTimer); presenceTimer = null; }
+}
+
+const PRESENCE_LABEL = { active: 'в сети', idle: 'отошёл', offline: 'не в сети' };
+
+function sinceText(ts) {
+  if (!ts) return '';
+  const min = Math.floor((Date.now() - ts) / 60000);
+  if (min < 1) return 'только что';
+  if (min < 60) return `${min} мин`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `${h} ч`;
+  return `${Math.floor(h / 24)} дн`;
+}
+
+function renderUsers() {
+  const list = document.getElementById('usersList');
+  if (!list) return;
+  const q = (document.getElementById('userSearch')?.value || '').trim().toLowerCase();
+  const matches = (u) => {
+    if (!q) return true;
+    const hosts = (presenceCache[u.id]?.hosts || []).join(' ').toLowerCase();
+    return u.username.toLowerCase().includes(q)
+      || (u.display_name || '').toLowerCase().includes(q)
+      || hosts.includes(q);   // искать по имени ПК — привычнее, когда звонит «человек с PC-209»
+  };
+  const filtered = usersCache.filter(matches);
+
+  const count = document.getElementById('usersCount');
+  if (count) {
+    const online = usersCache.filter(u => (presenceCache[u.id]?.state || 'offline') !== 'offline').length;
+    count.textContent = `${filtered.length} из ${usersCache.length}, в сети ${online}`;
+  }
+
+  if (!filtered.length) {
+    list.innerHTML = '<div style="color:var(--muted); text-align:center; padding:22px;">Никого не найдено</div>';
+    return;
+  }
+
+  list.innerHTML = filtered.map(u => {
+    const p = presenceCache[u.id] || { state: 'offline', hosts: [], since: null };
+    const depts = (u.departments || []).map(d => d.name).join(', ');
+    // Машин может быть несколько — человек сидит и за своим ПК, и за чужим;
+    // показываем все, иначе непонятно, откуда он на самом деле.
+    const hosts = (p.hosts || []).length ? p.hosts.map(escapeHtml).join(', ') : '—';
+    const caps = [];
+    if (u.can_admin) caps.push('админка');
+    if (u.can_broadcast) caps.push('рассылки');
+    return `<div class="user-row">
+      <div class="user-id">
+        <span class="user-dot ${p.state}" title="${PRESENCE_LABEL[p.state]}"></span>
+        <div style="min-width:0;">
+          <div class="user-login">${escapeHtml(u.username)}</div>
+          <div class="user-sub">${escapeHtml(u.display_name || '')}</div>
+        </div>
+      </div>
+      <div class="user-cell">${PRESENCE_LABEL[p.state]}${p.since ? ` · ${sinceText(p.since)}` : ''}</div>
+      <div class="user-cell user-hosts" title="${escapeHtml((p.hosts || []).join(', '))}">${hosts}</div>
+      <div class="user-cell">
+        <div>${escapeHtml(depts || 'Без отдела')}</div>
+        ${caps.length ? `<div class="user-caps" style="margin-top:4px;">${caps.map(c => `<span class="cap-chip">${c}</span>`).join('')}</div>` : ''}
+      </div>
+      <button class="user-menu-btn" title="Действия" onclick="openUserMenu(${u.id}, this)">···</button>
+    </div>`;
+  }).join('');
+}
+
+function closeUserMenu() {
+  const m = document.getElementById('userMenu');
+  if (m) m.remove();
+}
+document.addEventListener('click', (e) => {
+  const m = document.getElementById('userMenu');
+  if (m && !m.contains(e.target) && !e.target.classList.contains('user-menu-btn')) closeUserMenu();
+});
+
+// Всё, что можно сделать с человеком, — здесь. В строке этих действий больше
+// нет: они занимали пять колонок и мешали читать сам список.
+function openUserMenu(id, anchor) {
+  const existed = document.getElementById('userMenu');
+  closeUserMenu();
+  if (existed && existed.dataset.forUser === String(id)) return; // повторный клик закрывает
+  const u = usersCache.find(x => x.id === id);
+  if (!u) return;
+
+  const menu = document.createElement('div');
+  menu.id = 'userMenu';
+  menu.dataset.forUser = String(id);
+  menu.innerHTML = `
+    <button data-act="rename">Переименовать</button>
+    <button data-act="depts">Отделы<span class="menu-state">${escapeHtml((u.departments || []).map(d => d.name).join(', ') || 'нет')}</span></button>
+    <div class="menu-sep"></div>
+    <button data-act="broadcast">Рассылки<span class="menu-state">${u.can_broadcast ? 'включены' : 'выключены'}</span></button>
+    <button data-act="admin">Админка<span class="menu-state">${u.can_admin ? 'включена' : 'выключена'}</span></button>
+    <div class="menu-sep"></div>
+    <button data-act="password">Сбросить пароль</button>
+    <button data-act="delete" class="danger">Удалить</button>`;
+  document.body.appendChild(menu);
+
+  const r = anchor.getBoundingClientRect();
+  menu.style.left = Math.min(r.right - menu.offsetWidth, window.innerWidth - menu.offsetWidth - 8) + 'px';
+  menu.style.top = (r.bottom + menu.offsetHeight + 8 < window.innerHeight
+    ? r.bottom + 4
+    : Math.max(8, r.top - menu.offsetHeight - 4)) + 'px';
+
+  menu.querySelectorAll('button').forEach(b => {
+    b.onclick = async () => {
+      const act = b.dataset.act;
+      if (act === 'depts') { pickUserDepartments(id, anchor); closeUserMenu(); return; }
+      closeUserMenu();
+      if (act === 'rename') return renameUser(id);
+      if (act === 'broadcast') return toggleUserCap(id, 'can_broadcast', !u.can_broadcast);
+      if (act === 'admin') return toggleUserCap(id, 'can_admin', !u.can_admin);
+      if (act === 'password') return resetPassword(id);
+      if (act === 'delete') return deleteUser(id);
+    };
+  });
+}
+
+function userVersion(id) { return usersCache.find(u => u.id === id)?.version; }
+function applyUserVersion(id, version) { const u = usersCache.find(x => x.id === id); if (u && version !== undefined) u.version = version; }
+
+async function renameUser(id) {
+  const u = usersCache.find(x => x.id === id);
+  const val = (prompt('Отображаемое имя:', u ? (u.display_name || '') : '') || '').trim();
+  if (!val || (u && val === u.display_name)) return;
+  try { await api(`api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify({ display_name: val, version: userVersion(id) }) }); refreshAll(); } catch (e) { alert(e.message); refreshAll(); }
+}
+async function toggleUserCap(id, cap, checked) {
+  try {
+    const r = await api(`api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify({ [cap]: checked, version: userVersion(id) }) });
+    applyUserVersion(id, r.version);
+    // Право видно в строке значком, поэтому список надо перерисовать: раньше
+    // состояние держала галочка, и обновлять было нечего.
+    const u = usersCache.find(x => x.id === id);
+    if (u) u[cap] = checked;
+    renderUsers();
+  } catch (e) { alert(e.message); refreshAll(); }
+}
+
+function renderDepts() {
+  const body = document.getElementById('deptsBody');
+  body.innerHTML = '';
+  deptsCache.forEach((d, i) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td class="row-flex">
+        <button class="action ghost" title="Выше" ${i === 0 ? 'disabled' : ''} onclick="moveDept(${i}, -1)">↑</button>
+        <button class="action ghost" title="Ниже" ${i === deptsCache.length - 1 ? 'disabled' : ''} onclick="moveDept(${i}, 1)">↓</button>
+      </td>
+      <td>${escapeHtml(d.name)}</td>
+      <td class="row-flex">
+        <button class="action ghost" onclick="renameDept(${d.id})">Переименовать</button>
+        <button class="action danger" onclick="deleteDept(${d.id})">Удалить</button>
+      </td>`;
+    body.appendChild(tr);
+  });
+  renderNewUserDepartments(); // кнопка выбора отделов у формы "новый пользователь" — см. ниже
+}
+// Текущее имя берём из кэша по id, а не подставляем строкой в сам onclick: подстановка ломалась
+// на любой кавычке в названии отдела (и открывала бы вставку разметки, если бы имя туда попало).
+async function renameDept(id) {
+  const currentName = deptsCache.find(d => d.id === id)?.name || '';
+  const name = prompt('Новое название отдела:', currentName);
+  if (!name || !name.trim() || name.trim() === currentName) return;
+  try { await api(`api/admin/departments/${id}`, { method: 'PATCH', body: JSON.stringify({ name: name.trim() }) }); refreshAll(); } catch (e) { alert(e.message); }
+}
+async function moveDept(index, dir) {
+  const target = index + dir;
+  if (target < 0 || target >= deptsCache.length) return;
+  const order = deptsCache.map(d => d.id);
+  [order[index], order[target]] = [order[target], order[index]];
+  try { await api('api/admin/departments/reorder', { method: 'POST', body: JSON.stringify({ order }) }); refreshAll(); } catch (e) { alert(e.message); }
+}
+
+async function loadRegistration() {
+  try {
+    const { open } = await api('api/admin/registration');
+    document.getElementById('regOpen').checked = open;
+  } catch { /* не критично: остальная панель работает и без этого переключателя */ }
+}
+async function saveRegistration(open) {
+  const msg = document.getElementById('regMsg');
+  try {
+    await api('api/admin/registration', { method: 'PATCH', body: JSON.stringify({ open }) });
+    msg.textContent = open ? 'Регистрация разрешена' : 'Регистрация выключена';
+    setTimeout(() => { msg.textContent = ''; }, 2500);
+  } catch (e) { msg.textContent = 'Ошибка: ' + e.message; loadRegistration(); }
+}
+
+async function refreshAll() {
+  usersCache = await api('api/admin/users');
+  deptsCache = await api('api/departments');
+  renderUsers();
+  renderDepts();
+  const opts = usersCache.map(u => `<option value="${u.id}">${escapeHtml(u.display_name)}</option>`).join('');
+  document.getElementById('histUser1').innerHTML = opts;
+  document.getElementById('histUser2').innerHTML = opts;
+  loadStats();
+  loadRegistration();
+}
+
+async function createUser() {
+  const username = document.getElementById('newUsername').value.trim();
+  const password = document.getElementById('newPassword').value;
+  const department_ids = [...newUserDepartments];
+  const can_broadcast = document.getElementById('newUserBroadcast').checked;
+  const can_admin = document.getElementById('newUserAdmin').checked;
+  if (!username || !password) return alert('Укажите логин и пароль');
+  try {
+    await api('api/admin/users', { method: 'POST', body: JSON.stringify({ username, password, department_ids, can_broadcast, can_admin }) });
+    document.getElementById('newUsername').value = '';
+    document.getElementById('newPassword').value = '';
+    newUserDepartments = [];
+    renderNewUserDepartments();
+    document.getElementById('newUserBroadcast').checked = false;
+    document.getElementById('newUserAdmin').checked = false;
+    refreshAll();
+  } catch (e) { alert(e.message); }
+}
+// ---------- Выбор отделов ----------
+// Один всплывающий список на всю страницу, а не свой у каждой строки: строк может быть двести.
+let newUserDepartments = []; // отделы, выбранные в форме "новый пользователь", до её отправки
+
+function closeDeptPicker() {
+  const el = document.getElementById('deptPicker');
+  if (el) el.remove();
+}
+document.addEventListener('mousedown', (e) => {
+  const picker = document.getElementById('deptPicker');
+  if (picker && !picker.contains(e.target) && !e.target.classList.contains('dept-btn')) closeDeptPicker();
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDeptPicker(); });
+
+function openDeptPicker(anchor, selectedIds, onToggle) {
+  closeDeptPicker();
+  const picker = document.createElement('div');
+  picker.id = 'deptPicker';
+  if (!deptsCache.length) {
+    picker.innerHTML = '<div class="empty">Отделов пока нет — создайте их выше</div>';
+  } else {
+    picker.innerHTML = deptsCache.map(d =>
+      `<label><input type="checkbox" value="${d.id}" ${selectedIds.includes(d.id) ? 'checked' : ''}>${escapeHtml(d.name)}</label>`
+    ).join('');
+  }
+  document.body.appendChild(picker);
+  const rect = anchor.getBoundingClientRect();
+  // Ниже кнопки, а если там не помещается (нижние строки длинной таблицы) — выше неё.
+  const height = picker.offsetHeight;
+  picker.style.left = Math.min(rect.left, window.innerWidth - picker.offsetWidth - 8) + 'px';
+  picker.style.top = (rect.bottom + height + 8 < window.innerHeight ? rect.bottom + 4 : Math.max(8, rect.top - height - 4)) + 'px';
+  picker.querySelectorAll('input[type=checkbox]').forEach(cb => {
+    cb.onchange = () => {
+      const ids = [...picker.querySelectorAll('input[type=checkbox]')].filter(x => x.checked).map(x => Number(x.value));
+      onToggle(ids);
+    };
+  });
+}
+
+function pickUserDepartments(id, anchor) {
+  const user = usersCache.find(u => u.id === id);
+  if (!user) return;
+  openDeptPicker(anchor, (user.departments || []).map(d => d.id), async (ids) => {
+    try {
+      const r = await api(`api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify({ department_ids: ids, version: userVersion(id) }) });
+      applyUserVersion(id, r.version);
+      // Обновляем кэш и кнопку на месте: перерисовка всей таблицы закрыла бы список галочек,
+      // а отделов обычно отмечают сразу несколько.
+      user.departments = ids.map(i => deptsCache.find(d => d.id === i)).filter(Boolean).map(d => ({ id: d.id, name: d.name }));
+      const names = user.departments.map(d => d.name).join(', ');
+      anchor.textContent = names || 'Без отдела';
+      anchor.title = names || 'Без отдела';
+      anchor.classList.toggle('empty', !names);
+    } catch (e) { alert(e.message); refreshAll(); }
+  });
+}
+
+function renderNewUserDepartments() {
+  const btn = document.getElementById('newDept');
+  if (!btn) return;
+  newUserDepartments = newUserDepartments.filter(id => deptsCache.some(d => d.id === id)); // отдел могли удалить
+  const names = newUserDepartments.map(id => deptsCache.find(d => d.id === id)?.name).filter(Boolean).join(', ');
+  btn.textContent = names || 'Без отдела';
+  btn.title = names || 'Без отдела';
+  btn.classList.toggle('empty', !names);
+}
+
+function pickNewUserDepartments(anchor) {
+  openDeptPicker(anchor, newUserDepartments, (ids) => {
+    newUserDepartments = ids;
+    renderNewUserDepartments();
+  });
+}
+async function resetPassword(id) {
+  const u = usersCache.find(x => x.id === id);
+  const val = prompt(`Новый пароль для ${u ? u.username : 'пользователя'} (минимум 4 символа):`, '');
+  if (!val) return;
+  if (val.length < 4) return alert('Пароль короче четырёх символов сервер не примет');
+  try { await api(`api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify({ password: val, version: userVersion(id) }) }); alert('Пароль обновлён'); refreshAll(); } catch (e) { alert(e.message); refreshAll(); }
+}
+async function deleteUser(id) {
+  if (!confirm('Удалить пользователя без возможности восстановления?')) return;
+  try { await api(`api/admin/users/${id}`, { method: 'DELETE' }); refreshAll(); } catch (e) { alert(e.message); }
+}
+async function createDept() {
+  const name = document.getElementById('newDeptName').value.trim();
+  if (!name) return;
+  try { await api('api/admin/departments', { method: 'POST', body: JSON.stringify({ name }) }); document.getElementById('newDeptName').value = ''; refreshAll(); } catch (e) { alert(e.message); }
+}
+async function deleteDept(id) {
+  if (!confirm('Удалить отдел? Сотрудники останутся без отдела.')) return;
+  try { await api(`api/admin/departments/${id}`, { method: 'DELETE' }); refreshAll(); } catch (e) { alert(e.message); }
+}
+
+document.getElementById('histType').onchange = (e) => {
+  const isDm = e.target.value === 'dm';
+  document.getElementById('histUser1').style.display = isDm ? 'inline-block' : 'none';
+  document.getElementById('histUser2').style.display = isDm ? 'inline-block' : 'none';
+};
+
+// Экранируем И кавычки тоже: без них значение, попавшее в атрибут (например value="..." в списке
+// сотрудников), закрывало атрибут своей кавычкой и дальше писало уже разметку — то есть обычного
+// экранирования "<" и ">" для атрибутов недостаточно. String() — потому что сюда попадают и
+// значения из логов, где на месте строки может оказаться число или null, а у них нет .replace.
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function renderHistoryBox(items) {
+  document.getElementById('histMessages').innerHTML = items.map(m => {
+    const time = new Date(m.created_at).toLocaleString('ru-RU');
+    const files = (m.files || []).map(f => ` 📎 ${escapeHtml(f.name)}${f.exists === false ? ' (удалён с диска)' : ''}`).join('');
+    // from_user — это отображаемое имя, которое сотрудник задаёт себе сам в клиенте. Без
+    // экранирования имя вида "<img src=x onerror=...>" выполнялось бы прямо здесь, в открытой
+    // сессии администратора, — то есть любой сотрудник мог получить доступ к панели, просто
+    // переименовавшись и дождавшись, когда админ откроет переписку.
+    return `<div class="m"><b>${escapeHtml(m.from_user)}:</b> ${escapeHtml(m.text)}${files}<span class="t">${time}</span></div>`;
+  }).join('') || 'Сообщений пока нет';
+}
+
+async function loadHistory() {
+  const type = document.getElementById('histType').value;
+  const box = document.getElementById('histMessages');
+  box.innerHTML = 'Загрузка...';
+  document.getElementById('histMoreRow').style.display = 'none';
+  try {
+    let path;
+    if (type === 'room') {
+      path = 'api/admin/history/room/general';
+    } else {
+      const u1 = document.getElementById('histUser1').value, u2 = document.getElementById('histUser2').value;
+      if (!u1 || !u2 || u1 === u2) { box.innerHTML = 'Выберите двух разных сотрудников'; return; }
+      path = `api/admin/history/dm/${u1}/${u2}`;
+    }
+    const items = await api(path);
+    lastHistory = { type, path, items, oldestId: items.length ? items[0].id : null, hasMore: items.length === 200 };
+    renderHistoryBox(items);
+    document.getElementById('histMoreRow').style.display = lastHistory.hasMore ? 'flex' : 'none';
+  } catch (e) { box.innerHTML = 'Ошибка: ' + e.message; }
+}
+
+async function loadMoreHistory() {
+  if (!lastHistory.hasMore || !lastHistory.path) return;
+  const btn = document.getElementById('histMoreBtn');
+  const box = document.getElementById('histMessages');
+  btn.disabled = true;
+  btn.textContent = 'Загрузка...';
+  try {
+    const items = await api(`${lastHistory.path}?before=${lastHistory.oldestId}`);
+    lastHistory.hasMore = items.length === 200;
+    if (items.length) {
+      lastHistory.oldestId = items[0].id;
+      lastHistory.items = [...items, ...lastHistory.items];
+      const prevHeight = box.scrollHeight, prevTop = box.scrollTop;
+      renderHistoryBox(lastHistory.items);
+      box.scrollTop = box.scrollHeight - prevHeight + prevTop; // не сбрасываем позицию просмотра вставкой сверху
+    }
+    document.getElementById('histMoreRow').style.display = lastHistory.hasMore ? 'flex' : 'none';
+  } catch (e) { alert(e.message); } finally {
+    btn.disabled = false;
+    btn.textContent = 'Показать более ранние';
+  }
+}
+
+function exportHistory() {
+  if (!lastHistory.items.length) { alert('Сначала откройте переписку'); return; }
+  const lines = lastHistory.items.map(m => `[${new Date(m.created_at).toLocaleString('ru-RU')}] ${m.from_user}: ${m.text}`);
+  const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `history-${lastHistory.type}-${Date.now()}.txt`;
+  a.click();
+}
+
+function fmtSize(bytes) {
+  if (!bytes) return '—';
+  if (bytes < 1024) return bytes + ' Б';
+  if (bytes < 1024 * 1024) return Math.round(bytes / 1024) + ' КБ';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' МБ';
+}
+
+async function loadUploadSettings() {
+  try {
+    const s = await api('api/admin/upload-settings');
+    document.getElementById('uploadExtMode').value = s.mode;
+    document.getElementById('uploadExtList').value = s.extensions.join(', ');
+    document.getElementById('uploadMaxMb').value = s.maxMb;
+    document.getElementById('uploadMaxMb').max = s.hardCeilingMb;
+  } catch (e) { document.getElementById('uploadSettingsMsg').textContent = 'Ошибка: ' + e.message; }
+}
+async function saveUploadSettings() {
+  const msg = document.getElementById('uploadSettingsMsg');
+  msg.textContent = 'Сохранение...';
+  try {
+    await api('api/admin/upload-settings', { method: 'PATCH', body: JSON.stringify({
+      mode: document.getElementById('uploadExtMode').value,
+      extensions: document.getElementById('uploadExtList').value,
+      maxMb: document.getElementById('uploadMaxMb').value,
+    }) });
+    msg.textContent = 'Сохранено';
+    setTimeout(() => { if (msg.textContent === 'Сохранено') msg.textContent = ''; }, 2500);
+    loadUploadSettings();
+  } catch (e) { msg.textContent = 'Ошибка: ' + e.message; }
+}
+
+async function loadFiles() {
+  const body = document.getElementById('filesBody');
+  body.innerHTML = '<tr><td colspan="6">Загрузка...</td></tr>';
+  try {
+    const files = await api('api/admin/files');
+    const totalSize = files.reduce((s, f) => s + f.size, 0);
+    const orphaned = files.filter(f => f.orphaned).length;
+    document.getElementById('filesSummary').textContent =
+      `Всего: ${files.length} · Занято места: ${fmtSize(totalSize)}` + (orphaned ? ` · Без ссылок в переписке: ${orphaned}` : '');
+    body.innerHTML = files.map(f => `<tr>
+        <td>${escapeHtml(f.originalName)}${f.orphaned ? ' <span style="color:var(--warn)">(без сообщения)</span>' : ''}</td>
+        <td>${f.context ? escapeHtml(f.context) : '—'}</td>
+        <td>${f.from ? escapeHtml(f.from) : '—'}</td>
+        <td>${new Date(f.created_at).toLocaleString('ru-RU')}</td>
+        <td>${fmtSize(f.size)}</td>
+        <td><button class="action danger" data-disk="${escapeHtml(f.diskName)}" onclick="deleteFile(this.dataset.disk)">Удалить</button></td>
+      </tr>`).join('') || '<tr><td colspan="6" style="color:var(--muted)">Файлов пока нет</td></tr>';
+  } catch (e) { body.innerHTML = `<tr><td colspan="6">Ошибка: ${escapeHtml(e.message)}</td></tr>`; }
+}
+async function deleteFile(diskName) {
+  if (!confirm('Удалить файл с сервера без возможности восстановления?')) return;
+  try { await api(`api/admin/files/${encodeURIComponent(diskName)}`, { method: 'DELETE' }); loadFiles(); } catch (e) { alert(e.message); }
+}
+
+function todayStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+const LEVEL_COLOR = { INFO: 'var(--muted)', WARN: 'var(--warn)', ERROR: 'var(--danger)' };
+// ---------- Сертификат сервера ----------
+// Раздел нужен не для красоты: сертификат домена выдаётся на два года, корневой — на десять.
+// Оба когда-нибудь придётся заменить, и делать это правкой переменных окружения на сервере
+// неудобно ровно в тот момент, когда это срочно.
+const TLS_SOURCE_LABEL = {
+  store: 'загружен через эту панель',
+  'env-pfx': 'задан переменной TLS_PFX при запуске сервера',
+  'env-pem': 'задан переменными TLS_CERT/TLS_KEY при запуске сервера',
+};
+// То же самое, но так, чтобы вставало в предложение «сертификат задан ещё и ...».
+const TLS_SOURCE_SHORT = {
+  store: 'в хранилище панели',
+  'env-pfx': 'переменной окружения TLS_PFX',
+  'env-pem': 'переменными окружения TLS_CERT/TLS_KEY',
+};
+
+function tlsCertRows(cert) {
+  if (!cert) return '';
+  if (cert.error) return `<div style="color:var(--danger)">Файл не читается: ${escapeHtml(cert.error)}</div>`;
+  // Срок показываем цветом, а не только числом: "осталось 20 дней" в общем списке цифр
+  // проскакивают мимо глаз, а красная строка — нет.
+  const days = cert.daysLeft;
+  const dayColor = days === null ? 'var(--muted)' : days <= 0 ? 'var(--danger)' : days <= 30 ? 'var(--warn)' : 'var(--muted)';
+  const dayText = days === null ? '' : days <= 0 ? ' — срок истёк' : ` — осталось ${days} дн.`;
+  const row = (k, v, color) => `<tr><td style="color:var(--muted); width:190px;">${k}</td><td${color ? ` style="color:${color}"` : ''}>${v}</td></tr>`;
+  return `<table style="margin-top:10px;">
+    ${row('Кому выдан', escapeHtml(cert.subject || '—'))}
+    ${row('Имена (SAN)', escapeHtml(cert.san || '—'))}
+    ${row('Кем выдан', escapeHtml(cert.issuer || '—'))}
+    ${row('Действует до', escapeHtml(cert.validTo || '—') + dayText, dayColor)}
+    ${row('Сертификатов в цепочке', String(cert.certificates))}
+    ${row('Отпечаток', `<code style="font-size:11px;">${escapeHtml(cert.fingerprint || '—')}</code>`)}
+  </table>`;
+}
+
+function tlsWarnBox(text) {
+  return `<div style="margin-top:10px; padding:8px 10px; border:1px solid var(--warn); border-radius:8px; color:var(--warn); font-size:12.5px;">${text}</div>`;
+}
+
+async function loadTls() {
+  const box = document.getElementById('tlsState');
+  box.innerHTML = 'Загрузка…';
+  try {
+    const s = await api('api/admin/tls');
+    document.getElementById('tlsInsecureWarn').style.display = s.requestSecure ? 'none' : '';
+
+    let html = s.enabled
+      ? `<div style="font-size:15px; color:var(--online)">🔒 Шифрование включено — соединения идут по https</div>`
+      : `<div style="font-size:15px; color:var(--danger)">⚠ Шифрования нет — всё идёт открытым текстом</div>`;
+    if (s.source) html += `<div style="color:var(--muted); font-size:12px; margin-top:4px;">Сертификат ${escapeHtml(TLS_SOURCE_LABEL[s.source] || s.source)}</div>`;
+
+    html += tlsCertRows(s.certificate);
+
+    // Двойная настройка: файл в хранилище и переменная окружения одновременно. Пока файл есть,
+    // действует он, а переменная стоит в тени — и обнаруживается ровно тогда, когда файл удаляют
+    // и с удивлением видят, что сервер всё так же на https. Показываем это заранее.
+    if (s.envAlsoSet) {
+      html += tlsWarnBox('Сертификат задан <b>дважды</b>: файлом в хранилище (действует он) и '
+        + escapeHtml(TLS_SOURCE_SHORT[s.envAlsoSet] || s.envAlsoSet)
+        + ' в скрипте запуска. Пока обе настройки на месте, кнопка «Удалить из хранилища» шифрование не выключит — '
+        + 'сервер просто возьмёт сертификат из переменной. Уберите переменную из скрипта запуска (или из настроек службы), '
+        + 'чтобы сертификатом управляла только эта панель.');
+    }
+
+    // Файл в хранилище есть, а действует не он — так бывает ровно в одном случае: сертификат
+    // загрузили на сервер, работавший по http. Молчать об этом нельзя, иначе администратор
+    // уверен, что всё включилось.
+    if (s.restartRequired) {
+      html += tlsWarnBox('Сертификат загружен, но ещё не действует: включить шифрование на работающем http-сервере нельзя. <b>Перезапустите сервер.</b>')
+           + `<div style="margin-top:10px; color:var(--muted); font-size:12px;">Что лежит в хранилище и заработает после перезапуска:</div>`
+           + tlsCertRows(s.stored);
+    }
+    if (s.certificate && s.certificate.chainComplete === false) {
+      html += tlsWarnBox('Сервер отдаёт не всю цепочку — в ней нет промежуточных удостоверяющих центров. Браузеры это иногда прощают, а автообновление клиента — нет: обновления будут молча не идти. Экспортируйте сертификат заново, вместе со всеми сертификатами пути.');
+    }
+    if (s.rootMatchesClient === false) {
+      html += tlsWarnBox('Сервер подписан <b>не тем</b> корневым центром, который вшит в сборку клиента. Клиенты перестанут доверять серверу. Замените <code>desktop-client/rosstat-root-ca.crt</code> новым корневым сертификатом и пересоберите установщики.');
+    }
+    box.innerHTML = html;
+  } catch (e) {
+    box.innerHTML = `<span style="color:var(--danger)">Ошибка: ${escapeHtml(e.message)}</span>`;
+  }
+}
+
+async function uploadTls() {
+  const input = document.getElementById('tlsFile');
+  const result = document.getElementById('tlsUploadResult');
+  const file = input.files && input.files[0];
+  if (!file) { result.innerHTML = '<span style="color:var(--warn)">Выберите файл</span>'; return; }
+  if (file.size > 200 * 1024) { result.innerHTML = '<span style="color:var(--danger)">Это слишком большой файл для сертификата — похоже, выбран не тот</span>'; return; }
+  if (!confirm(`Заменить действующий сертификат на «${file.name}»?`)) return;
+
+  result.textContent = 'Проверяем файл…';
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    let bin = '';
+    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    const data = await api('api/admin/tls', {
+      method: 'POST',
+      body: JSON.stringify({ pfx: btoa(bin), password: document.getElementById('tlsPassword').value }),
+    });
+    document.getElementById('tlsPassword').value = ''; // пароль от закрытого ключа не оставляем в поле
+    input.value = '';
+    result.innerHTML = data.applied
+      ? '<span style="color:var(--online)">Сертификат заменён и уже действует. Перезапуск не нужен: новые соединения идут с новым сертификатом.</span>'
+      : '<span style="color:var(--warn)">Файл принят и сохранён, но чтобы шифрование включилось, сервер нужно перезапустить.</span>';
+    loadTls();
+  } catch (e) {
+    result.innerHTML = `<span style="color:var(--danger)">${escapeHtml(e.message)}</span>`;
+  }
+}
+
+async function removeTls() {
+  if (!confirm('Удалить сертификат из хранилища сервера?')) return;
+  try {
+    const r = await api('api/admin/tls', { method: 'DELETE' });
+    // Сказать "удалено" мало: если сертификат задан ещё и переменной окружения, после перезапуска
+    // сервер поднимется по https с тем же сертификатом — и выглядит это так, будто удаление не
+    // сработало. Сервер сразу считает, что реально будет дальше, а мы это показываем.
+    if (r.nextSource) {
+      alert('Файл из хранилища удалён, но шифрование НЕ отключится: сертификат задан ещё и '
+        + (TLS_SOURCE_SHORT[r.nextSource] || r.nextSource)
+        + '. После перезапуска сервер возьмёт его оттуда — ' + (r.nextWhere || '')
+        + '.\n\nЧтобы сервер работал без шифрования, уберите эту переменную из скрипта запуска (службы) и перезапустите его.');
+    } else {
+      alert('Сертификат удалён. После перезапуска сервер будет работать без шифрования — трафик пойдёт открытым текстом.');
+    }
+    loadTls();
+  } catch (e) { alert(e.message); }
+}
+
+async function loadLogs() {
+  const day = document.getElementById('logsDay').value || todayStr();
+  document.getElementById('logsDay').value = day;
+  const type = document.getElementById('logsType').value;
+  const level = document.getElementById('logsLevel').value;
+  const body = document.getElementById('logsBody');
+  body.innerHTML = '<tr><td colspan="5">Загрузка...</td></tr>';
+  try {
+    const { entries, truncated, total } = await api(`api/admin/logs?day=${day}&type=${type}&level=${level}`);
+    document.getElementById('logsSummary').textContent = `Записей: ${total}` + (truncated ? ' (показаны последние ' + entries.length + ')' : '');
+    body.innerHTML = entries.map(e => {
+      const time = new Date(e.ts).toLocaleTimeString('ru-RU');
+      const color = LEVEL_COLOR[e.level] || 'var(--muted)';
+      // meta уже структура, а не строка — просто аккуратно раскладываем в "ключ: значение" построчно
+      const details = Object.entries(e.meta || {}).map(([k, v]) => `${escapeHtml(k)}: ${escapeHtml(String(v))}`).join(' · ');
+      return `<tr>
+          <td style="color:var(--muted); font-variant-numeric:tabular-nums;">${time}</td>
+          <td style="color:${color}; font-weight:700;">${e.level}</td>
+          <td style="color:var(--muted);">${e.source === 'client' ? 'клиент' : 'сервер'}</td>
+          <td>${escapeHtml(e.event)}</td>
+          <td style="color:var(--muted); font-size:12px;">${details}</td>
+        </tr>`;
+    }).join('') || '<tr><td colspan="5" style="color:var(--muted)">За этот день записей нет</td></tr>';
+  } catch (e) { body.innerHTML = `<tr><td colspan="5">Ошибка: ${escapeHtml(e.message)}</td></tr>`; }
+}
+
+// ---------- Клиенты и обновления ----------
+let publishedCache = {};
+
+async function loadPublishedVersions() {
+  const box = document.getElementById('publishedVersions');
+  try {
+    publishedCache = await api('api/admin/update-published');
+    const cell = (track, label) => {
+      const p = publishedCache[track];
+      return `<div><div style="color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.4px;">${label}</div>`
+        + (p ? `<div style="font-size:18px; font-weight:700;">${escapeHtml(p.version)}</div>`
+             + `<div style="color:var(--muted); font-size:11px;">${escapeHtml(p.file || '')}</div>`
+             : `<div style="font-size:14px; color:var(--warn)">не выложено</div>`)
+        + `</div>`;
+    };
+    box.innerHTML = cell('win7', 'Windows 7 / 8.1') + cell('win10', 'Windows 10+');
+  } catch (e) { box.innerHTML = `<span style="color:var(--danger)">${escapeHtml(e.message)}</span>`; }
+}
+
+async function loadClients() {
+  const body = document.getElementById('clientsBody');
+  body.innerHTML = '<tr><td colspan="5">Загрузка...</td></tr>';
+  try {
+    await loadPublishedVersions();
+    const clients = await api('api/admin/clients');
+    document.getElementById('clientsSummary').textContent =
+      clients.length ? `Машин на связи: ${clients.length}` : '';
+    body.innerHTML = clients.map(c => {
+      // Устаревшей считаем только тогда, когда есть с чем сравнивать: и версия клиента известна,
+      // и на сервере что-то выложено для его трека.
+      const pub = c.track && publishedCache[c.track] ? publishedCache[c.track].version : null;
+      const outdated = pub && c.version && pub !== c.version;
+      const verCell = c.version
+        ? `${escapeHtml(c.version)}${outdated ? ` <span style="color:var(--warn)">→ ${escapeHtml(pub)}</span>` : ''}`
+        : '<span style="color:var(--muted)">—</span>';
+      const trackLabel = { win7: 'Windows 7 / 8.1', win10: 'Windows 10+', dev: 'из исходников' }[c.track] || '—';
+      return `<tr>
+        <td>${escapeHtml(c.user)}</td>
+        <td>${escapeHtml(c.hostname)}</td>
+        <td>${verCell}</td>
+        <td style="color:var(--muted)">${escapeHtml(trackLabel)}</td>
+        <td class="row-flex">
+          <button class="action" data-uid="${c.userId}" data-host="${escapeHtml(c.hostname)}"
+            onclick="forceUpdate(this.dataset.uid, this.dataset.host)"${outdated ? '' : ' disabled title="Версия уже актуальна"'}>Обновить</button>
+          <button class="action ghost" data-uid="${c.userId}" data-host="${escapeHtml(c.hostname)}"
+            onclick="requestClientLog(this.dataset.uid, this.dataset.host)">Журнал</button>
+        </td>
+      </tr>`;
+    }).join('') || '<tr><td colspan="5" style="color:var(--muted)">Сейчас никто не подключён</td></tr>';
+  } catch (e) { body.innerHTML = `<tr><td colspan="5">Ошибка: ${escapeHtml(e.message)}</td></tr>`; }
+}
+
+async function forceUpdate(userId, host) {
+  if (!confirm(`Запустить обновление на «${host}»? Приложение у сотрудника перезапустится через 15 секунд после загрузки.`)) return;
+  try {
+    await api('api/admin/force-update', { method: 'POST', body: JSON.stringify({ userId: Number(userId), host }) });
+    alert('Команда отправлена. Обновление займёт некоторое время — список можно обновить позже.');
+  } catch (e) { alert(e.message); }
+}
+
+async function requestClientLog(userId, host) {
+  const panel = document.getElementById('clientLogPanel');
+  const text = document.getElementById('clientLogText');
+  document.getElementById('clientLogTitle').textContent = `Журнал с машины «${host}»`;
+  panel.style.display = '';
+  text.textContent = 'Запрашиваем журнал у клиента…';
+  try {
+    await api('api/admin/request-log', { method: 'POST', body: JSON.stringify({ userId: Number(userId), host }) });
+  } catch (e) { text.textContent = 'Ошибка: ' + e.message; return; }
+  // Клиент отвечает не мгновенно — журнал приходит на сервер отдельным запросом. Опрашиваем
+  // несколько раз, а не ждём один раз наугад.
+  for (let i = 0; i < 10; i++) {
+    await new Promise(r => setTimeout(r, 700));
+    try {
+      const dump = await api(`api/admin/client-log?userId=${encodeURIComponent(userId)}&host=${encodeURIComponent(host)}`);
+      if (Date.now() - dump.at < 60000) {
+        text.textContent = dump.text || '(журнал пуст)';
+        return;
+      }
+    } catch { /* ещё не пришёл — ждём дальше */ }
+  }
+  text.textContent = 'Клиент не прислал журнал. Возможно, он только что отключился.';
+}
+
+async function loadBroadcastFeed() {
+  // all=1 — панель показывает и объявления всей организации, и сообщения отдельным отделам:
+  // сотрудник видит только свои, администратор по своей задаче видит всё.
+  const items = await api('api/broadcasts?all=1');
+  document.getElementById('bcFeed').innerHTML = items.map(b => {
+    const time = new Date(b.created_at).toLocaleString('ru-RU');
+    const dept = b.department ? `<span class="time">отдел: ${escapeHtml(b.department)}</span>` : '';
+    return `<div class="bc-item"><span class="who">${escapeHtml(b.from_user)}</span><span class="time">${time}</span>${dept}<div class="txt">${escapeHtml(b.text)}</div></div>`;
+  }).join('') || '<div style="color:var(--muted)">Рассылок пока не было</div>';
+}
+async function sendBroadcast() {
+  const el = document.getElementById('bcText');
+  const text = el.value.trim();
+  if (!text) return;
+  try { await api('api/broadcast', { method: 'POST', body: JSON.stringify({ text }) }); el.value = ''; loadBroadcastFeed(); } catch (e) { alert(e.message); }
+}
+
+function connectPresenceWs() {
+  const wsUrl = location.origin.replace(/^http/, 'ws');
+  const ws = new WebSocket(`${wsUrl}?token=${token}&host=${encodeURIComponent('Веб-панель администратора')}`);
+  ws.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    if (data.type === 'presence') {
+      const online = new Set(Object.entries(data.users).filter(([, v]) => v.state !== 'offline').map(([k]) => k));
+      document.getElementById('statOnline').textContent = online.size;
+    }
+  };
+  ws.onclose = () => setTimeout(connectPresenceWs, 3000);
+}
+
+async function startDash() {
+  // Право могло измениться (лично или через отдел) с прошлого захода — перепроверяем перед показом панели
+  let fresh;
+  try { fresh = await api('api/me'); } catch { logout(); return; }
+  if (!fresh.can_admin) { logout(); return; }
+  me = fresh;
+  localStorage.setItem('admin_me', JSON.stringify(me));
+
+  document.getElementById('authScreen').style.display = 'none';
+  document.getElementById('dash').classList.add('active');
+  document.getElementById('whoName').textContent = me.display_name || me.username;
+  await refreshAll();
+  document.getElementById('whoRole').textContent = (me.departments || []).map(d => d.name).join(', ');
+  await loadHistory();
+  await loadBroadcastFeed();
+  await loadFiles();
+  await loadUploadSettings();
+  document.getElementById('logsDay').value = todayStr();
+  await loadLogs();
+  await loadClients();
+  connectPresenceWs();
+  setInterval(refreshAll, 30000);
+}
+
+if (token && me) startDash();
+</script>
+</body>
+</html>

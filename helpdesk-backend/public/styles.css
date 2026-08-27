@@ -1,263 +1,473 @@
+/* ============================================================================
+   Material You (Material 3) — тональная тема платформы.
+
+   Палитра построена от фирменного тёплого золотого (#A97F45): из него взяты
+   тона primary и нейтральные поверхности. Отсюда основные отличия от прежнего
+   оформления: вместо тёмно-синей боковой панели и белых карточек на сером —
+   набор близких тональных поверхностей, крупные скругления и «таблетки»
+   (pill) вместо прямоугольных кнопок.
+
+   Цвета заданы в hex, а не в oklch: интерфейс открывают с рабочих машин, где
+   может стоять браузер старше Chrome 111, — oklch там просто не применится и
+   элемент останется без цвета.
+
+   ВАЖНО про имена: старые переменные (--ink, --wire, --line-soft и т.д.)
+   сохранены и переназначены на новые тона, потому что public/app.js
+   подставляет их в инлайновые стили. Переименовывать их без правки app.js
+   нельзя. Имена классов по той же причине не менялись.
+   ========================================================================= */
+
 :root {
-  --bg: #EEF1F6;
-  --paper: #FFFFFF;
-  --ink: #1C2733;
-  --ink-soft: #5B6B7D;
-  --line: #DDE3EA;
-  --line-soft: #F1F4F8;
-  --wire: #A97F45;
-  --wire-soft: #F7EEDC;
-  --amber: #C7791F;
-  --amber-soft: #F7E9D6;
-  --red: #B5432F;
-  --red-soft: #F5E1DC;
-  --green: #3F7A4E;
-  --green-soft: #E4EFE5;
-  --sidebar: #1E3A5F;
-  --sidebar-2: #16304D;
-  --sidebar-soft: #2B4A70;
-  --mono: 'Consolas', 'Menlo', monospace;
-  --serif: Georgia, "Times New Roman", serif;
+  /* --- Material 3: primary --- */
+  --md-primary: #7D5700;
+  --md-on-primary: #FFFFFF;
+  --md-primary-container: #FFDEA6;
+  --md-on-primary-container: #281900;
+
+  /* --- Material 3: secondary (активные пункты меню, мягкие акценты) --- */
+  --md-secondary-container: #F0E0C8;
+  --md-on-secondary-container: #251A04;
+
+  /* --- Material 3: нейтральные поверхности (тёплый нейтральный) --- */
+  --md-surface: #FFF8F3;
+  --md-surface-container-lowest: #FFFFFF;
+  --md-surface-container-low: #FBF1E9;
+  --md-surface-container: #F5ECE3;
+  --md-surface-container-high: #F0E6DE;
+  --md-surface-container-highest: #EAE1D9;
+  --md-on-surface: #1F1B16;
+  --md-on-surface-variant: #4F453A;
+  --md-outline: #817567;
+  --md-outline-variant: #D8CCBE;
+
+  /* --- Тональные пары под статусы и сигналы --- */
+  --md-error: #8C1D18;
+  --md-error-container: #FFDAD6;
+  --md-on-error-container: #410002;
+  --md-warn-container: #FFDCC2;
+  --md-on-warn-container: #2E1500;
+  --md-info-container: #DCE3F9;
+  --md-on-info-container: #101C33;
+  --md-success-container: #CDEBD5;
+  --md-on-success-container: #08210F;
+  --md-neutral-container: #EFE5DB;
+  --md-on-neutral-container: #302A24;
+
+  /* --- Слой состояния (hover/press): M3 кладёт полупрозрачный тон сверху --- */
+  --md-state-hover: rgba(31, 27, 22, 0.06);
+  --md-state-hover-strong: rgba(31, 27, 22, 0.10);
+
+  /* --- Форма --- */
+  --md-shape-xs: 8px;
+  --md-shape-s: 12px;
+  --md-shape-m: 16px;
+  --md-shape-l: 20px;
+  --md-shape-xl: 28px;
+  --md-shape-full: 100px;
+
+  /* --- Тень: в M3 её мало, глубина делается тоном --- */
+  --md-elev-1: 0 1px 2px rgba(31, 27, 22, 0.10);
+  --md-elev-2: 0 2px 6px rgba(31, 27, 22, 0.10);
+  --md-elev-3: 0 6px 18px rgba(31, 27, 22, 0.12);
+
+  /* --- Совместимость: имена, на которые ссылается app.js --- */
+  --ink: var(--md-on-surface);
+  --ink-soft: var(--md-on-surface-variant);
+  --line: var(--md-outline-variant);
+  --line-soft: var(--md-surface-container-high);
+  --wire: var(--md-primary);
+  --wire-soft: var(--md-primary-container);
+  --amber: #8A5300;
+  --amber-soft: var(--md-warn-container);
+  --red: var(--md-error);
+  --red-soft: var(--md-error-container);
+  --green: #1F6B37;
+  --green-soft: var(--md-success-container);
+  --bg: var(--md-surface);
+  --paper: var(--md-surface-container-lowest);
+  --sidebar: var(--md-surface-container);
+
+  /* Roboto — штатный шрифт Material; на рабочих Windows-машинах его обычно
+     нет, поэтому первым запасным идёт Segoe UI. Веб-шрифты не подключаем:
+     сеть изолирована, до fonts.googleapis.com запрос не уйдёт. */
+  --sans: Roboto, "Segoe UI", system-ui, -apple-system, Arial, sans-serif;
+  --serif: var(--sans); /* M3 не использует засечки; имя оставлено для app.js */
+  --mono: "Cascadia Mono", Consolas, "Roboto Mono", Menlo, monospace;
 }
+
+/* --- Полоса прокрутки ---
+   Штатная светло-серая полоса Chromium выбивалась из тёплой палитры и
+   выглядела как чужая деталь на каждом экране. Стилизуем через
+   ::-webkit-scrollbar: этот набор псевдоэлементов понимают все Chromium,
+   включая 109-й, который стоит на рабочих машинах. Стандартные
+   scrollbar-width/scrollbar-color появились только в Chrome 121, поэтому они
+   идут ниже отдельно и лишь повторяют тот же вид в новых браузерах и Firefox.
+   Прозрачная рамка с background-clip даёт отступ от края, чтобы полоса не
+   липла к содержимому. */
+::-webkit-scrollbar { width: 12px; height: 12px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--md-outline-variant);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  border-radius: var(--md-shape-full);
+}
+::-webkit-scrollbar-thumb:hover { background: var(--md-outline); background-clip: padding-box; }
+::-webkit-scrollbar-corner { background: transparent; }
+/* scrollbar-width/-color наследуются, поэтому достаточно корня. */
+html { scrollbar-width: thin; scrollbar-color: var(--md-outline-variant) transparent; }
 
 * { box-sizing: border-box; }
 html, body { height: 100%; }
 body {
   margin: 0;
-  font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
-  background: linear-gradient(180deg, #E4E9F0 0%, #EEF1F6 100%);
-  color: var(--ink);
-  overflow: hidden; /* скроллится только контентная область внутри оболочки, не вся страница */
+  font-family: var(--sans);
+  background: var(--md-surface);
+  color: var(--md-on-surface);
+  overflow: hidden; /* скроллится только контентная область внутри оболочки */
+  -webkit-font-smoothing: antialiased;
 }
 #root { height: 100%; }
 button, input, select, textarea { font-family: inherit; font-size: inherit; }
-a { color: inherit; }
+a { color: var(--md-primary); }
 
 /* --- Login --- */
 .login-screen {
-  min-height: 100vh; background: linear-gradient(135deg, var(--sidebar) 0%, var(--sidebar-2) 100%);
+  min-height: 100vh; background: var(--md-surface-container);
   display: flex; align-items: center; justify-content: center;
 }
 .login-card {
-  width: 380px; background: var(--paper); border-radius: 18px;
-  padding: 36px 32px; box-shadow: 0 20px 60px rgba(0,0,0,0.35);
+  width: 400px; background: var(--md-surface-container-lowest); border-radius: var(--md-shape-xl);
+  padding: 40px 36px; box-shadow: var(--md-elev-3);
 }
-.login-logo { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
-.login-logo-icon {
-  width: 34px; height: 34px; border-radius: 10px; background: var(--wire);
-  display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 700;
-}
-.login-title { font-family: var(--serif); font-weight: 600; font-size: 18px; letter-spacing: 0.1px; }
-.login-sub { font-size: 12.5px; color: var(--ink-soft); margin-bottom: 26px; }
-.tab-group { display: flex; gap: 4px; margin-bottom: 20px; background: var(--line-soft); padding: 3px; border-radius: 10px; }
+.login-logo { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
+/* Герб вместо прежней плитки с буквой: у ведомственной системы уместнее
+   государственный символ, а не инициал. Подложки нет намеренно — герб рисуется
+   прямо на поверхности, как на бланках. */
+.brand-emblem { flex-shrink: 0; color: var(--md-primary); display: block; }
+/* Подпись системы и ведомство под ней. Строки прижаты друг к другу (line-height
+   1.2), иначе на 32-пиксельном гербе они разъезжаются и блок перестаёт
+   читаться как один заголовок. */
+.brand-text { min-width: 0; line-height: 1.2; }
+.brand-name { font-family: var(--serif); font-weight: 600; font-size: 14.5px; color: var(--md-on-surface); }
+.brand-org { font-size: 11.5px; color: var(--md-on-surface-variant); letter-spacing: 0.2px; margin-top: 2px; }
+.login-title { font-weight: 600; font-size: 22px; letter-spacing: 0; }
+.login-sub { font-size: 13.5px; color: var(--md-on-surface-variant); margin-bottom: 28px; }
+.tab-group { display: flex; gap: 4px; margin-bottom: 22px; background: var(--md-surface-container-high); padding: 4px; border-radius: var(--md-shape-full); }
 .tab-btn {
-  flex: 1; padding: 7px 4px; font-size: 12px; font-weight: 600; border: none; border-radius: 8px;
-  background: transparent; color: var(--ink-soft); cursor: pointer;
+  flex: 1; padding: 9px 4px; font-size: 13px; font-weight: 600; border: none; border-radius: var(--md-shape-full);
+  background: transparent; color: var(--md-on-surface-variant); cursor: pointer; transition: background 0.15s ease, color 0.15s ease;
 }
-.tab-btn.active { background: var(--paper); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,0.08); }
-.field-label { font-size: 12px; font-weight: 600; color: var(--ink-soft); display: block; margin-bottom: 6px; }
+.tab-btn:hover { background: var(--md-state-hover); }
+.tab-btn.active { background: var(--md-primary-container); color: var(--md-on-primary-container); }
+.field-label { font-size: 12.5px; font-weight: 500; color: var(--md-on-surface-variant); display: block; margin-bottom: 7px; }
 .field-input {
-  width: 100%; padding: 9px 11px; border: 1px solid var(--line); border-radius: 10px;
-  outline: none; margin-bottom: 14px; transition: border-color 0.12s ease;
+  width: 100%; padding: 14px 16px; border: 1px solid var(--md-outline); border-radius: var(--md-shape-xs);
+  outline: none; margin-bottom: 16px; background: var(--md-surface-container-lowest); color: var(--md-on-surface);
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
 }
-.field-input:focus { border-color: var(--wire); }
+.field-input:focus { border-color: var(--md-primary); box-shadow: inset 0 0 0 1px var(--md-primary); }
 .btn-primary {
-  width: 100%; padding: 10px 0; background: var(--wire); color: #fff; border: none;
-  border-radius: 10px; font-size: 13.5px; font-weight: 600; cursor: pointer; transition: filter 0.12s ease;
+  width: 100%; padding: 14px 0; background: var(--md-primary); color: var(--md-on-primary); border: none;
+  border-radius: var(--md-shape-full); font-size: 14px; font-weight: 600; letter-spacing: 0.1px;
+  cursor: pointer; transition: box-shadow 0.15s ease, filter 0.15s ease;
 }
-.btn-primary:disabled { background: var(--line); cursor: not-allowed; }
+.btn-primary:hover { box-shadow: var(--md-elev-2); filter: brightness(1.06); }
+.btn-primary:disabled { background: rgba(31,27,22,0.12); color: rgba(31,27,22,0.38); cursor: not-allowed; box-shadow: none; filter: none; }
 .note-box {
-  display: flex; gap: 6px; align-items: flex-start; font-size: 11px; color: var(--ink-soft);
-  margin-bottom: 16px; background: var(--wire-soft); padding: 8px 10px; border-radius: 6px;
+  display: flex; gap: 8px; align-items: flex-start; font-size: 12px; color: var(--md-on-surface-variant);
+  margin-bottom: 18px; background: var(--md-surface-container); padding: 12px 14px; border-radius: var(--md-shape-s);
 }
 .error-box {
-  display: flex; gap: 8px; align-items: flex-start; background: var(--red-soft); color: #7A2E1F;
-  font-size: 12px; padding: 10px 12px; border-radius: 6px; margin-bottom: 16px;
+  display: flex; gap: 10px; align-items: flex-start; background: var(--md-error-container); color: var(--md-on-error-container);
+  font-size: 12.5px; padding: 12px 14px; border-radius: var(--md-shape-s); margin-bottom: 18px;
 }
 .warn-box {
-  display: flex; gap: 8px; align-items: flex-start; background: var(--amber-soft); color: #7A5218;
-  font-size: 12px; padding: 10px 12px; border-radius: 6px; margin-bottom: 16px;
+  display: flex; gap: 10px; align-items: flex-start; background: var(--md-warn-container); color: var(--md-on-warn-container);
+  font-size: 12.5px; padding: 12px 14px; border-radius: var(--md-shape-s); margin-bottom: 18px;
 }
 
 /* --- App shell --- */
 .app-shell {
   display: flex;
-  gap: 14px;
-  max-width: 1400px;
-  margin: 20px auto;
-  height: calc(100vh - 40px);
-  padding: 14px;
-  box-sizing: border-box;
+  gap: 12px;
+  max-width: 1600px;
+  margin: 0 auto;
+  height: 100vh;
+  padding: 12px;
 }
+/* Navigation drawer: светлая тональная поверхность вместо тёмной панели.
+   Тон на ступень глубже фона страницы (surface): на surface-container-low
+   панель почти сливалась с фоном и граница читалась только по скруглению. */
 .sidebar {
-  width: 216px; background: linear-gradient(160deg, var(--sidebar) 0%, var(--sidebar-2) 100%); color: #fff; display: flex; flex-direction: column; flex-shrink: 0;
-  border-radius: 18px;
-  box-shadow: 0 8px 28px rgba(20, 40, 63, 0.22);
-  min-height: 0; /* даёт дочернему sidebar-nav корректно посчитать overflow внутри flex-колонки */
+  width: 260px; background: var(--md-surface-container); color: var(--md-on-surface);
+  display: flex; flex-direction: column; flex-shrink: 0;
+  border-radius: var(--md-shape-xl);
+  min-height: 0;
 }
 .sidebar-head {
-  padding: 20px 18px 16px; border-bottom: 1px solid var(--sidebar-soft);
-  display: flex; align-items: center; gap: 9px; flex-shrink: 0;
+  padding: 22px 22px 18px;
+  display: flex; align-items: center; gap: 12px; flex-shrink: 0;
 }
-.sidebar-nav { padding: 14px 10px; flex: 1; min-height: 0; overflow-y: auto; }
+/* Кнопка раздела прямо в шапке: сертификаты относятся ко всей платформе, а не
+   к заявкам, и в их группе выглядели случайным пунктом. */
+.head-action {
+  margin-left: auto; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px;
+  border: none; border-radius: 50%; background: transparent; color: var(--md-on-surface-variant);
+  cursor: pointer; transition: background 0.13s ease, color 0.13s ease;
+}
+.head-action:hover { background: var(--md-state-hover); color: var(--md-on-surface); }
+.head-action.active { background: var(--md-primary-container); color: var(--md-on-primary-container); }
+.sidebar-nav { padding: 4px 12px 12px; flex: 1; min-height: 0; overflow-y: auto; }
+/* Пункт меню в M3 — «таблетка» на всю ширину */
 .nav-btn {
-  width: 100%; display: flex; align-items: center; gap: 10px; padding: 9px 12px;
-  background: transparent; border: none; border-radius: 10px; color: #A7B0AB;
-  font-size: 13px; font-weight: 500; cursor: pointer; margin-bottom: 2px; text-align: left;
-  transition: background 0.12s ease;
+  width: 100%; display: flex; align-items: center; gap: 12px; padding: 13px 16px;
+  background: transparent; border: none; border-radius: var(--md-shape-full); color: var(--md-on-surface-variant);
+  font-size: 13.5px; font-weight: 500; cursor: pointer; margin-bottom: 4px; text-align: left;
+  white-space: nowrap; /* «Входящие заявки» рядом со счётчиком иначе рвётся на две строки */
+  transition: background 0.13s ease, color 0.13s ease;
 }
-.nav-btn:hover { background: rgba(255,255,255,0.06); color: #fff; }
-.nav-btn.active { background: var(--sidebar-soft); color: #fff; font-weight: 600; }
-.nav-btn-sub { padding-left: 30px; font-size: 12.5px; }
+.nav-btn:hover { background: var(--md-state-hover); color: var(--md-on-surface); }
+.nav-btn.active { background: var(--md-primary-container); color: var(--md-on-primary-container); font-weight: 600; }
+.nav-btn-sub { padding-left: 34px; font-size: 13px; }
 .nav-group-header {
-  width: 100%; display: flex; align-items: center; gap: 10px; padding: 9px 12px;
-  background: transparent; border: none; border-radius: 10px; color: #A7B0AB;
-  font-size: 13px; font-weight: 600; cursor: pointer; text-align: left; margin-bottom: 2px;
-  transition: background 0.12s ease;
+  width: 100%; display: flex; align-items: center; gap: 12px; padding: 13px 16px;
+  background: transparent; border: none; border-radius: var(--md-shape-full); color: var(--md-on-surface-variant);
+  font-size: 13.5px; font-weight: 600; cursor: pointer; text-align: left; margin-bottom: 4px;
+  transition: background 0.13s ease, color 0.13s ease;
 }
-.nav-group-header:hover { background: rgba(255,255,255,0.06); color: #fff; }
-.nav-chevron { margin-left: auto; display: inline-flex; color: #7C8580; transition: transform 0.15s ease; }
+.nav-group-header:hover { background: var(--md-state-hover); color: var(--md-on-surface); }
+.nav-chevron { margin-left: auto; display: inline-flex; color: var(--md-on-surface-variant); transition: transform 0.18s ease; }
 .nav-chevron.open { transform: rotate(90deg); }
-.nav-subgroup { margin-bottom: 4px; }
-.nav-divider { height: 1px; background: var(--sidebar-soft); margin: 10px 10px; }
-.nav-icon { margin-right: 8px; display: inline-flex; align-items: center; }
+.nav-subgroup { margin-bottom: 6px; }
+.nav-divider { height: 1px; background: var(--md-outline-variant); margin: 12px 16px; }
+.nav-icon { display: inline-flex; align-items: center; }
 .nav-icon svg, .search-icon svg, .row-arrow svg, .chevron-icon svg { display: block; }
 .nav-badge {
-  margin-left: auto; background: var(--amber); color: #fff; font-size: 10.5px; font-weight: 700;
-  border-radius: 999px; padding: 1px 7px;
+  margin-left: auto; background: var(--md-error); color: #fff; font-size: 11px; font-weight: 600;
+  border-radius: var(--md-shape-full); padding: 2px 8px; min-width: 20px; text-align: center;
 }
-.sidebar-foot { padding: 14px 16px; border-top: 1px solid var(--sidebar-soft); flex-shrink: 0; }
-.user-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.sidebar-foot { padding: 12px 16px 16px; flex-shrink: 0; }
+.user-row { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; padding: 0 4px; }
 .user-avatar {
-  width: 26px; height: 26px; border-radius: 50%; background: var(--wire-soft); color: var(--wire);
-  display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; flex-shrink: 0;
+  width: 40px; height: 40px; border-radius: 50%; background: var(--md-primary-container); color: var(--md-on-primary-container);
+  display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; flex-shrink: 0;
 }
-.user-name { font-size: 12.5px; font-weight: 600; color: #fff; word-wrap: break-word; overflow-wrap: break-word; line-height: 1.35; }
-.user-dept { font-size: 11px; color: #8A948E; }
+.user-name { font-size: 13px; font-weight: 500; color: var(--md-on-surface); word-wrap: break-word; overflow-wrap: break-word; line-height: 1.35; }
+.user-dept { font-size: 11.5px; color: var(--md-on-surface-variant); }
 .user-role-badge {
-  display: inline-block; margin-top: 4px; font-size: 10px; font-weight: 700; letter-spacing: 0.3px;
-  text-transform: uppercase; color: var(--wire); background: rgba(169,127,69,0.18); padding: 2px 7px; border-radius: 999px;
+  display: inline-block; margin-top: 5px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.4px;
+  text-transform: uppercase; color: var(--md-on-secondary-container); background: var(--md-secondary-container);
+  padding: 3px 9px; border-radius: var(--md-shape-full);
 }
-.logout-btn { width: 100%; display: flex; align-items: center; gap: 8px; background: none; border: none; color: #8A948E; font-size: 12px; cursor: pointer; padding: 6px 0; border-radius: 8px; transition: background 0.12s ease; }
-.logout-btn:hover { background: rgba(255,255,255,0.05); color: #fff; }
+.logout-btn {
+  width: 100%; display: flex; align-items: center; gap: 12px; background: none; border: none;
+  color: var(--md-on-surface-variant); font-size: 13px; cursor: pointer; padding: 11px 16px;
+  border-radius: var(--md-shape-full); transition: background 0.13s ease, color 0.13s ease;
+}
+.logout-btn:hover { background: var(--md-error-container); color: var(--md-on-error-container); }
 
 .main {
-  flex: 1; min-width: 0; background: var(--paper);
-  border-radius: 18px; overflow: hidden;
-  box-shadow: 0 8px 28px rgba(20, 39, 63, 0.08);
-  border: 1px solid rgba(20, 39, 63, 0.06);
+  flex: 1; min-width: 0; background: var(--md-surface-container-lowest);
+  border-radius: var(--md-shape-xl); overflow: hidden;
   display: flex; flex-direction: column; min-height: 0;
 }
 .topbar {
-  display: flex; align-items: center; justify-content: space-between; padding: 22px 28px 16px;
-  background: var(--paper); flex-shrink: 0;
+  display: flex; align-items: center; justify-content: space-between; padding: 26px 32px 18px;
+  flex-shrink: 0;
 }
-.topbar-title { font-family: var(--serif); font-size: 19px; font-weight: 600; letter-spacing: 0.1px; }
+.topbar-title { font-size: 24px; font-weight: 600; letter-spacing: 0; }
 .topbar-title-row { display: flex; align-items: center; }
 .icon-btn {
-  display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px;
-  border-radius: 10px; border: none; background: var(--line-soft); color: var(--ink-soft); cursor: pointer;
-  margin-right: 12px; flex-shrink: 0; transition: background 0.12s ease, color 0.12s ease;
+  display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px;
+  border-radius: 50%; border: none; background: transparent; color: var(--md-on-surface-variant); cursor: pointer;
+  margin-right: 12px; flex-shrink: 0; transition: background 0.13s ease, color 0.13s ease;
 }
-.icon-btn:hover { background: var(--wire-soft); color: var(--wire); }
+.icon-btn:hover { background: var(--md-state-hover); color: var(--md-on-surface); }
 .icon-btn svg { transform: scaleX(-1); } /* стрелка "вправо" развёрнута в "назад" */
-.page { padding: 8px 28px 24px; flex: 1; min-height: 0; overflow-y: auto; }
-.page-flush { padding: 0; overflow: hidden; } /* встроенный модуль сам управляет своими отступами и скроллом */
+.page { padding: 4px 32px 28px; flex: 1; min-height: 0; overflow-y: auto; }
+.page-flush { padding: 0; overflow: hidden; } /* встроенный модуль сам управляет отступами и скроллом */
 .module-frame { display: block; width: 100%; height: 100%; border: none; }
 
 /* --- Buttons / inputs (shared) --- */
 .btn {
-  padding: 8px 16px; border: none; border-radius: 10px; font-size: 12.5px; font-weight: 600; cursor: pointer;
-  display: inline-flex; align-items: center; gap: 6px; transition: filter 0.12s ease;
+  padding: 11px 22px; border: none; border-radius: var(--md-shape-full); font-size: 13.5px; font-weight: 600;
+  letter-spacing: 0.1px; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 8px; transition: box-shadow 0.15s ease, filter 0.15s ease, background 0.15s ease;
 }
-.btn:hover { filter: brightness(0.96); }
-.btn-wire { background: var(--wire); color: #fff; }
-.btn-ghost { background: var(--line-soft); color: var(--ink); }
+.btn-wire { background: var(--md-primary); color: var(--md-on-primary); }
+.btn-wire:hover { box-shadow: var(--md-elev-2); filter: brightness(1.06); }
+.btn-ghost { background: var(--md-surface-container-high); color: var(--md-on-surface); }
+.btn-ghost:hover { background: var(--md-surface-container-highest); }
 select, .input {
-  padding: 7px 10px; font-size: 12.5px; border-radius: 10px; border: 1px solid var(--line); background: var(--paper); color: var(--ink);
+  padding: 11px 14px; font-size: 13.5px; border-radius: var(--md-shape-xs); border: 1px solid var(--md-outline);
+  background: var(--md-surface-container-lowest); color: var(--md-on-surface); outline: none;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
 }
+select:focus, .input:focus { border-color: var(--md-primary); box-shadow: inset 0 0 0 1px var(--md-primary); }
+
+/* --- Выпадающий список ---
+   Системный <select> нельзя оформить: стрелка рисуется браузером, прижата к
+   краю, а раскрытый список берёт вид от системы и в тёплую палитру не
+   попадает совсем. Поэтому настоящий select остаётся в разметке (скрытый) —
+   ради него работает весь код, который читает .value, — а видимую часть
+   рисуем сами. Ставится ко всем select автоматически, см. enhanceSelects. */
+.select-wrap { position: relative; display: inline-block; vertical-align: middle; }
+.select-wrap > select {
+  position: absolute; opacity: 0; pointer-events: none; width: 0; height: 0; padding: 0; border: 0;
+}
+.select-btn {
+  display: inline-flex; align-items: center; gap: 10px; width: 100%;
+  padding: 11px 14px 11px 16px; font-size: 13.5px; font-family: inherit; text-align: left;
+  border: 1px solid var(--md-outline-variant); border-radius: var(--md-shape-full);
+  background: var(--md-surface-container-lowest); color: var(--md-on-surface);
+  cursor: pointer; transition: border-color 0.12s ease, background 0.13s ease;
+}
+.select-btn:hover { background: var(--md-surface-container-low); }
+.select-wrap.open .select-btn { border-color: var(--md-primary); }
+.select-btn .select-value { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Стрелка не прижата к грани: у системного select между ней и краем не было
+   ничего, и поле выглядело обрезанным. */
+.select-btn .select-chevron {
+  display: inline-flex; flex-shrink: 0; color: var(--md-on-surface-variant);
+  transform: rotate(90deg); transition: transform 0.18s ease;
+}
+.select-wrap.open .select-btn .select-chevron { transform: rotate(-90deg); }
+.select-menu {
+  position: absolute; z-index: 40; top: calc(100% + 6px); left: 0; min-width: 100%;
+  padding: 6px; border-radius: var(--md-shape-m); background: var(--md-surface-container-lowest);
+  box-shadow: var(--md-elev-3); max-height: 300px; overflow-y: auto;
+}
+.select-option {
+  padding: 10px 14px; border-radius: var(--md-shape-xs); font-size: 13.5px; cursor: pointer;
+  white-space: nowrap; transition: background 0.1s ease;
+}
+.select-option:hover, .select-option.active { background: var(--md-state-hover); }
+.select-option.selected {
+  background: var(--md-primary-container); color: var(--md-on-primary-container); font-weight: 600;
+}
+/* Поле формы (в карточке) — прямоугольное, как соседние текстовые поля;
+   «таблетка» уместна только среди фильтров. */
+.select-wrap.select-field { display: block; }
+.select-wrap.select-field .select-btn { border-radius: var(--md-shape-xs); border-color: var(--md-outline); }
 textarea.input { font-family: inherit; resize: vertical; }
 
 /* --- List screen --- */
-.filters-row { padding: 0 0 0 0; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
-.toggle-group { display: flex; gap: 3px; background: var(--line-soft); padding: 3px; border-radius: 10px; }
-.toggle-btn {
-  padding: 6px 14px; font-size: 12.5px; font-weight: 600; border: none; border-radius: 8px;
-  background: transparent; color: var(--ink-soft); cursor: pointer; transition: background 0.12s ease, color 0.12s ease;
+.filters-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 18px; }
+/* Сегментированный переключатель M3 */
+.toggle-group {
+  display: flex; gap: 4px; padding: 4px; border-radius: var(--md-shape-full);
+  background: var(--md-surface-container-lowest); border: 1px solid var(--md-outline-variant);
 }
-.toggle-btn.active { background: var(--paper); color: var(--ink); box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
-.filters-count { margin-left: auto; font-size: 12px; color: var(--ink-soft); }
+.toggle-btn {
+  padding: 8px 18px; font-size: 13px; font-weight: 500; border: none; border-radius: var(--md-shape-full);
+  background: transparent; color: var(--md-on-surface-variant); cursor: pointer; transition: background 0.13s ease, color 0.13s ease;
+}
+.toggle-btn:hover { background: var(--md-state-hover); }
+.toggle-btn.active { background: var(--md-primary-container); color: var(--md-on-primary-container); font-weight: 600; }
+.filters-count { margin-left: auto; font-size: 12.5px; color: var(--md-on-surface-variant); }
 .search-wrap { position: relative; }
-.search-wrap input { padding: 7px 10px 7px 32px; width: 240px; }
-.search-icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--ink-soft); display: flex; }
+.search-wrap input { padding: 11px 16px 11px 42px; width: 280px; border-radius: var(--md-shape-full); background: var(--md-surface-container-high); border: 1px solid transparent; }
+.search-wrap input:focus { border-color: var(--md-primary); box-shadow: none; }
+.search-icon { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: var(--md-on-surface-variant); display: flex; }
 
-.ticket-table { background: var(--paper); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+/* Список заявок: карточки на тональной поверхности вместо линованной таблицы.
+   Колонки фиксированной ширины, поэтому при узком окне сетка не помещается.
+   Раньше строка оставалась шириной с окно, а содержимое вылезало за её фон —
+   текст висел на пустом месте. Теперь строка растёт до ширины содержимого
+   (max-content), а прокручивается вся таблица целиком. */
+.ticket-table { background: transparent; border: none; border-radius: 0; overflow-x: auto; }
+.ticket-row-head, .ticket-row { width: max-content; min-width: 100%; }
 .ticket-row-head, .ticket-row {
   display: grid; grid-template-columns: 96px 1fr 130px 130px 150px 140px 24px;
-  column-gap: 18px; padding: 11px 18px; align-items: center; font-size: 13.5px;
+  column-gap: 18px; align-items: center; font-size: 13.5px;
 }
-.ticket-row-head { background: var(--line-soft); font-size: 11px; font-weight: 700; color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.3px; }
-.ticket-row { border-top: 1px solid var(--line-soft); cursor: pointer; transition: background 0.1s ease; }
-.ticket-row:hover { background: var(--line-soft); }
-.row-arrow { display: flex; justify-content: flex-end; color: var(--ink-soft); }
+.ticket-row-head {
+  background: transparent; font-size: 11px; font-weight: 600; color: var(--md-on-surface-variant);
+  text-transform: uppercase; letter-spacing: 0.5px; padding: 4px 20px 10px;
+}
+.ticket-row {
+  border: none; cursor: pointer; padding: 16px 20px; margin-bottom: 8px;
+  background: var(--md-surface-container-low); border-radius: var(--md-shape-m);
+  transition: background 0.13s ease, box-shadow 0.13s ease;
+}
+.ticket-row:hover { background: var(--md-surface-container-high); box-shadow: var(--md-elev-1); }
+.row-arrow { display: flex; justify-content: flex-end; color: var(--md-on-surface-variant); }
 .mono { font-family: var(--mono); }
-.ticket-id { color: var(--wire); font-weight: 600; font-size: 12.5px; }
-.ticket-title-cell { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.ticket-title-cell span.title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ticket-id { color: var(--md-primary); font-weight: 600; font-size: 12.5px; }
+.ticket-title-cell { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ticket-title-cell span.title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .cell-ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.cell-wrap { white-space: normal; word-break: break-word; overflow-wrap: break-word; line-height: 1.3; }
-.unread-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--wire); flex-shrink: 0; }
-.priority-dot { display: inline-block; width: 8px; height: 8px; border-radius: 3px; flex-shrink: 0; }
-.badge { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 999px; letter-spacing: 0.2px; }
-.empty-state { padding: 40px 16px; text-align: center; color: var(--ink-soft); font-size: 13px; }
+.cell-wrap { white-space: normal; word-break: break-word; overflow-wrap: break-word; line-height: 1.35; }
+.unread-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--md-primary); flex-shrink: 0; }
+.priority-dot { display: inline-block; width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+/* Chip (assist chip) */
+.badge {
+  display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500;
+  padding: 5px 12px; border-radius: var(--md-shape-xs); letter-spacing: 0.2px;
+}
+.empty-state { padding: 56px 16px; text-align: center; color: var(--md-on-surface-variant); font-size: 13.5px; }
 
 /* --- Create screen --- */
-.card { background: var(--paper); border: 1px solid var(--line); border-radius: 14px; padding: 22px; }
-.form-row { display: flex; gap: 14px; margin-bottom: 16px; }
+.card { background: var(--md-surface-container-low); border: none; border-radius: var(--md-shape-l); padding: 26px; }
+.form-row { display: flex; gap: 16px; margin-bottom: 18px; }
 .form-row > div { flex: 1; }
 .dropzone {
-  border: 1.5px dashed var(--line); border-radius: 12px; padding: 18px 14px; text-align: center;
-  margin-bottom: 16px; cursor: pointer; color: var(--ink-soft); font-size: 12.5px; transition: border-color 0.12s ease, background 0.12s ease;
+  border: 1.5px dashed var(--md-outline); border-radius: var(--md-shape-m); padding: 24px 16px; text-align: center;
+  margin-bottom: 18px; cursor: pointer; color: var(--md-on-surface-variant); font-size: 13px;
+  transition: border-color 0.13s ease, background 0.13s ease;
 }
-.dropzone:hover { border-color: var(--wire); background: var(--wire-soft); }
-.dropzone-icon { display: inline-flex; vertical-align: middle; margin-right: 6px; opacity: 0.7; }
-.file-chip { display: flex; align-items: center; justify-content: space-between; background: var(--line-soft); border-radius: 10px; padding: 6px 10px; font-size: 12px; margin-bottom: 6px; }
-.file-chip-name { display: flex; align-items: center; gap: 6px; }
-.file-chip-remove { display: inline-flex; align-items: center; justify-content: center; cursor: pointer; color: var(--ink-soft); padding: 3px; border-radius: 5px; transition: background 0.12s ease, color 0.12s ease; }
-.file-chip-remove:hover { background: rgba(0,0,0,0.07); color: var(--red); }
+.dropzone:hover { border-color: var(--md-primary); background: var(--md-primary-container); color: var(--md-on-primary-container); }
+.dropzone-icon { display: inline-flex; vertical-align: middle; margin-right: 8px; opacity: 0.75; }
+.file-chip {
+  display: flex; align-items: center; justify-content: space-between; background: var(--md-surface-container-high);
+  border-radius: var(--md-shape-xs); padding: 9px 14px; font-size: 12.5px; margin-bottom: 8px;
+}
+.file-chip-name { display: flex; align-items: center; gap: 8px; }
+.file-chip-remove {
+  display: inline-flex; align-items: center; justify-content: center; cursor: pointer; color: var(--md-on-surface-variant);
+  padding: 5px; border-radius: 50%; transition: background 0.13s ease, color 0.13s ease;
+}
+.file-chip-remove:hover { background: var(--md-error-container); color: var(--md-on-error-container); }
 
-.history-toggle { display: flex; align-items: center; margin-top: 16px; color: var(--ink-soft); font-size: 12px; font-weight: 600; cursor: pointer; }
-.chevron-icon { display: inline-flex; margin-right: 6px; transition: transform 0.15s ease; }
+.history-toggle { display: flex; align-items: center; margin-top: 18px; color: var(--md-on-surface-variant); font-size: 13px; font-weight: 500; cursor: pointer; }
+.chevron-icon { display: inline-flex; margin-right: 8px; transition: transform 0.18s ease; }
 .history-toggle.open .chevron-icon { transform: rotate(90deg); }
 
 /* --- Detail screen --- */
-.detail-layout { display: flex; gap: 20px; max-width: 980px; margin: 0 auto; }
+.detail-layout { display: flex; gap: 24px; max-width: 1040px; margin: 0 auto; }
 .detail-main { flex: 1; min-width: 0; }
-.detail-side { width: 240px; flex-shrink: 0; }
-.comment-box { padding: 10px 13px; border-radius: 12px; margin-bottom: 12px; }
-.comment-box.internal { background: var(--amber-soft); border-left: 3px solid var(--amber); }
-.comment-box.public { background: var(--line-soft); border-left: 3px solid var(--wire); }
-.field-mini { margin-bottom: 10px; }
-.field-mini-label { font-size: 11px; color: var(--ink-soft); margin-bottom: 2px; }
-.field-mini-value { font-size: 12.5px; font-weight: 500; }
-.section-label { font-size: 11px; font-weight: 700; color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 10px; }
+.detail-side { width: 264px; flex-shrink: 0; }
+.comment-box { padding: 14px 16px; border-radius: var(--md-shape-m); margin-bottom: 12px; }
+.comment-box.internal { background: var(--md-warn-container); color: var(--md-on-warn-container); border-left: none; }
+.comment-box.public { background: var(--md-surface-container-low); border-left: none; }
+.field-mini { margin-bottom: 14px; }
+.field-mini-label { font-size: 11.5px; color: var(--md-on-surface-variant); margin-bottom: 3px; }
+.field-mini-value { font-size: 13.5px; font-weight: 500; }
+.section-label { font-size: 11px; font-weight: 600; color: var(--md-on-surface-variant); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; }
 
 /* --- Dashboard --- */
-.stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 20px; }
-.stat-card { background: var(--paper); border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; }
-.stat-label { font-size: 11px; color: var(--ink-soft); font-weight: 600; margin-bottom: 8px; }
-.stat-value { font-size: 28px; font-weight: 700; }
-.bar-row { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
-.bar-track { flex: 1; background: var(--line-soft); border-radius: 999px; height: 14px; overflow: hidden; }
-.bar-fill { height: 100%; background: var(--wire); border-radius: 999px; }
+.stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
+.stat-card { background: var(--md-surface-container-low); border: none; border-radius: var(--md-shape-l); padding: 22px 24px; }
+.stat-label { font-size: 12px; color: var(--md-on-surface-variant); font-weight: 500; margin-bottom: 10px; }
+.stat-value { font-size: 32px; font-weight: 600; letter-spacing: -0.5px; }
+.bar-row { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; }
+.bar-track { flex: 1; background: var(--md-surface-container-highest); border-radius: var(--md-shape-full); height: 16px; overflow: hidden; }
+.bar-fill { height: 100%; background: var(--md-primary); border-radius: var(--md-shape-full); }
 
 /* --- Notifications --- */
-.notif-item { display: flex; justify-content: space-between; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line-soft); cursor: pointer; }
-.notif-item:hover { background: var(--line-soft); }
-
-.spinner { text-align: center; padding: 40px; color: var(--ink-soft); font-size: 13px; }
-.toast {
-  position: fixed; bottom: 20px; right: 20px; background: rgba(28, 39, 51, 0.94); color: #fff; padding: 10px 16px;
-  border-radius: 12px; font-size: 13px; z-index: 100; backdrop-filter: blur(6px);
+.notif-item {
+  display: flex; justify-content: space-between; gap: 12px; padding: 14px 16px; border-top: none;
+  cursor: pointer; border-radius: var(--md-shape-s); margin-bottom: 4px; transition: background 0.13s ease;
 }
-.toast.error { background: rgba(181, 67, 47, 0.94); }
+.notif-item:hover { background: var(--md-surface-container-high); }
+
+.spinner { text-align: center; padding: 56px; color: var(--md-on-surface-variant); font-size: 13.5px; }
+/* Snackbar */
+.toast {
+  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+  background: #37322B; color: #F6EEE6; padding: 14px 22px;
+  border-radius: var(--md-shape-xs); font-size: 13.5px; z-index: 100; box-shadow: var(--md-elev-3);
+}
+.toast.error { background: var(--md-error); color: #fff; }

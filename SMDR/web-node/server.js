@@ -12,8 +12,9 @@ const PORT = process.env.PORT || 3102;
 // до этого порта не достучаться никак, кроме как через саму платформу.
 const BIND_HOST = '127.0.0.1';
 
+app.disable('x-powered-by');
 app.set('view engine', 'ejs');
-app.use(express.urlencoded({ extended: true }));
+app.use(express.urlencoded({ extended: true, limit: '32kb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 // Chart.js отдаём со своего сервера, а не с внешнего CDN (который блокируется в сети)
 app.use('/vendor', express.static(path.join(__dirname, 'node_modules', 'chart.js', 'dist')));
@@ -121,8 +122,17 @@ app.get('/directory', (req, res) => {
 
 app.post('/directory', (req, res) => {
   const { ext, fio } = req.body;
+  // Раньше значения уходили в базу как есть: непустой проверки не было
+  // вообще (пустой добавочный создавал мусорную строку), а длину никто не
+  // ограничивал. Добавочный — только цифры, ФИО — обычная строка разумной длины.
+  if (typeof ext !== 'string' || !/^\d{1,10}$/.test(ext.trim())) {
+    return res.status(400).send('Добавочный должен состоять только из цифр (до 10 знаков)');
+  }
+  if (typeof fio !== 'string' || fio.length > 200) {
+    return res.status(400).send('ФИО должно быть строкой не длиннее 200 символов');
+  }
   db.prepare(`INSERT INTO employees (ext, fio) VALUES (?, ?)
-              ON CONFLICT(ext) DO UPDATE SET fio = excluded.fio`).run(ext, fio);
+              ON CONFLICT(ext) DO UPDATE SET fio = excluded.fio`).run(ext.trim(), fio.trim());
   res.redirect('directory');
 });
 

@@ -4,65 +4,95 @@
 <meta charset="UTF-8" />
 <title>Вход — Реестр сертификатов</title>
 <style>
+  /* Material You — единая тема с платформой и остальными модулями. */
+  :root {
+    --md-primary: #7D5700;
+    --md-on-primary: #FFFFFF;
+    --md-primary-container: #FFDEA6;
+    --md-on-primary-container: #281900;
+    --md-surface: #FFF8F3;
+    --md-surface-container: #F5ECE3;
+    --md-surface-container-lowest: #FFFFFF;
+    --md-on-surface: #1F1B16;
+    --md-on-surface-variant: #4F453A;
+    --md-outline: #817567;
+    --md-outline-variant: #D8CCBE;
+    --md-error: #8C1D18;
+    --md-shape-xs: 8px;
+    --md-shape-m: 16px;
+    --md-shape-xl: 28px;
+    --md-shape-full: 100px;
+    --sans: Roboto, "Segoe UI", system-ui, -apple-system, Arial, sans-serif;
+  }
   * { box-sizing: border-box; }
+  /* --- Полоса прокрутки ---
+     Штатная светло-серая полоса Chromium выбивалась из тёплой палитры. Стилизуем
+     через ::-webkit-scrollbar: эти псевдоэлементы понимают все Chromium, включая
+     109-й на рабочих машинах. Стандартные scrollbar-width/scrollbar-color
+     появились только в Chrome 121 — они ниже и лишь повторяют тот же вид в новых
+     браузерах и в Firefox. Прозрачная рамка с background-clip даёт отступ от
+     края, чтобы полоса не липла к содержимому. */
+  ::-webkit-scrollbar { width: 12px; height: 12px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: var(--md-outline-variant);
+    border: 3px solid transparent;
+    background-clip: padding-box;
+    border-radius: var(--md-shape-full);
+  }
+  ::-webkit-scrollbar-thumb:hover { background: var(--md-outline); background-clip: padding-box; }
+  ::-webkit-scrollbar-corner { background: transparent; }
+  /* scrollbar-width/-color наследуются, поэтому достаточно корня. */
+  html { scrollbar-width: thin; scrollbar-color: var(--md-outline-variant) transparent; }
+
   body {
-    font-family: "Segoe UI", Arial, sans-serif;
+    font-family: var(--sans);
     margin: 0;
     height: 100vh;
     display: flex;
     align-items: center;
     justify-content: center;
-    background: linear-gradient(135deg, #1e3a5f, #0f1f33);
-    position: relative;
-    overflow: hidden;
-  }
-  body::before {
-    content: "";
-    position: absolute;
-    top: -15%;
-    right: -10%;
-    width: 55vw;
-    height: 55vw;
-    max-width: 700px;
-    max-height: 700px;
-    background: radial-gradient(circle, #c39a5b 0%, transparent 70%);
-    opacity: 0.16;
-    filter: blur(60px);
+    background: var(--md-surface-container);
+    color: var(--md-on-surface);
+    -webkit-font-smoothing: antialiased;
   }
 
   .box {
-    position: relative;
-    z-index: 1;
-    background: #fff;
-    border-radius: 14px;
-    padding: 40px 34px 32px;
-    width: 320px;
-    box-shadow: 0 20px 50px rgba(0,0,0,0.35);
+    background: var(--md-surface-container-lowest);
+    border-radius: var(--md-shape-xl);
+    padding: 40px 36px 32px;
+    width: 360px;
+    box-shadow: 0 6px 18px rgba(31, 27, 22, 0.12);
   }
   .seal {
-    display: flex; justify-content: center; margin-bottom: 14px; color: #a97f45;
+    display: flex; justify-content: center; align-items: center; margin: 0 auto 18px;
+    width: 56px; height: 56px; border-radius: var(--md-shape-m);
+    background: var(--md-primary-container); color: var(--md-on-primary-container);
   }
   .box h1 {
-    font-family: Georgia, "Times New Roman", serif;
-    font-size: 18px; font-weight: 600; margin: 0 0 4px; color: #1e3a5f; text-align: center;
+    font-size: 22px; font-weight: 600; margin: 0 0 6px; color: var(--md-on-surface); text-align: center;
   }
   .box .subtitle {
-    text-align: center; font-size: 11px; color: #8a97a8; letter-spacing: 1px;
-    text-transform: uppercase; margin-bottom: 22px;
+    text-align: center; font-size: 13.5px; color: var(--md-on-surface-variant);
+    margin-bottom: 26px; letter-spacing: 0; text-transform: none;
   }
-  label { display: block; font-size: 13px; color: #444; margin: 12px 0 4px; }
+  label { display: block; font-size: 12.5px; font-weight: 500; color: var(--md-on-surface-variant); margin: 14px 0 7px; }
   input {
-    width: 100%; padding: 10px 12px; font-size: 14px;
-    border: 1px solid #ccd4dd; border-radius: 7px;
+    width: 100%; padding: 14px 16px; font-size: 14px; font-family: inherit;
+    border: 1px solid var(--md-outline); border-radius: var(--md-shape-xs);
+    background: var(--md-surface-container-lowest); color: var(--md-on-surface); outline: none;
+    transition: border-color 0.12s ease, box-shadow 0.12s ease;
   }
-  input:focus { outline: none; border-color: #c39a5b; }
+  input:focus { border-color: var(--md-primary); box-shadow: inset 0 0 0 1px var(--md-primary); }
   button {
-    width: 100%; margin-top: 22px; padding: 11px; background: #1e3a5f; color: #fff;
-    border: none; border-radius: 7px; font-size: 14px; cursor: pointer;
-    transition: background 0.15s;
+    width: 100%; margin-top: 26px; padding: 14px;
+    background: var(--md-primary); color: var(--md-on-primary);
+    border: none; border-radius: var(--md-shape-full);
+    font-size: 14px; font-weight: 600; letter-spacing: 0.1px; cursor: pointer;
+    transition: box-shadow 0.15s, filter 0.15s;
   }
-  button:hover { background: #16304d; }
-  #error { color: #d13c3c; font-size: 13px; margin-top: 12px; min-height: 18px; text-align: center; }
+  button:hover { box-shadow: 0 1px 2px rgba(31, 27, 22, 0.10); filter: brightness(1.06); }
+  #error { color: var(--md-error); font-size: 13px; margin-top: 14px; min-height: 18px; text-align: center; }
 </style>
 </head>
 <body>

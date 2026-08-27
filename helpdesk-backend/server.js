@@ -3,23 +3,54 @@ const path = require("path");
 const session = require("express-session");
 const config = require("./config/config");
 const { initDb, ensureLocalAccounts } = require("./db/init");
+const { resolveTlsOptions, createAppServer } = require("./services/tls");
 
 const db = initDb();
 ensureLocalAccounts(db);
 
+// Узнаём про TLS ДО настройки сессии: от этого зависит флаг Secure у куки, а
+// поменять его после создания middleware уже нельзя.
+const tlsEnabled = Boolean(resolveTlsOptions());
+
 const app = express();
-app.use(express.json());
+
+// Заголовок-версия Express выдаёт стек и версию сервера — снимаем.
+app.disable("x-powered-by");
+
+if (!process.env.SESSION_SECRET) {
+  console.warn(
+    "[внимание] SESSION_SECRET не задан в .env — используется значение по умолчанию. " +
+      "Сессии можно подделать: задайте свой секрет и перезапустите сервер."
+  );
+}
+
 app.use(session({
   secret: config.sessionSecret,
   resave: false,
   saveUninitialized: false,
   rolling: true, // продлевает срок действия куки при каждом активном запросе
+  name: "helpdesk.sid", // не оставляем узнаваемый connect.sid по умолчанию
   cookie: {
     httpOnly: true,
+    // Явно, а не полагаясь на умолчание браузера: куку не отправят при
+    // переходе/отправке формы с чужого сайта — это закрывает CSRF на
+    // изменяющих запросах и к платформе, и к проксируемым модулям.
+    sameSite: "lax",
     maxAge: config.sessionMaxAgeDays * 24 * 60 * 60 * 1000,
-    // secure: true — включить, когда сервер будет за HTTPS/reverse proxy
+    // По HTTPS куку помечаем Secure — браузер не отправит её открытым текстом,
+    // если кто-то откроет платформу по http. По HTTP флаг ставить нельзя:
+    // браузер тогда не примет куку вовсе и вход перестанет работать.
+    secure: tlsEnabled,
   },
 }));
+
+// Сертификаты — до общего парсера тела: PFX с цепочкой не влезает в его
+// предел, и маршрут читает тело сам (см. routes/certificates.js).
+app.use("/api/certificates", require("./routes/certificates")());
+
+// Ограничение размера JSON-тела для всего остального: без него любой вошедший
+// мог отправить запрос на сотни мегабайт и занять память процесса.
+app.use(express.json({ limit: "100kb" }));
 
 app.use("/api/auth", require("./routes/auth")(db));
 app.use("/api/tickets", require("./routes/tickets")(db));
@@ -43,6 +74,12 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: "Внутренняя ошибка сервера" });
 });
 
-app.listen(config.port, () => {
-  console.log(`Сервер запущен на порту ${config.port}`);
+// Планировщик оповещений — после того, как маршруты собраны: первый обход он
+// делает сразу при старте, и к этому моменту всё, чем он пользуется, должно
+// быть готово.
+require("./services/scheduler").start(db);
+
+const { server, secure } = createAppServer(app);
+server.listen(config.port, () => {
+  console.log(`Сервер запущен: ${secure ? "https" : "http"}://localhost:${config.port}`);
 });

@@ -1,14 +1,78 @@
+import os
 import socket
 import sqlite3
 import time
 import re
 import logging
 from datetime import datetime
+from pathlib import Path
 
-HOST = "10.148.130.207"
-PORT = 23000
-LOGIN = b"SMDR\r\n"
-PASSWORD = b"CCSMDRP\r\n"
+# Адрес АТС и пароль SMDR раньше лежали прямо в этом файле и уезжали в
+# репозиторий вместе с кодом. Теперь берём их из окружения или из соседнего
+# файла .env (он в .gitignore). Разбираем .env вручную, без python-dotenv:
+# на закрытом контуре ставить пакеты неоткуда, а формат тут простейший.
+def read_env_text(env_path):
+    """Прочитать .env, не полагаясь на то, в какой кодировке его сохранили.
+
+    Файл правят Блокнотом, а он на Windows по умолчанию пишет в кодировке
+    системы (для русской — cp1251). Один русский символ в комментарии — и
+    строгое чтение в utf-8 роняло коллектор с UnicodeDecodeError ещё до того,
+    как он успевал что-то сказать про настройки. Кодировка комментария к делу
+    не относится: значения здесь — адрес, порт и пароль, то есть латиница.
+
+    utf-8-sig, а не utf-8: он заодно снимает BOM, который Блокнот дописывает в
+    начало файла. Без этого первый ключ читался бы как "\ufeffSMDR_HOST" и
+    молча не находился — а это ошибка куда неприятнее падения, потому что
+    выглядит как "переменную не задали".
+    """
+    data = env_path.read_bytes()
+    for encoding in ('utf-8-sig', 'cp1251'):
+        try:
+            return data.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    # Ни то ни другое — читаем как получится, лишь бы добраться до значений:
+    # испорченным окажется только нечитаемый комментарий.
+    return data.decode('utf-8', errors='replace')
+
+
+def load_env():
+    env_path = Path(__file__).with_name('.env')
+    if not env_path.exists():
+        return
+    for raw in read_env_text(env_path).splitlines():
+        line = raw.strip()
+        if not line or line.startswith('#') or '=' not in line:
+            continue
+        key, value = line.split('=', 1)
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+load_env()
+
+HOST = os.environ.get('SMDR_HOST', '')
+PORT = int(os.environ.get('SMDR_PORT', '23000'))
+LOGIN = (os.environ.get('SMDR_LOGIN', 'SMDR') + '\r\n').encode()
+PASSWORD = (os.environ.get('SMDR_PASSWORD', '') + '\r\n').encode()
+
+# Через сколько минут молчания считать соединение мёртвым и переподключиться.
+# Записи приходят только по завершении разговора, поэтому ночью тишина в
+# несколько часов — норма, и просто так рвать связь незачем. Но обрыв бывает
+# «тихим»: АТС ушла в перезагрузку, межсетевой экран выкинул простаивающую
+# сессию — TCP при этом не закрывается, recv молча ждёт вечно, и коллектор
+# выглядит работающим, ничего не принимая. Пересоединение стоит секунду,
+# невыявленный обрыв — рабочий день без журнала.
+IDLE_RECONNECT_MIN = int(os.environ.get('SMDR_IDLE_RECONNECT_MIN', '30'))
+# Как часто отмечать в журнале, что связь жива, а звонков просто нет. Без этой
+# строки по логу не отличить «всё в порядке» от «висим».
+IDLE_NOTE_MIN = int(os.environ.get('SMDR_IDLE_NOTE_MIN', '5'))
+
+if not HOST or not os.environ.get('SMDR_PASSWORD'):
+    raise SystemExit(
+        'Не заданы SMDR_HOST и/или SMDR_PASSWORD.\n'
+        'Скопируйте .env.example в .env рядом с этим файлом и укажите адрес АТС '
+        'и пароль SMDR (см. SMDR/README.md).'
+    )
 
 logging.basicConfig(filename='collector.log', level=logging.INFO,
                      format='%(asctime)s %(message)s')
@@ -107,25 +171,66 @@ def parse_line(line):
     }
 
 
+def enable_keepalive(sock):
+    """Попросить систему саму проверять, жива ли АТС.
+
+    Без этого разрыв, о котором нам не сказали (перезагрузка АТС, сброс сессии
+    на межсетевом экране), не обнаруживается никогда: данных нет, но и ошибки
+    нет. С keepalive ядро само шлёт пробы и рвёт соединение, а мы получаем
+    исключение и переподключаемся.
+    """
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+    except OSError:
+        return
+    # Интервалы задаются по-разному: на Windows одним вызовом ioctl, на Linux
+    # тремя опциями. Ни то ни другое не критично — если не вышло, останутся
+    # системные умолчания (на Windows это 2 часа, долго, но лучше, чем ничего).
+    try:
+        if hasattr(socket, 'SIO_KEEPALIVE_VALS'):        # Windows
+            sock.ioctl(socket.SIO_KEEPALIVE_VALS, (1, 60_000, 10_000))
+        else:                                            # Linux и прочие
+            for opt, value in (('TCP_KEEPIDLE', 60), ('TCP_KEEPINTVL', 10), ('TCP_KEEPCNT', 6)):
+                if hasattr(socket, opt):
+                    sock.setsockopt(socket.IPPROTO_TCP, getattr(socket, opt), value)
+    except OSError as e:
+        logging.warning(f"Не удалось настроить keepalive: {e}")
+
+
 def connect_and_listen(conn):
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(30)
+    enable_keepalive(sock)
     sock.connect((HOST, PORT))
     logging.info("Подключились к АТС")
 
-    sock.recv(4096)
+    # Что ответила АТС на каждом шаге — в лог. Раньше здесь безусловно писалось
+    # «Авторизовались», хотя ответ никто не смотрел: при неверном логине или
+    # пароле АТС просто не начинает слать записи, а в журнале стояло, что вход
+    # выполнен. Отличить «пароль не тот» от «звонков нет» было невозможно.
+    # Сам пароль не логируем — только приглашение и ответ АТС.
+    def short(data):
+        return data.decode(errors='replace').strip().replace('\r', ' ').replace('\n', ' ')[:120]
+
+    prompt = sock.recv(4096)
     sock.sendall(LOGIN)
     time.sleep(0.3)
-    sock.recv(4096)
+    after_login = sock.recv(4096)
     sock.sendall(PASSWORD)
-    logging.info("Авторизовались")
+    logging.info(
+        f"Отправили учётные данные (логин {os.environ.get('SMDR_LOGIN', 'SMDR')!r}). "
+        f"АТС до логина: {short(prompt)!r}; после логина: {short(after_login)!r}"
+    )
 
     buf = b''
+    last_data = time.monotonic()
+    last_note = last_data
     while True:
         try:
             data = sock.recv(4096)
             if not data:
                 raise ConnectionError("АТС закрыла соединение")
+            last_data = last_note = time.monotonic()
             buf += data
             while b'\r\n' in buf:
                 line, buf = buf.split(b'\r\n', 1)
@@ -158,6 +263,17 @@ def connect_and_listen(conn):
                 conn.commit()
                 logging.info(f"CALL: {text}")
         except socket.timeout:
+            # Записи приходят только по завершении разговора, так что тишина
+            # сама по себе не признак поломки. Отмечаем её в журнале и рвём
+            # связь, только когда молчание затянулось сверх всякой меры.
+            idle = time.monotonic() - last_data
+            if time.monotonic() - last_note >= IDLE_NOTE_MIN * 60:
+                last_note = time.monotonic()
+                logging.info(f"Тишина {int(idle // 60)} мин — соединение с АТС держим, звонков нет")
+            if IDLE_RECONNECT_MIN and idle >= IDLE_RECONNECT_MIN * 60:
+                raise ConnectionError(
+                    f"нет записей {int(idle // 60)} мин — переподключаемся на случай тихого обрыва"
+                )
             continue
 
 

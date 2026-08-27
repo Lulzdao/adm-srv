@@ -54,10 +54,22 @@
 </div>
 
 <script>
+// Таблица дособирается на клиенте через innerHTML, поэтому всё, что пришло из
+// базы, обязано экранироваться здесь вручную — на сервере EJS (<%= %>) делает
+// это сам, а тут защиты не было: ФИО из справочника (его вводит человек) и
+// поля звонка от АТС попадали в разметку как есть.
+function escHtml(value) {
+  return String(value == null ? '' : value).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+}
+function cell(value) {
+  return value === null || value === undefined || value === '' ? '—' : escHtml(value);
+}
 function directionCell(row) {
-  if (row.direction === 'incoming') return (row.caller || '') + ' → ' + (row.did || '');
-  if (row.direction === 'internal') return '→ ' + (row.internal_to || '');
-  if (row.direction === 'outgoing') return row.number || '';
+  if (row.direction === 'incoming') return escHtml(row.caller || '') + ' → ' + escHtml(row.did || '');
+  if (row.direction === 'internal') return '→ ' + escHtml(row.internal_to || '');
+  if (row.direction === 'outgoing') return escHtml(row.number || '');
   return '<span class="muted">не распознано</span>';
 }
 function badgeCell(row) {
@@ -70,14 +82,14 @@ function badgeCell(row) {
 function renderRows(rows) {
   return rows.map(function(row) {
     return '<tr>' +
-      '<td>' + (row.call_date || '—') + '</td>' +
-      '<td>' + (row.call_time || '—') + '</td>' +
-      '<td>' + (row.ext || '—') + '</td>' +
+      '<td>' + cell(row.call_date) + '</td>' +
+      '<td>' + cell(row.call_time) + '</td>' +
+      '<td>' + cell(row.ext) + '</td>' +
       '<td>' + badgeCell(row) + '</td>' +
       '<td>' + directionCell(row) + '</td>' +
-      '<td>' + (row.duration || '—') + '</td>' +
-      '<td>' + (row.ring || '—') + '</td>' +
-      '<td>' + (row.fio || '—') + '</td>' +
+      '<td>' + cell(row.duration) + '</td>' +
+      '<td>' + cell(row.ring) + '</td>' +
+      '<td>' + cell(row.fio) + '</td>' +
     '</tr>';
   }).join('');
 }
@@ -110,4 +122,5 @@ document.getElementById('autoRefresh').addEventListener('change', function(e) {
 
 startAutoRefresh();
 </script>
+<script src="select.js"></script>
 </body></html>
