@@ -1,0 +1,17 @@
+node_modules/
+messenger.db
+messenger.db-shm
+messenger.db-wal
+uploads/
+logs/
+updates/
+bootstrap-admin.js
+.env
+
+# Сертификаты сервера: внутри закрытый ключ. В репозиторий им нельзя ни при каких обстоятельствах.
+# certs/ — хранилище, которым управляет веб-панель (раздел "Сертификат").
+certs/
+*.pfx
+*.p12
+*.key
+*.pem

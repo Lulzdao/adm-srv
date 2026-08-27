@@ -583,13 +583,13 @@ desktop.getAppInfo().then(({ version, track, electron }) => {
 // Главный процесс пишет свои события (сбои обновления, падения окон) в локальный файл и присылает
 // их сюда — потому что обратиться к серверу может только это окно, токен есть лишь у него.
 // Без этого такие события оставались бы на машине сотрудника и до раздела "Логи" не доходили.
-desktop.onReportToServer(({ kind, meta }) => {
+desktop.onReportToServer(({ kind, meta, level }) => {
   if (!token || !serverUrl) return; // ещё не вошли — отправлять нечем и некуда
   fetch(`${serverUrl}/api/client-log`, {
     method: 'POST',
     headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      kind, source: 'main', hostname: desktop.hostname,
+      kind, level, source: 'main', hostname: desktop.hostname,
       message: (meta && (meta.message || meta.reason)) || kind,
       extra: meta,
     }),
@@ -1300,8 +1300,9 @@ function openConnectionDialog() {
       <button class="ui-btn-ghost" id="connHttps" style="flex:1;">https</button>
     </div>
     <input id="connUrlInput" spellcheck="false" style="width:100%; padding:9px 11px; margin-bottom:6px; background:var(--panel-2); border:1px solid var(--border); border-radius:8px; color:var(--text); font-size:13px;">
-    <div id="connDialogNote" style="font-size:11px; color:var(--muted); margin-bottom:14px; min-height:15px;"></div>
+    <div id="connDialogNote" style="font-size:11px; color:var(--muted); margin-bottom:10px; min-height:15px;"></div>
     <div class="ui-modal-actions">
+      <button class="ui-btn-ghost" id="connCheck">Проверить</button>
       <button class="ui-btn-ghost" id="connCancel">Отмена</button>
       <button class="ui-btn-primary" id="connSave">Сохранить</button>
     </div>
@@ -1334,7 +1335,48 @@ function openConnectionDialog() {
   input.addEventListener('input', refreshNote);
   refreshNote();
 
+  // Проверка ДО сохранения. Без неё смена адреса — прыжок вслепую: приложение перезапускается и
+  // только там выясняется, что сервер по этому адресу не отвечает (а чинить это приходится уже
+  // с экрана входа по Ctrl+S). Заодно это единственное, ради чего кнопки http/https вообще нужны:
+  // переключил протокол, нажал "Проверить" и увидел, отвечает ли сервер именно так.
+  const checkAddress = async () => {
+    const value = input.value.trim();
+    if (!/^https?:\/\/.+/i.test(value)) {
+      note.textContent = 'Адрес должен начинаться с http:// или https://';
+      note.style.color = 'var(--danger)';
+      return;
+    }
+    const btn = box.querySelector('#connCheck');
+    btn.disabled = true;
+    note.textContent = 'Проверяем…';
+    note.style.color = 'var(--muted)';
+    // AbortController, а не просто await: на недоступном адресе fetch может висеть десятки секунд,
+    // и человек за это время решит, что окно зависло.
+    const stop = new AbortController();
+    const timer = setTimeout(() => stop.abort(), 4000);
+    try {
+      const res = await fetch(value.replace(/\/+$/, '') + '/api/ping', { signal: stop.signal });
+      const data = await res.json();
+      if (!data || data.app !== 'iskra') throw new Error('это не сервер Искры');
+      note.textContent = data.secure
+        ? 'Сервер отвечает, соединение шифруется.'
+        : 'Сервер отвечает, но БЕЗ шифрования — пароль и переписка пойдут открытым текстом.';
+      note.style.color = data.secure ? 'var(--online)' : 'var(--danger)';
+    } catch (e) {
+      // Различать эти два случая важно: "не отвечает" чинят адресом, а "сертификат не признан" —
+      // сертификатом на сервере, и путать их значит искать не там.
+      note.textContent = e.name === 'AbortError'
+        ? 'Сервер не ответил за 4 секунды — проверьте адрес и сеть.'
+        : 'Связаться не удалось: неверный адрес, сервер выключен либо его сертификат не признан.';
+      note.style.color = 'var(--danger)';
+    } finally {
+      clearTimeout(timer);
+      btn.disabled = false;
+    }
+  };
+
   const close = () => overlay.remove();
+  box.querySelector('#connCheck').onclick = checkAddress;
   box.querySelector('#connCancel').onclick = close;
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') close();

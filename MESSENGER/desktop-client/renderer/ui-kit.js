@@ -144,15 +144,23 @@
     box.className = 'ui-modal-box';
     box.innerHTML = `
       <div class="ui-modal-title">${uiIcon('warn')} Соединение с сервером потеряно</div>
-      <div class="ui-modal-msg">Проверьте подключение к сети. Можно попробовать ещё раз или закрыть приложение.</div>
-      <div class="ui-modal-actions">
-        <button class="ui-btn-ghost" id="uiClExit">Выйти</button>
+      <div class="ui-modal-msg">Проверьте подключение к сети. Можно попробовать ещё раз, выйти из аккаунта или закрыть приложение.</div>
+      <div class="ui-modal-actions stacked">
         <button class="ui-btn-primary" id="uiClRetry">Повторить</button>
+        <button class="ui-btn-ghost" id="uiClLogout">Выйти из аккаунта</button>
+        <button class="ui-btn-ghost" id="uiClExit">Закрыть приложение</button>
       </div>
     `;
     overlay.appendChild(box);
     document.body.appendChild(overlay);
     connectionLostOverlay = overlay;
+    // Выход из аккаунта возвращает на экран входа, а он тут единственный способ выбраться из
+    // тупика: если адрес сервера задан неверно, приложение бесконечно переподключается, и попасть
+    // туда, где адрес можно исправить (Ctrl+S на экране входа), иначе не выйдет — перезапуск не
+    // поможет, клиент снова войдёт по сохранённому токену и снова упрётся в тот же адрес.
+    // Обращения к серверу выход не требует: токен просто стирается на этой машине (см. logout
+    // в main.js), поэтому кнопка работает и при полностью недоступном сервере.
+    box.querySelector('#uiClLogout').onclick = () => window.desktop.logout();
     box.querySelector('#uiClExit').onclick = () => window.desktop.windowAction('quit');
     box.querySelector('#uiClRetry').onclick = () => { window.hideConnectionLostModal(); onRetry(); };
   };

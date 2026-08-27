@@ -817,6 +817,12 @@ app.post('/api/register', ipRateLimit({ windowMs: 60 * 60 * 1000, max: 10 }), (r
   }
 });
 
+// Проверка "тот ли это адрес и отвечает ли сервер" — без входа, до всякого пароля. Нужна клиенту:
+// служебное окно смены адреса (Ctrl+Shift+S в настройках) даёт нажать "Проверить" ДО сохранения,
+// вместо того чтобы перезапускаться вслепую и выяснять это уже без связи. Ничего не раскрывает:
+// по этому же адресу и так отдаётся страница входа в панель.
+app.get('/api/ping', (req, res) => res.json({ ok: true, app: 'iskra', secure: Boolean(req.secure) }));
+
 app.post('/api/login', ipRateLimit({ windowMs: 10 * 60 * 1000, max: 30 }), (req, res) => {
   const { username, password } = req.body || {};
   const lockedSec = checkLoginLock(username);
@@ -861,8 +867,13 @@ app.post('/api/client-log', auth, (req, res) => {
     }
     return res.json({ ok: true });
   }
-  const { kind, message, extra, source, hostname } = req.body || {};
+  const { kind, message, extra, source, hostname, level } = req.body || {};
   logClient({
+    // Клиент сам говорит, насколько это серьёзно. Раньше всё присланное считалось ошибкой, и
+    // «на сервере ещё нет файлов обновления» — обычное состояние до первого выпуска — попадало в
+    // журнал красным с каждой машины при каждом запуске. Чужому значению не доверяем: всё, кроме
+    // явных WARN/INFO, остаётся ERROR.
+    level: ['WARN', 'INFO'].includes(level) ? level : 'ERROR',
     userId: req.user.id,
     username: req.user.username,
     hostname: String(hostname || '?').slice(0, 100),
@@ -1462,6 +1473,7 @@ app.get('/api/admin/tls', auth, requireCapability('can_admin'), async (req, res)
   res.json({
     enabled: server instanceof https.Server,
     source: tlsSource,                              // store | env-pfx | env-pem | null
+    envAlsoSet: tlsSource === 'store' ? envTlsSource() : null, // "двойная настройка", см. envTlsSource
     storeHasCertificate: inStore,
     restartRequired: inStore && tlsSource !== 'store',
     requestSecure: Boolean(req.secure),             // сама панель сейчас открыта по https или нет
@@ -1578,8 +1590,12 @@ app.delete('/api/admin/tls', auth, requireCapability('can_admin'), (req, res) =>
   } catch (err) {
     return res.status(500).json({ error: 'Не удалось удалить файл: ' + String((err && err.message) || err) });
   }
-  logServer('WARN', 'tls_certificate_removed', { adminId: req.user.id });
-  res.json({ ok: true });
+  // Удаление из хранилища НЕ означает "теперь без шифрования": если сертификат задан ещё и
+  // переменной окружения, после перезапуска сервер возьмёт его оттуда — и со стороны это выглядит
+  // так, будто удаление не сработало. Поэтому сразу считаем и возвращаем, что реально будет дальше.
+  const next = resolveTlsOptions();
+  logServer('WARN', 'tls_certificate_removed', { adminId: req.user.id, next_source: next ? next.source : null });
+  res.json({ ok: true, nextSource: next ? next.source : null, nextWhere: next ? next.where : null });
 });
 
 // PFX больше стандартного лимита express.json() — ответ должен остаться JSON, иначе панель
@@ -1622,9 +1638,9 @@ function parseLogLine(line, source) {
   if (!m) return null;
   let meta = {};
   try { meta = JSON.parse(m[1]); } catch { /* строка повреждена — оставляем meta пустым */ }
-  // Клиентские записи всегда об ошибке (см. installErrorReporting в ui-kit.js — шлёт только сбои),
-  // отдельного уровня в самой строке нет, поэтому фиксируем ERROR для единообразия с серверными.
-  return { ts, level: 'ERROR', source: 'client', event: meta.kind || 'client_error', meta };
+  // Уровень присылает сам клиент (см. logLocal в main.js). У записей, сделанных прежними сборками,
+  // его нет — там по-прежнему ERROR, как и раньше.
+  return { ts, level: meta.level || 'ERROR', source: 'client', event: meta.kind || 'client_error', meta };
 }
 // Логи читаются прямо из дневных файлов (см. logsDir выше), без отдельной БД-таблицы под них —
 // для 20-200 человек файл за день весит от силы сотни КБ, гонять его целиком в память при каждом
@@ -1732,6 +1748,15 @@ function resolveTlsOptions() {
 
 let tlsSource = null; // что реально сейчас используется — показывается в панели
 
+// Задан ли сертификат ещё и переменными окружения. Нужно, чтобы предупредить о "двойной настройке":
+// пока файл лежит в хранилище, действует он, а переменная стоит в тени и ничем себя не проявляет —
+// ровно до того дня, когда файл из хранилища удалят и обнаружат, что сервер всё так же на https.
+function envTlsSource() {
+  if (TLS_PFX) return 'env-pfx';
+  if (TLS_CERT && TLS_KEY) return 'env-pem';
+  return null;
+}
+
 function createAppServer() {
   let resolved;
   try {
@@ -1761,6 +1786,12 @@ function createAppServer() {
   }
   tlsSource = resolved.source;
   logServer('INFO', 'tls_enabled', { source: resolved.source, where: resolved.where });
+  if (resolved.source === 'store' && envTlsSource()) {
+    logServer('WARN', 'tls_shadow_config', {
+      shadowed: envTlsSource(),
+      hint: 'Сертификат задан и в хранилище certs/, и переменными окружения. Действует хранилище; переменная вступит в силу, только если файл из хранилища удалить. Уберите её из скрипта запуска, чтобы управление было в одном месте',
+    });
+  }
   return https.createServer(resolved.options, app);
 }
 

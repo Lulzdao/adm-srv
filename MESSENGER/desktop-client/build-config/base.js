@@ -21,6 +21,11 @@ module.exports = {
   // у них останется старая копия в "Программы и компоненты" и второй ярлык.
   appId: 'ru.lipetskstat.iskra',
   productName: 'Искра',
+  // Оно же — имя ярлыка и запись в "Программах и компонентах". А вот ПАПКА установки получается
+  // другой: C:\Program Files\iskra-desktop, по имени из package.json. Так задумано в самом
+  // electron-builder — getWindowsInstallationDirName берёт productName только если он состоит из
+  // ASCII (регулярка /^[-_+0-9a-zA-Z .]+$/), иначе откатывается на name. Кириллица её не проходит.
+  // Менять это не нужно: латинский путь на диске надёжнее, а на виду у сотрудника всё равно «Искра».
 
   win: {
     icon: 'build/icon.ico',
@@ -51,7 +56,8 @@ module.exports = {
     'preload.js',
     'config.js',
     'renderer/**/*',
-    'tray-icon.png',
+    'tray-icon.ico',
+    'tray-icon-fallback.png', // запасной вариант, если .ico не декодируется — см. createTray в main.js
     'build/icon.ico',
     // Корневой сертификат домена — нужен главному процессу, чтобы Node доверял серверу по https
     // (см. trustOrganizationCa в main.js). Публичный файл, секрета не содержит.

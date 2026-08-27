@@ -147,15 +147,19 @@ if (process.platform === 'win32' && require('os').release().startsWith('6.1')) {
 // исключение случилось в ГЛАВНОМ процессе — слать уже некому и нечем, единственное, что остаётся —
 // записать на диск самого пользователя, чтобы при разборе инцидента можно было попросить этот файл.
 const LOG_PATH = path.join(app.getPath('userData'), 'client.log');
-function logLocal(event, meta = {}) {
-  fs.appendFile(LOG_PATH, `${new Date().toISOString()} [${event}] ${JSON.stringify(meta)}\n`, () => {});
+// level — насколько это серьёзно. По умолчанию ERROR, потому что подавляющее большинство вызовов
+// здесь — про настоящие сбои. Но не всё: «на сервере ещё нет файлов обновления» — обычное состояние
+// до первого выпуска, и помечать это ошибкой значит каждый день засыпать журнал одинаковыми
+// красными строками с каждой машины (проверка идёт при каждом запуске приложения).
+function logLocal(event, meta = {}, level = 'ERROR') {
+  fs.appendFile(LOG_PATH, `${new Date().toISOString()} [${level}] [${event}] ${JSON.stringify(meta)}\n`, () => {});
   // ...и заодно на сервер, чтобы это было видно в разделе "Логи" веб-панели. Раньше события
   // главного процесса (сбои обновления, падения окон) оставались только здесь, на машине
   // сотрудника, — добраться до них можно было, лишь придя к человеку за компьютер.
   // Отправляет ростер: токен для обращения к серверу есть только у него. Через try, потому что
   // logLocal вызывается в том числе из обработчика неперехваченных исключений — он может
   // сработать раньше, чем появится само окно ростера.
-  try { sendToWindow(rosterWin, 'report-to-server', { kind: event, meta }); } catch { /* окна ещё/уже нет */ }
+  try { sendToWindow(rosterWin, 'report-to-server', { kind: event, meta, level }); } catch { /* окна ещё/уже нет */ }
 }
 process.on('uncaughtException', (err) => {
   logLocal('main_uncaught_exception', { message: err.message, stack: err.stack });
@@ -578,11 +582,17 @@ function createRoster() {
 }
 
 function createTray() {
-  const iconPath = path.join(__dirname, 'tray-icon.png');
-  const icon = nativeImage.createFromPath(iconPath);
+  const iconPath = path.join(__dirname, 'tray-icon.ico');
+  let icon = nativeImage.createFromPath(iconPath);
   if (icon.isEmpty()) {
-    // Если видите это в консоли после сборки .exe — значит tray-icon.png не попал в установщик:
-    // проверьте, что он указан в поле "files" секции "build" в package.json
+    // .ico декодируется через нативный декодер ОС — на Windows это штатно, но проверено вживую:
+    // на Linux (например, при разработке не с Windows) nativeImage отдаёт пустое изображение молча,
+    // без исключения. Без отдельного PNG трей остался бы совсем без иконки, а не с чуть похуже.
+    icon = nativeImage.createFromPath(path.join(__dirname, 'tray-icon-fallback.png'));
+  }
+  if (icon.isEmpty()) {
+    // Если видите это в консоли после сборки .exe — значит ни tray-icon.ico, ни tray-icon-fallback.png
+    // не попали в установщик: проверьте поле "files" секции "build" в package.json
     console.warn('Иконка трея не найдена или пуста:', iconPath);
   }
   tray = new Tray(icon);
@@ -715,6 +725,15 @@ function sendUpdateState(state) {
 // HTML-страницы 404 в придачу. В панели настроек из этого получается простыня на десяток строк,
 // по которой всё равно не понять, что делать. Поэтому наружу отдаём короткую фразу по-русски, а
 // полный текст пишем в client.log (в папке данных пользователя) — там он и нужен, когда разбираются.
+// Насколько серьёзно то, что не удалось проверить обновления. Отсутствие файлов на сервере — не
+// поломка, а обычное состояние до первого выпуска: клиент проверяет обновления при каждом запуске,
+// и с двухсот машин это дало бы двести одинаковых записей в день в разделе «Логи». Всё остальное
+// (сервер недоступен, сертификат не признан) — настоящая ошибка.
+function updateErrorLevel(err) {
+  const raw = String((err && (err.stack || err.message)) || err);
+  return /\b404\b|latest\.yml|Cannot find .*\.yml/i.test(raw) ? 'WARN' : 'ERROR';
+}
+
 function shortUpdateError(err) {
   const raw = String((err && (err.stack || err.message)) || err);
   // Самый частый случай в работе: сборки на сервер ещё не выложили, значит latest.yml нет и в ответ
@@ -746,7 +765,9 @@ function setupUpdater() {
 
   autoUpdater.autoDownload = !!settings.autoUpdate;
   autoUpdater.autoInstallOnAppQuit = true; // скачанное встанет при следующем выходе, без вопросов
-  autoUpdater.logger = { info: () => {}, warn: () => {}, error: (m) => logLocal('updater_error', { message: String(m) }) };
+  // electron-updater пишет тот же самый текст и сюда, и в событие 'error' ниже — уровень считаем
+  // одинаково в обоих местах, иначе одна и та же причина попала бы в журнал под разной важностью.
+  autoUpdater.logger = { info: () => {}, warn: () => {}, error: (m) => logLocal('updater_error', { message: String(m) }, updateErrorLevel(m)) };
 
   autoUpdater.on('checking-for-update', () => sendUpdateState({ state: 'checking' }));
   autoUpdater.on('update-not-available', () => sendUpdateState({ state: 'not-available' }));
@@ -776,7 +797,7 @@ function setupUpdater() {
   autoUpdater.on('error', (err) => {
     // Ошибку показываем в настройках, а не глотаем: молча не обновляющийся клиент — это то, что
     // замечают через полгода. Но показываем коротко — полный текст только в лог (см. shortUpdateError).
-    logLocal('updater_error', { message: err && err.message, stack: err && err.stack });
+    logLocal('updater_error', { message: err && err.message, stack: err && err.stack }, updateErrorLevel(err));
     sendUpdateState({ state: 'error', message: shortUpdateError(err) });
   });
 
@@ -811,7 +832,7 @@ function checkForUpdates() {
     autoUpdater.autoDownload = !!settings.autoUpdate;
     autoUpdater.checkForUpdates();
   } catch (e) {
-    logLocal('updater_error', { message: e && e.message, stack: e && e.stack });
+    logLocal('updater_error', { message: e && e.message, stack: e && e.stack }, updateErrorLevel(e));
     sendUpdateState({ state: 'error', message: shortUpdateError(e) });
   }
 }

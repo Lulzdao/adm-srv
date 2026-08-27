@@ -72,6 +72,10 @@ body {
 .ui-modal-box .ui-modal-title svg { color: var(--danger); flex-shrink: 0; }
 .ui-modal-box .ui-modal-msg { font-size: 12.5px; color: var(--text); line-height: 1.5; margin-bottom: 16px; white-space: pre-wrap; }
 .ui-modal-box .ui-modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+/* Три действия в ряд из окна шириной 300px не помещаются — раскладываем столбиком, самое нужное
+   сверху (см. showConnectionLostModal в ui-kit.js). */
+.ui-modal-box .ui-modal-actions.stacked { flex-direction: column; }
+.ui-modal-box .ui-modal-actions.stacked button { width: 100%; }
 .ui-modal-box button { padding: 8px 14px; border-radius: 8px; border: none; font-size: 12.5px; font-weight: 600; cursor: pointer; }
 .ui-btn-primary { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff; }
 .ui-btn-danger { background: var(--danger); color: #fff; }
