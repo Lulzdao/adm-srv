@@ -10,11 +10,10 @@ const {
   describeCaPem,
   listTrustedRoots,
   inspectTlsOptions,
-  listStoreCertificates,
   reloadCertStore,
   TRUSTED_DIR,
-  SHARED_CERT_DIR,
   SHARED_PFX,
+  SHARED_PASS,
 } = require("../services/tls");
 const tls = require("tls");
 
@@ -26,10 +25,6 @@ const MAX_CA_BYTES = 64 * 1024;
 // с запасом, но не бесконечный: тело запроса читается в память.
 const MAX_PFX_BYTES = 512 * 1024;
 
-// Имена файлов хранилища: server.pfx и server.<домен>.pfx. Тот же набор, что
-// в services/tls.js, — держать его в согласии обязательно, иначе панель будет
-// писать файлы, которых сервер не видит.
-const STORE_FILE = /^server(\.[A-Za-z0-9][A-Za-z0-9._-]*)?\.pfx$/;
 
 // Имя файла задаёт администратор, и оно уходит в путь на диске — поэтому
 // разрешаем только заведомо безопасный набор символов. Без этого «имя» вида
@@ -44,13 +39,8 @@ module.exports = function certificateRoutes() {
   router.use(express.json({ limit: String(Math.round(MAX_PFX_BYTES * 1.4 / 1024)) + "kb" }));
   router.use(requireRole("it"));
 
-  // Что сервер предъявляет клиентам. Хранилище общее для платформы и «Искры»:
-  // они на одной машине и отвечают на одни и те же имена.
-  //
-  // Сертификатов может быть несколько — по одному на домен. Отдаём их вместе с
-  // именами, за которые каждый отвечает, и с подсказкой, какому домену он
-  // достанется: без этого «какой сертификат сейчас предъявляется вон тем
-  // клиентам» выясняется только перехватом трафика.
+  // Что сервер предъявляет клиентам. Сертификат ОДИН и общий с «Искрой»: обе
+  // службы на одной машине и отвечают на одно имя, поэтому и файл один.
   router.get("/server", (req, res) => {
     const state = currentTlsState();
     res.json({
@@ -58,31 +48,10 @@ module.exports = function certificateRoutes() {
       source: state.source,
       where: state.where,
       sharedStore: SHARED_PFX,
-      // Управление файлами живёт в панели «Искры» — там уже есть загрузка с
-      // проверкой пароля и цепочки. Платформа перечитывает те же файлы сама.
-      managedBy: state.source === "shared-store" ? "iskra" : "env",
+      // "store" — файл в общем хранилище, его можно заменить прямо здесь.
+      // "env" — путь прописан в .env, тогда замена только через .env и перезапуск.
+      managedBy: state.source === "shared-store" ? "store" : "env",
       certificate: state.certificate,
-      entries: state.entries || [],
-      domains: describeDomains(state.entries || []),
-    });
-  });
-
-  // Проверка «а что увидит клиент, который придёт с таким именем». Ровно тот
-  // вопрос, который возникает при двух доменах, и ровно его иначе не задать,
-  // не пересаживаясь за машину в нужной подсети.
-  router.get("/server/for/:name", (req, res) => {
-    const name = String(req.params.name || "").toLowerCase();
-    if (!/^[a-z0-9.*-]{1,253}$/.test(name)) return res.status(400).json({ error: "Некорректное имя" });
-    const state = currentTlsState();
-    const match = (state.entries || []).find((e) => matchesName(e.names || [], name));
-    const fallback = (state.entries || []).find((e) => e.isDefault) || (state.entries || [])[0] || null;
-    res.json({
-      name,
-      matched: Boolean(match),
-      // Если имя не совпало ни с одним — клиенту уедет основной сертификат, и
-      // браузер ругнётся на несовпадение имени. Показываем именно это.
-      entry: match || fallback || null,
-      viaSni: Boolean(match),
     });
   });
 
@@ -91,14 +60,12 @@ module.exports = function certificateRoutes() {
    * «что мы предъявляем клиентам». Корни (кому верим мы) — отдельная и куда
    * более редкая история, см. ниже.
    *
-   * Имя файла администратор НЕ выбирает: его определяет сам сертификат. Домен
-   * берётся из имён в SAN, и если для этого домена файл уже есть — он
-   * перезаписывается. Иначе появляется новый. Так продление сертификата
-   * заменяет старый, а не оседает вторым файлом рядом, и не нужно помнить
-   * договорённость об именах.
+   * Файл всегда один и тот же — server.pfx в общем хранилище. Его же читает
+   * «Искра», поэтому загрузить можно из любой панели, разницы нет. Прежний
+   * файл сохраняется рядом с суффиксом .bak.
    */
   router.post("/server", async (req, res) => {
-    const { pfx, password, makeDefault } = req.body || {};
+    const { pfx, password } = req.body || {};
     if (typeof pfx !== "string" || !pfx) return res.status(400).json({ error: "Файл не передан" });
     if (pfx.length > MAX_PFX_BYTES * 1.4) return res.status(400).json({ error: "Файл слишком большой" });
 
@@ -130,28 +97,21 @@ module.exports = function certificateRoutes() {
       return res.status(400).json({ error: `Срок действия этого сертификата истёк ${info.validTo}` });
     }
     if (!info.names.length) {
-      // Сертификат без SAN не примет ни один современный клиент, и выбрать по
-      // имени его тоже нельзя — то есть он бесполезен ровно там, где нужен.
+      // Сертификат без SAN не примет ни один современный клиент: и браузеры, и
+      // Node давно смотрят только туда, а не в CN.
       return res.status(400).json({ error: "В сертификате нет имён (SAN) — такой не примет ни браузер, ни клиент" });
     }
 
-    const existing = listStoreCertificates(SHARED_CERT_DIR);
-    const known = currentTlsState().entries || []; // здесь уже разобранные имена из SAN
-    const file = makeDefault || !existing.length ? "server.pfx" : targetFile(info.names, known);
-
     try {
-      fs.mkdirSync(SHARED_CERT_DIR, { recursive: true, mode: 0o700 });
-      const full = path.join(SHARED_CERT_DIR, file);
+      fs.mkdirSync(path.dirname(SHARED_PFX), { recursive: true, mode: 0o700 });
       // Шаг назад на случай, если новый файл окажется не тем: старый не
       // затирается насовсем.
-      for (const ext of [".pfx", ".pass"]) {
-        const prev = full.replace(/\.pfx$/, ext);
+      for (const prev of [SHARED_PFX, SHARED_PASS]) {
         if (fs.existsSync(prev)) fs.copyFileSync(prev, prev + ".bak");
       }
-      fs.writeFileSync(full, buffer, { mode: 0o600 });
-      const passFile = full.replace(/\.pfx$/, ".pass");
-      if (password) fs.writeFileSync(passFile, String(password), { mode: 0o600 });
-      else if (fs.existsSync(passFile)) fs.unlinkSync(passFile);
+      fs.writeFileSync(SHARED_PFX, buffer, { mode: 0o600 });
+      if (password) fs.writeFileSync(SHARED_PASS, String(password), { mode: 0o600 });
+      else if (fs.existsSync(SHARED_PASS)) fs.unlinkSync(SHARED_PASS);
     } catch (err) {
       return res.status(500).json({ error: "Не удалось сохранить файл: " + err.message });
     }
@@ -159,44 +119,15 @@ module.exports = function certificateRoutes() {
     // Применяем сразу, не дожидаясь слежения за каталогом: администратор
     // должен увидеть результат, а не «сохранено, проверьте сами».
     const applied = await reloadCertStore();
-    console.log(`Загружен сертификат сервера ${file} (${info.subject || "без CN"}), применён: ${applied.applied}`);
+    console.log(`Загружен сертификат сервера (${info.subject || "без CN"}), применён: ${applied.applied}`);
     res.status(201).json({
       ok: true,
-      file,
       certificate: info,
       // false означает «нужен перезапуск»: превратить работающий http-сервер
       // в https на ходу нельзя, и это единственный такой случай.
       applied: applied.applied,
       restartRequired: !applied.applied,
     });
-  });
-
-  router.delete("/server/:file", async (req, res) => {
-    const { file } = req.params;
-    if (!STORE_FILE.test(file)) return res.status(400).json({ error: "Некорректное имя файла" });
-    const full = path.join(SHARED_CERT_DIR, file);
-    if (path.dirname(path.resolve(full)) !== path.resolve(SHARED_CERT_DIR)) {
-      return res.status(400).json({ error: "Некорректное имя файла" });
-    }
-    const existing = listStoreCertificates(SHARED_CERT_DIR);
-    if (!existing.some((e) => e.file === file)) return res.status(404).json({ error: "Файл не найден" });
-    if (existing.length === 1) {
-      // Удаление последнего оставило бы сервис без сертификата — и он не
-      // выключился бы, а продолжил отвечать старым до перезапуска, после
-      // которого поднялся бы по http. Такое лучше делать осознанно, руками.
-      return res.status(400).json({ error: "Это единственный сертификат — удалять его через панель нельзя" });
-    }
-    try {
-      for (const ext of [".pfx", ".pass"]) {
-        const target = full.replace(/\.pfx$/, ext);
-        if (fs.existsSync(target)) fs.renameSync(target, target + ".bak");
-      }
-    } catch (err) {
-      return res.status(500).json({ error: "Не удалось удалить файл: " + err.message });
-    }
-    await reloadCertStore();
-    console.log(`Удалён сертификат сервера ${file} (оставлена копия .bak)`);
-    res.json({ ok: true });
   });
 
   // Кому мы доверяем. Доменов два, поэтому корней может быть несколько; плюс
@@ -311,48 +242,4 @@ function probeModule(mod) {
     socket.on("timeout", () => { socket.destroy(); resolve({ ...base, secure: true, error: "Модуль не ответил" }); });
     socket.on("error", (err) => resolve({ ...base, secure: true, error: err.message }));
   });
-}
-
-// Имя совпадает точно или закрыто подстановочным сертификатом (*.in.local),
-// который действует ровно на один уровень имени — так же, как это считают
-// браузеры.
-function matchesName(names, name) {
-  if (names.includes(name)) return true;
-  const wildcard = name.replace(/^[^.]+\./, "*.");
-  return wildcard !== name && names.includes(wildcard);
-}
-
-// Группировка сертификатов по доменному суффиксу имён. Домен здесь — не
-// сущность из конфига, а просто общая часть имени: сертификат сам говорит, за
-// какой домен он отвечает, и сверять его с настройками LDAP смысла нет.
-function describeDomains(entries) {
-  const map = new Map();
-  for (const entry of entries) {
-    for (const name of entry.names || []) {
-      // IP-адрес доменом не является — он попадает в SAN отдельной строкой.
-      const suffix = /^[0-9.:]+$/.test(name) ? name : name.split(".").slice(1).join(".");
-      const key = suffix || name;
-      if (!map.has(key)) map.set(key, { domain: key, names: [], file: entry.file, certificate: entry.certificate });
-      map.get(key).names.push(name);
-    }
-  }
-  return [...map.values()];
-}
-
-/**
- * В какой файл лечь загруженному сертификату.
- *
- * Правило одно: сертификат «занимает» домен из своих имён. Если файл на этот
- * домен уже есть — перезаписываем его (это продление). Если нет — заводим
- * новый по имени домена. Так администратору не нужно ни выбирать имя файла,
- * ни помнить, какой файл за какой домен отвечал.
- */
-function targetFile(names, existing) {
-  const domains = names.filter((n) => !/^[0-9.:]+$/.test(n)).map((n) => n.split(".").slice(1).join("."));
-  const domain = domains.find(Boolean);
-  const busy = existing.find((e) => (e.names || []).some((n) => domains.includes(n.split(".").slice(1).join("."))));
-  if (busy) return busy.file;
-  if (!domain) return "server.pfx";
-  const safe = domain.toLowerCase().replace(/[^a-z0-9.-]/g, "-");
-  return `server.${safe}.pfx`;
 }

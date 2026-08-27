@@ -898,10 +898,10 @@ async function renderAdmin(main) {
 // Экран про «сертификаты» — это на самом деле про две разные вещи, которые
 // постоянно путают, и разница между ними определяет всю раскладку:
 //
-//   • СЕРТИФИКАТЫ СЕРВЕРА — что мы ПРЕДЪЯВЛЯЕМ клиентам. Это вся повседневная
+//   • СЕРТИФИКАТ СЕРВЕРА — что мы ПРЕДЪЯВЛЯЕМ клиентам. Это вся повседневная
 //     работа: продлили — загрузили. Поэтому загрузка здесь же, на видном
-//     месте, а не «положите файл вот в эту папку на сервере». Хранилище общее
-//     с «Искрой» (одна машина), на каждый домен — свой файл.
+//     месте, а не «положите файл вот в эту папку на сервере». Файл ОДИН и
+//     общий с «Искрой»: обе службы на одной машине и отвечают на одно имя.
 //
 //   • ДОВЕРЕННЫЕ КОРНИ — кому верим МЫ, когда сами ходим наружу (LDAPS к
 //     контроллерам домена, проксирование в «Искру»). Клиентов это не касается
@@ -926,48 +926,19 @@ async function renderCertificates(main) {
       api("/certificates/server"), api("/certificates/trusted"), api("/certificates/modules"),
     ]);
 
-    // Один сертификат на домен. Показываем каждый отдельной карточкой с
-    // именами, за которые он отвечает: главный вопрос при двух доменах —
-    // «какой из них увидит клиент вон оттуда», и отвечать на него должен
-    // экран, а не догадка.
-    const certDetails = (c) => `
-      ${row("Кому выдан", esc(c.subject || "—"))}
-      ${row("Имена в сертификате (SAN)", `<span class="mono" style="font-size:12px;">${esc(c.san || "—")}</span>`)}
-      ${row("Кем выдан", esc(c.issuer || "—"))}
-      ${row("Действителен до", `${esc(c.validTo || "—")} ${days(c.daysLeft)}`)}
-      ${row("Корень цепочки", esc(c.rootSubject || "—"))}
-      ${row("Цепочка", c.chainComplete
-         ? `<span class="badge" style="color:var(--green);background:var(--green-soft);">полная (${c.certificates} серт.)</span>`
-         : `<span class="badge" style="color:var(--amber);background:var(--amber-soft);">неполная — клиент может не достроить доверие</span>`)}
-      ${row("Отпечаток", `<span class="mono" style="font-size:11px;word-break:break-all;">${esc(c.fingerprint || "—")}</span>`)}`;
-
-    const entries = server.entries && server.entries.length
-      ? server.entries
-      : (server.certificate ? [{ file: server.where || "", isDefault: true, names: server.certificate.names || [], certificate: server.certificate }] : []);
-
-    const entryCard = (e) => {
-      const domain = (e.names || []).filter(n => !/^[0-9.:]+$/.test(n)).map(n => n.split(".").slice(1).join("."))[0];
-      return `
-      <div style="padding:14px 0;border-top:1px solid var(--line-soft);">
-        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
-          <div style="font-size:13.5px;font-weight:650;">${esc(domain || e.file)}</div>
-          ${e.isDefault ? `<span class="badge" style="color:var(--ink-soft);background:var(--line-soft);">по умолчанию</span>` : ""}
-          <span class="mono" style="font-size:11.5px;color:var(--ink-soft);">${esc(e.file)}</span>
-          ${entries.length > 1 && server.managedBy === "iskra"
-            ? `<button class="btn btn-ghost del-cert" data-file="${esc(e.file)}" style="margin-left:auto;">Удалить</button>` : ""}
-        </div>
-        ${e.error ? `<div class="warn-box">${esc(e.error)}</div>` : ""}
-        ${(e.names || []).length ? `<div style="margin-bottom:10px;display:flex;gap:6px;flex-wrap:wrap;">
-          ${e.names.map(n => `<span class="badge mono" style="font-size:11px;color:var(--ink-soft);background:var(--line-soft);">${esc(n)}</span>`).join("")}
-        </div>` : ""}
-        ${e.certificate ? certDetails(e.certificate) : ""}
-      </div>`;
-    };
-
+    const c = server.certificate;
     const serverCard = !server.secure
       ? `<div class="warn-box">Платформа работает по HTTP — сертификат не задан. Пароли и переписка идут открытым текстом.</div>`
-      : entries.length
-        ? entries.map(entryCard).join("")
+      : c
+        ? `${row("Кому выдан", esc(c.subject || "—"))}
+           ${row("Имена в сертификате (SAN)", `<span class="mono" style="font-size:12px;">${esc(c.san || "—")}</span>`)}
+           ${row("Кем выдан", esc(c.issuer || "—"))}
+           ${row("Действителен до", `${esc(c.validTo || "—")} ${days(c.daysLeft)}`)}
+           ${row("Корень цепочки", esc(c.rootSubject || "—"))}
+           ${row("Цепочка", c.chainComplete
+              ? `<span class="badge" style="color:var(--green);background:var(--green-soft);">полная (${c.certificates} серт.)</span>`
+              : `<span class="badge" style="color:var(--amber);background:var(--amber-soft);">неполная — клиент может не достроить доверие</span>`)}
+           ${row("Отпечаток", `<span class="mono" style="font-size:11px;word-break:break-all;">${esc(c.fingerprint || "—")}</span>`)}`
         : `<div style="font-size:12.5px;color:var(--ink-soft);">Сертификат применён, подробности ещё читаются…</div>`;
 
     const rootRow = (r) => `
@@ -1009,25 +980,24 @@ async function renderCertificates(main) {
       <div style="max-width:900px;">
         <div>
           <div class="card" style="margin-bottom:20px;">
-            <div class="section-label">Сертификаты сервера — что мы предъявляем</div>
-            <div style="font-size:12px;color:var(--ink-soft);margin-bottom:4px;">
-              Хранилище общее для платформы и «Искры»: они на одной машине. На каждый домен —
-              свой сертификат от своего удостоверяющего центра; сервер отдаёт тот, чьё имя
-              клиент запросил, поэтому чужому УЦ доверять никому не приходится.
-              ${server.managedBy === "iskra"
-                ? `Файлы лежат в <span class="mono">${esc(server.sharedStore.replace(/server\.pfx$/, ""))}</span>; загрузить новый можно здесь же, форма ниже. Тот же каталог читает и «Искра» — отдельно ей ничего подкладывать не нужно.`
-                : `Путь задан переменными окружения (<span class="mono">${esc(server.where || "")}</span>) — тогда сертификат один на всех, загрузка из панели отключена, замена через .env и перезапуск.`}
+            <div class="section-label">Сертификат сервера — что мы предъявляем</div>
+            <div style="font-size:12px;color:var(--ink-soft);margin-bottom:14px;">
+              Сертификат один на обе службы: платформа и «Искра» стоят на одной машине и отвечают
+              на одно имя. ${server.managedBy === "store"
+                ? `Файл лежит в <span class="mono">${esc(server.sharedStore)}</span>; загрузить новый можно здесь же (форма ниже) или в панели «Искры» — разницы нет, файл тот же. Обе службы перечитывают его сами, без перезапуска.`
+                : `Путь задан переменными окружения (<span class="mono">${esc(server.where || "")}</span>) — загрузка из панели при этом отключена, замена через .env и перезапуск.`}
             </div>
             ${serverCard}
 
-            ${server.managedBy === "iskra" ? `
+            ${server.managedBy === "store" ? `
             <div style="margin-top:18px;padding-top:16px;border-top:1px solid var(--line-soft);">
-              <div class="section-label" style="margin-bottom:8px;">Загрузить сертификат</div>
+              <div class="section-label" style="margin-bottom:8px;">Заменить сертификат</div>
               <div style="font-size:12px;color:var(--ink-soft);margin-bottom:12px;">
                 PFX (.pfx или .p12) — экспортированный из удостоверяющего центра домена вместе с
-                закрытым ключом и всеми сертификатами пути. Имя файла выбирать не нужно: домен
-                определяется по самому сертификату, и если файл на этот домен уже есть, он
-                заменяется. Сертификат применяется сразу, без перезапуска.
+                закрытым ключом и всеми сертификатами пути. Файл сначала проверяется (пароль, срок,
+                цепочка) и только потом заменяет действующий: испортить работающую платформу
+                загрузкой не того файла нельзя. Прежний остаётся рядом с суффиксом
+                <span class="mono">.bak</span>.
               </div>
               <div class="form-row" style="margin-bottom:12px;">
                 <div>
@@ -1039,22 +1009,9 @@ async function renderCertificates(main) {
                   <input class="field-input" id="certPass" type="password" placeholder="если он есть" style="margin-bottom:0;">
                 </div>
               </div>
-              <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink-soft);margin-bottom:12px;cursor:pointer;">
-                <input type="checkbox" id="certDefault">
-                Сделать основным — его получат клиенты, пришедшие с незнакомым именем
-              </label>
-              <button class="btn btn-wire" id="certUpload">Загрузить</button>
+              <button class="btn btn-wire" id="certUpload">Загрузить и применить</button>
               <div id="certMsg" style="margin-top:10px;font-size:12.5px;"></div>
             </div>` : ""}
-
-            <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--line-soft);">
-              <div class="field-label">Что увидит клиент, который придёт с именем</div>
-              <div style="display:flex;gap:8px;">
-                <input class="field-input" id="sniName" placeholder="p48-srv-adm01.in.local" style="margin-bottom:0;flex:1;">
-                <button class="btn btn-wire" id="sniCheck">Проверить</button>
-              </div>
-              <div id="sniMsg" style="margin-top:9px;font-size:12.5px;"></div>
-            </div>
           </div>
 
           <div class="card">
@@ -1077,10 +1034,10 @@ async function renderCertificates(main) {
           Это не про клиентов: они берут корни из хранилища Windows, куда те приезжают групповыми
           политиками, и панель на это никак не влияет. Список ниже — про исходящие соединения самой
           платформы: LDAPS к контроллерам доменов и проверка сертификата «Искры» при
-          проксировании. На доменной машине он не нужен вовсе — платформа запускается с
-          <span class="mono">--use-system-ca</span> и доверяет тому же хранилищу Windows.
-          Раздел пригождается в трёх случаях: машина вне домена, сторонний удостоверяющий центр,
-          переходный период при смене УЦ. Файлы лежат в <span class="mono">${esc(trusted.dir)}</span>,
+          проксировании. Удостоверяющий центр у нас один, и на доменной машине здесь не нужно
+          ничего: платформа запускается с <span class="mono">--use-system-ca</span> и доверяет тому
+          же хранилищу Windows. Раздел пригождается в двух случаях: машина вне домена и переходный
+          период при смене УЦ. Файлы лежат в <span class="mono">${esc(trusted.dir)}</span>,
           подключаются переменной <span class="mono">NODE_EXTRA_CA_CERTS</span> и начинают
           действовать только после перезапуска платформы.
         </div>
@@ -1117,50 +1074,12 @@ async function renderCertificates(main) {
         });
         const res = await api("/certificates/server", {
           method: "POST",
-          body: {
-            pfx: b64,
-            password: document.getElementById("certPass").value,
-            makeDefault: document.getElementById("certDefault").checked,
-          },
+          body: { pfx: b64, password: document.getElementById("certPass").value },
         });
         renderCertificates(main);
         toast(res.restartRequired
-          ? `Сохранён как ${res.file}. Нужен перезапуск: включить шифрование на работающем HTTP-сервере нельзя.`
-          : `Сертификат применён (${res.file}), перезапуск не нужен.`);
-      } catch (e) { msg.style.color = "var(--red)"; msg.textContent = e.message; }
-    };
-
-    main.querySelectorAll(".del-cert").forEach(btn => {
-      btn.onclick = async () => {
-        if (!confirm(`Удалить сертификат ${btn.dataset.file}? Клиенты, приходившие с его именами, получат основной и отвергнут его.`)) return;
-        try {
-          await api(`/certificates/server/${encodeURIComponent(btn.dataset.file)}`, { method: "DELETE" });
-          renderCertificates(main);
-          toast("Сертификат удалён, копия .bak осталась на диске");
-        } catch (e) { toast(e.message, true); }
-      };
-    });
-
-    const sniBtn = document.getElementById("sniCheck");
-    if (sniBtn) sniBtn.onclick = async () => {
-      const msg = document.getElementById("sniMsg");
-      const name = document.getElementById("sniName").value.trim().toLowerCase();
-      if (!name) return;
-      msg.style.color = "var(--ink-soft)"; msg.textContent = "Проверяю…";
-      try {
-        const r = await api(`/certificates/server/for/${encodeURIComponent(name)}`);
-        const cert = r.entry && r.entry.certificate;
-        if (r.matched) {
-          msg.style.color = "var(--green)";
-          msg.innerHTML = `Отдадим <span class="mono">${esc(r.entry.file)}</span> — выдан «${esc((cert && cert.issuer) || "—")}». Клиент должен доверять корню «${esc((cert && cert.rootSubject) || "—")}».`;
-        } else {
-          // Несовпадение имени — самая частая причина «сертификат не подходит»:
-          // клиент получит основной, и браузер откажется его принимать.
-          msg.style.color = "var(--amber)";
-          msg.innerHTML = r.entry
-            ? `Этого имени нет ни в одном сертификате — уедет основной <span class="mono">${esc(r.entry.file)}</span>, и клиент отвергнет его как «выдан другому имени».`
-            : "Сертификатов в хранилище нет.";
-        }
+          ? "Файл сохранён. Нужен перезапуск: включить шифрование на работающем HTTP-сервере нельзя."
+          : "Сертификат применён, перезапуск не нужен. «Искра» подхватит его сама.");
       } catch (e) { msg.style.color = "var(--red)"; msg.textContent = e.message; }
     };
 

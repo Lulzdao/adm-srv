@@ -12,32 +12,24 @@ const crypto = require("crypto");
  * процесс, и параллельного незашифрованного порта, про который легко забыть,
  * не остаётся. Шифрование включается само, как только есть сертификат.
  *
- * ОБЩЕЕ ХРАНИЛИЩЕ. Платформа и «Искра» стоят на одной машине и отвечают на
- * одни и те же имена, поэтому сертификаты у них ОДНИ — те же файлы, которыми
- * уже умеет управлять панель «Искры» (раздел «Сертификат»: загрузка, проверка
- * пароля и цепочки, замена на лету). Дублировать эту машинерию в платформе
- * вредно: два хранилища — ровно та путаница, которой мы избегаем. Платформа
- * читает те же файлы и перечитывает их, когда они меняются.
+ * СЕРТИФИКАТ ОДИН. Платформа и «Искра» стоят на одной машине и отвечают на
+ * одно имя — p48-srv-adm01.rosstat.local. Обращаются по нему из обеих подсетей:
+ * в in.local заведена запись и маршрут через шлюз, который знает этот адрес,
+ * поэтому второго имени, второго сертификата и выбора сертификата по имени
+ * (SNI) не требуется. Удостоверяющий центр тоже один — его корень раздаётся
+ * групповыми политиками в оба домена.
  *
- * ДВА ДОМЕНА — ДВА СЕРТИФИКАТА. Подсети две, домены разные (rosstat.local и
- * in.local), удостоверяющий центр у каждого свой. Заставлять один домен
- * доверять чужому УЦ не нужно и не надо: сервер держит по сертификату на
- * домен и предъявляет тот, чьё имя клиент запросил (SNI). Клиент из любой
- * подсети видит сертификат СВОЕГО домена, выданный СВОИМ УЦ, корень которого
- * и так лежит у него в хранилище благодаря групповым политикам.
+ * Файл один и тот же для обеих служб: MESSENGER/certs/server.pfx, рядом
+ * server.pass с паролем. Оба сервиса читают его и перечитывают, когда он
+ * меняется, поэтому загрузить новый можно из любой панели — платформы или
+ * «Искры», разницы нет.
  *
- * Как это выглядит в каталоге:
- *   server.pfx              — основной (тот, что был всегда), rosstat.local
- *   server.in.local.pfx     — второй домен; суффикс произвольный, он лишь для
- *                             человека, а имена берутся из самого сертификата
- *   server*.pass            — пароль к файлу рядом с ним, если он есть
- *
- * Порядок поиска сертификата по умолчанию:
+ * Порядок поиска:
  *   1. TLS_PFX (+ TLS_PFX_PASSWORD) — если путь задан явно;
  *   2. TLS_CERT + TLS_KEY — PEM, где TLS_CERT это ПОЛНАЯ цепочка;
  *   3. общее хранилище (по умолчанию MESSENGER/certs/server.pfx).
- * Явно заданный в .env сертификат отключает и слежение за каталогом, и SNI:
- * если администратор прописал файл руками, мы не подменяем его решение.
+ * Явно заданный в .env сертификат отключает слежение за файлом: если
+ * администратор прописал путь руками, мы не подменяем его решение.
  */
 
 // Где лежит общее хранилище. Значение по умолчанию совпадает с тем, что
@@ -47,39 +39,8 @@ const SHARED_CERT_DIR = process.env.SHARED_CERT_DIR
 const SHARED_PFX = path.join(SHARED_CERT_DIR, "server.pfx");
 const SHARED_PASS = path.join(SHARED_CERT_DIR, "server.pass");
 
-// server.pfx и server.<что-угодно>.pfx — и ничего больше: .bak, оставленный
-// «Искрой» перед заменой, подхватывать нельзя.
-const STORE_FILE = /^server(\.[A-Za-z0-9][A-Za-z0-9._-]*)?\.pfx$/;
-
 function readIfExists(file, encoding) {
   try { return fs.readFileSync(file, encoding); } catch { return null; }
-}
-
-function optionsForPfx(file) {
-  const pfx = readIfExists(file);
-  if (!pfx) return null;
-  const options = { pfx };
-  // Пароль пишется в соседний .pass как есть, без перевода строки, — так его
-  // кладёт панель «Искры»; поэтому и читаем как есть, не обрезая пробелы:
-  // пробел в конце пароля тоже пароль.
-  const pass = readIfExists(file.replace(/\.pfx$/, ".pass"), "utf8");
-  if (pass) options.passphrase = pass;
-  return options;
-}
-
-/** Все сертификаты общего хранилища. Первым — основной. */
-function listStoreCertificates(dir = SHARED_CERT_DIR) {
-  let names;
-  try { names = fs.readdirSync(dir); } catch { return []; }
-  return names
-    .filter((n) => STORE_FILE.test(n))
-    .sort((a, b) => (a === "server.pfx" ? -1 : b === "server.pfx" ? 1 : a.localeCompare(b)))
-    .map((n) => {
-      const where = path.join(dir, n);
-      const options = optionsForPfx(where);
-      return options ? { file: n, where, options, isDefault: n === "server.pfx" } : null;
-    })
-    .filter(Boolean);
 }
 
 function resolveTlsOptions(env = process.env) {
@@ -95,12 +56,17 @@ function resolveTlsOptions(env = process.env) {
       where: env.TLS_CERT,
     };
   }
-  // Основной — server.pfx; если его нет, годится любой из хранилища: сервер
-  // должен подняться и с одним сертификатом второго домена.
-  const entries = listStoreCertificates(env.SHARED_CERT_DIR || SHARED_CERT_DIR);
-  if (entries.length) {
-    const first = entries[0];
-    return { options: first.options, source: "shared-store", where: first.where };
+  const dir = env.SHARED_CERT_DIR || SHARED_CERT_DIR;
+  const file = path.join(dir, "server.pfx");
+  const pfx = readIfExists(file);
+  if (pfx) {
+    const options = { pfx };
+    // Пароль лежит в соседнем .pass как есть, без перевода строки, — так его
+    // пишет панель. Поэтому и читаем как есть, не обрезая пробелы: пробел в
+    // конце пароля тоже пароль.
+    const pass = readIfExists(path.join(dir, "server.pass"), "utf8");
+    if (pass) options.passphrase = pass;
+    return { options, source: "shared-store", where: file };
   }
   return null;
 }
@@ -170,8 +136,8 @@ function describeChain(peer) {
 /**
  * Имена, за которые сертификат отвечает. Берём из SAN, а не из CN: браузеры и
  * Node давно смотрят только туда, и сертификат «на CN без SAN» не примет никто.
- * IP из SAN тоже собираем — по ним никто ходить не должен, но показать в
- * панели полезно: видно, если сертификат выписан «на адрес».
+ * Показываем их в панели — по ним видно, к серверу под каким именем вообще
+ * можно обращаться.
  */
 function dnsNames(leaf) {
   const san = leaf && leaf.subjectaltname;
@@ -183,81 +149,26 @@ function dnsNames(leaf) {
     .map((part) => part.replace(/^(DNS|IP Address):/i, "").toLowerCase());
 }
 
-// Работающий https-сервер и каталог хранилища: их держим здесь, чтобы
-// перечитать сертификаты можно было и по событию файловой системы, и сразу
-// после загрузки файла из панели.
+// Работающий https-сервер: держим ссылку, чтобы применить новый сертификат
+// сразу после загрузки из панели, не дожидаясь срабатывания fs.watch.
 let activeServer = null;
 let activeDir = SHARED_CERT_DIR;
 
-// Последнее, что удалось узнать о действующих сертификатах: панель показывает
+// Последнее, что удалось узнать о действующем сертификате: панель показывает
 // это, не трогая сеть заново.
-let current = { secure: false, source: null, where: null, certificate: null, entries: [] };
+let current = { secure: false, source: null, where: null, certificate: null };
 
 function currentTlsState() {
-  return { ...current, entries: current.entries.map((e) => ({ ...e })) };
+  return { ...current };
 }
 
-// --- Выбор сертификата по запрошенному имени (SNI) ----------------------
-//
-// Карта «имя → контекст». Пересобирается при каждой перезагрузке хранилища,
-// поэтому SNICallback ставится один раз при создании сервера и просто
-// смотрит сюда.
-let byName = new Map();
-
-function contextForName(servername) {
-  const name = String(servername || "").toLowerCase();
-  if (!name) return null;
-  const exact = byName.get(name);
-  if (exact) return exact;
-  // Подстановочный сертификат (*.in.local) закрывает ровно один уровень имени.
-  const wildcard = byName.get(name.replace(/^[^.]+\./, "*."));
-  return wildcard || null;
-}
-
-function sniCallback(servername, cb) {
-  // null вместо контекста — не ошибка: сервер возьмёт свой основной. Так и
-  // должно быть, пока имён ещё не узнали или пришли с незнакомым именем.
-  cb(null, contextForName(servername) || undefined);
-}
-
-/**
- * Перебрать хранилище, поднять контексты и разложить их по именам.
- * Всё делается на копиях: пока новая карта не собрана, старая продолжает
- * обслуживать соединения.
- */
-async function loadCertStore(dir = SHARED_CERT_DIR) {
-  const entries = [];
-  const next = new Map();
-
-  for (const entry of listStoreCertificates(dir)) {
-    const row = { file: entry.file, where: entry.where, isDefault: entry.isDefault, names: [], certificate: null };
-    let context;
-    try {
-      context = tls.createSecureContext(entry.options);
-    } catch (err) {
-      row.error = entry.options.passphrase
-        ? "Файл не читается — вероятно, неверный пароль"
-        : "Файл не читается — вероятно, он защищён паролем, а пароля рядом нет (server.pass)";
-      entries.push(row);
-      continue;
-    }
-    try {
-      row.certificate = await inspectTlsOptions(entry.options);
-      row.names = row.certificate.names || [];
-      for (const name of row.names) if (!next.has(name)) next.set(name, context);
-    } catch (err) {
-      // Контекст рабочий, а разобрать цепочку не вышло — сертификат всё равно
-      // годен как основной, просто по имени его не выберешь.
-      row.error = "Не удалось разобрать цепочку: " + err.message;
-    }
-    entries.push(row);
-  }
-
-  byName = next;
-  current.entries = entries;
-  const def = entries.find((e) => e.isDefault) || entries[0];
-  if (def && def.certificate) current.certificate = def.certificate;
-  return entries;
+function refreshCertificateInfo(options) {
+  return inspectTlsOptions(options)
+    .then((info) => { current.certificate = info; return info; })
+    .catch((err) => {
+      console.error("Не удалось разобрать действующий сертификат:", err.message);
+      return null;
+    });
 }
 
 /**
@@ -272,7 +183,7 @@ function createAppServer(app, env = process.env) {
       "[внимание] Сертификат не задан и общего хранилища нет — платформа работает по HTTP, " +
         "пароли и переписка идут открытым текстом. Это допустимо только в изолированной сети."
     );
-    current = { secure: false, source: null, where: null, certificate: null, entries: [] };
+    current = { secure: false, source: null, where: null, certificate: null };
     return { server: http.createServer(app), secure: false };
   }
 
@@ -286,47 +197,26 @@ function createAppServer(app, env = process.env) {
     throw err;
   }
 
-  const shared = resolved.source === "shared-store";
-  const server = https.createServer(
-    // SNICallback ставим один раз и навсегда: карта имён за ним меняется на
-    // ходу, а сам обработчик после создания сервера уже не заменить.
-    shared ? { ...resolved.options, SNICallback: sniCallback } : resolved.options,
-    app
-  );
-  current = { secure: true, source: resolved.source, where: resolved.where, certificate: null, entries: [] };
+  const server = https.createServer(resolved.options, app);
+  current = { secure: true, source: resolved.source, where: resolved.where, certificate: null };
   console.log(`TLS включён: сертификат из ${resolved.where} (${resolved.source})`);
 
   // Узнаём, что реально отдаём клиенту, — уже после старта, чтобы не задерживать
   // подъём сервера, если проверка почему-то затянется.
-  if (shared) {
-    loadCertStore(env.SHARED_CERT_DIR || SHARED_CERT_DIR)
-      .then((entries) => {
-        const named = entries.filter((e) => e.names.length);
-        if (named.length > 1) {
-          console.log(
-            "Сертификатов в хранилище: " + entries.length + "; имена: " +
-              named.map((e) => e.names.join(", ")).join(" | ")
-          );
-        }
-      })
-      .catch((err) => console.error("Не удалось разобрать хранилище сертификатов:", err.message));
-  } else {
-    inspectTlsOptions(resolved.options)
-      .then((info) => { current.certificate = info; })
-      .catch((err) => console.error("Не удалось разобрать действующий сертификат:", err.message));
-  }
+  refreshCertificateInfo(resolved.options);
 
   watchSharedStore(server, resolved.source, env.SHARED_CERT_DIR || SHARED_CERT_DIR);
   return { server, secure: true };
 }
 
 /**
- * Перечитывание общего хранилища без перезапуска.
+ * Перечитывание сертификата без перезапуска.
  *
- * Ради этого всё и затевалось: администратор загружает новый файл в панели
- * «Искры» один раз, и обе службы начинают отдавать его сами. Раньше платформа
- * продолжала бы предъявлять старый сертификат до ручного перезапуска — и это
- * тот случай, когда «вроде поменяли, а не работает» ищут часами.
+ * Ради этого всё и затевалось: администратор загружает новый файл один раз —
+ * в панели платформы или «Искры», всё равно, — и обе службы начинают отдавать
+ * его сами. Иначе платформа продолжала бы предъявлять старый сертификат до
+ * ручного перезапуска, и это тот случай, когда «вроде поменяли, а не
+ * работает» ищут часами.
  *
  * Меняется только контекст: уже открытые соединения доживают со старым
  * сертификатом, новые идут с новым.
@@ -350,10 +240,8 @@ async function reloadCertStore() {
     console.error(`Новый сертификат не принят, оставлен прежний: ${err.message}`);
     return { applied: false, reason: "unreadable", error: err.message };
   }
-  // Карту имён пересобираем в любом случае: могли добавить или убрать
-  // сертификат второго домена, не трогая основной.
-  await loadCertStore(activeDir).catch(() => { /* не смертельно: основной уже применён */ });
-  console.log("Сертификаты перечитаны из общего хранилища без перезапуска");
+  await refreshCertificateInfo(resolved.options);
+  console.log("Сертификат перечитан из общего хранилища без перезапуска");
   return { applied: true };
 }
 
@@ -364,15 +252,13 @@ function watchSharedStore(server, source, dir = SHARED_CERT_DIR) {
   if (!fs.existsSync(dir)) return;
 
   let timer = null;
-  const reload = () => { reloadCertStore().catch(() => { /* уже залогировано */ }); };
-
   try {
     fs.watch(dir, (event, filename) => {
-      if (filename && !STORE_FILE.test(String(filename)) && !/^server[.\w-]*\.pass$/.test(String(filename))) return;
+      if (filename && !/^server\.(pfx|pass)$/.test(String(filename))) return;
       // Панель пишет .pfx и .pass по очереди, да и запись не атомарна — ждём,
       // пока файлы улягутся, иначе прочитаем половину.
       clearTimeout(timer);
-      timer = setTimeout(reload, 1500);
+      timer = setTimeout(() => { reloadCertStore().catch(() => { /* уже залогировано */ }); }, 1500);
     }).unref();
   } catch (err) {
     console.warn(`Не удалось следить за хранилищем сертификатов: ${err.message}`);
@@ -382,10 +268,11 @@ function watchSharedStore(server, source, dir = SHARED_CERT_DIR) {
 // --- Доверенные корни ---------------------------------------------------
 //
 // Это ДРУГАЯ сущность, чем сертификат сервера, и путать их нельзя:
-// сертификат сервера — то, что мы предъявляем; корни — то, кому мы верим.
-// Домена два, поэтому корней тоже может быть несколько, плюс сторонние на
-// будущее. Здесь платформа только хранит и показывает список; в доверие
-// процесса он попадает через NODE_EXTRA_CA_CERTS (см. README).
+// сертификат сервера — то, что мы предъявляем; корни — то, кому верим мы,
+// когда сами ходим наружу (LDAPS к контроллерам доменов, проверка «Искры»
+// при проксировании). Клиентов это не касается: они берут корни из хранилища
+// Windows. Удостоверяющий центр у нас один, так что в обычной жизни здесь
+// пусто; список нужен на машине вне домена и на время смены УЦ.
 const TRUSTED_DIR = process.env.TRUSTED_CA_DIR || path.join(__dirname, "..", "certs", "trusted");
 
 function describeCaPem(pem, file) {
@@ -426,11 +313,9 @@ module.exports = {
   describeChain,
   describeCaPem,
   listTrustedRoots,
-  listStoreCertificates,
-  loadCertStore,
   reloadCertStore,
-  contextForName,
   TRUSTED_DIR,
   SHARED_CERT_DIR,
   SHARED_PFX,
+  SHARED_PASS,
 };
