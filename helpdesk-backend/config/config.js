@@ -1,5 +1,33 @@
-require("dotenv").config();
 const crypto = require("crypto");
+
+// --- Откуда взялась переменная -------------------------------------------
+//
+// dotenv НЕ переопределяет то, что уже есть в окружении процесса. Из-за этого
+// переменная, однажды заданная в системе (setx, скрипт запуска, вкладка
+// Environment в NSSM), продолжает действовать, а в .env её нет — и снаружи это
+// выглядит как «путь взялся ниоткуда». Снимок до загрузки .env позволяет
+// сказать точно, откуда пришло значение, и не заставлять администратора это
+// выяснять.
+const beforeDotenv = { ...process.env };
+const parsed = require("dotenv").config().parsed || {};
+
+// Пустое значение в .env ОТМЕНЯЕТ переменную окружения. Без этого «TLS_PFX=»
+// в файле ничего бы не давало (dotenv пропускает ключ, раз он уже задан), и
+// убрать унаследованную переменную можно было бы только через реестр.
+for (const [key, value] of Object.entries(parsed)) {
+  if (value === "" && process.env[key]) delete process.env[key];
+}
+
+/**
+ * Откуда пришла переменная: ".env", "система" или null, если её нет вовсе.
+ * Нужно ровно для одного — чтобы сообщение об ошибке называло место, где
+ * значение правится, а не просто печатало его.
+ */
+function envSource(name) {
+  if (!process.env[name]) return null;
+  if (beforeDotenv[name] === process.env[name]) return "система";
+  return name in parsed ? ".env" : "система";
+}
 
 // Секрет подписи сессионных cookie. Раньше при незаданном SESSION_SECRET
 // подставлялась одна и та же строка "dev-secret-change-me" — зная её (а она
@@ -26,6 +54,7 @@ function domainConfig(prefix) {
 }
 
 module.exports = {
+  envSource,
   port: process.env.PORT || 3000,
   sessionSecret: sessionSecret(),
   dbPath: process.env.DB_PATH || "./data/helpdesk.db",
