@@ -1,0 +1,182 @@
+/* Общее оформление обеих страниц модуля — «Сертификаты» и «МЧД».
+   Вынесено из index.html, когда страниц стало две: вторая копия тех же
+   правил разъехалась бы с первой при первой же правке. */
+/* Material You (Material 3) — та же тональная тема, что у платформы:
+     модуль открывается в iframe внутри неё, поэтому палитра, скругления и
+     типографика совпадают один в один. Цвета в hex (не oklch): интерфейс
+     открывают с рабочих машин, где браузер может быть старше Chrome 111.
+     Веб-шрифты не подключаем — сеть изолированная. */
+  :root {
+    --md-primary: #7D5700;
+    --md-on-primary: #FFFFFF;
+    --md-primary-container: #FFDEA6;
+    --md-on-primary-container: #281900;
+    --md-secondary-container: #F0E0C8;
+    --md-on-secondary-container: #251A04;
+
+    --md-surface: #FFF8F3;
+    --md-surface-container-lowest: #FFFFFF;
+    --md-surface-container-low: #FBF1E9;
+    --md-surface-container: #F5ECE3;
+    --md-surface-container-high: #F0E6DE;
+    --md-surface-container-highest: #EAE1D9;
+    --md-on-surface: #1F1B16;
+    --md-on-surface-variant: #4F453A;
+    --md-outline: #817567;
+    --md-outline-variant: #D8CCBE;
+
+    --md-error: #8C1D18;
+    --md-error-container: #FFDAD6;
+    --md-on-error-container: #410002;
+    --md-warn-container: #FFDCC2;
+    --md-on-warn-container: #2E1500;
+    --md-success-container: #CDEBD5;
+    --md-on-success-container: #08210F;
+
+    --md-state-hover: rgba(31, 27, 22, 0.06);
+    --md-shape-xs: 8px;
+    --md-shape-m: 16px;
+    --md-shape-l: 20px;
+    --md-shape-xl: 28px;
+    --md-shape-full: 100px;
+    --md-elev-1: 0 1px 2px rgba(31, 27, 22, 0.10);
+    --md-elev-3: 0 6px 18px rgba(31, 27, 22, 0.12);
+
+    --sans: Roboto, "Segoe UI", system-ui, -apple-system, Arial, sans-serif;
+
+    /* Имена, на которые ссылается скрипт и разметка ниже */
+    --bg: var(--md-surface);
+    --text: var(--md-on-surface);
+    --muted: var(--md-on-surface-variant);
+    --accent: var(--md-primary);
+    --accent-dark: var(--md-on-primary-container);
+    --panel-bg: var(--md-surface-container-lowest);
+    --panel-border: var(--md-outline-variant);
+    --th-bg: var(--md-surface-container);
+    --row-border: var(--md-surface-container-high);
+    --row-hover: var(--md-surface-container-low);
+    --expired-bg: var(--md-error-container);
+    --expired-hover: #FFCFC9;
+    --soon-bg: var(--md-warn-container);
+    --soon-hover: #FFD0AC;
+    --input-border: var(--md-outline);
+  }
+
+  /* --- Полоса прокрутки ---
+     Штатная светло-серая полоса Chromium выбивалась из тёплой палитры. Стилизуем
+     через ::-webkit-scrollbar: эти псевдоэлементы понимают все Chromium, включая
+     109-й на рабочих машинах. Стандартные scrollbar-width/scrollbar-color
+     появились только в Chrome 121 — они ниже и лишь повторяют тот же вид в новых
+     браузерах и в Firefox. Прозрачная рамка с background-clip даёт отступ от
+     края, чтобы полоса не липла к содержимому. */
+  ::-webkit-scrollbar { width: 12px; height: 12px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: var(--md-outline-variant);
+    border: 3px solid transparent;
+    background-clip: padding-box;
+    border-radius: var(--md-shape-full);
+  }
+  ::-webkit-scrollbar-thumb:hover { background: var(--md-outline); background-clip: padding-box; }
+  ::-webkit-scrollbar-corner { background: transparent; }
+  /* scrollbar-width/-color наследуются, поэтому достаточно корня. */
+  html { scrollbar-width: thin; scrollbar-color: var(--md-outline-variant) transparent; }
+
+  * { box-sizing: border-box; }
+  html { height: 100%; }
+  body {
+    font-family: var(--sans);
+    margin: 0;
+    color: var(--md-on-surface);
+    /* Белый — как контентная область платформы: модуль встроен в неё через
+       iframe. Тон из палитры остаётся на таблице. */
+    background: var(--md-surface-container-lowest);
+    height: 100%;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  main {
+    max-width: 1280px; margin: 0 auto; padding: 20px 24px 24px;
+    height: 100vh; display: flex; flex-direction: column;
+  }
+
+  .toolbar-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    margin-bottom: 16px; flex-wrap: wrap; flex-shrink: 0;
+  }
+  .search-wrap-cv { display: flex; align-items: center; gap: 12px; }
+  #searchInput {
+    width: 320px; max-width: 60vw; padding: 12px 18px; font-size: 13.5px;
+    border: 1px solid transparent; border-radius: var(--md-shape-full);
+    background: var(--md-surface-container-high); color: var(--md-on-surface);
+    transition: border-color 0.12s ease;
+  }
+  #searchInput:focus { outline: none; border-color: var(--md-primary); }
+  #resultCount { font-size: 12.5px; color: var(--md-on-surface-variant); white-space: nowrap; }
+  #fileInput { display: none; }
+  .add-cert-wrap { display: flex; align-items: center; gap: 12px; }
+  .dnd-hint { font-size: 12.5px; color: var(--md-on-surface-variant); }
+  /* Filled button M3 */
+  .add-cert-btn {
+    padding: 12px 22px; font-size: 13.5px; font-weight: 600; letter-spacing: 0.1px;
+    cursor: pointer; white-space: nowrap; border: none;
+    background: var(--md-primary); color: var(--md-on-primary); border-radius: var(--md-shape-full);
+    transition: box-shadow 0.15s, filter 0.15s;
+  }
+  .add-cert-btn:hover { box-shadow: var(--md-elev-1); filter: brightness(1.06); }
+
+  /* Snackbar */
+  #status {
+    position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+    z-index: 50; padding: 14px 22px; border-radius: var(--md-shape-xs); font-size: 13.5px; font-weight: 500;
+    box-shadow: var(--md-elev-3); pointer-events: none;
+    background: #37322B; color: #F6EEE6;
+  }
+  #status:empty { display: none; }
+  #status.error { background: var(--md-error); color: #fff; }
+  #status.ok { background: var(--md-success-container); color: var(--md-on-success-container); }
+
+  .table-wrap {
+    border: none; border-radius: var(--md-shape-l);
+    background: var(--md-surface-container-low);
+    overflow-x: hidden; overflow-y: scroll; flex: 1; min-height: 0;
+    scrollbar-gutter: stable;
+  }
+  .table-wrap table { padding-right: 6px; }
+  th:last-child, td:last-child { padding-right: 22px; }
+  table { width: 100%; border-collapse: collapse; background: transparent; }
+  th, td { padding: 14px 18px; border-bottom: 1px solid var(--md-surface-container-high); text-align: left; font-size: 14px; }
+  th {
+    position: sticky; top: 0; z-index: 2; background: var(--md-surface-container-high);
+    font-weight: 600; color: var(--md-on-surface-variant); font-size: 11.5px;
+    text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+  th.sortable:hover { color: var(--md-on-surface); }
+  .sort-arrow { font-size: 10px; opacity: 0.8; margin-left: 5px; color: var(--md-primary); }
+  tbody tr:last-child td { border-bottom: none; }
+
+  tr.expired { background: var(--md-error-container); color: var(--md-on-error-container); }
+  tr.expired:hover { background: #FFCFC9; }
+  tr.soon { background: var(--md-warn-container); color: var(--md-on-warn-container); }
+  tr.soon:hover { background: #FFD0AC; }
+  tr:not(.expired):not(.soon):hover { background: var(--md-surface-container); }
+
+  /* Text button M3 */
+  .del-btn {
+    background: none; border: none; color: var(--md-error); cursor: pointer; font-size: 13px;
+    font-weight: 600; padding: 7px 14px; border-radius: var(--md-shape-full);
+    transition: background 0.13s ease;
+  }
+  .del-btn:hover { background: var(--md-error-container); text-decoration: none; }
+
+  #dropOverlay {
+    display: none; position: fixed; inset: 0; z-index: 999;
+    background: rgba(31, 27, 22, 0.72); color: #fff;
+    align-items: center; justify-content: center; text-align: center;
+    font-size: 24px; font-family: var(--sans); font-weight: 600;
+    border: 4px dashed var(--md-primary-container); box-sizing: border-box;
+  }
+  #dropOverlay.active { display: flex; }
+</style>

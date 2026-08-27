@@ -5,6 +5,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const { Certificate } = require('@fidm/x509');
 const { DatabaseSync } = require('node:sqlite');
+const { parseArchive } = require('./mchd');
 
 // ---------- Загрузка .env (без пакета dotenv, простым парсером) ----------
 function loadEnv() {
@@ -90,6 +91,33 @@ db.exec(`
   )
 `);
 
+// Машиночитаемые доверенности. Отдельная таблица, а не общая с сертификатами:
+// это разные документы с разными полями, и «универсальная» запись пополам из
+// пустых колонок читалась бы хуже обеих.
+//
+// Полей ровно три содержательных — ФИО, реестровый номер, срок действия. В
+// архиве ЕИС есть ещё паспорт, СНИЛС, ИНН, дата рождения и данные организации;
+// они СОЗНАТЕЛЬНО не сохраняются: для слежения за сроками не нужны, а чего нет
+// в базе, то нельзя ни показать лишнему человеку, ни потерять вместе с файлом.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS attorneys (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    uuid TEXT,
+    reg_number TEXT,
+    full_name TEXT,
+    valid_from TEXT,
+    valid_to TEXT,
+    signed INTEGER DEFAULT 0,
+    source_format TEXT,
+    file_name TEXT,
+    uploaded_at TEXT DEFAULT (datetime('now', 'localtime'))
+  )
+`);
+
+// Уникальность — по uuid доверенности: он глобально уникален, в отличие от
+// номера. Повторная загрузка того же архива обновит запись, а не заведёт вторую.
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS ux_attorney_uuid ON attorneys(uuid)');
+
 // Миграция для баз, созданных предыдущей версией: добавляем колонки для проверки
 // дублей, если их ещё нет (ALTER TABLE ADD COLUMN не трогает существующие данные).
 const existingColumns = db.prepare("PRAGMA table_info(certificates)").all().map((c) => c.name);
@@ -114,6 +142,39 @@ const insertStmt = db.prepare(`
 `);
 const listStmt = db.prepare('SELECT * FROM certificates ORDER BY id DESC');
 const deleteStmt = db.prepare('DELETE FROM certificates WHERE id = ?');
+
+// Повторная загрузка того же архива — обычное дело: доверенность перевыпустили
+// или просто скачали заново. ON CONFLICT обновляет запись вместо ошибки.
+const insertAttorneyStmt = db.prepare(`
+  INSERT INTO attorneys (uuid, reg_number, full_name, valid_from, valid_to, signed, source_format, file_name)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  ON CONFLICT(uuid) DO UPDATE SET
+    reg_number = excluded.reg_number,
+    full_name = excluded.full_name,
+    valid_from = excluded.valid_from,
+    valid_to = excluded.valid_to,
+    signed = excluded.signed,
+    source_format = excluded.source_format,
+    file_name = excluded.file_name,
+    uploaded_at = datetime('now', 'localtime')
+`);
+// Сортировка по сроку: ближайшие к истечению — сверху, это и есть смысл списка.
+const listAttorneysStmt = db.prepare('SELECT * FROM attorneys ORDER BY valid_to ASC');
+const deleteAttorneyStmt = db.prepare('DELETE FROM attorneys WHERE id = ?');
+
+function addAttorney(record, fileName) {
+  insertAttorneyStmt.run(
+    record.uuid || `${record.regNumber}|${record.fullName}`, // без uuid ключом служит номер с ФИО
+    record.regNumber,
+    record.fullName,
+    record.validFrom,
+    record.validTo,
+    record.signed ? 1 : 0,
+    record.format,
+    fileName
+  );
+  return record;
+}
 
 function addCertificate(record) {
   try {
@@ -311,6 +372,13 @@ app.get(['/', '/index.html'], requireAuthPage, (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+// Вторая страница модуля — доверенности. Переключение между «Сертификатами» и
+// «МЧД» живёт в боковом меню платформы (см. views в config/modules.js), поэтому
+// своей навигации у модуля нет.
+app.get(['/mchd', '/mchd.html'], requireAuthPage, (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'mchd.html'));
+});
+
 // Остальная статика (стили, скрипты) — без авторизации, там нет данных.
 app.use(
   express.static(path.join(__dirname, 'public'), {
@@ -337,6 +405,34 @@ app.post('/api/upload', requireAuthApi, upload.array('certificates', 50), (req, 
   res.json({ inserted: results.length, results, errors });
 });
 
+// Архив ЕИС целиком: и перетаскиванием, и кнопкой — как у сертификатов.
+app.post('/api/mchd/upload', requireAuthApi, upload.array('archives', 20), (req, res) => {
+  const results = [];
+  const errors = [];
+  for (const file of req.files || []) {
+    try {
+      const parsed = parseArchive(file.buffer);
+      addAttorney(parsed, file.originalname);
+      results.push({ fullName: parsed.fullName, validTo: parsed.validTo });
+    } catch (err) {
+      errors.push({ file: file.originalname, error: err.message });
+    }
+  }
+  res.json({ inserted: results.length, errors });
+});
+
+app.get('/api/mchd', requireAuthApi, (req, res) => {
+  res.json(listAttorneysStmt.all());
+});
+
+app.delete('/api/mchd/:id', requireAuthApi, (req, res) => {
+  if (!/^[1-9]\d{0,17}$/.test(String(req.params.id))) {
+    return res.status(400).json({ error: 'Некорректный идентификатор доверенности' });
+  }
+  deleteAttorneyStmt.run(req.params.id);
+  res.json({ ok: true });
+});
+
 app.get('/api/certificates', requireAuthApi, (req, res) => {
   res.json(listCertificates());
 });
@@ -357,7 +453,7 @@ app.delete('/api/certificates/:id', requireAuthApi, (req, res) => {
 app.use((err, req, res, next) => {
   console.error('[ошибка]', err);
   if (err && err.code === 'LIMIT_FILE_SIZE') {
-    return res.status(400).json({ error: 'Файл больше 5 МБ — такой сертификат не принимается' });
+    return res.status(400).json({ error: 'Файл больше 5 МБ — не принимается' });
   }
   if (err && err.code === 'LIMIT_UNEXPECTED_FILE') {
     return res.status(400).json({ error: 'Неверное имя поля с файлом при загрузке' });

@@ -20,7 +20,10 @@
 module.exports = [
   {
     id: "certs", label: "Сертвивер", path: "/modules/certs", target: "http://127.0.0.1:3101", roles: ["it"],
-    views: [{ id: "root", label: "Сертвивер", sub: "" }],
+    views: [
+      { id: "certs", label: "Сертификаты", sub: "" },
+      { id: "mchd", label: "МЧД", sub: "mchd" },
+    ],
   },
   {
     id: "smdr", label: "Журнал звонков", path: "/modules/smdr", target: "http://127.0.0.1:3102", roles: ["it"],
