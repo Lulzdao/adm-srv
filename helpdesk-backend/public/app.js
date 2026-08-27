@@ -12,6 +12,12 @@ const ICON_PATHS = {
   paperclip: '<path d="M21 12.5l-8.5 8.5a4 4 0 1 1-5.66-5.66l9-9a2.5 2.5 0 1 1 3.54 3.54l-9 9a1 1 0 1 1-1.42-1.42l8-8"/>',
   x: '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
   box: '<path d="M21 8L12 3 3 8l9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/>',
+  // Иконки модулей: печать с лентами — Сертвивер, трубка — журнал звонков,
+  // облачко реплики — «Искра». Общий «ящик» остаётся запасным вариантом для
+  // модулей, которые подключат позже.
+  seal: '<circle cx="12" cy="9" r="5.5"/><path d="M8.6 13.5L7.2 21 12 18.6 16.8 21l-1.4-7.5"/>',
+  phone: '<path d="M21.5 16.9v2.6a2 2 0 0 1-2.2 2 19.4 19.4 0 0 1-8.5-3 19.1 19.1 0 0 1-5.9-5.9 19.4 19.4 0 0 1-3-8.6 2 2 0 0 1 2-2.2h2.6a2 2 0 0 1 2 1.7c.1.9.3 1.7.6 2.5a2 2 0 0 1-.5 2.1L7.5 9.4a15.6 15.6 0 0 0 5.9 5.9l1.3-1.1a2 2 0 0 1 2.1-.5c.8.3 1.6.5 2.5.6a2 2 0 0 1 1.7 2z"/>',
+  message: '<path d="M20.5 11.7a8 8 0 0 1-8.6 8 8.7 8.7 0 0 1-3.6-.9L3.5 20.5l1.7-4.8a8.7 8.7 0 0 1-.9-3.6 8 8 0 0 1 8-8.6 8 8 0 0 1 8.2 8.2z"/>',
 };
 function icon(name, size) {
   size = size || 16;
@@ -267,6 +273,11 @@ function navGroupHtml(groupId, label, iconName, badge, items) {
 }
 
 const MODULE_VIEW_ICONS = { log: "inbox", stats: "chart", directory: "folder", root: "box" };
+// Иконка пункта меню по идентификатору модуля из config/modules.js. Ключ — тот
+// же id, что и на сервере; для незнакомого модуля остаётся общий «ящик», так
+// что подключение нового ничего здесь не ломает.
+const MODULE_ICONS = { certs: "seal", smdr: "phone", messenger: "message" };
+const moduleIcon = (id) => MODULE_ICONS[id] || "box";
 
 function renderShell() {
   const u = state.user;
@@ -306,11 +317,11 @@ function renderShell() {
     navHtml += `<div class="nav-divider"></div>` + state.modules.map(m => {
       const views = (m.views && m.views.length) ? m.views : [{ id: "root", label: m.label, sub: "" }];
       if (views.length === 1) {
-        const it = { id: `module:${m.id}:${views[0].id}`, label: m.label, icon: "box" };
+        const it = { id: `module:${m.id}:${views[0].id}`, label: m.label, icon: moduleIcon(m.id) };
         return navBtnHtml(it, state.view === it.id, false);
       }
       const items = views.map(v => ({ id: `module:${m.id}:${v.id}`, label: v.label, icon: MODULE_VIEW_ICONS[v.id] }));
-      return navGroupHtml(`mod-${m.id}`, m.label, "box", 0, items);
+      return navGroupHtml(`mod-${m.id}`, m.label, moduleIcon(m.id), 0, items);
     }).join("");
   }
 
