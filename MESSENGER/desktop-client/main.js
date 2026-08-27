@@ -140,6 +140,33 @@ if (process.platform === 'win32' && require('os').release().startsWith('6.1')) {
   app.disableHardwareAcceleration();
 }
 
+// ---------- Экономный режим ----------
+// Часть машин заметно слабее прочих, и на них клиент временами ощутимо грузит
+// систему. Режим включается машинной политикой (lowResourceMode в
+// C:\ProgramData\Iskra\config.json) — то есть централизованно, на конкретные
+// ПК, — и делает три вещи: снимает аппаратное ускорение (на слабой графике оно
+// стоит дороже, чем даёт), отдаёт фоновым окнам меньше времени и разрежает
+// собственные таймеры клиента.
+//
+// Читаем ДО app.whenReady(): переключатели Chromium после старта не действуют.
+// Файл политики разбирается ниже, а здесь нужен только один флаг, поэтому
+// достаём его отдельным дешёвым чтением — дублирование мелкое и сознательное.
+function readLowResourceFlag() {
+  const file = process.platform === 'win32'
+    ? path.join(process.env.ProgramData || 'C:\\ProgramData', 'Iskra', 'config.json')
+    : '/etc/iskra/config.json';
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')).lowResourceMode === true; }
+  catch { return false; }
+}
+const LOW_RESOURCE = readLowResourceFlag();
+if (LOW_RESOURCE) {
+  app.disableHardwareAcceleration();
+  // Фоновым окнам — меньше процессорного времени. Оба переключателя штатные
+  // для Chromium и на переднем плане ничего не замедляют.
+  app.commandLine.appendSwitch('enable-features', 'CalculateNativeWinOcclusion');
+  app.commandLine.appendSwitch('renderer-process-limit', '2');
+}
+
 // ---------- Локальный лог клиента ----------
 // Ошибки ВНУТРИ окон (JS-исключения, unhandledrejection) рендереры сами отправляют на сервер
 // (см. installErrorReporting в ui-kit.js/preload.js) — так их видно централизованно, не выезжая к
@@ -526,6 +553,9 @@ function createWindow(key, file, payload, size) {
   const qs = new URLSearchParams(payload).toString();
   win.loadFile(path.join(__dirname, 'renderer', file), { search: qs });
   win.once('ready-to-show', () => win.show());
+  // Имя для журнала берём из файла страницы: переменной с типом окна здесь нет,
+  // а администратору по логу нужно понимать, что именно зависло.
+  watchWindowHangs(win, file.includes('chat') ? 'чат' : file.includes('broadcast') ? 'рассылка' : file);
   // Перехват нужен на КАЖДОМ окне, а не только на ростере: Windows шлёт WM_QUERYENDSESSION/
   // WM_ENDSESSION каждому окну напрямую и независимо. Само окно себя больше не уничтожает —
   // всё делает общий beginShutdown() (см. hookSessionEnd), поэтому N открытых окон дают один
@@ -566,6 +596,7 @@ function createRoster() {
   rosterWin.webContents.on('did-finish-load', () => rosterWin.webContents.setZoomFactor(settings.uiScale || 1));
   rosterWin.loadFile(path.join(__dirname, 'renderer', 'roster.html'));
   rosterWin.once('ready-to-show', () => rosterWin.show());
+  watchWindowHangs(rosterWin, 'список сотрудников');
   attachSizePersistence(rosterWin, 'rosterSize');
   attachWindowStateEvents(rosterWin);
 
@@ -1070,6 +1101,79 @@ ipcMain.on('notify', (event, payload) => {
   n.show();
 });
 
+// ---------- Наблюдение за нагрузкой и зависаниями ----------
+//
+// Жалобы вида «временами грузит компьютер» невозможно разобрать по факту: к
+// моменту, когда о них рассказывают, всё уже прошло. Поэтому клиент сам
+// замечает два состояния и пишет о них на сервер понятной строкой — в разделе
+// «Логи» видно машину, процесс и числа, а не пересказ.
+//
+//   client_hang        — окно перестало отвечать (зависло)
+//   client_hang_over   — отвисло, с длительностью
+//   client_high_cpu    — процесс держит высокую загрузку не разово, а подряд
+//   client_process_gone — вспомогательный процесс Chromium упал
+//
+// Пороги намеренно грубые: задача — поймать то, что мешает человеку работать,
+// а не собирать телеметрию. Кратковременные всплески (открытие окна, загрузка
+// файла) отсекаются требованием нескольких замеров подряд.
+const CPU_SAMPLE_MS = 30_000;   // как часто смотрим
+const CPU_LIMIT_PERCENT = 40;   // выше этого считаем нагрузкой
+const CPU_SAMPLES_TO_ALERT = 3; // столько замеров подряд — тогда сообщаем
+const CPU_REPORT_COOLDOWN_MS = 10 * 60_000; // не чаще раза в 10 минут на процесс
+
+const cpuStreak = new Map();     // pid -> сколько замеров подряд выше порога
+const cpuReportedAt = new Map(); // pid -> когда в последний раз сообщали
+
+function startResourceWatch() {
+  setInterval(() => {
+    let metrics;
+    try { metrics = app.getAppMetrics(); } catch { return; }
+    const alive = new Set();
+    for (const m of metrics) {
+      alive.add(m.pid);
+      const percent = Math.round((m.cpu && m.cpu.percentCPUUsage) || 0);
+      if (percent < CPU_LIMIT_PERCENT) { cpuStreak.set(m.pid, 0); continue; }
+      const streak = (cpuStreak.get(m.pid) || 0) + 1;
+      cpuStreak.set(m.pid, streak);
+      if (streak < CPU_SAMPLES_TO_ALERT) continue;
+      // Явная проверка на «ещё не сообщали», а не last || 0: с нулём выражение
+      // читается как «сообщали в 1970-м» и держится на том, что Date.now()
+      // велик. Верно, но случайно.
+      const last = cpuReportedAt.get(m.pid);
+      if (last !== undefined && Date.now() - last < CPU_REPORT_COOLDOWN_MS) continue;
+      cpuReportedAt.set(m.pid, Date.now());
+      const memMb = Math.round(((m.memory && m.memory.workingSetSize) || 0) / 1024);
+      logLocal('client_high_cpu', {
+        message: `Процесс «${m.type}» держит ${percent}% ЦП уже ${Math.round(streak * CPU_SAMPLE_MS / 1000)} с (память ${memMb} МБ)`,
+        type: m.type, pid: m.pid, percent, memoryMb: memMb,
+        seconds: Math.round(streak * CPU_SAMPLE_MS / 1000),
+        lowResourceMode: LOW_RESOURCE,
+      }, 'WARN');
+    }
+    // Процессы приходят и уходят — иначе счётчики росли бы вечно.
+    for (const pid of [...cpuStreak.keys()]) if (!alive.has(pid)) { cpuStreak.delete(pid); cpuReportedAt.delete(pid); }
+  }, CPU_SAMPLE_MS).unref();
+}
+
+// Окно перестало отвечать. Electron сообщает об этом сам; нам остаётся не
+// потерять событие и померить, сколько оно длилось.
+const hangSince = new WeakMap();
+function watchWindowHangs(win, name) {
+  win.on('unresponsive', () => {
+    hangSince.set(win, Date.now());
+    logLocal('client_hang', { message: `Окно «${name}» не отвечает`, window: name, lowResourceMode: LOW_RESOURCE }, 'WARN');
+  });
+  win.on('responsive', () => {
+    const started = hangSince.get(win);
+    hangSince.delete(win);
+    const sec = started ? Math.round((Date.now() - started) / 1000) : null;
+    logLocal('client_hang_over', {
+      message: `Окно «${name}» снова отвечает${sec !== null ? `, зависало ${sec} с` : ''}`,
+      window: name, seconds: sec,
+    }, 'INFO');
+  });
+}
+
 app.whenReady().then(() => {
   createRoster();
   createTray();
@@ -1084,6 +1188,18 @@ app.whenReady().then(() => {
   app.on('render-process-gone', (event, webContents, details) => {
     logLocal('render_process_gone', { reason: details.reason, exitCode: details.exitCode });
   });
+
+  // Вспомогательные процессы Chromium (GPU, утилиты) падают отдельно от окон и
+  // раньше не попадали никуда: пользователь видел «подтормаживает», а следов не
+  // оставалось.
+  app.on('child-process-gone', (event, details) => {
+    logLocal('client_process_gone', {
+      message: `Процесс «${details.type}» завершился аварийно: ${details.reason}`,
+      type: details.type, reason: details.reason, exitCode: details.exitCode, service: details.serviceName,
+    });
+  });
+
+  startResourceWatch();
 
   // Путь для сохранения файлов по умолчанию (настройки клиента). Если задан — сохраняем сразу
   // туда без диалога "Сохранить как"; если нет — Electron сам покажет системный диалог с верно
