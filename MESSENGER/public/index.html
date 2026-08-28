@@ -217,7 +217,11 @@
        съезжало вниз ровно на половину этой добавки. Теперь первые строчки всех
        колонок стоят на одной высоте независимо от значков. */
     display:grid; align-items:start; gap:14px;
-    grid-template-columns: minmax(170px,1.5fr) 120px minmax(110px,1.1fr) minmax(130px,1.2fr) 36px;
+    /* 155px под статус — «не в сети · только что» самая длинная из подписей и в
+       120px переносилась на две строки, из-за чего строка становилась выше
+       соседних. Величина фиксированная, а не по содержимому: колонка «по
+       содержимому» снова считалась бы в каждой строке своя. */
+    grid-template-columns: minmax(170px,1.5fr) 155px minmax(110px,1.1fr) minmax(130px,1.2fr) 36px;
     padding:12px 14px; border-radius:var(--md-shape-m); background:var(--md-surface-container-lowest);
     margin-bottom:8px;
   }
@@ -265,17 +269,20 @@
      отделе, приходится сличать четвёртую колонку глазами. Разложенный по
      отделам — отвечает на этот вопрос сразу, а внутри блока порядок
      алфавитный, чтобы искать человека можно было как в справочнике. */
-  .dept-block { margin-bottom:18px; }
+  .dept-block { margin-bottom:26px; }
   .dept-block:last-child { margin-bottom:0; }
   .dept-head {
     display:flex; align-items:baseline; gap:10px;
-    padding:0 14px 7px; margin-bottom:2px;
+    /* Отступ под чертой заметно больше, чем над ней: строка пользователя
+       начиналась почти вплотную к разделителю, и заголовок отдела читался
+       как часть первой строки, а не как шапка блока. */
+    padding:0 14px 8px; margin-bottom:12px;
     border-bottom:1px solid var(--md-outline-variant);
   }
   .dept-head .name { font-size:13px; font-weight:700; letter-spacing:.02em; }
   .dept-head .count { font-size:11.5px; color:var(--md-on-surface-variant); }
   .dept-head.empty .name { color:var(--md-on-surface-variant); font-weight:600; }
-  .dept-empty { padding:10px 14px 2px; font-size:12.5px; color:var(--md-on-surface-variant); }
+  .dept-empty { padding:2px 14px 2px; font-size:12.5px; color:var(--md-on-surface-variant); }
 
   /* ---- Перетаскивание отделов ---- */
   /* Действия отдела — в одну строку. Общий .row-flex переносит содержимое, и в

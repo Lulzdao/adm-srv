@@ -510,6 +510,52 @@ const MODULE_VIEW_ICONS = { log: "inbox", stats: "chart", directory: "folder", c
 const MODULE_ICONS = { certs: "seal", smdr: "phone", messenger: "spark" };
 const moduleIcon = (id) => MODULE_ICONS[id] || "box";
 
+// ====== Прокрутка бокового меню ======
+//
+// renderShell() пересобирает оболочку целиком через innerHTML, а вместе с ней и
+// сам прокручиваемый элемент меню. Позиция прокрутки принадлежит УЗЛУ, и с его
+// заменой она пропадала: каждый переход между разделами и каждое F5 отматывали
+// меню в самое начало, хотя выбранный пункт мог быть в самом низу.
+//
+// Источник истины — переменная, а не сам элемент. Так задумано: сразу после
+// innerHTML раскладка ещё не посчитана, у нового узла нулевая высота, и любое
+// чтение позиции с него вернуло бы ноль. Если бы этот ноль записывался обратно,
+// он бы затирал настоящую позицию — ровно так первая попытка и не сработала.
+//
+// В sessionStorage кладём копию, чтобы позиция пережила F5. Именно session, а не
+// local: у двух открытых окон панели позиции свои, и это правильно.
+const NAV_SCROLL_KEY = "adm.navScroll";
+
+let navScroll = (() => {
+  try { return Number(sessionStorage.getItem(NAV_SCROLL_KEY)) || 0; } catch { return 0; }
+})();
+
+function rememberNavScroll(value) {
+  navScroll = value;
+  try { sessionStorage.setItem(NAV_SCROLL_KEY, String(value)); } catch { /* приватный режим — не беда */ }
+}
+
+function restoreNavScroll() {
+  const nav = document.querySelector(".sidebar-nav");
+  if (!nav) return;
+
+  // Проверка isConnected — не перестраховка, а суть починки. При замене
+  // содержимого через innerHTML старый элемент меню отсоединяется, его позиция
+  // сбрасывается в ноль, и он успевает поднять СВОЁ событие прокрутки. Слушатель
+  // на нём ещё жив и записывал этот ноль поверх настоящей позиции — из-за чего
+  // меню и отматывалось наверх. Отсоединённый узел про нашу позицию больше
+  // ничего не знает, и слушать его незачем.
+  nav.addEventListener("scroll", () => {
+    if (!nav.isConnected) return;
+    rememberNavScroll(nav.scrollTop);
+  }, { passive: true });
+
+  if (!navScroll) return;
+  // Через кадр: на момент возврата из innerHTML раскладки ещё нет, высота узла
+  // нулевая, и присвоение scrollTop браузер обрежет до нуля.
+  requestAnimationFrame(() => { nav.scrollTop = navScroll; });
+}
+
 function renderShell() {
   const u = state.user;
   const totalUnread = state.notifications.filter(n => !n.is_read).length;
@@ -588,6 +634,8 @@ function renderShell() {
       </div>
       <div class="main" id="mainArea"></div>
     </div>`;
+
+  restoreNavScroll();
 
   const certsBtn = document.getElementById("certsBtn");
   if (certsBtn) certsBtn.onclick = () => setView("certs");
@@ -1532,17 +1580,47 @@ function notifRowHtml(e) {
 
 // ---- Вкладка «Шаблоны» -----------------------------------------------------
 
+// Шаблон правят по одному, а не читают все подряд: категорий десять, каждая с
+// темой, текстом и списком подстановок, и простыня из десяти карточек прокручивалась
+// экранов на пять. Показываем ту, что выбрали в списке; выбор запоминаем на время
+// сессии, чтобы после сохранения и возврата на вкладку не искать её заново.
+const TPL_PICK_KEY = "adm.tplPick";
+
 function renderNotifTemplates(page, kinds) {
+  let picked = null;
+  try { picked = sessionStorage.getItem(TPL_PICK_KEY); } catch { /* приватный режим */ }
+  if (!kinds.some(k => k.kind === picked)) picked = kinds.length ? kinds[0].kind : null;
+
   page.innerHTML = `
     <div style="max-width:900px;">
-      <div style="font-size:12.5px;color:var(--ink-soft);margin-bottom:16px;">
-        Подстановки пишутся в двойных фигурных скобках. Кнопка «Предпросмотр» показывает
-        письмо на выдуманном примере — править шаблон вслепую значит однажды разослать
-        письмо с опечаткой в самой подстановке.
+      <div class="card" style="margin-bottom:18px;">
+        <div class="field-label">Шаблон какой категории править</div>
+        <select class="input field-select" id="tplPick" style="width:100%;">
+          ${kinds.map(k => `<option value="${esc(k.kind)}" ${k.kind === picked ? "selected" : ""}>${esc(k.label)}</option>`).join("")}
+        </select>
+        <div style="font-size:12.5px;color:var(--ink-soft);margin-top:12px;">
+          Подстановки пишутся в двойных фигурных скобках. Кнопка «Предпросмотр» показывает
+          письмо на выдуманном примере — править шаблон вслепую значит однажды разослать
+          письмо с опечаткой в самой подстановке.
+        </div>
       </div>
-      ${kinds.map(templateCardHtml).join("")}
+      <div id="tplHost"></div>
     </div>`;
 
+  enhanceSelects(page);
+  const host = page.querySelector("#tplHost");
+  const show = (kind) => {
+    const k = kinds.find(x => x.kind === kind);
+    if (!k) return;
+    try { sessionStorage.setItem(TPL_PICK_KEY, kind); } catch { /* приватный режим */ }
+    host.innerHTML = templateCardHtml(k);
+    wireTemplateCards(host);
+  };
+  page.querySelector("#tplPick").onchange = (e) => show(e.target.value);
+  if (picked) show(picked);
+}
+
+function wireTemplateCards(page) {
   page.querySelectorAll(".tpl-card").forEach(card => {
     const kind = card.dataset.kind;
     const subj = card.querySelector(".tpl-subject");
