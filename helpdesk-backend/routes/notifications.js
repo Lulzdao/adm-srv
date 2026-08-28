@@ -285,9 +285,25 @@ module.exports = function notificationRoutes(db) {
     const check = await mailer.verify(db);
     if (!check.ok) return res.json(check);
 
-    const to = (req.body && req.body.to) || req.session.user.email;
+    // Адрес читаем из базы, а не из сессии: сессия — снимок на момент входа, и
+    // адрес мог появиться уже после него (скажем, локальной учётке его
+    // проставили при следующем старте сервера). Иначе пришлось бы выходить и
+    // заходить заново, чтобы отправить пробное письмо.
+    const me = db.prepare("SELECT email, auth_type FROM users WHERE id = ?").get(req.session.user.id) || {};
+    const to = (req.body && req.body.to) || me.email;
+
     if (!to) {
-      return res.json({ ok: true, detail: check.detail, warning: "Соединение есть, но некуда отправить пробное письмо: у вашей учётной записи не заполнен адрес в домене" });
+      // Формулировка зависит от того, откуда адрес вообще должен браться:
+      // у доменной учётки — из LDAP, у локальной — из настроек сервера. Совет
+      // «проверьте атрибут в домене» локальному администратору бесполезен.
+      const where = me.auth_type === "local"
+        ? "у локальной учётной записи адрес задаётся в настройках сервера (LOCAL_ADMIN_EMAIL)"
+        : "у вашей учётной записи не заполнен адрес в домене";
+      return res.json({
+        ok: true,
+        detail: check.detail,
+        warning: `Соединение есть, но некуда отправить пробное письмо: ${where}`,
+      });
     }
     if (!mailer.isEmail(to)) return res.status(400).json({ error: "Адрес получателя не похож на почтовый" });
 

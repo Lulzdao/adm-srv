@@ -100,13 +100,26 @@ function migrateNotifications(db) {
 function ensureLocalAccounts(db) {
   for (const acc of config.localAccounts) {
     if (!acc.passwordHash) continue;
-    const existing = db.prepare("SELECT id FROM users WHERE ad_login = ?").get(acc.login);
-    if (existing) continue;
+    const existing = db.prepare("SELECT id, email FROM users WHERE ad_login = ?").get(acc.login);
+
+    if (existing) {
+      // Адрес держим в согласии с конфигом на каждом старте. У доменных учёток
+      // источник истины — LDAP, у локальных его нет, поэтому источник истины
+      // здесь один: config/config.js. Правит его только тот, кто и так правит
+      // .env на сервере, а из интерфейса адрес локальной учётки не меняется —
+      // значит затирать нечего.
+      const want = acc.email || null;
+      if ((existing.email || null) !== want) {
+        db.prepare("UPDATE users SET email = ? WHERE id = ?").run(want, existing.id);
+        console.log(`Локальному аккаунту ${acc.login} проставлен адрес: ${want || "(пусто)"}`);
+      }
+      continue;
+    }
 
     db.prepare(
-      `INSERT INTO users (ad_login, full_name, role, auth_type, local_password_hash)
-       VALUES (?, ?, ?, 'local', ?)`
-    ).run(acc.login, acc.fullName, acc.role, acc.passwordHash);
+      `INSERT INTO users (ad_login, full_name, role, email, auth_type, local_password_hash)
+       VALUES (?, ?, ?, ?, 'local', ?)`
+    ).run(acc.login, acc.fullName, acc.role, acc.email || null, acc.passwordHash);
 
     console.log(`Создан локальный аккаунт: ${acc.login} (роль: ${acc.role})`);
   }
