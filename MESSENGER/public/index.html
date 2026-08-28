@@ -206,14 +206,30 @@
      вопрос «кто это и что с ним сейчас», а всё, что с ним можно сделать,
      убрано в меню справа. */
   .user-row {
-    display:grid; align-items:center; gap:14px;
-    grid-template-columns: minmax(180px,1.2fr) minmax(120px,0.9fr) minmax(150px,1fr) auto 36px;
+    /* Колонки заданы долями и фиксированными величинами, БЕЗ auto и min-content.
+       Каждая строка — отдельная сетка, поэтому колонка шириной «по содержимому»
+       считалась бы в каждой строке своя: у кого есть значки прав, у того
+       колонка шире, и весь ряд уезжал относительно соседних. С долями ширина
+       зависит только от ширины панели, то есть у всех строк одинаковая.
+
+       align-items:start, а не center: значки прав добавляют строке вторую
+       строчку текста, и при центрировании содержимое остальных колонок
+       съезжало вниз ровно на половину этой добавки. Теперь первые строчки всех
+       колонок стоят на одной высоте независимо от значков. */
+    display:grid; align-items:start; gap:14px;
+    /* 155px под статус — «не в сети · только что» самая длинная из подписей и в
+       120px переносилась на две строки, из-за чего строка становилась выше
+       соседних. Величина фиксированная, а не по содержимому: колонка «по
+       содержимому» снова считалась бы в каждой строке своя. */
+    grid-template-columns: minmax(170px,1.5fr) 155px minmax(110px,1.1fr) minmax(130px,1.2fr) 36px;
     padding:12px 14px; border-radius:var(--md-shape-m); background:var(--md-surface-container-lowest);
     margin-bottom:8px;
   }
   .user-row:hover { background:var(--md-surface-container-low); }
-  .user-id { display:flex; align-items:center; gap:10px; min-width:0; }
-  .user-dot { width:9px; height:9px; border-radius:50%; flex-shrink:0; }
+  .user-id { display:flex; align-items:flex-start; gap:10px; min-width:0; }
+  /* Точку сдвигаем на середину первой строки логина: при выравнивании по верху
+     она иначе прилипает к самому краю строки. */
+  .user-dot { width:9px; height:9px; border-radius:50%; flex-shrink:0; margin-top:5px; }
   .user-dot.active { background:#1F6B37; }
   .user-dot.idle { background:#8A5300; }
   .user-dot.offline { background:var(--md-outline-variant); }
@@ -227,7 +243,7 @@
     background:var(--md-secondary-container); color:var(--md-on-secondary-container); white-space:nowrap;
   }
   .user-menu-btn {
-    width:32px; height:32px; border:none; border-radius:50%; background:transparent; cursor:pointer;
+    width:32px; height:32px; margin-top:-4px; border:none; border-radius:50%; background:transparent; cursor:pointer;
     color:var(--md-on-surface-variant); font-size:17px; line-height:1; letter-spacing:1px;
     transition:background .13s ease;
   }
@@ -247,6 +263,45 @@
   #userMenu button.danger:hover { background:var(--md-error-container); }
   #userMenu .menu-sep { height:1px; background:var(--md-outline-variant); margin:5px 8px; }
   #userMenu .menu-state { font-size:11.5px; color:var(--md-on-surface-variant); }
+
+  /* ---- Блоки отделов в списке пользователей ----
+     Плоский список из сорока человек читается плохо: чтобы понять, кто в каком
+     отделе, приходится сличать четвёртую колонку глазами. Разложенный по
+     отделам — отвечает на этот вопрос сразу, а внутри блока порядок
+     алфавитный, чтобы искать человека можно было как в справочнике. */
+  .dept-block { margin-bottom:26px; }
+  .dept-block:last-child { margin-bottom:0; }
+  .dept-head {
+    display:flex; align-items:baseline; gap:10px;
+    /* Отступ под чертой заметно больше, чем над ней: строка пользователя
+       начиналась почти вплотную к разделителю, и заголовок отдела читался
+       как часть первой строки, а не как шапка блока. */
+    padding:0 14px 8px; margin-bottom:12px;
+    border-bottom:1px solid var(--md-outline-variant);
+  }
+  .dept-head .name { font-size:13px; font-weight:700; letter-spacing:.02em; }
+  .dept-head .count { font-size:11.5px; color:var(--md-on-surface-variant); }
+  .dept-head.empty .name { color:var(--md-on-surface-variant); font-weight:600; }
+  .dept-empty { padding:2px 14px 2px; font-size:12.5px; color:var(--md-on-surface-variant); }
+
+  /* ---- Перетаскивание отделов ---- */
+  /* Действия отдела — в одну строку. Общий .row-flex переносит содержимое, и в
+     колонке фиксированной ширины две кнопки вставали друг под друга, раздувая
+     строку вдвое; перетаскивать такую строку неудобно, да и читается хуже. */
+  .dept-actions { display:flex; gap:8px; align-items:center; flex-wrap:nowrap; justify-content:flex-end; }
+  .dept-actions .action { white-space:nowrap; }
+  .dept-row td { vertical-align:middle; }
+  .dept-row.dragging { opacity:.45; }
+  .dept-row.drop-before td { box-shadow: inset 0 2px 0 var(--md-primary); }
+  .dept-row.drop-after td { box-shadow: inset 0 -2px 0 var(--md-primary); }
+  .drag-handle {
+    width:30px; height:30px; padding:0; border:none; border-radius:var(--md-shape-xs);
+    background:transparent; color:var(--md-on-surface-variant); cursor:grab;
+    font-size:17px; line-height:1; letter-spacing:1px;
+  }
+  .drag-handle:hover { background:var(--md-state-hover); color:var(--md-on-surface); }
+  .drag-handle:focus-visible { outline:2px solid var(--md-primary); outline-offset:1px; }
+  .dept-row.dragging .drag-handle { cursor:grabbing; }
 
   /* --- Выпадающий список (см. одноимённый скрипт) --- */
   .select-wrap { position: relative; display: inline-block; vertical-align: middle; }
@@ -404,14 +459,15 @@
         <h3>Отделы</h3>
         <p style="color:var(--muted); font-size:12px; margin:0 0 10px;">
           Права (рассылки/админка) выдаются только персонально — ниже, каждому пользователю. Здесь
-          только название отдела и порядок отображения (стрелки ↑↓).
+          только название отдела и порядок: перетащите строку за ручку слева. В этом же порядке
+          отделы идут в списке пользователей.
         </p>
         <div class="row-flex">
           <input id="newDeptName" placeholder="Название отдела">
           <button class="action" onclick="createDept()">Добавить</button>
         </div>
         <table style="margin-top:12px;">
-          <thead><tr><th style="width:60px"></th><th>Название</th><th style="width:190px"></th></tr></thead>
+          <thead><tr><th style="width:44px"></th><th>Название</th><th style="width:250px"></th></tr></thead>
           <tbody id="deptsBody"></tbody>
         </table>
       </div>
@@ -738,21 +794,26 @@ function logout() {
   location.reload();
 }
 
+// Открытие раздела. Вынесено из обработчика клика, потому что раздел
+// открывается не только кликом: он же активен при первой загрузке панели.
+// Пока это жило внутри onclick, опрос присутствия при загрузке не запускался
+// вовсе — статусы появлялись, только если уйти на другую вкладку и вернуться.
+function activateView(name) {
+  document.querySelectorAll('.nav-item').forEach(i => i.classList.toggle('active', i.dataset.view === name));
+  document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === 'view-' + name));
+
+  // Список подключённых меняется постоянно — перечитываем при каждом заходе в раздел, а не
+  // показываем то, что было на момент входа в панель.
+  if (name === 'updates') loadClients();
+  if (name === 'tls') loadTls();
+  // Статусы в списке пользователей обновляем, только пока раздел открыт:
+  // держать опрос постоянно незачем.
+  if (name === 'users') startPresencePolling();
+  else stopPresencePolling();
+}
+
 document.querySelectorAll('.nav-item').forEach(item => {
-  item.onclick = () => {
-    document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
-    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-    item.classList.add('active');
-    document.getElementById('view-' + item.dataset.view).classList.add('active');
-    // Список подключённых меняется постоянно — перечитываем при каждом заходе в раздел, а не
-    // показываем то, что было на момент входа в панель.
-    if (item.dataset.view === 'updates') loadClients();
-    if (item.dataset.view === 'tls') loadTls();
-    // Статусы в списке пользователей обновляем, только пока раздел открыт:
-    // держать опрос постоянно незачем.
-    if (item.dataset.view === 'users') startPresencePolling();
-    else stopPresencePolling();
-  };
+  item.onclick = () => activateView(item.dataset.view);
 });
 
 function fmtUptime(sec) {
@@ -775,10 +836,13 @@ async function loadStats() {
 let presenceCache = {};
 let presenceTimer = null;
 
+let presenceConnections = null;   // сколько сокетов видит сервер; null — ещё не спрашивали
+
 async function loadPresence() {
   try {
-    const { users } = await api('api/admin/presence');
+    const { users, connections } = await api('api/admin/presence');
     presenceCache = users || {};
+    presenceConnections = typeof connections === 'number' ? connections : null;
     renderUsers();
   } catch { /* не критично: список пользователей покажется без статусов */ }
 }
@@ -821,7 +885,12 @@ function renderUsers() {
   const count = document.getElementById('usersCount');
   if (count) {
     const online = usersCache.filter(u => (presenceCache[u.id]?.state || 'offline') !== 'offline').length;
-    count.textContent = `${filtered.length} из ${usersCache.length}, в сети ${online}`;
+    let text = `${filtered.length} из ${usersCache.length}, в сети ${online}`;
+    // Когда в сети никого, а соединений ноль — это не поломка панели, а
+    // отсутствие подключённых клиентов. Разница важная: в первом случае чинят
+    // панель, во втором — смотрят, почему клиенты не доходят до сервера.
+    if (!online && presenceConnections === 0) text += ' · сервер не видит ни одного подключения';
+    count.textContent = text;
   }
 
   if (!filtered.length) {
@@ -829,32 +898,67 @@ function renderUsers() {
     return;
   }
 
-  list.innerHTML = filtered.map(u => {
-    const p = presenceCache[u.id] || { state: 'offline', hosts: [], since: null };
-    const depts = (u.departments || []).map(d => d.name).join(', ');
-    // Машин может быть несколько — человек сидит и за своим ПК, и за чужим;
-    // показываем все, иначе непонятно, откуда он на самом деле.
-    const hosts = (p.hosts || []).length ? p.hosts.map(escapeHtml).join(', ') : '—';
-    const caps = [];
-    if (u.can_admin) caps.push('админка');
-    if (u.can_broadcast) caps.push('рассылки');
-    return `<div class="user-row">
-      <div class="user-id">
-        <span class="user-dot ${p.state}" title="${PRESENCE_LABEL[p.state]}"></span>
-        <div style="min-width:0;">
-          <div class="user-login">${escapeHtml(u.username)}</div>
-          <div class="user-sub">${escapeHtml(u.display_name || '')}</div>
-        </div>
+  // Порядок блоков — тот же, что у отделов на вкладке выше: его задаёт
+  // администратор перетаскиванием, и список пользователей обязан ему следовать,
+  // иначе порядок отделов означал бы что-то только в одном месте панели.
+  const byName = (a, b) =>
+    (a.display_name || a.username).localeCompare(b.display_name || b.username, 'ru');
+
+  const blocks = deptsCache.map(d => ({
+    name: d.name,
+    users: filtered.filter(u => (u.departments || []).some(x => x.id === d.id)).sort(byName),
+  }));
+  // «Без отдела» всегда последним: это не отдел, а остаток.
+  const orphans = filtered.filter(u => !(u.departments || []).length).sort(byName);
+  if (orphans.length) blocks.push({ name: 'Без отдела', users: orphans, orphan: true });
+
+  // Пустые отделы показываем только когда не ищем. При поиске они были бы
+  // шумом: человек ищет конкретного сотрудника, а не изучает состав отделов.
+  const visible = blocks.filter(b => b.users.length || !q);
+
+  list.innerHTML = visible.map(b => `
+    <div class="dept-block">
+      <div class="dept-head${b.users.length ? '' : ' empty'}">
+        <span class="name">${escapeHtml(b.name)}</span>
+        <span class="count">${b.users.length ? `${b.users.length} чел.` : 'никого'}</span>
       </div>
-      <div class="user-cell">${PRESENCE_LABEL[p.state]}${p.since ? ` · ${sinceText(p.since)}` : ''}</div>
-      <div class="user-cell user-hosts" title="${escapeHtml((p.hosts || []).join(', '))}">${hosts}</div>
-      <div class="user-cell">
-        <div>${escapeHtml(depts || 'Без отдела')}</div>
-        ${caps.length ? `<div class="user-caps" style="margin-top:4px;">${caps.map(c => `<span class="cap-chip">${c}</span>`).join('')}</div>` : ''}
+      ${b.users.length
+        ? b.users.map(u => userRowHtml(u, b.name)).join('')
+        : '<div class="dept-empty">В этом отделе пока никого нет.</div>'}
+    </div>`).join('');
+}
+
+// Строка одного человека. Вынесена из renderUsers отдельно, потому что теперь
+// вызывается из каждого блока отдела, а не один раз по плоскому списку.
+//
+// blockName — отдел, в блоке которого строка сейчас рисуется. Нужен, чтобы
+// подпись «ещё в» перечисляла ОСТАЛЬНЫЕ отделы человека: сотрудник в двух
+// отделах встречается в списке дважды, и без этой подписи непонятно, почему.
+function userRowHtml(u, blockName) {
+  const p = presenceCache[u.id] || { state: 'offline', hosts: [], since: null };
+  const other = (u.departments || []).map(d => d.name).filter(n => n && n !== blockName);
+  // Машин может быть несколько — человек сидит и за своим ПК, и за чужим;
+  // показываем все, иначе непонятно, откуда он на самом деле.
+  const hosts = (p.hosts || []).length ? p.hosts.map(escapeHtml).join(', ') : '—';
+  const caps = [];
+  if (u.can_admin) caps.push('админка');
+  if (u.can_broadcast) caps.push('рассылки');
+  return `<div class="user-row">
+    <div class="user-id">
+      <span class="user-dot ${p.state}" title="${PRESENCE_LABEL[p.state]}"></span>
+      <div style="min-width:0;">
+        <div class="user-login">${escapeHtml(u.username)}</div>
+        <div class="user-sub">${escapeHtml(u.display_name || '')}</div>
       </div>
+    </div>
+    <div class="user-cell">${PRESENCE_LABEL[p.state]}${p.since ? ` · ${sinceText(p.since)}` : ''}</div>
+    <div class="user-cell user-hosts" title="${escapeHtml((p.hosts || []).join(', '))}">${hosts}</div>
+    <div class="user-cell">
+      ${caps.length ? `<div class="user-caps">${caps.map(c => `<span class="cap-chip">${c}</span>`).join('')}</div>` : ''}
+      ${other.length ? `<div style="margin-top:${caps.length ? 4 : 0}px;">ещё в: ${escapeHtml(other.join(', '))}</div>` : ''}
+    </div>
       <button class="user-menu-btn" title="Действия" onclick="openUserMenu(${u.id}, this)">···</button>
     </div>`;
-  }).join('');
 }
 
 function closeUserMenu() {
@@ -930,23 +1034,123 @@ async function toggleUserCap(id, cap, checked) {
   } catch (e) { alert(e.message); refreshAll(); }
 }
 
+// Порядок отделов задаётся перетаскиванием строк. Раньше здесь были стрелки
+// ↑↓: чтобы поднять отдел на пять позиций, приходилось нажать пять раз и пять
+// раз дождаться перезагрузки списка с сервера.
+//
+// Мышь — не единственный способ: сама «ручка» это кнопка, и со стрелками на
+// клавиатуре она двигает строку так же. Перетаскивание с клавиатуры не
+// работает нигде, и молча оставить панель без клавиатуры было бы потерей, а не
+// упрощением.
 function renderDepts() {
   const body = document.getElementById('deptsBody');
   body.innerHTML = '';
   deptsCache.forEach((d, i) => {
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td class="row-flex">
-        <button class="action ghost" title="Выше" ${i === 0 ? 'disabled' : ''} onclick="moveDept(${i}, -1)">↑</button>
-        <button class="action ghost" title="Ниже" ${i === deptsCache.length - 1 ? 'disabled' : ''} onclick="moveDept(${i}, 1)">↓</button>
+    tr.className = 'dept-row';
+    tr.draggable = true;
+    tr.dataset.index = String(i);
+    tr.innerHTML = `<td>
+        <button class="drag-handle" title="Перетащите, чтобы изменить порядок (или стрелки ↑↓ с клавиатуры)"
+                aria-label="Переместить отдел ${escapeHtml(d.name)}">⠿</button>
       </td>
       <td>${escapeHtml(d.name)}</td>
-      <td class="row-flex">
+      <td class="dept-actions">
         <button class="action ghost" onclick="renameDept(${d.id})">Переименовать</button>
         <button class="action danger" onclick="deleteDept(${d.id})">Удалить</button>
       </td>`;
     body.appendChild(tr);
   });
+  wireDeptDrag(body);
   renderNewUserDepartments(); // кнопка выбора отделов у формы "новый пользователь" — см. ниже
+}
+
+function wireDeptDrag(body) {
+  let fromIndex = null;
+
+  const clearMarks = () => body.querySelectorAll('.dept-row')
+    .forEach(r => r.classList.remove('drop-before', 'drop-after', 'dragging'));
+
+  body.querySelectorAll('.dept-row').forEach(row => {
+    row.addEventListener('dragstart', (e) => {
+      fromIndex = Number(row.dataset.index);
+      row.classList.add('dragging');
+      // Firefox не начинает перетаскивание без данных в буфере; значение
+      // неважно, важен сам факт, что они заданы.
+      e.dataTransfer.effectAllowed = 'move';
+      try { e.dataTransfer.setData('text/plain', String(fromIndex)); } catch { /* не все браузеры дают писать сюда */ }
+    });
+
+    row.addEventListener('dragover', (e) => {
+      if (fromIndex === null) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      // Куда встанет строка — выше или ниже той, над которой курсор. Считаем по
+      // середине строки, иначе на границе указатель дрожит между вариантами.
+      const r = row.getBoundingClientRect();
+      const after = e.clientY > r.top + r.height / 2;
+      row.classList.toggle('drop-after', after);
+      row.classList.toggle('drop-before', !after);
+    });
+
+    row.addEventListener('dragleave', () => row.classList.remove('drop-before', 'drop-after'));
+
+    row.addEventListener('drop', (e) => {
+      e.preventDefault();
+      if (fromIndex === null) return;
+      const over = Number(row.dataset.index);
+      const r = row.getBoundingClientRect();
+      const after = e.clientY > r.top + r.height / 2;
+      let to = after ? over + 1 : over;
+      // Удаление исходной строки сдвигает всё, что было ниже, на одну позицию.
+      if (fromIndex < to) to -= 1;
+      clearMarks();
+      const moved = fromIndex;
+      fromIndex = null;
+      if (to !== moved) applyDeptOrder(moved, to);
+    });
+
+    row.addEventListener('dragend', () => { fromIndex = null; clearMarks(); });
+
+    // Клавиатура: та же ручка, стрелки вверх/вниз.
+    row.querySelector('.drag-handle').addEventListener('keydown', (e) => {
+      const i = Number(row.dataset.index);
+      if (e.key === 'ArrowUp' && i > 0) { e.preventDefault(); applyDeptOrder(i, i - 1, true); }
+      if (e.key === 'ArrowDown' && i < deptsCache.length - 1) { e.preventDefault(); applyDeptOrder(i, i + 1, true); }
+    });
+  });
+}
+
+/**
+ * Переставить отдел и сохранить порядок.
+ *
+ * Список перерисовывается СРАЗУ, не дожидаясь сервера: при перетаскивании
+ * строка обязана оказаться там, куда её отпустили, иначе движение выглядит
+ * незасчитанным. Если сервер откажет — возвращаем прежний порядок и говорим об
+ * этом, а не оставляем расхождение молча.
+ */
+async function applyDeptOrder(from, to, keepFocus) {
+  const previous = deptsCache.slice();
+  const [moved] = deptsCache.splice(from, 1);
+  deptsCache.splice(to, 0, moved);
+  renderDepts();
+  renderUsers();   // блоки пользователей идут в том же порядке
+  if (keepFocus) {
+    const row = document.querySelector(`.dept-row[data-index="${to}"] .drag-handle`);
+    if (row) row.focus();
+  }
+
+  try {
+    await api('api/admin/departments/reorder', {
+      method: 'POST',
+      body: JSON.stringify({ order: deptsCache.map(d => d.id) }),
+    });
+  } catch (e) {
+    deptsCache = previous;
+    renderDepts();
+    renderUsers();
+    alert('Не удалось сохранить порядок отделов: ' + e.message);
+  }
 }
 // Текущее имя берём из кэша по id, а не подставляем строкой в сам onclick: подстановка ломалась
 // на любой кавычке в названии отдела (и открывала бы вставку разметки, если бы имя туда попало).
@@ -956,14 +1160,6 @@ async function renameDept(id) {
   if (!name || !name.trim() || name.trim() === currentName) return;
   try { await api(`api/admin/departments/${id}`, { method: 'PATCH', body: JSON.stringify({ name: name.trim() }) }); refreshAll(); } catch (e) { alert(e.message); }
 }
-async function moveDept(index, dir) {
-  const target = index + dir;
-  if (target < 0 || target >= deptsCache.length) return;
-  const order = deptsCache.map(d => d.id);
-  [order[index], order[target]] = [order[target], order[index]];
-  try { await api('api/admin/departments/reorder', { method: 'POST', body: JSON.stringify({ order }) }); refreshAll(); } catch (e) { alert(e.message); }
-}
-
 async function loadRegistration() {
   try {
     const { open } = await api('api/admin/registration');
@@ -1535,6 +1731,10 @@ async function startDash() {
   await loadLogs();
   await loadClients();
   connectPresenceWs();
+  // Открываем раздел, отмеченный активным в разметке, через ту же функцию, что
+  // и клик. Иначе всё, что раздел включает при открытии (опрос присутствия),
+  // при загрузке панели не запускается.
+  activateView(document.querySelector('.nav-item.active')?.dataset.view || 'overview');
   setInterval(refreshAll, 30000);
 }
 

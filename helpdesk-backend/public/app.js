@@ -356,7 +356,11 @@ async function enterApp() {
     state.modules = modules;
   } catch (e) { state.modules = []; }
   await refreshNotifications();
-  setView("inbox");
+  // Обновление страницы не должно выбрасывать на «Входящие»: человек нажал F5
+  // на журнале звонков и ждёт увидеть журнал звонков. Адрес вкладки держим в
+  // якоре URL, а не в хранилище браузера — тогда работают и кнопка «назад», и
+  // ссылка, посланную коллеге.
+  await restoreViewFromHash();
   if (!notifPollHandle) {
     notifPollHandle = setInterval(async () => {
       await refreshNotifications();
@@ -369,15 +373,86 @@ function clearViewPoll() {
   if (viewPollHandle) { clearInterval(viewPollHandle); viewPollHandle = null; }
 }
 
-function setView(view, arg) {
+function setView(view, arg, { replace = false } = {}) {
   clearViewPoll();
   if (view === "detail") {
     state.currentTicket = arg;
     if (state.view !== "detail") state.previousView = state.view; // не затираем при обновлении самой карточки
   }
   state.view = view;
+  writeHash(replace);
   renderShell();
 }
+
+// ====== Вкладка в адресе страницы ======
+//
+// Экран целиком собирается на клиенте, поэтому сам по себе URL про открытую
+// вкладку ничего не знает: после F5 приложение всегда открывалось на
+// «Входящих». Держим адрес вкладки в якоре — он не уходит на сервер, переживает
+// обновление, и заодно начинают работать кнопки «назад» и «вперёд».
+//
+// Карточка заявки хранится в якоре номером (#detail/148), а не целым объектом:
+// заявку всё равно надо перечитать — за время до обновления её могли изменить.
+
+let applyingHash = false;   // защита от петли «пишем якорь -> ловим hashchange -> пишем якорь»
+
+function writeHash(replace) {
+  const hash = state.view === "detail" && state.currentTicket
+    ? `#detail/${state.currentTicket.id}`
+    : `#${state.view}`;
+  if (location.hash === hash) return;
+  applyingHash = true;
+  // Переход, который сделал человек, — новая запись в истории: тогда «назад»
+  // возвращает из карточки в список, как он и ожидает. А вот восстановление
+  // вкладки после F5 или отработка самой кнопки «назад» историю пополнять не
+  // должны, иначе выйти из приложения кнопкой станет невозможно.
+  if (replace) history.replaceState(null, "", hash);
+  else history.pushState(null, "", hash);
+  applyingHash = false;
+}
+
+/** Существует ли такая вкладка у ЭТОЙ роли. Чужую из адреса открывать нельзя. */
+function viewExists(view) {
+  if (!view) return false;
+  const u = state.user;
+  const isIT = u.role === "it";
+  if (["inbox", "mine", "create"].includes(view)) return true;
+  if (["dashboard", "admin", "certs"].includes(view) || view.startsWith("notif:")) return isIT;
+  if (view.startsWith("module:")) {
+    const [, modId, viewId] = view.split(":");
+    const mod = state.modules.find((m) => m.id === modId);
+    if (!mod) return false;
+    const views = (mod.views && mod.views.length) ? mod.views : [{ id: "root" }];
+    return views.some((v) => v.id === viewId);
+  }
+  return false;
+}
+
+async function restoreViewFromHash() {
+  const raw = decodeURIComponent(location.hash.replace(/^#/, ""));
+
+  const detail = raw.match(/^detail\/(\d+)$/);
+  if (detail) {
+    // Заявку перечитываем, а не достаём из памяти: после обновления страницы
+    // никакой памяти нет, да и содержимое могло измениться.
+    try {
+      const { ticket } = await api("/tickets/" + detail[1]);
+      setView("detail", ticket, { replace: true });
+      return;
+    } catch {
+      // Заявку удалили или прав на неё нет — молча возвращаемся к списку,
+      // ошибка про чужой номер в адресе пользователю ничего не объясняет.
+    }
+  }
+
+  setView(viewExists(raw) ? raw : "inbox", undefined, { replace: true });
+}
+
+// Кнопки «назад» и «вперёд» браузера.
+window.addEventListener("hashchange", () => {
+  if (applyingHash || !state.user) return;
+  restoreViewFromHash();
+});
 
 function updateBadgeDom() {
   const total = state.notifications.filter(n => !n.is_read).length;
@@ -434,6 +509,52 @@ const MODULE_VIEW_ICONS = { log: "inbox", stats: "chart", directory: "folder", c
 // что подключение нового ничего здесь не ломает.
 const MODULE_ICONS = { certs: "seal", smdr: "phone", messenger: "spark" };
 const moduleIcon = (id) => MODULE_ICONS[id] || "box";
+
+// ====== Прокрутка бокового меню ======
+//
+// renderShell() пересобирает оболочку целиком через innerHTML, а вместе с ней и
+// сам прокручиваемый элемент меню. Позиция прокрутки принадлежит УЗЛУ, и с его
+// заменой она пропадала: каждый переход между разделами и каждое F5 отматывали
+// меню в самое начало, хотя выбранный пункт мог быть в самом низу.
+//
+// Источник истины — переменная, а не сам элемент. Так задумано: сразу после
+// innerHTML раскладка ещё не посчитана, у нового узла нулевая высота, и любое
+// чтение позиции с него вернуло бы ноль. Если бы этот ноль записывался обратно,
+// он бы затирал настоящую позицию — ровно так первая попытка и не сработала.
+//
+// В sessionStorage кладём копию, чтобы позиция пережила F5. Именно session, а не
+// local: у двух открытых окон панели позиции свои, и это правильно.
+const NAV_SCROLL_KEY = "adm.navScroll";
+
+let navScroll = (() => {
+  try { return Number(sessionStorage.getItem(NAV_SCROLL_KEY)) || 0; } catch { return 0; }
+})();
+
+function rememberNavScroll(value) {
+  navScroll = value;
+  try { sessionStorage.setItem(NAV_SCROLL_KEY, String(value)); } catch { /* приватный режим — не беда */ }
+}
+
+function restoreNavScroll() {
+  const nav = document.querySelector(".sidebar-nav");
+  if (!nav) return;
+
+  // Проверка isConnected — не перестраховка, а суть починки. При замене
+  // содержимого через innerHTML старый элемент меню отсоединяется, его позиция
+  // сбрасывается в ноль, и он успевает поднять СВОЁ событие прокрутки. Слушатель
+  // на нём ещё жив и записывал этот ноль поверх настоящей позиции — из-за чего
+  // меню и отматывалось наверх. Отсоединённый узел про нашу позицию больше
+  // ничего не знает, и слушать его незачем.
+  nav.addEventListener("scroll", () => {
+    if (!nav.isConnected) return;
+    rememberNavScroll(nav.scrollTop);
+  }, { passive: true });
+
+  if (!navScroll) return;
+  // Через кадр: на момент возврата из innerHTML раскладки ещё нет, высота узла
+  // нулевая, и присвоение scrollTop браузер обрежет до нуля.
+  requestAnimationFrame(() => { nav.scrollTop = navScroll; });
+}
 
 function renderShell() {
   const u = state.user;
@@ -513,6 +634,8 @@ function renderShell() {
       </div>
       <div class="main" id="mainArea"></div>
     </div>`;
+
+  restoreNavScroll();
 
   const certsBtn = document.getElementById("certsBtn");
   if (certsBtn) certsBtn.onclick = () => setView("certs");
@@ -1457,17 +1580,49 @@ function notifRowHtml(e) {
 
 // ---- Вкладка «Шаблоны» -----------------------------------------------------
 
+// Шаблон правят по одному, а не читают все подряд: категорий десять, каждая с
+// темой, текстом и списком подстановок, и простыня из десяти карточек прокручивалась
+// экранов на пять. Показываем ту, что выбрали в списке; выбор запоминаем на время
+// сессии, чтобы после сохранения и возврата на вкладку не искать её заново.
+const TPL_PICK_KEY = "adm.tplPick";
+// Тот же приём на вкладке «Отправка»: список получателей правят по одному.
+const RCP_PICK_KEY = "adm.rcpPick";
+
 function renderNotifTemplates(page, kinds) {
+  let picked = null;
+  try { picked = sessionStorage.getItem(TPL_PICK_KEY); } catch { /* приватный режим */ }
+  if (!kinds.some(k => k.kind === picked)) picked = kinds.length ? kinds[0].kind : null;
+
   page.innerHTML = `
     <div style="max-width:900px;">
-      <div style="font-size:12.5px;color:var(--ink-soft);margin-bottom:16px;">
-        Подстановки пишутся в двойных фигурных скобках. Кнопка «Предпросмотр» показывает
-        письмо на выдуманном примере — править шаблон вслепую значит однажды разослать
-        письмо с опечаткой в самой подстановке.
+      <div class="card" style="margin-bottom:18px;">
+        <div class="field-label">Шаблон какой категории править</div>
+        <select class="input field-select" id="tplPick" style="width:100%;">
+          ${kinds.map(k => `<option value="${esc(k.kind)}" ${k.kind === picked ? "selected" : ""}>${esc(k.label)}</option>`).join("")}
+        </select>
+        <div style="font-size:12.5px;color:var(--ink-soft);margin-top:12px;">
+          Подстановки пишутся в двойных фигурных скобках. Кнопка «Предпросмотр» показывает
+          письмо на выдуманном примере — править шаблон вслепую значит однажды разослать
+          письмо с опечаткой в самой подстановке.
+        </div>
       </div>
-      ${kinds.map(templateCardHtml).join("")}
+      <div id="tplHost"></div>
     </div>`;
 
+  enhanceSelects(page);
+  const host = page.querySelector("#tplHost");
+  const show = (kind) => {
+    const k = kinds.find(x => x.kind === kind);
+    if (!k) return;
+    try { sessionStorage.setItem(TPL_PICK_KEY, kind); } catch { /* приватный режим */ }
+    host.innerHTML = templateCardHtml(k);
+    wireTemplateCards(host);
+  };
+  page.querySelector("#tplPick").onchange = (e) => show(e.target.value);
+  if (picked) show(picked);
+}
+
+function wireTemplateCards(page) {
   page.querySelectorAll(".tpl-card").forEach(card => {
     const kind = card.dataset.kind;
     const subj = card.querySelector(".tpl-subject");
@@ -1618,11 +1773,15 @@ async function renderNotifSmtp(page, kinds) {
 
       <div class="card" style="margin-bottom:20px;">
         <div class="section-label">Кому уходят письма</div>
-        <div style="font-size:12px;color:var(--ink-soft);margin-bottom:6px;">
+        <div style="font-size:12px;color:var(--ink-soft);margin-bottom:14px;">
           Адреса — по одному на строку. Проверяются при сохранении: опечатка иначе будет молчать
           ровно так же, как молчал ненастроенный сервер.
         </div>
-        ${withList.map(recipientCardHtml).join("")}
+        <div class="field-label">Список какой категории править</div>
+        <select class="input field-select" id="rcpPick" style="width:100%;">
+          ${withList.map(k => `<option value="${esc(k.kind)}">${esc(k.label)}${rcpBadge(k)}</option>`).join("")}
+        </select>
+        <div id="rcpHost"></div>
       </div>
 
       <div class="card" style="margin-bottom:20px;">
@@ -1721,7 +1880,38 @@ async function renderNotifSmtp(page, kinds) {
     } catch (e) { retryMsg.style.color = "var(--red)"; retryMsg.textContent = e.message; }
   };
 
-  page.querySelectorAll(".rcp-card").forEach(card => {
+  // Список категорий вместо пяти карточек подряд — так же, как на вкладке
+  // «Шаблоны». Правят их по одной, а прокручивать простыню, чтобы добраться до
+  // нужной, приходилось каждый раз.
+  //
+  // В подписи каждой категории видно, сколько у неё получателей: иначе выбирать
+  // пришлось бы вслепую, и незаполненный список нашёлся бы только перебором.
+  const rcpHost = page.querySelector("#rcpHost");
+  const rcpSelect = page.querySelector("#rcpPick");
+  if (rcpSelect && rcpHost) {
+    let pickedRcp = null;
+    try { pickedRcp = sessionStorage.getItem(RCP_PICK_KEY); } catch { /* приватный режим */ }
+    if (!withList.some(k => k.kind === pickedRcp)) pickedRcp = withList.length ? withList[0].kind : null;
+
+    const showRcp = (kind) => {
+      const k = withList.find(x => x.kind === kind);
+      if (!k) return;
+      try { sessionStorage.setItem(RCP_PICK_KEY, kind); } catch { /* приватный режим */ }
+      rcpHost.innerHTML = recipientCardHtml(k);
+      wireRecipientCards(rcpHost, withList);
+    };
+    rcpSelect.value = pickedRcp || "";
+    rcpSelect.onchange = (e) => showRcp(e.target.value);
+    if (pickedRcp) showRcp(pickedRcp);
+  }
+
+  enhanceSelects(page);
+}
+
+// Обвязка карточки получателей. Отдельно от renderNotifSmtp, потому что теперь
+// карточка перерисовывается при каждом выборе категории, а не один раз.
+function wireRecipientCards(host, withList) {
+  host.querySelectorAll(".rcp-card").forEach(card => {
     const kind = card.dataset.kind;
     const field = card.querySelector(".rcp-emails");
     const note = card.querySelector(".rcp-msg");
@@ -1744,9 +1934,38 @@ async function renderNotifSmtp(page, kinds) {
         field.value = r.settings.emails || "";
         recount();
         note.style.color = "var(--green)"; note.textContent = "Сохранено";
+
+        // Подпись в списке категорий показывает число получателей — после
+        // сохранения она обязана сойтись с полем, иначе выбор снова станет
+        // гаданием.
+        const k = withList.find(x => x.kind === kind);
+        if (k) k.emails = field.value;
+        refreshRcpOptions(withList);
       } catch (e) { note.style.color = "var(--red)"; note.textContent = e.message; }
     };
   });
+}
+
+// Пересобрать подписи в списке категорий, не трогая выбранную.
+function refreshRcpOptions(withList) {
+  const select = document.getElementById("rcpPick");
+  if (!select) return;
+  const current = select.value;
+  select.innerHTML = withList
+    .map(k => `<option value="${esc(k.kind)}">${esc(k.label)}${rcpBadge(k)}</option>`).join("");
+  select.value = current;
+  // Событие change НЕ поднимаем намеренно: оно перерисовало бы карточку и
+  // стёрло надпись «Сохранено» ровно в тот момент, когда её читают. Видимую
+  // часть обновляем сами — настоящий select спрятан под нашей обёрткой.
+  const wrap = select.closest(".select-wrap");
+  const label = wrap && wrap.querySelector(".select-value");
+  if (label) label.textContent = select.options[select.selectedIndex]?.textContent || "";
+}
+
+// Сколько адресов заведено — приписка к названию категории в списке.
+function rcpBadge(k) {
+  const n = (k.emails || "").split(/[\r\n,;]+/).map(s => s.trim()).filter(Boolean).length;
+  return n ? ` — ${n} адр.` : " — не заполнено";
 }
 
 // Сводка обхода — то, что вернул адаптер: «документов 42, истекает 3». Показываем

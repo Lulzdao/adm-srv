@@ -1164,7 +1164,11 @@ app.get('/api/admin/users', auth, requireCapability('can_admin'), (req, res) => 
 // не пробрасывается, — а список пользователей должен показывать статус в любом
 // случае. Отдаём снимок целиком: он маленький и считается по памяти процесса.
 app.get('/api/admin/presence', auth, requireCapability('can_admin'), (req, res) => {
-  res.json({ users: presenceSnapshot() });
+  // connections — сколько сокетов сервер видит прямо сейчас. Без этого числа
+  // список, где все «не в сети», ничего не объясняет: непонятно, панель ли
+  // сломалась, или клиенты действительно не подключены (например, не проходит
+  // рукопожатие TLS). Ноль соединений при работающих клиентах — это ответ.
+  res.json({ users: presenceSnapshot(), connections: connMeta.size });
 });
 
 // Включение/выключение самостоятельной регистрации (см. registrationOpen выше).
@@ -1972,12 +1976,22 @@ function presenceSnapshot() {
     if (!onlineByUser.has(meta.userId)) onlineByUser.set(meta.userId, { state: 'offline', hosts: new Set(), idleSince: null });
     const entry = onlineByUser.get(meta.userId);
     entry.hosts.add(meta.hostname || 'неизвестный ПК');
-    if (meta.state === 'active') { entry.state = 'active'; entry.idleSince = null; }
-    else if (meta.state === 'idle' && entry.state !== 'active') {
-      entry.state = 'idle';
-      // Если у пользователя несколько ПК и оба "отошли" — берём более раннее время, т.е. самый
-      // давний по времени переход в AFK (человек отошёл ото всех, начиная с этого момента).
-      if (meta.idleSince && (!entry.idleSince || meta.idleSince < entry.idleSince)) entry.idleSince = meta.idleSince;
+
+    // Живое соединение — это уже «в сети». Раньше состояние выводилось ТОЛЬКО из
+    // meta.state, и запись оставалась 'offline', если состояние оказывалось
+    // чем-то третьим: человек значился не в сети, хотя его сокет висел прямо
+    // здесь, в этом же цикле. Теперь «не в сети» может получиться единственным
+    // способом — когда соединений нет вовсе.
+    if (meta.state === 'idle') {
+      if (entry.state !== 'active') {
+        entry.state = 'idle';
+        // Если у пользователя несколько ПК и оба "отошли" — берём более раннее время, т.е. самый
+        // давний по времени переход в AFK (человек отошёл ото всех, начиная с этого момента).
+        if (meta.idleSince && (!entry.idleSince || meta.idleSince < entry.idleSince)) entry.idleSince = meta.idleSince;
+      }
+    } else {
+      entry.state = 'active';
+      entry.idleSince = null;
     }
   }
 
