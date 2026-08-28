@@ -356,7 +356,11 @@ async function enterApp() {
     state.modules = modules;
   } catch (e) { state.modules = []; }
   await refreshNotifications();
-  setView("inbox");
+  // Обновление страницы не должно выбрасывать на «Входящие»: человек нажал F5
+  // на журнале звонков и ждёт увидеть журнал звонков. Адрес вкладки держим в
+  // якоре URL, а не в хранилище браузера — тогда работают и кнопка «назад», и
+  // ссылка, посланную коллеге.
+  await restoreViewFromHash();
   if (!notifPollHandle) {
     notifPollHandle = setInterval(async () => {
       await refreshNotifications();
@@ -369,15 +373,86 @@ function clearViewPoll() {
   if (viewPollHandle) { clearInterval(viewPollHandle); viewPollHandle = null; }
 }
 
-function setView(view, arg) {
+function setView(view, arg, { replace = false } = {}) {
   clearViewPoll();
   if (view === "detail") {
     state.currentTicket = arg;
     if (state.view !== "detail") state.previousView = state.view; // не затираем при обновлении самой карточки
   }
   state.view = view;
+  writeHash(replace);
   renderShell();
 }
+
+// ====== Вкладка в адресе страницы ======
+//
+// Экран целиком собирается на клиенте, поэтому сам по себе URL про открытую
+// вкладку ничего не знает: после F5 приложение всегда открывалось на
+// «Входящих». Держим адрес вкладки в якоре — он не уходит на сервер, переживает
+// обновление, и заодно начинают работать кнопки «назад» и «вперёд».
+//
+// Карточка заявки хранится в якоре номером (#detail/148), а не целым объектом:
+// заявку всё равно надо перечитать — за время до обновления её могли изменить.
+
+let applyingHash = false;   // защита от петли «пишем якорь -> ловим hashchange -> пишем якорь»
+
+function writeHash(replace) {
+  const hash = state.view === "detail" && state.currentTicket
+    ? `#detail/${state.currentTicket.id}`
+    : `#${state.view}`;
+  if (location.hash === hash) return;
+  applyingHash = true;
+  // Переход, который сделал человек, — новая запись в истории: тогда «назад»
+  // возвращает из карточки в список, как он и ожидает. А вот восстановление
+  // вкладки после F5 или отработка самой кнопки «назад» историю пополнять не
+  // должны, иначе выйти из приложения кнопкой станет невозможно.
+  if (replace) history.replaceState(null, "", hash);
+  else history.pushState(null, "", hash);
+  applyingHash = false;
+}
+
+/** Существует ли такая вкладка у ЭТОЙ роли. Чужую из адреса открывать нельзя. */
+function viewExists(view) {
+  if (!view) return false;
+  const u = state.user;
+  const isIT = u.role === "it";
+  if (["inbox", "mine", "create"].includes(view)) return true;
+  if (["dashboard", "admin", "certs"].includes(view) || view.startsWith("notif:")) return isIT;
+  if (view.startsWith("module:")) {
+    const [, modId, viewId] = view.split(":");
+    const mod = state.modules.find((m) => m.id === modId);
+    if (!mod) return false;
+    const views = (mod.views && mod.views.length) ? mod.views : [{ id: "root" }];
+    return views.some((v) => v.id === viewId);
+  }
+  return false;
+}
+
+async function restoreViewFromHash() {
+  const raw = decodeURIComponent(location.hash.replace(/^#/, ""));
+
+  const detail = raw.match(/^detail\/(\d+)$/);
+  if (detail) {
+    // Заявку перечитываем, а не достаём из памяти: после обновления страницы
+    // никакой памяти нет, да и содержимое могло измениться.
+    try {
+      const { ticket } = await api("/tickets/" + detail[1]);
+      setView("detail", ticket, { replace: true });
+      return;
+    } catch {
+      // Заявку удалили или прав на неё нет — молча возвращаемся к списку,
+      // ошибка про чужой номер в адресе пользователю ничего не объясняет.
+    }
+  }
+
+  setView(viewExists(raw) ? raw : "inbox", undefined, { replace: true });
+}
+
+// Кнопки «назад» и «вперёд» браузера.
+window.addEventListener("hashchange", () => {
+  if (applyingHash || !state.user) return;
+  restoreViewFromHash();
+});
 
 function updateBadgeDom() {
   const total = state.notifications.filter(n => !n.is_read).length;
