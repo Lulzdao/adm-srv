@@ -1585,6 +1585,8 @@ function notifRowHtml(e) {
 // экранов на пять. Показываем ту, что выбрали в списке; выбор запоминаем на время
 // сессии, чтобы после сохранения и возврата на вкладку не искать её заново.
 const TPL_PICK_KEY = "adm.tplPick";
+// Тот же приём на вкладке «Отправка»: список получателей правят по одному.
+const RCP_PICK_KEY = "adm.rcpPick";
 
 function renderNotifTemplates(page, kinds) {
   let picked = null;
@@ -1771,11 +1773,15 @@ async function renderNotifSmtp(page, kinds) {
 
       <div class="card" style="margin-bottom:20px;">
         <div class="section-label">Кому уходят письма</div>
-        <div style="font-size:12px;color:var(--ink-soft);margin-bottom:6px;">
+        <div style="font-size:12px;color:var(--ink-soft);margin-bottom:14px;">
           Адреса — по одному на строку. Проверяются при сохранении: опечатка иначе будет молчать
           ровно так же, как молчал ненастроенный сервер.
         </div>
-        ${withList.map(recipientCardHtml).join("")}
+        <div class="field-label">Список какой категории править</div>
+        <select class="input field-select" id="rcpPick" style="width:100%;">
+          ${withList.map(k => `<option value="${esc(k.kind)}">${esc(k.label)}${rcpBadge(k)}</option>`).join("")}
+        </select>
+        <div id="rcpHost"></div>
       </div>
 
       <div class="card" style="margin-bottom:20px;">
@@ -1874,7 +1880,38 @@ async function renderNotifSmtp(page, kinds) {
     } catch (e) { retryMsg.style.color = "var(--red)"; retryMsg.textContent = e.message; }
   };
 
-  page.querySelectorAll(".rcp-card").forEach(card => {
+  // Список категорий вместо пяти карточек подряд — так же, как на вкладке
+  // «Шаблоны». Правят их по одной, а прокручивать простыню, чтобы добраться до
+  // нужной, приходилось каждый раз.
+  //
+  // В подписи каждой категории видно, сколько у неё получателей: иначе выбирать
+  // пришлось бы вслепую, и незаполненный список нашёлся бы только перебором.
+  const rcpHost = page.querySelector("#rcpHost");
+  const rcpSelect = page.querySelector("#rcpPick");
+  if (rcpSelect && rcpHost) {
+    let pickedRcp = null;
+    try { pickedRcp = sessionStorage.getItem(RCP_PICK_KEY); } catch { /* приватный режим */ }
+    if (!withList.some(k => k.kind === pickedRcp)) pickedRcp = withList.length ? withList[0].kind : null;
+
+    const showRcp = (kind) => {
+      const k = withList.find(x => x.kind === kind);
+      if (!k) return;
+      try { sessionStorage.setItem(RCP_PICK_KEY, kind); } catch { /* приватный режим */ }
+      rcpHost.innerHTML = recipientCardHtml(k);
+      wireRecipientCards(rcpHost, withList);
+    };
+    rcpSelect.value = pickedRcp || "";
+    rcpSelect.onchange = (e) => showRcp(e.target.value);
+    if (pickedRcp) showRcp(pickedRcp);
+  }
+
+  enhanceSelects(page);
+}
+
+// Обвязка карточки получателей. Отдельно от renderNotifSmtp, потому что теперь
+// карточка перерисовывается при каждом выборе категории, а не один раз.
+function wireRecipientCards(host, withList) {
+  host.querySelectorAll(".rcp-card").forEach(card => {
     const kind = card.dataset.kind;
     const field = card.querySelector(".rcp-emails");
     const note = card.querySelector(".rcp-msg");
@@ -1897,9 +1934,38 @@ async function renderNotifSmtp(page, kinds) {
         field.value = r.settings.emails || "";
         recount();
         note.style.color = "var(--green)"; note.textContent = "Сохранено";
+
+        // Подпись в списке категорий показывает число получателей — после
+        // сохранения она обязана сойтись с полем, иначе выбор снова станет
+        // гаданием.
+        const k = withList.find(x => x.kind === kind);
+        if (k) k.emails = field.value;
+        refreshRcpOptions(withList);
       } catch (e) { note.style.color = "var(--red)"; note.textContent = e.message; }
     };
   });
+}
+
+// Пересобрать подписи в списке категорий, не трогая выбранную.
+function refreshRcpOptions(withList) {
+  const select = document.getElementById("rcpPick");
+  if (!select) return;
+  const current = select.value;
+  select.innerHTML = withList
+    .map(k => `<option value="${esc(k.kind)}">${esc(k.label)}${rcpBadge(k)}</option>`).join("");
+  select.value = current;
+  // Событие change НЕ поднимаем намеренно: оно перерисовало бы карточку и
+  // стёрло надпись «Сохранено» ровно в тот момент, когда её читают. Видимую
+  // часть обновляем сами — настоящий select спрятан под нашей обёрткой.
+  const wrap = select.closest(".select-wrap");
+  const label = wrap && wrap.querySelector(".select-value");
+  if (label) label.textContent = select.options[select.selectedIndex]?.textContent || "";
+}
+
+// Сколько адресов заведено — приписка к названию категории в списке.
+function rcpBadge(k) {
+  const n = (k.emails || "").split(/[\r\n,;]+/).map(s => s.trim()).filter(Boolean).length;
+  return n ? ` — ${n} адр.` : " — не заполнено";
 }
 
 // Сводка обхода — то, что вернул адаптер: «документов 42, истекает 3». Показываем
