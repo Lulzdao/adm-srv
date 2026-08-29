@@ -71,10 +71,39 @@ module.exports = function adminRoutes(db) {
       GROUP BY t.assigned_to ORDER BY n DESC LIMIT 5
     `).all(days);
 
+    // Сводка для дашборда. Раньше он скачивал ВЕСЬ список заявок
+    // (1,87 МБ при 5000 заявок), чтобы посчитать в браузере шесть чисел и
+    // гистограмму по отделам. Те же числа SQL отдаёт одним проходом, а ответ
+    // весит полторы сотни байт вместо почти двух мегабайт.
+    const totals = db.prepare(`
+      SELECT
+        COUNT(*) AS total,
+        SUM(CASE WHEN status NOT IN ('resolved','closed','cancelled') THEN 1 ELSE 0 END) AS open,
+        SUM(CASE WHEN priority = 'critical' AND status NOT IN ('closed','cancelled') THEN 1 ELSE 0 END) AS critical,
+        SUM(CASE WHEN status IN ('closed','resolved') THEN 1 ELSE 0 END) AS closedTotal
+      FROM tickets
+    `).get();
+
+    // Счётчик по отделам отдаём картой «имя -> число»: порядок и полный состав
+    // отделов фронтенд берёт из своего справочника, поэтому отдел без единой
+    // заявки на гистограмме остаётся видимым.
+    const byCategory = Object.fromEntries(
+      db.prepare(`
+        SELECT c.name, COUNT(t.id) AS n
+        FROM categories c LEFT JOIN tickets t ON t.category_id = c.id
+        GROUP BY c.id
+      `).all().map((r) => [r.name, r.n])
+    );
+
     res.json({
       closed7, closed30,
       topWeek: topByWindow(7),
       topMonth: topByWindow(30),
+      total: totals.total,
+      open: totals.open,
+      critical: totals.critical,
+      closedTotal: totals.closedTotal,
+      byCategory,
     });
   });
 

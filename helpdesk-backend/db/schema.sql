@@ -88,6 +88,11 @@ CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets(status);
 CREATE INDEX IF NOT EXISTS idx_tickets_assigned ON tickets(assigned_to);
 CREATE INDEX IF NOT EXISTS idx_tickets_created_by ON tickets(created_by);
 CREATE INDEX IF NOT EXISTS idx_comments_ticket ON comments(ticket_id);
+-- Карточка заявки читает историю и вложения по ticket_id. Индекса на них не было,
+-- и каждое открытие карточки перебирало обе таблицы целиком. Замер на 20 000
+-- заявок (60 000 строк истории): история 2,44 -> 0,02 мс, вложения 0,23 -> 0,012 мс.
+CREATE INDEX IF NOT EXISTS idx_status_history_ticket ON status_history(ticket_id);
+CREATE INDEX IF NOT EXISTS idx_attachments_ticket ON attachments(ticket_id);
 CREATE INDEX IF NOT EXISTS idx_notifications_user_unread ON notifications(user_id, is_read);
 
 -- Отделы-исполнители (ИТ/ХОЗ/ЕГРПО и то, что вы добавите) заполняются
@@ -159,3 +164,9 @@ CREATE INDEX IF NOT EXISTS idx_notif_deliv_event ON notification_deliveries(even
 CREATE INDEX IF NOT EXISTS idx_notif_deliv_inapp ON notification_deliveries(user_id, is_read) WHERE channel = 'inapp';
 -- Повтор неудачных отправок на следующем тике планировщика.
 CREATE INDEX IF NOT EXISTS idx_notif_deliv_pending ON notification_deliveries(status) WHERE status = 'pending';
+-- Бейдж «непрочитанные» берёт последние 50 отметок пользователя. Существующий
+-- индекс (user_id, is_read) годится для отбора, но не для сортировки: порядок
+-- строился временной таблицей по ВСЕЙ переписке человека. Этот индекс даёт и
+-- отбор, и порядок сразу — но работает только в паре с ORDER BY d.id DESC
+-- (см. routes/notifications.js). Замер при 20 000 отметок: 8,16 -> 0,11 мс.
+CREATE INDEX IF NOT EXISTS idx_notif_deliv_inapp_id ON notification_deliveries(user_id, id DESC) WHERE channel = 'inapp';

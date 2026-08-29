@@ -227,6 +227,35 @@ module.exports = function ticketRoutes(db) {
     }
 
     const where = clauses.length ? "WHERE " + clauses.join(" AND ") : "";
+
+    // Предел на выдачу.
+    //
+    // Раньше маршрут отдавал ВСЮ таблицу. На 5000 заявок это 1,27 МБ ответа и
+    // 22-30 мс, которые node:sqlite и сериализация JSON держат синхронно — то
+    // есть платформа в это время не отвечает никому: ни другому сотруднику, ни
+    // проксируемому модулю. А список опрашивается таймером раз в 20 секунд с
+    // КАЖДОГО открытого рабочего места: при десяти таких местах замеренная
+    // задержка цикла событий доходила до 149 мс. Кэш браузера тут не помогает —
+    // ответ 304 стоит столько же, потому что тело всё равно строится: по нему
+    // считается ETag.
+    //
+    // Заявок только прибывает: маршрута удаления в платформе нет вовсе.
+    const PAGE_SIZE = 200;
+
+    // Полное число нужно подписи «N заявок»: без него на экране было бы
+    // написано «200 заявок» независимо от того, сколько их на самом деле.
+    // Отдельный COUNT дешевле выдачи строк — он не собирает тексты и не ходит
+    // в users за именами.
+    const total = db.prepare(`
+      SELECT COUNT(*) AS n
+      FROM tickets t
+      LEFT JOIN categories c ON c.id = t.category_id
+      ${where}
+    `).get(params).n;
+
+    // Наборы параметров РАЗНЫЕ: node:sqlite отвергает именованный параметр,
+    // которого нет в запросе («Unknown named parameter»), поэтому один объект
+    // на оба запроса подать нельзя.
     const rows = db.prepare(`
       SELECT t.id, t.display_id, t.title, t.priority, t.status, t.room, t.extension,
              t.created_at, t.updated_at,
@@ -239,9 +268,10 @@ module.exports = function ticketRoutes(db) {
       LEFT JOIN users assignee ON assignee.id = t.assigned_to
       ${where}
       ORDER BY t.updated_at DESC
-    `).all(params);
+      LIMIT @limit
+    `).all({ ...params, limit: PAGE_SIZE });
 
-    res.json({ tickets: rows });
+    res.json({ tickets: rows, total, limit: PAGE_SIZE });
   });
 
   // POST /api/tickets

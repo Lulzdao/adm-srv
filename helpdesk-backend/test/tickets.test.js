@@ -221,3 +221,66 @@ test("имя вложения сохраняется как есть — экр�
   assert.ok(имя.includes("%22"), `ожидалось экранированное имя, получено: ${имя}`);
   assert.ok(имя.startsWith("отчёт"), `кириллица должна доехать целой, получено: ${имя}`);
 });
+
+test("список заявок ограничен и сообщает полное число", async (t) => {
+  const { db, app, заявитель, ticketId } = await stand(t);
+
+  // Заявок больше предела делать незачем — проверяем сам договор ответа.
+  const r = await заявитель.get("/api/tickets");
+  assert.strictEqual(r.status, 200, r.text);
+  assert.ok(Array.isArray(r.json.tickets));
+  assert.strictEqual(typeof r.json.total, "number", "клиент подписывает счётчик по total");
+  assert.strictEqual(typeof r.json.limit, "number", "и должен знать, сколько строк ему отдали");
+  assert.strictEqual(r.json.total, 1);
+  assert.ok(r.json.tickets.length <= r.json.limit);
+  assert.ok(db && ticketId);
+});
+
+test("счётчик списка считается по тем же условиям, что и выдача", async (t) => {
+  const { app, заявитель, ticketId } = await stand(t);
+
+  // Вторая заявка в другом статусе: фильтр обязан влиять и на выдачу, и на total,
+  // иначе на экране «5 заявок» при одной строке.
+  const вторая = await заявитель.post("/api/tickets", {
+    title: "Вторая заявка", description: "для фильтра", room: "212", priority: "low",
+  });
+  assert.strictEqual(вторая.status, 201, вторая.text);
+
+  const админ = client(app.url);
+  await админ.login("!ит");
+  await админ.patch(`/api/tickets/${вторая.json.id}`, { status: "closed" });
+
+  const открытые = await заявитель.get("/api/tickets");
+  assert.strictEqual(открытые.json.total, 1, "закрытая заявка не должна попадать в счётчик открытых");
+  assert.strictEqual(открытые.json.tickets.length, 1);
+
+  const все = await заявитель.get("/api/tickets?status=all");
+  assert.strictEqual(все.json.total, 2);
+  assert.ok(ticketId);
+});
+
+test("сводка для дашборда считается на сервере, а не в браузере", async (t) => {
+  const { app, заявитель, ticketId } = await stand(t);
+  const админ = client(app.url);
+  await админ.login("!ит");
+
+  const r = await админ.get("/api/admin/stats");
+  assert.strictEqual(r.status, 200, r.text);
+  for (const поле of ["total", "open", "critical", "closedTotal", "byCategory"]) {
+    assert.ok(поле in r.json, `в сводке нет поля ${поле}`);
+  }
+  assert.strictEqual(r.json.total, 1);
+  assert.strictEqual(r.json.open, 1);
+  assert.strictEqual(r.json.critical, 0);
+  assert.strictEqual(r.json.closedTotal, 0);
+  assert.strictEqual(typeof r.json.byCategory, "object");
+
+  await админ.patch(`/api/tickets/${ticketId}`, { status: "closed" });
+  const после = await админ.get("/api/admin/stats");
+  assert.strictEqual(после.json.open, 0);
+  assert.strictEqual(после.json.closedTotal, 1);
+
+  // Сводка — только для ИТ: заявитель её не получает.
+  const чужой = await заявитель.get("/api/admin/stats");
+  assert.strictEqual(чужой.status, 403);
+});
