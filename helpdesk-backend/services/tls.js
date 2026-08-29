@@ -87,26 +87,51 @@ function resolveTlsOptions(env = process.env) {
  * подключаемся и разбираем предъявленную цепочку. Из PFX её содержимое иначе
  * не видно, а в PEM легко положить лишнее или забыть промежуточный.
  */
+// Рукопожатие может не завершиться вовсе — ни успехом, ни ошибкой. Без предела
+// ожидания такой случай подвешивал бы навсегда и обещание, и открытый порт: а
+// зовут эту функцию прямо из обработчика загрузки сертификата
+// (routes/certificates.js), то есть запрос пользователя висел бы бесконечно, а
+// каждая попытка оставляла бы за собой ещё один слушающий сокет.
+const INSPECT_TIMEOUT_MS = 5000;
+
 function inspectTlsOptions(options) {
   return new Promise((resolve, reject) => {
     let probe;
     try { probe = tls.createServer(options, (socket) => socket.end()); }
     catch (err) { return reject(err); }
 
-    const fail = (err) => { try { probe.close(); } catch { /* уже закрыт */ } reject(err); };
-    probe.on("error", fail);
+    // Прибираем ровно один раз: до правки повторный вызов fail() из второго
+    // источника ошибки закрывал уже закрытый сервер.
+    let done = false;
+    let timer = null;
+    const finish = (err, info) => {
+      if (done) return;
+      done = true;
+      if (timer) clearTimeout(timer);
+      try { probe.close(); } catch { /* уже закрыт */ }
+      if (err) reject(err); else resolve(info);
+    };
+
+    timer = setTimeout(
+      () => finish(new Error(`Сертификат не удалось разобрать за ${INSPECT_TIMEOUT_MS / 1000} с: рукопожатие не завершилось`)),
+      INSPECT_TIMEOUT_MS
+    );
+    // Таймер не должен сам по себе держать процесс живым.
+    if (timer.unref) timer.unref();
+
+    probe.on("error", finish);
     probe.listen(0, "127.0.0.1", () => {
       const socket = tls.connect(
         { host: "127.0.0.1", port: probe.address().port, rejectUnauthorized: false },
         () => {
           let info;
           try { info = describeChain(socket.getPeerCertificate(true)); }
-          catch (err) { socket.destroy(); return fail(err); }
+          catch (err) { socket.destroy(); return finish(err); }
           socket.destroy();
-          probe.close(() => resolve(info));
+          finish(null, info);
         }
       );
-      socket.on("error", fail);
+      socket.on("error", finish);
     });
   });
 }
@@ -363,4 +388,6 @@ module.exports = {
   SHARED_CERT_DIR,
   SHARED_PFX,
   SHARED_PASS,
+  dnsNames,
+  INSPECT_TIMEOUT_MS,
 };
