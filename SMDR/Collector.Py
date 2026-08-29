@@ -98,7 +98,20 @@ LINE_RE = re.compile(
 
 
 def init_db():
-    conn = sqlite3.connect('smdr.db')
+    # timeout: сколько ждать освобождения базы, прежде чем сдаться. По
+    # умолчанию 5 секунд — веб-часть журнала успевала их выбрать длинной
+    # выборкой, и вставка звонка получала «database is locked».
+    conn = sqlite3.connect('smdr.db', timeout=30)
+    # WAL: читатель и писатель перестают мешать друг другу. Без него длинное
+    # чтение из веб-части блокирует вставку целиком — а ошибка базы вылетала в
+    # главный цикл, рвала TCP-сессию с АТС и уходила на пятисекундное
+    # переподключение. Всё, что АТС отдаст за эти пять секунд, теряется
+    # навсегда: SMDR не переспрашивают.
+    conn.execute('PRAGMA journal_mode=WAL')
+    # NORMAL вместо FULL: при WAL это безопасно для целостности базы (потерять
+    # можно только последние транзакции при отключении питания), а запись
+    # каждой строки перестаёт ждать физической записи на диск.
+    conn.execute('PRAGMA synchronous=NORMAL')
     conn.execute('''CREATE TABLE IF NOT EXISTS calls (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         call_dt TEXT,
@@ -117,8 +130,43 @@ def init_db():
         raw_line TEXT,
         received_at TEXT
     )''')
+    # Индексы под запросы веб-части: без них страница журнала на 300 тыс.
+    # строк перебирает таблицу целиком. Заводим их здесь, рядом с созданием
+    # таблицы, чтобы схема жила в одном месте.
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_calls_dt ON calls(call_dt DESC)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_calls_direction ON calls(direction)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_calls_ext ON calls(ext)')
     conn.commit()
     return conn
+
+
+# Поля вставки перечислены один раз: раньше тот же список стоял в двух местах
+# подряд, и добавить колонку, поправив только одно, было делом одной невнимательности.
+INSERT_SQL = '''INSERT INTO calls
+    (call_dt, call_date, call_time, ext, co, number, ring, duration, direction, status, did, caller, internal_to, raw_line, received_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'''
+
+
+def save_call(conn, values, text):
+    """Записать строку SMDR. Ошибка базы НЕ должна обрывать связь с АТС.
+
+    Раньше исключение отсюда улетало в главный цикл: тот закрывал сокет и ждал
+    пять секунд до переподключения, а всё, что АТС отдавала за это время,
+    пропадало без следа. Теперь неудачная запись стоит одной строки в журнале —
+    и сама строка SMDR там уже есть (её пишет RAW выше), так что данные можно
+    восстановить из лога.
+    """
+    try:
+        conn.execute(INSERT_SQL, values)
+        conn.commit()
+        return True
+    except sqlite3.Error as e:
+        logging.error(f"НЕ ЗАПИСАНО В БАЗУ ({e}): {text}")
+        try:
+            conn.rollback()
+        except sqlite3.Error:
+            pass
+        return False
 
 
 def parse_line(line):
@@ -243,24 +291,16 @@ def connect_and_listen(conn):
                 parsed = parse_line(text)
                 if parsed is None:
                     logging.warning(f"НЕ РАСПОЗНАНО: {text}")
-                    conn.execute('''INSERT INTO calls
-                        (call_dt, call_date, call_time, ext, co, number, ring, duration, direction, status, did, caller, internal_to, raw_line, received_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-                        (None, None, None, None, None, None, None, None,
-                         'unknown', None, None, None, None, text,
-                         datetime.now().isoformat()))
-                    conn.commit()
+                    save_call(conn, (None, None, None, None, None, None, None, None,
+                                     'unknown', None, None, None, None, text,
+                                     datetime.now().isoformat()), text)
                     continue
 
-                conn.execute('''INSERT INTO calls
-                    (call_dt, call_date, call_time, ext, co, number, ring, duration, direction, status, did, caller, internal_to, raw_line, received_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-                    (parsed['call_dt'], parsed['call_date'], parsed['call_time'],
-                     parsed['ext'], parsed['co'], parsed['number'], parsed['ring'],
-                     parsed['duration'], parsed['direction'], parsed['status'],
-                     parsed['did'], parsed['caller'], parsed['internal_to'], text,
-                     datetime.now().isoformat()))
-                conn.commit()
+                save_call(conn, (parsed['call_dt'], parsed['call_date'], parsed['call_time'],
+                                 parsed['ext'], parsed['co'], parsed['number'], parsed['ring'],
+                                 parsed['duration'], parsed['direction'], parsed['status'],
+                                 parsed['did'], parsed['caller'], parsed['internal_to'], text,
+                                 datetime.now().isoformat()), text)
                 logging.info(f"CALL: {text}")
         except socket.timeout:
             # Записи приходят только по завершении разговора, так что тишина
