@@ -104,7 +104,27 @@ async function runJob(db, job, { force = false } = {}) {
   }
 }
 
+// Идёт ли обход прямо сейчас. setInterval не ждёт завершения предыдущего
+// вызова: обход длиннее часа наложился бы сам на себя, и в модули ушли бы два
+// одновременных запроса, а одни и те же документы разобрались бы дважды.
+// Пропустить час безопасно — планировщик спрашивает «сделано ли уже», а не
+// «настал ли момент», и следующий час доделает пропущенное.
+let ticking = false;
+
 async function tick(db) {
+  if (ticking) {
+    console.warn("[планировщик] предыдущий обход ещё идёт — этот час пропускаем");
+    return;
+  }
+  ticking = true;
+  try {
+    return await runTick(db);
+  } finally {
+    ticking = false;
+  }
+}
+
+async function runTick(db) {
   // Отсечка первого запуска. Всё, что истекло до этого дня, письма «срочно
   // выпустить новый» не порождает: про эти события мы физически не могли
   // предупредить, а рассылать их задним числом — верный способ приучить
@@ -145,4 +165,9 @@ function stop() {
   timer = null;
 }
 
-module.exports = { start, stop, tick, runJob, status, JOBS, DEFAULT_HOUR };
+// Только для тестов: узнать, идёт ли обход сейчас.
+function isTicking() {
+  return ticking;
+}
+
+module.exports = { start, stop, tick, runJob, status, isTicking, JOBS, DEFAULT_HOUR };

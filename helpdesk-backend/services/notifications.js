@@ -156,19 +156,46 @@ function emit(db, {
   return eventId;
 }
 
+// Вся отправка почты идёт ОДНОЙ очередью.
+//
+// emit() намеренно не ждёт рассылку: недоступный почтовый сервер не должен
+// подвешивать запрос, ради которого всё затевалось. Но из-за этого ежечасный
+// повтор планировщика успевает выбрать те же самые ожидающие строки, пока
+// первая рассылка ещё идёт, — и адресат получает два одинаковых письма, а
+// исход записывается дважды. Заодно очередь убирает вторую беду: пачка
+// событий больше не открывает десяток одновременных подключений к SMTP.
+//
+// Надёжнее было бы держать состояние «отправляется» в самой таблице — оно
+// пережило бы и перезапуск. Но status ограничен CHECK-ом, а его в SQLite не
+// изменить без пересборки таблицы: цена несоразмерна выигрышу. Процесс у
+// платформы один, и очереди в памяти для этого достаточно.
+let mailQueue = Promise.resolve();
+
+function enqueueMail(job) {
+  const started = mailQueue.then(job, job);
+  // Хвост очереди не должен зависеть от исхода предыдущей задачи: иначе одна
+  // ошибка отменила бы всю дальнейшую рассылку.
+  mailQueue = started.then(() => {}, () => {});
+  return started;
+}
+
 /** Отправить все ожидающие письма события и записать исход каждого. */
 async function deliverPending(db, eventId, subject, text) {
-  const rows = db.prepare(
-    "SELECT id, address FROM notification_deliveries WHERE event_id = ? AND channel = 'email' AND status = 'pending'"
-  ).all(eventId);
+  return enqueueMail(async () => {
+    // Выборку делаем ВНУТРИ очереди, а не до неё: иначе список ожидающих строк
+    // был бы снят до того, как предыдущая рассылка их разберёт.
+    const rows = db.prepare(
+      "SELECT id, address FROM notification_deliveries WHERE event_id = ? AND channel = 'email' AND status = 'pending'"
+    ).all(eventId);
 
-  for (const row of rows) {
-    const result = await mailer.send(db, { to: row.address, subject, text });
-    writeOutcome(db, row.id, result);
-    if (!result.ok) {
-      console.error(`[оповещения] письмо на ${row.address} не ушло: ${result.error}`);
+    for (const row of rows) {
+      const result = await mailer.send(db, { to: row.address, subject, text });
+      writeOutcome(db, row.id, result);
+      if (!result.ok) {
+        console.error(`[оповещения] письмо на ${row.address} не ушло: ${result.error}`);
+      }
     }
-  }
+  });
 }
 
 // Исход одной отправки. Причина записывается ВСЕГДА, в том числе когда письмо
@@ -230,27 +257,31 @@ async function backfillDeliveries(db, kind, { days = 30 } = {}) {
  * и терять из-за этого письмо не нужно.
  */
 async function retryPending(db, { includeFailed = false, limit = 100 } = {}) {
-  const rows = db.prepare(`
-    SELECT d.id, d.address, e.kind, e.payload
-    FROM notification_deliveries d
-    JOIN notification_events e ON e.id = d.event_id
-    WHERE d.channel = 'email' AND (d.status = 'pending' ${includeFailed ? "OR d.status = 'failed'" : ""})
-    ORDER BY d.id LIMIT ?
-  `).all(limit);
+  // Тоже через общую очередь: повтор и текущая рассылка иначе разбирают одни и
+  // те же строки, и адресат получает письмо дважды.
+  return enqueueMail(async () => {
+    const rows = db.prepare(`
+      SELECT d.id, d.address, e.kind, e.payload
+      FROM notification_deliveries d
+      JOIN notification_events e ON e.id = d.event_id
+      WHERE d.channel = 'email' AND (d.status = 'pending' ${includeFailed ? "OR d.status = 'failed'" : ""})
+      ORDER BY d.id LIMIT ?
+    `).all(limit);
 
-  for (const row of rows) {
-    const s = settingsFor(db, row.kind);
-    if (!s) continue;
-    let payload = {};
-    try { payload = JSON.parse(row.payload || "{}"); } catch { /* повреждённый payload не повод падать */ }
-    const result = await mailer.send(db, {
-      to: row.address,
-      subject: render(s.subjectTpl, payload),
-      text: render(s.bodyTpl, payload),
-    });
-    writeOutcome(db, row.id, result);
-  }
-  return rows.length;
+    for (const row of rows) {
+      const s = settingsFor(db, row.kind);
+      if (!s) continue;
+      let payload = {};
+      try { payload = JSON.parse(row.payload || "{}"); } catch { /* повреждённый payload не повод падать */ }
+      const result = await mailer.send(db, {
+        to: row.address,
+        subject: render(s.subjectTpl, payload),
+        text: render(s.bodyTpl, payload),
+      });
+      writeOutcome(db, row.id, result);
+    }
+    return rows.length;
+  });
 }
 
 module.exports = { emit, settingsFor, resolveEmails, render, retryPending, backfillDeliveries };
