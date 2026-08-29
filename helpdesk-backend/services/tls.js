@@ -323,13 +323,27 @@ function watchSharedStore(server, source, dir = SHARED_CERT_DIR) {
 
   let timer = null;
   try {
-    fs.watch(dir, (event, filename) => {
+    const watcher = fs.watch(dir, (event, filename) => {
       if (filename && !/^server\.(pfx|pass)$/.test(String(filename))) return;
       // Панель пишет .pfx и .pass по очереди, да и запись не атомарна — ждём,
       // пока файлы улягутся, иначе прочитаем половину.
       clearTimeout(timer);
       timer = setTimeout(() => { reloadCertStore().catch(() => { /* уже залогировано */ }); }, 1500);
-    }).unref();
+    });
+    // Обработчик 'error' обязателен. try/catch выше ловит только неудачу
+    // САМОГО вызова fs.watch; ошибка, пришедшая позже (каталог удалили,
+    // хранилище переехало, сорвался сетевой путь), приходит событием — а
+    // необработанное 'error' у EventEmitter роняет процесс. То есть сбой
+    // слежения за сертификатом уносил всю платформу, и особенно вероятно это
+    // на Windows, где fs.watch куда придирчивее.
+    watcher.on("error", (err) => {
+      console.warn(
+        `Слежение за хранилищем сертификатов прекращено: ${err.message}. ` +
+        "Новый сертификат подхватится при перезапуске службы."
+      );
+      try { watcher.close(); } catch { /* уже закрыт */ }
+    });
+    watcher.unref();
   } catch (err) {
     console.warn(`Не удалось следить за хранилищем сертификатов: ${err.message}`);
   }
