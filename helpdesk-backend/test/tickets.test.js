@@ -134,3 +134,34 @@ test("некорректный идентификатор — 400, а не 500",
       `для "${плохой}" ожидался 400/404, получен ${r.status}`);
   }
 });
+
+test("номер заявки не переиспользуется после удаления строки из базы", async (t) => {
+  const { db, app, заявитель, ticketId } = await stand(t);
+
+  const первый = db.prepare("SELECT display_id FROM tickets WHERE id = ?").get(ticketId);
+  assert.strictEqual(первый.display_id, "ИТ-0001");
+
+  const второй = await заявитель.post("/api/tickets", {
+    title: "Вторая заявка", description: "проверка нумерации", room: "212", priority: "low",
+  });
+  assert.strictEqual(второй.status, 201, второй.text);
+  assert.strictEqual(
+    db.prepare("SELECT display_id FROM tickets WHERE id = ?").get(второй.json.id).display_id,
+    "ИТ-0002"
+  );
+
+  // Чистка тестовых заявок прямо в базе — обычное дело у администратора.
+  db.prepare("DELETE FROM tickets WHERE id = ?").run(ticketId);
+
+  const третий = await заявитель.post("/api/tickets", {
+    title: "Третья заявка", description: "после удаления первой", room: "212", priority: "low",
+  });
+  assert.strictEqual(третий.status, 201,
+    `создание упало после удаления заявки — счётчик откатился: ${третий.text}`);
+  assert.strictEqual(
+    db.prepare("SELECT display_id FROM tickets WHERE id = ?").get(третий.json.id).display_id,
+    "ИТ-0003",
+    "номер должен продолжаться от наибольшего, а не от количества"
+  );
+  assert.ok(app);
+});

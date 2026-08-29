@@ -583,12 +583,22 @@ function getTicketDetail(db, id, viewer) {
 
 // Номер зависит от отдела: ИТ-0001, ХОЗ-0001, ЕГРПО-0001 — свой счётчик
 // на каждый отдел, а не общий сквозной.
+//
+// Считаем от НАИБОЛЬШЕГО уже выданного номера, а не от количества заявок.
+// Через COUNT(*) счётчик откатывается назад при первом же удалении строки из
+// tickets: следующая заявка получает номер, который уже занят, и вставка
+// падает на UNIQUE display_id. Заявки перестали бы создаваться совсем — до тех
+// пор, пока счётчик не догонит удалённое. Маршрута удаления сейчас нет, но
+// чистка тестовых заявок прямо в базе — обычное дело, и цена ошибки тут
+// несоразмерна цене правки.
+//
+// substr в SQLite считает СИМВОЛЫ, а не байты, поэтому кириллический префикс
+// длиной в буквах даёт верное смещение: «ИТ-0007» -> позиция 4.
 function nextDisplayId(db, deptName) {
   const prefix = DEPT_PREFIX[deptName] || "ЗАЯВ";
   const row = db.prepare(`
-    SELECT COUNT(*) AS n FROM tickets t
-    JOIN categories c ON c.id = t.category_id
-    WHERE c.name = ?
-  `).get(deptName);
-  return `${prefix}-${String(row.n + 1).padStart(4, "0")}`;
+    SELECT MAX(CAST(substr(display_id, ?) AS INTEGER)) AS n
+    FROM tickets WHERE display_id LIKE ?
+  `).get(prefix.length + 2, `${prefix}-%`);
+  return `${prefix}-${String((row.n || 0) + 1).padStart(4, "0")}`;
 }
