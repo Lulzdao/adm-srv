@@ -292,7 +292,7 @@ module.exports = function ticketRoutes(db) {
       inappUserIds: deptUserIds(db, deptRole, user.id),
     });
 
-    res.status(201).json(getTicketDetail(db, ticketId));
+    res.status(201).json(getTicketDetail(db, ticketId, user));
   });
 
   // GET /api/tickets/:id
@@ -300,7 +300,7 @@ module.exports = function ticketRoutes(db) {
     const id = parseTicketId(req.params.id);
     if (id === null) return res.status(400).json({ error: "Некорректный идентификатор заявки" });
 
-    const ticket = getTicketDetail(db, id);
+    const ticket = getTicketDetail(db, id, req.session.user);
     if (!ticket) return res.status(404).json({ error: "Заявка не найдена" });
     if (!canAccessTicket(req.session.user, ticket)) {
       return res.status(403).json({ error: "Недостаточно прав для просмотра этой заявки" });
@@ -407,7 +407,7 @@ module.exports = function ticketRoutes(db) {
         .run(priority, ticket.id);
     }
 
-    res.json(getTicketDetail(db, ticket.id));
+    res.json(getTicketDetail(db, ticket.id, user));
   });
 
   // POST /api/tickets/:id/comments  { text, is_internal }
@@ -432,7 +432,11 @@ module.exports = function ticketRoutes(db) {
       return res.status(403).json({ error: "Недостаточно прав на комментирование этой заявки" });
     }
 
-    const internal = is_internal && user.role !== "user" ? 1 : 0;
+    // Право пометить заметку внутренней — ровно у того, кто её потом увидит
+    // (см. getTicketDetail). Раньше здесь стояло role !== "user", и сотрудник
+    // хозотдела, заведя заявку в ИТ, мог создать в ней пометку, невидимую ему
+    // самому: писать её он был вправе, а читать — уже нет.
+    const internal = is_internal && canManageTicket(user, ticket) ? 1 : 0;
 
     const info = db.prepare("INSERT INTO comments (ticket_id, user_id, text, is_internal) VALUES (?, ?, ?, ?)")
       .run(ticket.id, user.id, text.trim(), internal);
@@ -536,7 +540,14 @@ module.exports = function ticketRoutes(db) {
   return router;
 };
 
-function getTicketDetail(db, id) {
+// Внутренние заметки — переписка исполнителей между собой. Видит их тот, кто
+// заявкой УПРАВЛЯЕТ (ИТ и исполнители того отдела), а не всякий, кто вправе её
+// открыть: у заявителя есть право читать свою заявку, но не служебные пометки о
+// ней. Фильтра здесь не было вовсе — карточка отдавала все комментарии подряд,
+// и фронтенд честно рисовал заявителю чужую заметку с плашкой
+// «ВНУТРЕННЯЯ ЗАМЕТКА». Отсюда и параметр viewer: без него функция не может
+// решить, что показывать, а звать её без зрителя больше негде.
+function getTicketDetail(db, id, viewer) {
   const ticket = db.prepare(`
     SELECT t.*, c.name AS category, creator.full_name AS created_by_name, assignee.full_name AS assigned_to_name
     FROM tickets t
@@ -547,11 +558,15 @@ function getTicketDetail(db, id) {
   `).get(id);
   if (!ticket) return null;
 
+  // Отсев делает БД, а не вызывающий: забыть фильтр на одном из трёх вызовов
+  // куда легче, чем не передать зрителя — а без него заметки не покажутся вовсе.
+  const seesInternal = viewer && canManageTicket(viewer, ticket) ? 1 : 0;
   ticket.comments = db.prepare(`
     SELECT co.id, co.text, co.is_internal, co.created_at, u.full_name AS author
     FROM comments co JOIN users u ON u.id = co.user_id
-    WHERE co.ticket_id = ? ORDER BY co.created_at ASC
-  `).all(id);
+    WHERE co.ticket_id = ? AND (? = 1 OR co.is_internal = 0)
+    ORDER BY co.created_at ASC
+  `).all(id, seesInternal);
 
   ticket.attachments = db.prepare(`
     SELECT id, filename, filesize, mime_type, uploaded_at FROM attachments WHERE ticket_id = ?

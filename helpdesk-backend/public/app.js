@@ -233,10 +233,21 @@ async function api(path, opts = {}) {
 function initials(name) {
   return (name || "").split(" ").map(w => w[0]).slice(0, 2).join("").toUpperCase();
 }
+// Экранируем и КАВЫЧКИ тоже. Прежняя реализация шла через textContent +
+// innerHTML, а сериализатор HTML в текстовом узле кавычки не трогает — они там
+// законны. Значение же почти всегда подставляется внутрь атрибута
+// (`value="${esc(...)}"`, `download="${esc(...)}"`), и любая кавычка разрывала
+// атрибут. Имя вложения попадает в базу как есть, поэтому файл, названный
+// `отчёт" onmouseover="…`, выполнял свой код у каждого, кто открыл заявку.
+// Заодно исчезает создание DOM-узла на каждый вызов — а зовут её сотни раз
+// на одну отрисовку списка.
 function esc(s) {
-  const d = document.createElement("div");
-  d.textContent = s == null ? "" : String(s);
-  return d.innerHTML;
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 function fmtDate(iso) {
   if (!iso) return "—";
