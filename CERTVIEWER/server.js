@@ -372,6 +372,24 @@ app.get('/logout', (req, res) => {
   res.redirect('login');
 });
 
+// Охрана защищённых страниц. Перечислять адреса в маршрутах оказалось
+// недостаточно: Express сопоставляет маршрут с НЕраскодированным путём, а
+// express.static свой путь раскодирует. Из-за этого /%69ndex.html мимо
+// маршрута /index.html проваливался в статику, и каркас страницы отдавался без
+// входа (сам реестр при этом не утекал — /api/* так не обойти, там выходит
+// 404). Проверяем раскодированный путь ОДИН раз и до статики, чтобы список
+// адресов не приходилось держать в согласии с двумя разными способами
+// сопоставления.
+const PROTECTED_PAGES = new Set(['/', '/index.html', '/mchd', '/mchd.html']);
+
+app.use((req, res, next) => {
+  let decoded;
+  try { decoded = decodeURIComponent(req.path); }
+  catch { return res.status(400).send('Некорректный адрес'); }
+  if (!PROTECTED_PAGES.has(decoded)) return next();
+  return requireAuthPage(req, res, next);
+});
+
 // Защищённая страница. Оба адреса — и корень, и прямой /index.html —
 // объявлены ДО express.static: опция index:false отключает index.html только
 // как индекс каталога, а по прямому адресу статика отдавала его как обычный

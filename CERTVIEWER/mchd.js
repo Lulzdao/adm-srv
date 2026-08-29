@@ -34,6 +34,24 @@ const zlib = require('zlib');
 //  проход по ним разваливается.
 // ---------------------------------------------------------------------------
 
+// Пределы распаковки.
+//
+// Однородные данные ZIP жмёт примерно 1000:1, а записи центрального каталога
+// могут ВСЕ указывать на один и тот же локальный файл — тогда усиление ещё и
+// умножается на их число. Измерено на прежнем коде: архив в 199 КБ
+// разворачивался в 200 МБ за 1,8 с, а маршрут загрузки принимает двадцать
+// файлов по 5 МБ. Распаковка синхронная, поэтому такой архив не просто съедает
+// память, а держит единственный поток модуля до самого OOM: реестры
+// сертификатов и МЧД ложатся до перезапуска службы.
+//
+// Настоящая выгрузка МЧД из ЕИС — это несколько десятков килобайт XML и
+// подписей. Пределы ниже с запасом на два порядка и ни одному законному
+// архиву не мешают.
+const MAX_ENTRIES = 64;                    // файлов в архиве
+const MAX_ENTRY_BYTES = 8 * 1024 * 1024;   // распакованный размер одного файла
+const MAX_TOTAL_BYTES = 32 * 1024 * 1024;  // распакованный размер всего архива
+const TOO_BIG = 'Архив распаковывается в слишком большой объём — читать его отказываемся';
+
 const EOCD_SIG = 0x06054b50;   // конец центрального каталога
 const CEN_SIG = 0x02014b50;    // запись центрального каталога
 const LOC_SIG = 0x04034b50;    // локальный заголовок файла
@@ -54,12 +72,18 @@ function readZip(buf) {
   const count = buf.readUInt16LE(eocd + 10);
   let offset = buf.readUInt32LE(eocd + 16);
   const files = [];
+  let totalBytes = 0;
+
+  if (count > MAX_ENTRIES) throw new Error(TOO_BIG);
 
   for (let i = 0; i < count; i++) {
     if (offset + 46 > buf.length || buf.readUInt32LE(offset) !== CEN_SIG) break;
     const flags = buf.readUInt16LE(offset + 8);
     const method = buf.readUInt16LE(offset + 10);
     const compressedSize = buf.readUInt32LE(offset + 20);
+    // Заявленный размер после распаковки читаем ДО inflate: честную бомбу видно
+    // по одному заголовку, не потратив на неё ни памяти, ни времени.
+    const declaredSize = buf.readUInt32LE(offset + 24);
     const nameLen = buf.readUInt16LE(offset + 28);
     const extraLen = buf.readUInt16LE(offset + 30);
     const commentLen = buf.readUInt16LE(offset + 32);
@@ -76,10 +100,30 @@ function readZip(buf) {
     const dataStart = localOffset + 30 + locNameLen + locExtraLen;
     const raw = buf.subarray(dataStart, dataStart + compressedSize);
 
+    if (declaredSize > MAX_ENTRY_BYTES) throw new Error(TOO_BIG);
+
     let data;
     if (method === 0) data = Buffer.from(raw);            // без сжатия
-    else if (method === 8) data = zlib.inflateRawSync(raw); // deflate
+    else if (method === 8) {
+      // maxOutputLength — вторая линия: заголовку верить нельзя, он может
+      // объявить один килобайт, а развернуться в гигабайт. zlib в этом случае
+      // бросает ERR_BUFFER_TOO_LARGE, и сообщение о ней читать человеку
+      // бессмысленно — подменяем на внятное.
+      try {
+        data = zlib.inflateRawSync(raw, { maxOutputLength: MAX_ENTRY_BYTES });
+      } catch (err) {
+        if (err.code === 'ERR_BUFFER_TOO_LARGE') throw new Error(TOO_BIG);
+        throw err;
+      }
+    }
     else continue;                                         // прочих в выгрузках ЕИС не бывает
+
+    // Общий предел считаем отдельно: пределом на один файл его не заменить —
+    // записей каталога может быть много, и все они вправе указывать на один и
+    // тот же локальный заголовок.
+    totalBytes += data.length;
+    if (totalBytes > MAX_TOTAL_BYTES) throw new Error(TOO_BIG);
+
     files.push({ name, data, encrypted: (flags & 0x1) !== 0 });
   }
   if (!files.length) throw new Error('В архиве нет файлов');
