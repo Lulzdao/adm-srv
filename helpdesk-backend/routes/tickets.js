@@ -130,6 +130,13 @@ module.exports = function ticketRoutes(db) {
   router.use(requireAuth);
 
   const upload = multer({
+    // Имя файла в multipart приходит байтами UTF-8, а busboy по умолчанию
+    // читает их как latin1 — и «записка.txt» оседала в базе как
+    // «Ð·Ð°Ð¿Ð¸Ñ\x81ÐºÐ°.txt». В организации, где по-русски названо всё,
+    // это означало искажённое имя у каждого вложения — и в карточке, и при
+    // скачивании. Одна строка вместо ручного перекодирования Buffer из latin1:
+    // так правка не сломается, если multer однажды сменит умолчание.
+    defParamCharset: "utf8",
     storage: multer.diskStorage({
       destination: (req, file, cb) => {
         // req.ticket проставлен в authorizeAttachment ниже — там же :id уже

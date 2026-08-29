@@ -165,3 +165,59 @@ test("номер заявки не переиспользуется после �
   );
   assert.ok(app);
 });
+
+test("отвергнутое вложение не отменяет уже созданную заявку", async (t) => {
+  const { db, app, заявитель, ticketId } = await stand(t);
+
+  // Тип не из белого списка — multer отвергнет его на входе.
+  const форма = new FormData();
+  форма.append("file", new Blob(["MZ выдуманное содержимое"], { type: "application/x-msdownload" }), "вирус.exe");
+  const r = await fetch(`${app.url}/api/tickets/${ticketId}/attachments`, {
+    method: "POST", headers: { Cookie: заявитель.cookie }, body: форма,
+  });
+
+  assert.strictEqual(r.status, 400, "недопустимый тип должен отвергаться с 400, а не 500");
+  const карточка = await заявитель.get(`/api/tickets/${ticketId}`);
+  assert.strictEqual(карточка.status, 200, "заявка обязана остаться на месте");
+  assert.strictEqual(карточка.json.ticket.attachments.length, 0);
+  assert.strictEqual(db.prepare("SELECT COUNT(*) c FROM tickets").get().c, 1,
+    "второй заявки появиться не должно");
+});
+
+test("допустимое вложение прикрепляется и видно в карточке", async (t) => {
+  const { app, заявитель, ticketId } = await stand(t);
+
+  const форма = new FormData();
+  форма.append("file", new Blob(["выдуманный текст"], { type: "text/plain" }), "записка.txt");
+  const r = await fetch(`${app.url}/api/tickets/${ticketId}/attachments`, {
+    method: "POST", headers: { Cookie: заявитель.cookie }, body: форма,
+  });
+  assert.strictEqual(r.status, 201, await r.text());
+
+  const карточка = await заявитель.get(`/api/tickets/${ticketId}`);
+  assert.strictEqual(карточка.json.ticket.attachments.length, 1);
+  assert.strictEqual(карточка.json.ticket.attachments[0].filename, "записка.txt");
+});
+
+test("имя вложения сохраняется как есть — экранирование лежит на фронтенде", async (t) => {
+  const { app, заявитель, ticketId } = await stand(t);
+
+  // Имя с кавычкой: раньше оно разрывало атрибут download в разметке.
+  const враждебное = 'отчёт" onmouseover="1" x=".txt';
+  const форма = new FormData();
+  форма.append("file", new Blob(["выдуманный текст"], { type: "text/plain" }), враждебное);
+  const r = await fetch(`${app.url}/api/tickets/${ticketId}/attachments`, {
+    method: "POST", headers: { Cookie: заявитель.cookie }, body: форма,
+  });
+  assert.strictEqual(r.status, 201, await r.text());
+
+  const карточка = await заявитель.get(`/api/tickets/${ticketId}`);
+  const имя = карточка.json.ticket.attachments[0].filename;
+  // Кавычку и переводы строк отправитель экранирует сам, ещё в заголовке
+  // Content-Disposition (%22) — так делают и браузеры, и fetch. Поэтому через
+  // обычную форму кавычка до базы не доходит. Но сервер имя НЕ чистит, и
+  // клиент, который отправит запрос не через форму, положит в базу что угодно:
+  // экранирование при выводе остаётся обязанностью фронтенда (test/frontend.test.js).
+  assert.ok(имя.includes("%22"), `ожидалось экранированное имя, получено: ${имя}`);
+  assert.ok(имя.startsWith("отчёт"), `кириллица должна доехать целой, получено: ${имя}`);
+});

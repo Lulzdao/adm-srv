@@ -324,7 +324,15 @@ function requireAuthApi(req, res, next) {
 
 // ---------- Express ----------
 const app = express();
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
+// defParamCharset: имя файла в multipart приходит байтами UTF-8, а busboy по
+// умолчанию читает их как latin1. Без этого «Доверенность_Иванов.zip»
+// превращается в «ÐÐ¾Ð²ÐµÑ€ÐµÐ½Ð½Ð¾ÑÑ‚ÑŒ...» — и в сообщениях об ошибках
+// разбора, и там, где имя исходного файла сохраняется.
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  defParamCharset: 'utf8',
+});
 
 app.disable('x-powered-by');
 app.use(express.json({ limit: '32kb' }));

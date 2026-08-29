@@ -236,9 +236,17 @@ function initials(name) {
 // Экранируем и КАВЫЧКИ тоже. Прежняя реализация шла через textContent +
 // innerHTML, а сериализатор HTML в текстовом узле кавычки не трогает — они там
 // законны. Значение же почти всегда подставляется внутрь атрибута
-// (`value="${esc(...)}"`, `download="${esc(...)}"`), и любая кавычка разрывала
-// атрибут. Имя вложения попадает в базу как есть, поэтому файл, названный
-// `отчёт" onmouseover="…`, выполнял свой код у каждого, кто открыл заявку.
+// (`value="${esc(...)}"`, `download="${esc(...)}"`, `data-kind="${esc(...)}"`),
+// и любая кавычка разрывала атрибут: дальше в разметку попадал уже чужой
+// обработчик события. Проверено в настоящем Chromium.
+//
+// Досюда доезжает многое, что задаёт человек: шаблоны писем и адреса SMTP из
+// настроек, имена файлов сертификатов, имя вложения. Имя вложения через
+// обычную форму приходит уже с экранированной кавычкой (%22 — так делают и
+// браузеры, и fetch), но сервер имя не чистит, и клиент, отправляющий запрос
+// не через форму, положит в базу что угодно. Полагаться на чужое
+// экранирование там, где своё стоит пять строк, незачем.
+//
 // Заодно исчезает создание DOM-узла на каждый вызов — а зовут её сотни раз
 // на одну отрисовку списка.
 function esc(s) {
@@ -885,8 +893,15 @@ function renderCreate(main) {
     const title = titleEl.value.trim();
     if (!title) return;
     submitBtn.disabled = true; submitBtn.textContent = "Отправка…";
+
+    // Создание заявки и прикрепление файлов разделены намеренно. Раньше оба
+    // шага стояли в одном try: если заявка создавалась, а файл не проходил
+    // (слишком большой, неподходящий тип, оборвалась сеть), человек видел
+    // только сообщение об ошибке и нажимал «Отправить» ещё раз — так
+    // появлялась вторая заявка, а первая оставалась висеть без вложения.
+    let ticket;
     try {
-      const ticket = await api("/tickets", { method: "POST", body: {
+      ticket = await api("/tickets", { method: "POST", body: {
         title,
         category: document.getElementById("cCategory").value,
         priority: document.getElementById("cPriority").value,
@@ -894,17 +909,34 @@ function renderCreate(main) {
         extension: document.getElementById("cExt").value || null,
         description: document.getElementById("cDesc").value || null,
       }});
-      for (const f of files) {
+    } catch (e) {
+      // Заявки нет — повторить целиком безопасно.
+      toast(e.message, true);
+      submitBtn.disabled = false; submitBtn.textContent = "Отправить заявку";
+      return;
+    }
+
+    // Дальше заявка УЖЕ существует, и отказ вложения её не отменяет.
+    const notAttached = [];
+    for (const f of files) {
+      try {
         const fd = new FormData();
         fd.append("file", f);
         await api(`/tickets/${ticket.id}/attachments`, { method: "POST", body: fd });
+      } catch (e) {
+        notAttached.push(`${f.name} (${e.message})`);
       }
-      toast(`Заявка ${ticket.display_id} создана`);
-      setView("inbox");
-    } catch (e) {
-      toast(e.message, true);
-      submitBtn.disabled = false; submitBtn.textContent = "Отправить заявку";
     }
+
+    if (notAttached.length) {
+      toast(`Заявка ${ticket.display_id} создана, но не прикрепились файлы: ${notAttached.join(", ")}. `
+        + "Добавьте их в карточке заявки.", true);
+    } else {
+      toast(`Заявка ${ticket.display_id} создана`);
+    }
+    // Открываем саму заявку, а не список: человек видит, что она есть, и может
+    // тут же дослать то, что не прикрепилось.
+    setView("detail", ticket);
   };
 }
 
