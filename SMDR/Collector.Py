@@ -4,6 +4,7 @@ import sqlite3
 import time
 import re
 import logging
+from collections import deque
 from datetime import datetime
 from pathlib import Path
 
@@ -212,6 +213,57 @@ INSERT_SQL = '''INSERT INTO calls
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'''
 
 
+# Сколько последних записей помнить, чтобы отсеять повторную выдачу.
+# Буфер АТС невелик, двух тысяч строк хватает с большим запасом.
+RECENT_MEMORY = 2000
+
+
+class Недавние:
+    """Память о последних записях — против повторной выдачи буфера АТС.
+
+    Panasonic отдаёт содержимое своего буфера КАЖДОМУ новому подключению. А
+    подключаемся мы заново при каждом получасе тишины (SMDR_IDLE_RECONNECT_MIN)
+    и после любого обрыва — значит хвост буфера приезжает снова и снова, и один
+    и тот же звонок ложится в базу столько раз, сколько было переподключений.
+    Воспроизведено: три подключения подряд — три одинаковые строки.
+
+    Сравниваем по raw_line: в ней дата, время, номер, добавочный и обе
+    длительности разом. Два РАЗНЫХ звонка совпадут по этой строке только если
+    в одну минуту с одного добавочного на один номер прошли два разговора
+    одинаковой длительности до секунды — на практике этого не бывает, а цена
+    ошибки несопоставима: потерять одну запись против сотен копий.
+
+    Память заполняется из базы при старте, иначе перезапуск службы снова
+    впустил бы весь буфер.
+    """
+
+    def __init__(self, conn, размер=RECENT_MEMORY):
+        self.размер = размер
+        self.очередь = deque()
+        self.множество = set()
+        try:
+            строки = conn.execute(
+                "SELECT raw_line FROM calls ORDER BY id DESC LIMIT ?", (размер,)
+            ).fetchall()
+        except sqlite3.Error as e:
+            logging.warning(f"Не удалось прочитать недавние записи ({e}) — защита от повторов начнёт с нуля")
+            строки = []
+        for (строка,) in reversed(строки):
+            if строка:
+                self.добавить(строка)
+
+    def добавить(self, строка):
+        if строка in self.множество:
+            return
+        self.очередь.append(строка)
+        self.множество.add(строка)
+        while len(self.очередь) > self.размер:
+            self.множество.discard(self.очередь.popleft())
+
+    def __contains__(self, строка):
+        return строка in self.множество
+
+
 def save_call(conn, values, text):
     """Записать строку SMDR. Ошибка базы НЕ должна обрывать связь с АТС.
 
@@ -310,7 +362,11 @@ def enable_keepalive(sock):
         logging.warning(f"Не удалось настроить keepalive: {e}")
 
 
-def connect_and_listen(conn):
+def connect_and_listen(conn, недавние=None):
+    # Память переживает переподключения: она для того и нужна, что буфер АТС
+    # приезжает заново именно при новом подключении.
+    if недавние is None:
+        недавние = Недавние(conn)
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(30)
     enable_keepalive(sock)
@@ -413,20 +469,30 @@ def connect_and_listen(conn):
 
             logging.info(f"RAW: {text}")
 
+            # Повторная выдача буфера АТС: та же строка уже в базе — не кладём
+            # её второй раз. Именно так один звонок размножался на десятки.
+            if text in недавние:
+                logging.info("ПОВТОР — уже есть в базе, пропускаем")
+                continue
+
             parsed = parse_line(text)
             if parsed is None:
                 logging.warning(f"НЕ РАСПОЗНАНО: {text}")
-                save_call(conn, (None, None, None, None, None, None, None, None,
-                                 'unknown', None, None, None, None, text,
-                                 datetime.now().isoformat()), text)
+                if save_call(conn, (None, None, None, None, None, None, None, None,
+                                    'unknown', None, None, None, None, text,
+                                    datetime.now().isoformat()), text):
+                    недавние.добавить(text)
                 continue
 
-            save_call(conn, (parsed['call_dt'], parsed['call_date'], parsed['call_time'],
-                             parsed['ext'], parsed['co'], parsed['number'], parsed['ring'],
-                             parsed['duration'], parsed['direction'], parsed['status'],
-                             parsed['did'], parsed['caller'], parsed['internal_to'], text,
-                             datetime.now().isoformat()), text)
-            logging.info(f"CALL: {text}")
+            # Отмечаем только то, что ДЕЙСТВИТЕЛЬНО легло в базу: если запись не
+            # прошла (база занята), она должна приехать снова и записаться.
+            if save_call(conn, (parsed['call_dt'], parsed['call_date'], parsed['call_time'],
+                                parsed['ext'], parsed['co'], parsed['number'], parsed['ring'],
+                                parsed['duration'], parsed['direction'], parsed['status'],
+                                parsed['did'], parsed['caller'], parsed['internal_to'], text,
+                                datetime.now().isoformat()), text):
+                недавние.добавить(text)
+                logging.info(f"CALL: {text}")
         return buf
 
     while True:
@@ -460,9 +526,10 @@ def connect_and_listen(conn):
 
 def main():
     conn = init_db()
+    недавние = Недавние(conn)
     while True:
         try:
-            connect_and_listen(conn)
+            connect_and_listen(conn, недавние)
         except Exception as e:
             logging.error(f"Обрыв связи: {e}. Переподключение через 5 сек")
             time.sleep(5)
