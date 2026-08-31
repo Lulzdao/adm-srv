@@ -2,6 +2,7 @@
 
 const http = require("node:http");
 const bcrypt = require("bcrypt");
+const { packRoles } = require("../../services/userStore");
 
 // ============================================================================
 //  Платформа целиком, поднятая в тесте
@@ -45,12 +46,15 @@ const TEST_PASSWORD = "пароль-для-теста-1";
  * выдаётся только группой из .env и из панели недостижим. Подкладывать сессию в
  * обход входа нельзя — тогда тест перестанет замечать поломки самого входа.
  */
-async function makeLocalUser(db, { login, name, role = "user", email = null, isAdmin = false }) {
+async function makeLocalUser(db, { login, name, role = "user", roles = null, email = null, isAdmin = false }) {
   if (!sharedHash) sharedHash = await bcrypt.hash(TEST_PASSWORD, 10);
+  // Отделов может быть несколько. Если список не задан явно — выводим его из
+  // role, чтобы обычные тесты не приходилось переписывать.
+  const список = roles || (role !== "user" ? [role] : []);
   const info = db.prepare(`
-    INSERT INTO users (ad_login, full_name, role, is_admin, email, auth_type, local_password_hash)
-    VALUES (?, ?, ?, ?, ?, 'local', ?)
-  `).run(login, name, role, isAdmin ? 1 : 0, email, sharedHash);
+    INSERT INTO users (ad_login, full_name, role, roles, is_admin, email, auth_type, local_password_hash)
+    VALUES (?, ?, ?, ?, ?, ?, 'local', ?)
+  `).run(login, name, список[0] || role, packRoles(список), isAdmin ? 1 : 0, email, sharedHash);
   return Number(info.lastInsertRowid);
 }
 

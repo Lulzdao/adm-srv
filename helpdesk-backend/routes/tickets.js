@@ -3,6 +3,7 @@ const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
 const config = require("../config/config");
+const { roleLike } = require("../services/userStore");
 const { requireAuth } = require("../middleware/auth");
 const { emit } = require("../services/notifications");
 const { ticketNewKind } = require("../config/notifications");
@@ -100,18 +101,29 @@ const ticketSubject = (payload) => `${payload["номер"]} — ${payload["те
 
 // Кому зажечь бейдж у «Входящих заявок». Это персональная отметка, поэтому
 // исполнителей ищем по роли отдела: очередь разбирает любой из них.
+// Сотрудники отдела — по СПИСКУ отделов, а не по единственной роли: человек
+// может состоять и в ИТ, и в ХОЗ, и уведомления о новых заявках должны
+// приходить ему по обоим.
 const deptUserIds = (db, role, exceptId) =>
-  db.prepare("SELECT id FROM users WHERE role = ? AND id != ?").all(role, exceptId || 0).map((u) => u.id);
+  db.prepare("SELECT id FROM users WHERE roles LIKE ? AND id != ?")
+    .all(roleLike(role), exceptId || 0).map((u) => u.id);
+
+/** Названия отделов, в которых человек исполнитель. Пусто — он не исполнитель. */
+function userDepts(user) {
+  const roles = user.roles && user.roles.length ? user.roles : (user.role ? [user.role] : []);
+  return roles.map((r) => ROLE_DEPT[r]).filter(Boolean);
+}
 
 // Единое правило видимости конкретной заявки, используется во всех местах,
 // где нужно решить "может ли этот человек её увидеть/менять":
 // — администратор видит всё (признак is_admin, выдаётся группой из .env);
-// — hoz/egrpo видят очередь своего отдела ПЛЮС собственные заявки в любом
-//   отделе (если сотрудник хоз.отдела сам завёл заявку в ИТ, он её не теряет);
+// — исполнитель видит очереди ВСЕХ отделов, где он состоит, ПЛЮС собственные
+//   заявки в любом отделе (если сотрудник хозотдела сам завёл заявку в ИТ, он
+//   её не теряет);
 // — все остальные — только то, что сами создали или на что назначены.
 function canAccessTicket(user, ticket) {
   if (user.is_admin) return true;
-  if (ROLE_DEPT[user.role] && ticket.category === ROLE_DEPT[user.role]) return true;
+  if (userDepts(user).includes(ticket.category)) return true;
   return ticket.created_by === user.id || ticket.assigned_to === user.id;
 }
 
@@ -122,7 +134,7 @@ function canAccessTicket(user, ticket) {
 // мог сменить статус, приоритет и назначить исполнителем кого угодно.
 function canManageTicket(user, ticket) {
   if (user.is_admin) return true;
-  return Boolean(ROLE_DEPT[user.role]) && ticket.category === ROLE_DEPT[user.role];
+  return userDepts(user).includes(ticket.category);
 }
 
 module.exports = function ticketRoutes(db) {
@@ -220,9 +232,13 @@ module.exports = function ticketRoutes(db) {
       // "Входящие" для администратора — без ограничений, видит все отделы.
       // Исполнитель отдела ИТ сюда не попадает: его отсекает следующая ветка,
       // и он видит очередь своего отдела, как исполнители остальных отделов.
-    } else if (ROLE_DEPT[user.role]) {
-      clauses.push("c.name = @deptName");
-      params.deptName = ROLE_DEPT[user.role];
+    } else if (userDepts(user).length) {
+      // Отделов может быть несколько — во «Входящих» показываем очереди всех,
+      // где человек исполнитель.
+      const depts = userDepts(user);
+      const места = depts.map((_, i) => `@dept${i}`).join(", ");
+      clauses.push(`c.name IN (${места})`);
+      depts.forEach((name, i) => { params[`dept${i}`] = name; });
     } else {
       clauses.push("(t.created_by = @uid OR t.assigned_to = @uid)");
       params.uid = user.id;
@@ -347,9 +363,10 @@ module.exports = function ticketRoutes(db) {
     res.json({ ticket });
   });
 
-  // GET /api/tickets/:id/assignees — кандидаты в исполнители: те, у кого
-  // роль соответствует отделу заявки, плюс всегда it (могут подхватить
-  // любую заявку в порядке эскалации).
+  // GET /api/tickets/:id/assignees — кандидаты в исполнители: те, кто состоит
+  // в отделе заявки, плюс администраторы (могут подхватить любую заявку в
+  // порядке эскалации). Отделов у человека может быть несколько, поэтому
+  // отбор идёт по списку roles, а не по одной role.
   router.get("/:id/assignees", (req, res) => {
     const id = parseTicketId(req.params.id);
     if (id === null) return res.status(400).json({ error: "Некорректный идентификатор заявки" });
@@ -364,8 +381,8 @@ module.exports = function ticketRoutes(db) {
     }
     const deptRole = DEPT_ROLE[ticket.category];
     const rows = db.prepare(
-      "SELECT id, full_name, role FROM users WHERE role = ? OR role = 'it' ORDER BY full_name"
-    ).all(deptRole || "it");
+      "SELECT id, full_name, role FROM users WHERE roles LIKE ? OR is_admin = 1 ORDER BY full_name"
+    ).all(roleLike(deptRole || "it"));
     res.json({ users: rows });
   });
 
@@ -400,8 +417,8 @@ module.exports = function ticketRoutes(db) {
       const assigneeId = parseTicketId(assigned_to);
       const deptRole = DEPT_ROLE[ticket.category];
       assignee = assigneeId === null ? null : db.prepare(
-        "SELECT id FROM users WHERE id = ? AND (role = ? OR role = 'it')"
-      ).get(assigneeId, deptRole || "it");
+        "SELECT id FROM users WHERE id = ? AND (roles LIKE ? OR is_admin = 1)"
+      ).get(assigneeId, roleLike(deptRole || "it"));
       if (!assignee) return res.status(400).json({ error: "Такого исполнителя нельзя назначить на эту заявку" });
     }
 

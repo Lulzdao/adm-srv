@@ -9,6 +9,23 @@ function toBindable(v) {
   return String(v);
 }
 
+// Список отделов хранится строкой ",it,hoz," — с запятыми по краям. Так точное
+// совпадение ищется простым LIKE '%,it,%': без обрамляющих запятых поиск "it"
+// нашёлся бы внутри "audit" и подобных.
+function packRoles(roles) {
+  const clean = [...new Set((roles || []).filter(Boolean))];
+  return clean.length ? `,${clean.join(",")},` : "";
+}
+
+function unpackRoles(packed) {
+  return String(packed || "").split(",").filter(Boolean);
+}
+
+/** Условие SQL «пользователь состоит в этом отделе». Возвращает шаблон для LIKE. */
+function roleLike(role) {
+  return `%,${role},%`;
+}
+
 function upsertFromLdap(db, ldapUser) {
   const login = toBindable(ldapUser.login);
   const fullName = toBindable(ldapUser.fullName);
@@ -20,6 +37,9 @@ function upsertFromLdap(db, ldapUser) {
   // Признак администратора пересчитывается при КАЖДОМ входе: вышел человек из
   // группы в домене — на следующем входе признак снимется сам.
   const isAdmin = ldapUser.isAdmin ? 1 : 0;
+  // Отделов может быть несколько; role хранит первый по порядку — для подписи
+  // и для тех мест, где нужен «основной» отдел.
+  const roles = packRoles(ldapUser.roles);
 
   const existing = db.prepare("SELECT * FROM users WHERE ad_login = ?").get(login);
 
@@ -33,17 +53,17 @@ function upsertFromLdap(db, ldapUser) {
   if (existing) {
     db.prepare(
       `UPDATE users SET full_name = ?, department = ?, email = ?, phone = ?,
-       role = ?, is_admin = ?, last_domain = ?, last_login_at = datetime('now')
+       role = ?, roles = ?, is_admin = ?, last_domain = ?, last_login_at = datetime('now')
        WHERE id = ?`
-    ).run(fullName, department, email, phone, role, isAdmin, domain, existing.id);
+    ).run(fullName, department, email, phone, role, roles, isAdmin, domain, existing.id);
     return db.prepare("SELECT * FROM users WHERE id = ?").get(existing.id);
   }
 
   const info = db.prepare(
-    `INSERT INTO users (ad_login, full_name, department, email, phone, role, is_admin, auth_type, last_domain, last_login_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'ad', ?, datetime('now'))`
-  ).run(login, fullName, department, email, phone, role, isAdmin, domain);
+    `INSERT INTO users (ad_login, full_name, department, email, phone, role, roles, is_admin, auth_type, last_domain, last_login_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ad', ?, datetime('now'))`
+  ).run(login, fullName, department, email, phone, role, roles, isAdmin, domain);
   return db.prepare("SELECT * FROM users WHERE id = ?").get(info.lastInsertRowid);
 }
 
-module.exports = { upsertFromLdap };
+module.exports = { upsertFromLdap, packRoles, unpackRoles, roleLike };

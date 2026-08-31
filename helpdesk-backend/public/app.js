@@ -296,6 +296,16 @@ async function boot() {
   }
 }
 
+// Отделы, в которых человек исполнитель. Их может быть НЕСКОЛЬКО: сотрудник
+// состоит и в группе ИТ, и в группе ХОЗ — значит ведёт очереди обеих. Запасной
+// путь по одной role нужен для сессий, выданных до этой правки: они живут до
+// 30 дней, и до перелогина списка в них нет.
+function myDepts(u) {
+  const byRole = Object.fromEntries(state.departments.filter(d => d.role !== "user").map(d => [d.role, d.name]));
+  const roles = (u.roles && u.roles.length) ? u.roles : (u.role ? [u.role] : []);
+  return roles.map(r => byRole[r]).filter(Boolean);
+}
+
 // ====== Экран логина ======
 async function renderLogin(errorMsg) {
   let detectedMode = null;
@@ -591,14 +601,14 @@ function renderShell() {
   const u = state.user;
   const totalUnread = state.notifications.filter(n => !n.is_read).length;
   const isAdmin = Boolean(u.is_admin);
-  const deptForRole = Object.fromEntries(state.departments.filter(d => d.role !== "user").map(d => [d.role, d.name]));
-  // Исполнитель — тот, у кого роль соответствует отделу. Отдел ИТ теперь тоже
-  // сюда попадает: администратор и исполнитель ИТ — разные вещи, и человек
-  // вполне может быть и тем и другим одновременно.
-  const isExecutor = !!deptForRole[u.role];
-  const roleLabel = u.role === "user"
+  // Исполнитель — тот, у кого есть хотя бы один отдел. Отдел ИТ тоже сюда
+  // попадает: администратор и исполнитель ИТ — разные вещи, и человек вполне
+  // может быть и тем и другим одновременно.
+  const depts = myDepts(u);
+  const isExecutor = depts.length > 0;
+  const roleLabel = !isExecutor
     ? (isAdmin ? "Администратор" : "Сотрудник")
-    : `${deptForRole[u.role] || u.role}${isAdmin ? " · администратор" : ""}`;
+    : `${depts.join(", ")}${isAdmin ? " · администратор" : ""}`;
 
   let navHtml;
   if (isAdmin) {
@@ -725,8 +735,7 @@ async function renderList(main, opts = {}) {
   clearViewPoll();
   const u = state.user;
   const isAdmin = Boolean(u.is_admin);
-  const deptForRole = Object.fromEntries(state.departments.filter(d => d.role !== "user").map(d => [d.role, d.name]));
-  const isExecutor = !!deptForRole[u.role];
+  const isExecutor = myDepts(u).length > 0;
   const isPrivileged = isAdmin || isExecutor; // видит колонки "От кого"/"Кабинет"
   const scope = opts.scope || "inbox";
   // Фильтр по отделу имеет смысл только администратору: исполнителю сервер и
@@ -973,15 +982,15 @@ async function reloadTicket(id) {
 function renderDetail(main, ticket) {
   const u = state.user;
   const isAdmin = Boolean(u.is_admin);
-  const deptForRole = Object.fromEntries(state.departments.filter(d => d.role !== "user").map(d => [d.role, d.name]));
+  const depts = myDepts(u);
   // Право оставить внутреннюю заметку — у любого сотрудника службы, не только
   // у администратора: исполнитель ведёт заявку и пишет по ней служебные пометки.
-  const isPrivileged = isAdmin || !!deptForRole[u.role];
+  const isPrivileged = isAdmin || depts.length > 0;
   // А управлять заявкой (статус, исполнитель, приоритет) вправе администратор
   // и исполнитель ТОГО отдела, куда заявка заведена. Ровно это же правило
   // проверяет сервер в canManageTicket — расхождение здесь означало бы кнопки,
   // которые не работают.
-  const canManage = isAdmin || deptForRole[u.role] === ticket.category;
+  const canManage = isAdmin || depts.includes(ticket.category);
   const p = PRIORITIES.find(x => x.id === ticket.priority) || PRIORITIES[2];
 
   main.innerHTML = `
@@ -1228,7 +1237,7 @@ async function renderAdmin(main) {
         <div style="display:flex;align-items:center;gap:10px;">
           <span style="font-size:13px;font-weight:600;">${esc(a.full_name)}</span>
           <span class="mono" style="font-size:12px;color:var(--ink-soft);">${esc(a.ad_login)}</span>
-          ${показатьРоль ? `<span class="badge" style="color:var(--wire);background:var(--wire-soft);">${esc(ROLE_LABEL[a.role] || a.role)}</span>` : ""}
+          ${показатьРоль ? (a.roles || [a.role]).map(r => `<span class="badge" style="color:var(--wire);background:var(--wire-soft);">${esc(ROLE_LABEL[r] || r)}</span>`).join("") : ""}
           <span class="badge" style="color:var(--ink-soft);background:var(--line-soft);">${a.last_domain === "local" ? "Локальный" : "Домен " + esc(a.last_domain)}</span>
         </div>
         <span style="font-size:11px;color:var(--ink-soft);">вход ${fmtDate(a.last_login_at)}</span>

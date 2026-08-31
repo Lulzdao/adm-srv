@@ -1,6 +1,7 @@
 const express = require("express");
 const { requireAdmin } = require("../middleware/auth");
 const { getSetting, setSetting } = require("../services/settings");
+const { unpackRoles } = require("../services/userStore");
 const config = require("../config/config");
 const departments = require("../config/departments");
 
@@ -62,8 +63,8 @@ module.exports = function adminRoutes(db) {
   // входа, а не редактируемый вручную список.
   router.get("/admins", (req, res) => {
     const rows = db.prepare(`
-      SELECT ad_login, full_name, role, is_admin, last_domain, last_login_at
-      FROM users WHERE role != 'user' OR is_admin = 1
+      SELECT ad_login, full_name, role, roles, is_admin, last_domain, last_login_at
+      FROM users WHERE roles != '' OR is_admin = 1
       ORDER BY is_admin DESC, role, last_login_at DESC
     `).all();
     // Отдаём двумя списками: администратор и исполнитель — разные вещи, и
@@ -71,7 +72,7 @@ module.exports = function adminRoutes(db) {
     // другим — тогда он попадёт в оба списка, и это правда.
     res.json({
       admins: rows.filter((r) => r.is_admin),
-      executors: rows.filter((r) => r.role !== "user"),
+      executors: rows.filter((r) => r.roles).map((r) => ({ ...r, roles: unpackRoles(r.roles) })),
     });
   });
 

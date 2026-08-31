@@ -91,15 +91,21 @@ async function authenticate(domainKey, login, password, db) {
   // администраторы могли разом лишиться прав.
   const isAdmin = inGroup(cfg.adminGroup);
 
-  // Роль — это отдел, в котором человек исполнитель. Порядок в
-  // config/departments.js задаёт приоритет: первое совпадение побеждает.
-  // Группа отдела ИТ теперь значит ровно то, чем выглядит, — исполнители ИТ,
-  // без каких-либо прав администратора.
-  let role = "user";
+  // Отделов у исполнителя может быть НЕСКОЛЬКО. Раньше цикл выходил по первому
+  // совпадению, и сотрудник, состоящий и в группе ИТ, и в группе ХОЗ, видел
+  // очередь только того отдела, что стоит раньше в config/departments.js —
+  // заявки второго до него просто не доходили.
+  //
+  // Группа отдела ИТ значит ровно то, чем выглядит: исполнители ИТ, без
+  // каких-либо прав администратора.
+  const roles = [];
   for (const dept of departments) {
     const groupName = db && getSetting(db, `${dept.role}_group_${domainKey}`);
-    if (inGroup(groupName)) { role = dept.role; break; }
+    if (inGroup(groupName)) roles.push(dept.role);
   }
+  // role — первый по порядку из config/departments.js. Нужен там, где отдел
+  // должен быть один: подпись в интерфейсе, префикс, «основной» отдел.
+  const role = roles[0] || "user";
 
   return {
     login,
@@ -109,6 +115,7 @@ async function authenticate(domainKey, login, password, db) {
     department: singleValue(userEntry.department),
     phone: singleValue(userEntry.telephoneNumber),
     role,
+    roles,
     isAdmin,
   };
 }

@@ -1,7 +1,7 @@
 const express = require("express");
 const bcrypt = require("bcrypt");
 const { authenticate, LdapAuthError } = require("../services/ldapAuth");
-const { upsertFromLdap } = require("../services/userStore");
+const { upsertFromLdap, unpackRoles } = require("../services/userStore");
 const { detectDomain, normalizeIp } = require("../services/network");
 const { resolveTlsOptions } = require("../services/tls");
 const config = require("../config/config");
@@ -175,6 +175,9 @@ function publicUser(user) {
     department: user.department,
     email: user.email,
     role: user.role,
+    // Полный список отделов: их может быть несколько, и права на очередь
+    // считаются именно по нему, а не по одной role.
+    roles: unpackRoles(user.roles),
     // Снимок на момент входа, как и роль: смена членства в группе домена
     // вступит в силу при следующем входе.
     is_admin: Boolean(user.is_admin),

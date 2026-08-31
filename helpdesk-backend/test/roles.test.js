@@ -148,3 +148,93 @@ test("локальная аварийная учётка администрат�
   assert.strictEqual(строка.is_admin, 1,
     "иначе при пустой группе в .env администрировать платформу станет некому");
 });
+
+// ---------------------------------------------------------------------------
+//  Несколько отделов у одного исполнителя
+//
+//  Человек состоит и в группе ИТ, и в группе ХОЗ — значит ведёт очереди обеих.
+//  Раньше цикл в ldapAuth выходил по первому совпадению, и до него доходили
+//  заявки только того отдела, что стоит раньше в config/departments.js.
+// ---------------------------------------------------------------------------
+
+async function двухотдельный(t) {
+  const { db, cleanup } = freshDb();
+  const app = await startApp(db);
+  t.after(async () => { await app.close(); cleanup(); });
+
+  await makeLocalUser(db, { login: "!оба", name: "Универсал Тестовый", roles: ["it", "hoz"] });
+  await makeLocalUser(db, { login: "!толькоит", name: "Только ИТ Тестовый", role: "it" });
+  await makeLocalUser(db, { login: "!сотрудник", name: "Сотрудник Тестовый", role: "user" });
+
+  const сотрудник = await войти(app, "!сотрудник");
+  const ит = await сотрудник.post("/api/tickets", {
+    title: "Не печатает принтер", description: "мигает", room: "212", priority: "medium", category: "ИТ",
+  });
+  const хоз = await сотрудник.post("/api/tickets", {
+    title: "Сломался стул", description: "качается", room: "301", priority: "low", category: "ХОЗ",
+  });
+  const егрпо = await сотрудник.post("/api/tickets", {
+    title: "Вопрос по реестру", description: "уточнение", room: "115", priority: "low", category: "ЕГРПО",
+  });
+  for (const r of [ит, хоз, егрпо]) assert.strictEqual(r.status, 201, r.text);
+  return { db, app, ит: ит.json.id, хоз: хоз.json.id, егрпо: егрпо.json.id };
+}
+
+test("исполнитель двух отделов видит очереди обоих", async (t) => {
+  const { app, ит, хоз, егрпо } = await двухотдельный(t);
+  const оба = await войти(app, "!оба");
+
+  assert.strictEqual((await оба.get(`/api/tickets/${ит}`)).status, 200, "заявка ИТ");
+  assert.strictEqual((await оба.get(`/api/tickets/${хоз}`)).status, 200, "заявка ХОЗ");
+  assert.strictEqual((await оба.get(`/api/tickets/${егрпо}`)).status, 403, "чужой отдел закрыт");
+
+  const список = await оба.get("/api/tickets");
+  assert.strictEqual(список.json.total, 2, "во «Входящих» — очереди обоих отделов, но не третьего");
+});
+
+test("исполнитель одного отдела соседнюю очередь не видит", async (t) => {
+  const { app, ит, хоз } = await двухотдельный(t);
+  const толькоИТ = await войти(app, "!толькоит");
+
+  assert.strictEqual((await толькоИТ.get(`/api/tickets/${ит}`)).status, 200);
+  assert.strictEqual((await толькоИТ.get(`/api/tickets/${хоз}`)).status, 403);
+  assert.strictEqual((await толькоИТ.get("/api/tickets")).json.total, 1);
+});
+
+test("исполнитель двух отделов управляет заявками обоих", async (t) => {
+  const { app, ит, хоз } = await двухотдельный(t);
+  const оба = await войти(app, "!оба");
+
+  for (const [имя, id] of [["ИТ", ит], ["ХОЗ", хоз]]) {
+    const r = await оба.patch(`/api/tickets/${id}`, { status: "progress" });
+    assert.strictEqual(r.status, 200, `заявку ${имя} он обязан вести: ${r.text}`);
+  }
+});
+
+test("его можно назначить исполнителем в обоих отделах", async (t) => {
+  const { db, app, ит, хоз } = await двухотдельный(t);
+  const оба = await войти(app, "!оба");
+  const id = db.prepare("SELECT id FROM users WHERE ad_login = ?").get("!оба").id;
+
+  for (const [имя, ticket] of [["ИТ", ит], ["ХОЗ", хоз]]) {
+    const кандидаты = await оба.get(`/api/tickets/${ticket}/assignees`);
+    assert.ok(кандидаты.json.users.some((u) => u.id === id),
+      `в кандидатах отдела ${имя} его нет`);
+    const r = await оба.patch(`/api/tickets/${ticket}`, { assigned_to: id });
+    assert.strictEqual(r.status, 200, `назначение в отделе ${имя}: ${r.text}`);
+  }
+});
+
+test("оповещения о новых заявках приходят по обоим отделам", async (t) => {
+  const { db, app } = await двухотдельный(t);
+  const id = db.prepare("SELECT id FROM users WHERE ad_login = ?").get("!оба").id;
+
+  const отметки = db.prepare(`
+    SELECT e.kind FROM notification_deliveries d
+    JOIN notification_events e ON e.id = d.event_id
+    WHERE d.channel = 'inapp' AND d.user_id = ?
+  `).all(id).map((r) => r.kind).sort();
+
+  assert.deepStrictEqual(отметки, ["ticket_new:hoz", "ticket_new:it"],
+    "он должен получить отметки и по заявке ИТ, и по заявке ХОЗ");
+});
