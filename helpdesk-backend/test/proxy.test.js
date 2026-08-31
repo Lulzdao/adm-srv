@@ -49,7 +49,7 @@ async function stand(t) {
   const app = await startApp(db);
   t.after(async () => { await app.close(); await mod.close(); cleanup(); delete process.env.MODULE_SMDR_URL; });
 
-  await makeLocalUser(db, { login: "!ит", name: "Админ Тестовый", role: "it" });
+  await makeLocalUser(db, { login: "!ит", name: "Админ Тестовый", role: "it", isAdmin: true });
   await makeLocalUser(db, { login: "!сотрудник", name: "Сотрудник Тестовый", role: "user" });
   return { app, mod };
 }

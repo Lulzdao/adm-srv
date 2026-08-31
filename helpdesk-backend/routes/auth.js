@@ -175,6 +175,9 @@ function publicUser(user) {
     department: user.department,
     email: user.email,
     role: user.role,
+    // Снимок на момент входа, как и роль: смена членства в группе домена
+    // вступит в силу при следующем входе.
+    is_admin: Boolean(user.is_admin),
     auth_type: user.auth_type,
   };
 }

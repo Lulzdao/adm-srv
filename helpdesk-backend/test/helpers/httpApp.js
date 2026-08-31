@@ -38,15 +38,19 @@ const TEST_PASSWORD = "пароль-для-теста-1";
  * Локальная учётная запись с заданной ролью.
  *
  * Через неё тест входит по-настоящему: тот же маршрут, тот же bcrypt, та же
- * пересозданная сессия, что и у живого пользователя. Подкладывать сессию в
+ * пересозданная сессия, что и у живого пользователя.
+ *
+ * role и isAdmin — РАЗНЫЕ вещи: роль говорит, в каком отделе человек
+ * исполнитель, isAdmin — администратор ли он платформы. В бою признак
+ * выдаётся только группой из .env и из панели недостижим. Подкладывать сессию в
  * обход входа нельзя — тогда тест перестанет замечать поломки самого входа.
  */
-async function makeLocalUser(db, { login, name, role = "user", email = null }) {
+async function makeLocalUser(db, { login, name, role = "user", email = null, isAdmin = false }) {
   if (!sharedHash) sharedHash = await bcrypt.hash(TEST_PASSWORD, 10);
   const info = db.prepare(`
-    INSERT INTO users (ad_login, full_name, role, email, auth_type, local_password_hash)
-    VALUES (?, ?, ?, ?, 'local', ?)
-  `).run(login, name, role, email, sharedHash);
+    INSERT INTO users (ad_login, full_name, role, is_admin, email, auth_type, local_password_hash)
+    VALUES (?, ?, ?, ?, ?, 'local', ?)
+  `).run(login, name, role, isAdmin ? 1 : 0, email, sharedHash);
   return Number(info.lastInsertRowid);
 }
 

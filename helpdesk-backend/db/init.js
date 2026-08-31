@@ -28,9 +28,23 @@ function initDb() {
     db.prepare("INSERT OR IGNORE INTO categories (name) VALUES (?)").run(dept.name);
   }
 
+  migrateIsAdmin(db);
   migrateNotifications(db);
 
   return db;
+}
+
+// Колонка is_admin в уже существующей базе.
+//
+// schema.sql применяется через CREATE TABLE IF NOT EXISTS — для существующей
+// таблицы он не делает ничего, и новая колонка сама не появится. Добавляем её
+// отдельно, по факту отсутствия: так миграция идемпотентна и переживает любое
+// число перезапусков.
+function migrateIsAdmin(db) {
+  const columns = db.prepare("PRAGMA table_info(users)").all().map((c) => c.name);
+  if (columns.includes("is_admin")) return;
+  db.exec("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0");
+  console.log("В таблицу users добавлен признак is_admin (администраторы определяются группой из .env)");
 }
 
 // Перенос из старой таблицы notifications в пару events/deliveries.
@@ -100,7 +114,8 @@ function migrateNotifications(db) {
 function ensureLocalAccounts(db) {
   for (const acc of config.localAccounts) {
     if (!acc.passwordHash) continue;
-    const existing = db.prepare("SELECT id, email FROM users WHERE ad_login = ?").get(acc.login);
+    const existing = db.prepare("SELECT id, email, is_admin FROM users WHERE ad_login = ?").get(acc.login);
+    const wantAdmin = acc.isAdmin ? 1 : 0;
 
     if (existing) {
       // Адрес держим в согласии с конфигом на каждом старте. У доменных учёток
@@ -113,13 +128,19 @@ function ensureLocalAccounts(db) {
         db.prepare("UPDATE users SET email = ? WHERE id = ?").run(want, existing.id);
         console.log(`Локальному аккаунту ${acc.login} проставлен адрес: ${want || "(пусто)"}`);
       }
+      // Признак администратора — тоже из конфига, по той же причине: из
+      // интерфейса он не меняется, значит источник истины здесь один.
+      if (Number(existing.is_admin || 0) !== wantAdmin) {
+        db.prepare("UPDATE users SET is_admin = ? WHERE id = ?").run(wantAdmin, existing.id);
+        console.log(`Локальному аккаунту ${acc.login} ${wantAdmin ? "выданы" : "сняты"} права администратора`);
+      }
       continue;
     }
 
     db.prepare(
-      `INSERT INTO users (ad_login, full_name, role, email, auth_type, local_password_hash)
-       VALUES (?, ?, ?, ?, 'local', ?)`
-    ).run(acc.login, acc.fullName, acc.role, acc.email || null, acc.passwordHash);
+      `INSERT INTO users (ad_login, full_name, role, is_admin, email, auth_type, local_password_hash)
+       VALUES (?, ?, ?, ?, ?, 'local', ?)`
+    ).run(acc.login, acc.fullName, acc.role, wantAdmin, acc.email || null, acc.passwordHash);
 
     console.log(`Создан локальный аккаунт: ${acc.login} (роль: ${acc.role})`);
   }

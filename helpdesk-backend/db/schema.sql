@@ -9,6 +9,14 @@ CREATE TABLE IF NOT EXISTS users (
   email TEXT,
   phone TEXT,
   role TEXT NOT NULL DEFAULT 'user', -- допустимые значения см. config/departments.js + 'user'
+  -- Администратор — НЕ роль, а отдельный признак.
+  --
+  -- Роль отвечает на вопрос «в каком отделе человек исполнитель», и она одна:
+  -- совместить «исполнитель ИТ» и «администратор платформы» в одном поле
+  -- нельзя, а настоящий администратор обычно и то и другое. Кроме того,
+  -- источники у них разные: роль настраивается из панели, а признак
+  -- администратора выводится ТОЛЬКО из группы в .env и из панели недостижим.
+  is_admin INTEGER NOT NULL DEFAULT 0,
   auth_type TEXT NOT NULL DEFAULT 'ad' CHECK (auth_type IN ('ad', 'local')),
   local_password_hash TEXT,
   last_domain TEXT,

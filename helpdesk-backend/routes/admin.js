@@ -1,12 +1,12 @@
 const express = require("express");
-const { requireRole } = require("../middleware/auth");
+const { requireAdmin } = require("../middleware/auth");
 const { getSetting, setSetting } = require("../services/settings");
 const config = require("../config/config");
 const departments = require("../config/departments");
 
 module.exports = function adminRoutes(db) {
   const router = express.Router();
-  router.use(requireRole("it"));
+  router.use(requireAdmin);
 
   // Настройки AD-групп по отделу — состав отделов берётся из
   // config/departments.js, поэтому добавление нового отдела туда сразу
@@ -15,10 +15,22 @@ module.exports = function adminRoutes(db) {
     const result = departments.map((dept) => ({
       role: dept.role,
       name: dept.name,
-      groupA: getSetting(db, `${dept.role}_group_A`) || (dept.role === "it" ? config.domains.A.adminGroup : "") || "",
-      groupB: getSetting(db, `${dept.role}_group_B`) || (dept.role === "it" ? config.domains.B.adminGroup : "") || "",
+      groupA: getSetting(db, `${dept.role}_group_A`) || "",
+      groupB: getSetting(db, `${dept.role}_group_B`) || "",
     }));
-    res.json({ departments: result });
+
+    // Группа администраторов показывается ТОЛЬКО для справки и правится в .env.
+    // Раньше она подставлялась в поле отдела ИТ как значение по умолчанию, и
+    // из-за этого путались две разные вещи: сохранённая здесь группа замещала
+    // её (стоял ||), то есть добавление исполнителей ИТ могло разом лишить
+    // прав настоящих администраторов.
+    res.json({
+      departments: result,
+      adminGroups: {
+        A: config.domains.A.adminGroup || "",
+        B: config.domains.B.adminGroup || "",
+      },
+    });
   });
 
   // Роль в ключе настройки берём только из справочника отделов, а не из тела
@@ -50,10 +62,17 @@ module.exports = function adminRoutes(db) {
   // входа, а не редактируемый вручную список.
   router.get("/admins", (req, res) => {
     const rows = db.prepare(`
-      SELECT ad_login, full_name, role, last_domain, last_login_at
-      FROM users WHERE role != 'user' ORDER BY role, last_login_at DESC
+      SELECT ad_login, full_name, role, is_admin, last_domain, last_login_at
+      FROM users WHERE role != 'user' OR is_admin = 1
+      ORDER BY is_admin DESC, role, last_login_at DESC
     `).all();
-    res.json({ admins: rows });
+    // Отдаём двумя списками: администратор и исполнитель — разные вещи, и
+    // видеть их вперемешку значит снова их путать. Человек может быть и тем и
+    // другим — тогда он попадёт в оба списка, и это правда.
+    res.json({
+      admins: rows.filter((r) => r.is_admin),
+      executors: rows.filter((r) => r.role !== "user"),
+    });
   });
 
   router.get("/stats", (req, res) => {

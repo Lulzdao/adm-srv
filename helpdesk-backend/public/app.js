@@ -445,9 +445,10 @@ function writeHash(replace) {
 function viewExists(view) {
   if (!view) return false;
   const u = state.user;
-  const isIT = u.role === "it";
   if (["inbox", "mine", "create"].includes(view)) return true;
-  if (["dashboard", "admin", "certs"].includes(view) || view.startsWith("notif:")) return isIT;
+  // Разделы администратора — по признаку is_admin, а не по роли: роль "it"
+  // теперь значит «исполнитель отдела ИТ», и прав администратора не даёт.
+  if (["dashboard", "admin", "certs"].includes(view) || view.startsWith("notif:")) return Boolean(u.is_admin);
   if (view.startsWith("module:")) {
     const [, modId, viewId] = view.split(":");
     const mod = state.modules.find((m) => m.id === modId);
@@ -589,13 +590,18 @@ function restoreNavScroll() {
 function renderShell() {
   const u = state.user;
   const totalUnread = state.notifications.filter(n => !n.is_read).length;
-  const isIT = u.role === "it";
+  const isAdmin = Boolean(u.is_admin);
   const deptForRole = Object.fromEntries(state.departments.filter(d => d.role !== "user").map(d => [d.role, d.name]));
-  const isExecutor = !isIT && !!deptForRole[u.role];
-  const roleLabel = u.role === "user" ? "Сотрудник" : (deptForRole[u.role] || u.role);
+  // Исполнитель — тот, у кого роль соответствует отделу. Отдел ИТ теперь тоже
+  // сюда попадает: администратор и исполнитель ИТ — разные вещи, и человек
+  // вполне может быть и тем и другим одновременно.
+  const isExecutor = !!deptForRole[u.role];
+  const roleLabel = u.role === "user"
+    ? (isAdmin ? "Администратор" : "Сотрудник")
+    : `${deptForRole[u.role] || u.role}${isAdmin ? " · администратор" : ""}`;
 
   let navHtml;
-  if (isIT) {
+  if (isAdmin) {
     const subItems = [
       { id: "inbox", label: "Входящие заявки", icon: "inbox", badge: totalUnread },
       { id: "mine", label: "Мои заявки", icon: "folder" },
@@ -646,7 +652,7 @@ function renderShell() {
             <div class="brand-name">${APP_NAME}</div>
             <div class="brand-org">${APP_ORG}</div>
           </div>
-          ${isIT ? `<button class="head-action${state.view === "certs" ? " active" : ""}" id="certsBtn"
+          ${isAdmin ? `<button class="head-action${state.view === "certs" ? " active" : ""}" id="certsBtn"
             title="Сертификаты">${icon("shield", 18)}</button>` : ""}
         </div>
         <div class="sidebar-nav">${navHtml}</div>
@@ -718,18 +724,20 @@ function renderModule(main, mod, view) {
 async function renderList(main, opts = {}) {
   clearViewPoll();
   const u = state.user;
-  const isIT = u.role === "it";
+  const isAdmin = Boolean(u.is_admin);
   const deptForRole = Object.fromEntries(state.departments.filter(d => d.role !== "user").map(d => [d.role, d.name]));
-  const isExecutor = !isIT && !!deptForRole[u.role];
-  const isPrivileged = isIT || isExecutor; // видит колонки "От кого"/"Кабинет"
+  const isExecutor = !!deptForRole[u.role];
+  const isPrivileged = isAdmin || isExecutor; // видит колонки "От кого"/"Кабинет"
   const scope = opts.scope || "inbox";
-  const showDeptFilter = isIT && scope === "inbox"; // только у админа есть смысл фильтровать по отделу
+  // Фильтр по отделу имеет смысл только администратору: исполнителю сервер и
+  // так отдаёт очередь одного его отдела, выбирать не из чего.
+  const showDeptFilter = isAdmin && scope === "inbox";
 
   let closed = false; // открытые/закрытые — переключатель внутри страницы, не выпадающий список
   let q = "";
 
   const titles = {
-    inbox: isIT || isExecutor ? "Входящие заявки" : "Заявки",
+    inbox: isAdmin || isExecutor ? "Входящие заявки" : "Заявки",
     mine: "Мои заявки",
   };
 
@@ -964,10 +972,16 @@ async function reloadTicket(id) {
 
 function renderDetail(main, ticket) {
   const u = state.user;
-  const isIT = u.role === "it";
+  const isAdmin = Boolean(u.is_admin);
   const deptForRole = Object.fromEntries(state.departments.filter(d => d.role !== "user").map(d => [d.role, d.name]));
-  const isPrivileged = isIT || !!deptForRole[u.role]; // может оставлять внутренние заметки
-  const canManage = isIT || deptForRole[u.role] === ticket.category; // видит блок "Управление"
+  // Право оставить внутреннюю заметку — у любого сотрудника службы, не только
+  // у администратора: исполнитель ведёт заявку и пишет по ней служебные пометки.
+  const isPrivileged = isAdmin || !!deptForRole[u.role];
+  // А управлять заявкой (статус, исполнитель, приоритет) вправе администратор
+  // и исполнитель ТОГО отдела, куда заявка заведена. Ровно это же правило
+  // проверяет сервер в canManageTicket — расхождение здесь означало бы кнопки,
+  // которые не работают.
+  const canManage = isAdmin || deptForRole[u.role] === ticket.category;
   const p = PRIORITIES.find(x => x.id === ticket.priority) || PRIORITIES[2];
 
   main.innerHTML = `
@@ -1190,7 +1204,7 @@ async function renderDashboard(main) {
 async function renderAdmin(main) {
   main.innerHTML = `<div class="topbar"><div class="topbar-title">Администрирование</div></div><div class="page"><div class="spinner">Загрузка…</div></div>`;
   try {
-    const [{ departments: deptSettings }, { admins }] = await Promise.all([
+    const [{ departments: deptSettings, adminGroups }, { admins, executors }] = await Promise.all([
       api("/admin/settings"), api("/admin/admins"),
     ]);
 
@@ -1204,25 +1218,42 @@ async function renderAdmin(main) {
 
     const groupCard = (dept) => `
       <div class="card" style="margin-bottom:14px;">
-        <div class="section-label">Группа АД — роль ${esc(dept.name)}</div>
+        <div class="section-label">Группа АД — исполнители отдела ${esc(dept.name)}</div>
         ${groupRow(`group_${dept.role}_A`, "Домен А", dept.groupA, "имя группы")}
         ${groupRow(`group_${dept.role}_B`, "Домен Б", dept.groupB, "имя группы")}
       </div>`;
 
+    const человек = (a, показатьРоль) => `
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-top:1px solid var(--line-soft);">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="font-size:13px;font-weight:600;">${esc(a.full_name)}</span>
+          <span class="mono" style="font-size:12px;color:var(--ink-soft);">${esc(a.ad_login)}</span>
+          ${показатьРоль ? `<span class="badge" style="color:var(--wire);background:var(--wire-soft);">${esc(ROLE_LABEL[a.role] || a.role)}</span>` : ""}
+          <span class="badge" style="color:var(--ink-soft);background:var(--line-soft);">${a.last_domain === "local" ? "Локальный" : "Домен " + esc(a.last_domain)}</span>
+        </div>
+        <span style="font-size:11px;color:var(--ink-soft);">вход ${fmtDate(a.last_login_at)}</span>
+      </div>`;
+
+    const пусто = (текст) => `<div style="font-size:12.5px;color:var(--ink-soft);">${текст}</div>`;
+
     main.querySelector(".page").innerHTML = `
+      <div class="card" style="margin-bottom:14px;">
+        <div class="section-label">Администраторы платформы</div>
+        <div style="font-size:11.5px;color:var(--ink-soft);margin-bottom:6px;">
+          Права даёт членство в группе, указанной в <code class="mono">.env</code> на сервере:
+          <span class="mono">${esc(adminGroups.A || "— не задана —")}</span> (домен А),
+          <span class="mono">${esc(adminGroups.B || "— не задана —")}</span> (домен Б).
+          Отсюда список не редактируется и группами отделов ниже не расширяется.
+        </div>
+        ${admins.length ? admins.map(a => человек(a, false)).join("") : пусто("Ни один администратор ещё не входил.")}
+      </div>
+
       <div class="card" style="margin-bottom:20px;">
-        <div class="section-label">Текущие исполнители и администраторы</div>
-        <div style="font-size:11.5px;color:var(--ink-soft);margin-bottom:14px;">Список читается из членства в группах на момент последнего входа, не редактируется вручную.</div>
-        ${admins.length ? admins.map(a => `
-          <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-top:1px solid var(--line-soft);">
-            <div style="display:flex;align-items:center;gap:10px;">
-              <span style="font-size:13px;font-weight:600;">${esc(a.full_name)}</span>
-              <span class="mono" style="font-size:12px;color:var(--ink-soft);">${esc(a.ad_login)}</span>
-              <span class="badge" style="color:var(--wire);background:var(--wire-soft);">${esc(ROLE_LABEL[a.role] || a.role)}</span>
-              <span class="badge" style="color:var(--ink-soft);background:var(--line-soft);">${a.last_domain === "local" ? "Локальный" : "Домен " + esc(a.last_domain)}</span>
-            </div>
-            <span style="font-size:11px;color:var(--ink-soft);">вход ${fmtDate(a.last_login_at)}</span>
-          </div>`).join("") : `<div style="font-size:12.5px;color:var(--ink-soft);">Пока никто не входил под расширенной ролью.</div>`}
+        <div class="section-label">Исполнители по отделам</div>
+        <div style="font-size:11.5px;color:var(--ink-soft);margin-bottom:6px;">
+          Читается из членства в группах отделов на момент последнего входа. Прав администратора не даёт.
+        </div>
+        ${executors.length ? executors.map(a => человек(a, true)).join("") : пусто("Пока никто не входил под ролью исполнителя.")}
       </div>
 
       <div style="display:flex;gap:20px;align-items:flex-start;">

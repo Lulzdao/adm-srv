@@ -83,12 +83,21 @@ async function authenticate(domainKey, login, password, db) {
   // Порядок в config/departments.js — это и порядок приоритета: первое
   // совпадение побеждает (обычно "it" стоит первым, чтобы сотрудник,
   // случайно оказавшийся в двух группах, получил более широкую роль).
+  // Признак администратора выводится ТОЛЬКО из группы в .env. Через панель
+  // администрирования его выдать нельзя — там настраиваются группы отделов, и
+  // это разные ключи. Иначе получалось так: добавили в панели группу к отделу
+  // ИТ — и её участники стали администраторами платформы; хуже того, значение
+  // из панели ЗАМЕЩАЛО группу из .env (там стоял ||), и настоящие
+  // администраторы могли разом лишиться прав.
+  const isAdmin = inGroup(cfg.adminGroup);
+
+  // Роль — это отдел, в котором человек исполнитель. Порядок в
+  // config/departments.js задаёт приоритет: первое совпадение побеждает.
+  // Группа отдела ИТ теперь значит ровно то, чем выглядит, — исполнители ИТ,
+  // без каких-либо прав администратора.
   let role = "user";
   for (const dept of departments) {
-    // Для роли it совместимость: если новую группу под неё ещё не задали
-    // через панель администрирования, используем старое поле из .env.
-    const groupName = (db && getSetting(db, `${dept.role}_group_${domainKey}`))
-      || (dept.role === "it" ? cfg.adminGroup : null);
+    const groupName = db && getSetting(db, `${dept.role}_group_${domainKey}`);
     if (inGroup(groupName)) { role = dept.role; break; }
   }
 
@@ -100,6 +109,7 @@ async function authenticate(domainKey, login, password, db) {
     department: singleValue(userEntry.department),
     phone: singleValue(userEntry.telephoneNumber),
     role,
+    isAdmin,
   };
 }
 

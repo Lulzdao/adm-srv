@@ -1,5 +1,5 @@
 const express = require("express");
-const { requireAuth, requireRole } = require("../middleware/auth");
+const { requireAuth, requireAdmin } = require("../middleware/auth");
 const { KINDS, byKind, RECIPIENTS } = require("../config/notifications");
 const { settingsFor, resolveEmails, render, retryPending, backfillDeliveries } = require("../services/notifications");
 const { setSetting } = require("../services/settings");
@@ -60,7 +60,7 @@ module.exports = function notificationRoutes(db) {
   //  бейджем, который работает как работал.
   // ==========================================================================
 
-  const it = requireRole("it");
+  const it = requireAdmin;
 
   // Лента. Это журнал, а не входящие: отметок «прочитано» здесь нет, зато у
   // каждого события видно, куда оно уехало и чем закончилось.

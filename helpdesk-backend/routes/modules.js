@@ -13,9 +13,18 @@ module.exports = function () {
 
   // Список модулей, доступных текущей роли — фронтенд строит по нему пункты
   // меню, не зная заранее, что вообще подключено на платформе.
+  // Модуль доступен администратору всегда, а роли отдела — если она названа
+  // в `roles`. Раньше проверялась только роль, а роль "it" означала и
+  // «исполнитель ИТ», и «администратор» разом; теперь это разные вещи, и
+  // список `roles` служит ровно одному: открыть модуль исполнителям, если он
+  // им нужен по работе.
+  const allowed = (user, mod) => Boolean(user.is_admin) || mod.roles.includes(user.role);
+
+  // Список модулей, доступных текущему пользователю — фронтенд строит по нему
+  // пункты меню, не зная заранее, что вообще подключено на платформе.
   router.get("/api/modules", requireAuth, (req, res) => {
     const visible = modules
-      .filter((m) => m.roles.includes(req.session.user.role))
+      .filter((m) => allowed(req.session.user, m))
       .map((m) => ({ id: m.id, label: m.label, path: m.path, views: m.views }));
     res.json({ modules: visible });
   });
@@ -25,7 +34,7 @@ module.exports = function () {
       mod.path,
       requireAuth,
       (req, res, next) => {
-        if (!mod.roles.includes(req.session.user.role)) {
+        if (!allowed(req.session.user, mod)) {
           return res.status(403).json({ error: "Недостаточно прав для этого модуля" });
         }
         next();

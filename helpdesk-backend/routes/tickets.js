@@ -53,7 +53,7 @@ function optionalShortText(value) {
 // здесь ничего трогать не нужно.
 const DEPT_PREFIX = Object.fromEntries(departments.map((d) => [d.name, d.prefix]));
 const DEPT_ROLE = Object.fromEntries(departments.map((d) => [d.name, d.role]));
-const ROLE_DEPT = Object.fromEntries(departments.filter((d) => d.role !== "it").map((d) => [d.role, d.name]));
+const ROLE_DEPT = Object.fromEntries(departments.map((d) => [d.role, d.name]));
 const DEFAULT_DEPARTMENT = departments[0].name;
 
 // --- Оповещения по заявке ---------------------------------------------------
@@ -105,23 +105,23 @@ const deptUserIds = (db, role, exceptId) =>
 
 // Единое правило видимости конкретной заявки, используется во всех местах,
 // где нужно решить "может ли этот человек её увидеть/менять":
-// — it видит всё;
+// — администратор видит всё (признак is_admin, выдаётся группой из .env);
 // — hoz/egrpo видят очередь своего отдела ПЛЮС собственные заявки в любом
 //   отделе (если сотрудник хоз.отдела сам завёл заявку в ИТ, он её не теряет);
 // — все остальные — только то, что сами создали или на что назначены.
 function canAccessTicket(user, ticket) {
-  if (user.role === "it") return true;
+  if (user.is_admin) return true;
   if (ROLE_DEPT[user.role] && ticket.category === ROLE_DEPT[user.role]) return true;
   return ticket.created_by === user.id || ticket.assigned_to === user.id;
 }
 
 // Право МЕНЯТЬ заявку (статус, исполнитель, приоритет) — уже, чем право её
-// видеть: только ИТ и исполнители того отдела, куда заявка заведена.
+// видеть: только администраторы и исполнители того отдела, куда заявка заведена.
 // Ровно это и показывает фронтенд (блок "Управление" виден по тому же
 // условию), но раньше проверка была только на клиенте — по API заявитель
 // мог сменить статус, приоритет и назначить исполнителем кого угодно.
 function canManageTicket(user, ticket) {
-  if (user.role === "it") return true;
+  if (user.is_admin) return true;
   return Boolean(ROLE_DEPT[user.role]) && ticket.category === ROLE_DEPT[user.role];
 }
 
@@ -216,8 +216,10 @@ module.exports = function ticketRoutes(db) {
     if (mine === "1") {
       clauses.push("t.created_by = @uid");
       params.uid = user.id;
-    } else if (user.role === "it") {
-      // "Входящие" для админа — без ограничений, видит все отделы.
+    } else if (user.is_admin) {
+      // "Входящие" для администратора — без ограничений, видит все отделы.
+      // Исполнитель отдела ИТ сюда не попадает: его отсекает следующая ветка,
+      // и он видит очередь своего отдела, как исполнители остальных отделов.
     } else if (ROLE_DEPT[user.role]) {
       clauses.push("c.name = @deptName");
       params.deptName = ROLE_DEPT[user.role];

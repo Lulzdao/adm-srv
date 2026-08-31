@@ -2,7 +2,7 @@ const express = require("express");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
-const { requireRole } = require("../middleware/auth");
+const { requireAdmin } = require("../middleware/auth");
 const modules = require("../config/modules");
 const {
   currentTlsState,
@@ -37,7 +37,7 @@ module.exports = function certificateRoutes() {
   // цепочкой в base64 в этот предел не влезает. Поэтому маршрут смонтирован
   // до общего парсера и читает тело сам.
   router.use(express.json({ limit: String(Math.round(MAX_PFX_BYTES * 1.4 / 1024)) + "kb" }));
-  router.use(requireRole("it"));
+  router.use(requireAdmin);
 
   // Что сервер предъявляет клиентам. Сертификат ОДИН и общий с «Искрой»: обе
   // службы на одной машине и отвечают на одно имя, поэтому и файл один.

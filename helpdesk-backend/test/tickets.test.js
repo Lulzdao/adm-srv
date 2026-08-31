@@ -21,7 +21,7 @@ async function stand(t) {
 
   const ids = {
     заявитель: await makeLocalUser(db, { login: "!сотрудник", name: "Сотрудник Тестовый", role: "user" }),
-    админ: await makeLocalUser(db, { login: "!ит", name: "Админ Тестовый", role: "it" }),
+    админ: await makeLocalUser(db, { login: "!ит", name: "Админ Тестовый", role: "it", isAdmin: true }),
     хозяйственник: await makeLocalUser(db, { login: "!хоз", name: "Хозяйственник Тестовый", role: "hoz" }),
     посторонний: await makeLocalUser(db, { login: "!чужой", name: "Посторонний Тестовый", role: "user" }),
   };

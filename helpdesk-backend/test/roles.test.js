@@ -1,0 +1,150 @@
+'use strict';
+
+const test = require("node:test");
+const assert = require("node:assert");
+
+const { freshDb } = require("./helpers/tempDb");
+const { startApp, makeLocalUser, client } = require("./helpers/httpApp");
+
+// ============================================================================
+//  Администратор — не роль, а отдельный признак
+//
+//  Роль отвечает на вопрос «в каком отделе человек исполнитель». Права
+//  администратора выдаются ТОЛЬКО группой из .env и через панель недостижимы.
+//  Раньше это было одно поле: добавили в панели группу к отделу ИТ — и её
+//  участники становились администраторами платформы.
+//
+//  Все имена и учётные данные выдуманы.
+// ============================================================================
+
+async function stand(t) {
+  const { db, cleanup } = freshDb();
+  const app = await startApp(db);
+  t.after(async () => { await app.close(); cleanup(); });
+
+  await makeLocalUser(db, { login: "!админ", name: "Админ Тестовый", role: "it", isAdmin: true });
+  // Исполнитель отдела ИТ: та же роль, но БЕЗ прав администратора.
+  await makeLocalUser(db, { login: "!итшник", name: "Исполнитель Тестовый", role: "it" });
+  await makeLocalUser(db, { login: "!хоз", name: "Хозяйственник Тестовый", role: "hoz" });
+  await makeLocalUser(db, { login: "!сотрудник", name: "Сотрудник Тестовый", role: "user" });
+  return { db, app };
+}
+
+const войти = async (app, логин) => {
+  const кл = client(app.url);
+  await кл.login(логин);
+  return кл;
+};
+
+test("исполнитель отдела ИТ не получает прав администратора", async (t) => {
+  const { app } = await stand(t);
+  const итшник = await войти(app, "!итшник");
+
+  for (const адрес of ["/api/admin/settings", "/api/admin/stats", "/api/admin/admins",
+                       "/api/notifications/feed", "/api/certificates/server"]) {
+    const r = await итшник.get(адрес);
+    assert.strictEqual(r.status, 403, `${адрес} должен закрываться 403, получено ${r.status}`);
+  }
+});
+
+test("администратор в те же разделы проходит", async (t) => {
+  const { app } = await stand(t);
+  const админ = await войти(app, "!админ");
+
+  for (const адрес of ["/api/admin/settings", "/api/admin/stats", "/api/notifications/feed"]) {
+    const r = await админ.get(адрес);
+    assert.strictEqual(r.status, 200, `${адрес}: ${r.status} ${r.text}`);
+  }
+});
+
+test("признак администратора виден в сессии и отделён от роли", async (t) => {
+  const { app } = await stand(t);
+
+  const админ = await войти(app, "!админ");
+  const я = await админ.get("/api/auth/me");
+  assert.strictEqual(я.json.user.is_admin, true);
+  assert.strictEqual(я.json.user.role, "it", "роль остаётся отделом исполнителя");
+
+  const итшник = await войти(app, "!итшник");
+  const он = await итшник.get("/api/auth/me");
+  assert.strictEqual(он.json.user.is_admin, false);
+  assert.strictEqual(он.json.user.role, "it", "та же роль, но без прав администратора");
+});
+
+test("исполнитель ИТ видит очередь своего отдела, но не чужие заявки", async (t) => {
+  const { app } = await stand(t);
+
+  const хоз = await войти(app, "!хоз");
+  const хозЗаявка = await хоз.post("/api/tickets", {
+    title: "Сломался стул", description: "качается", room: "301", priority: "low", category: "ХОЗ",
+  });
+  assert.strictEqual(хозЗаявка.status, 201, хозЗаявка.text);
+
+  const сотрудник = await войти(app, "!сотрудник");
+  const итЗаявка = await сотрудник.post("/api/tickets", {
+    title: "Не печатает принтер", description: "мигает", room: "212", priority: "medium", category: "ИТ",
+  });
+  assert.strictEqual(итЗаявка.status, 201, итЗаявка.text);
+
+  const итшник = await войти(app, "!итшник");
+  const своя = await итшник.get(`/api/tickets/${итЗаявка.json.id}`);
+  assert.strictEqual(своя.status, 200, "заявку своего отдела исполнитель обязан видеть");
+
+  const чужая = await итшник.get(`/api/tickets/${хозЗаявка.json.id}`);
+  assert.strictEqual(чужая.status, 403, "чужой отдел исполнителю ИТ не виден");
+
+  const список = await итшник.get("/api/tickets");
+  assert.strictEqual(список.json.total, 1, "во «Входящих» — только очередь своего отдела");
+});
+
+test("администратор видит заявки всех отделов", async (t) => {
+  const { app } = await stand(t);
+
+  const хоз = await войти(app, "!хоз");
+  const хозЗаявка = await хоз.post("/api/tickets", {
+    title: "Сломался стул", description: "качается", room: "301", priority: "low", category: "ХОЗ",
+  });
+  const сотрудник = await войти(app, "!сотрудник");
+  await сотрудник.post("/api/tickets", {
+    title: "Не печатает принтер", description: "мигает", room: "212", priority: "medium", category: "ИТ",
+  });
+
+  const админ = await войти(app, "!админ");
+  assert.strictEqual((await админ.get(`/api/tickets/${хозЗаявка.json.id}`)).status, 200);
+  assert.strictEqual((await админ.get("/api/tickets")).json.total, 2);
+});
+
+test("модули открыты администратору и закрыты исполнителю", async (t) => {
+  const { app } = await stand(t);
+
+  const админ = await войти(app, "!админ");
+  const видноАдмину = (await админ.get("/api/modules")).json.modules.map((m) => m.id);
+  assert.ok(видноАдмину.includes("certs"), "администратор должен видеть Сертвивер");
+
+  const итшник = await войти(app, "!итшник");
+  const видноИсполнителю = (await итшник.get("/api/modules")).json.modules;
+  assert.deepStrictEqual(видноИсполнителю, [],
+    "по умолчанию модули только у администраторов — список roles в config/modules.js пуст");
+
+  // И не только пункт меню: сам прокси тоже должен отказать.
+  const r = await итшник.get("/modules/certs/");
+  assert.strictEqual(r.status, 403);
+});
+
+test("локальная аварийная учётка администратор по конфигу, а не по домену", async (t) => {
+  const { db, cleanup } = freshDb();
+  t.after(cleanup);
+  const { ensureLocalAccounts } = require("../db/init");
+  const config = require("../config/config");
+
+  // Пароль в конфиге пустой, поэтому учётка не заводится — подкладываем хэш.
+  db.prepare(`INSERT INTO users (ad_login, full_name, role, auth_type, local_password_hash)
+              VALUES (?, ?, 'it', 'local', 'выдуманный-хэш')`)
+    .run(config.localAccounts[0].login, "Локальный администратор");
+
+  ensureLocalAccounts(db);
+  const строка = db.prepare("SELECT is_admin FROM users WHERE ad_login = ?")
+    .get(config.localAccounts[0].login);
+  assert.strictEqual(строка.is_admin, 1,
+    "иначе при пустой группе в .env администрировать платформу станет некому");
+});
