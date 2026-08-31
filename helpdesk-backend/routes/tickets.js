@@ -55,6 +55,8 @@ function optionalShortText(value) {
 const DEPT_PREFIX = Object.fromEntries(departments.map((d) => [d.name, d.prefix]));
 const DEPT_ROLE = Object.fromEntries(departments.map((d) => [d.name, d.role]));
 const ROLE_DEPT = Object.fromEntries(departments.map((d) => [d.role, d.name]));
+// Роль отдела по умолчанию — для строк без категории (наследие ранних версий).
+const DEFAULT_DEPT_ROLE = departments[0].role;
 const DEFAULT_DEPARTMENT = departments[0].name;
 
 // --- Оповещения по заявке ---------------------------------------------------
@@ -363,10 +365,15 @@ module.exports = function ticketRoutes(db) {
     res.json({ ticket });
   });
 
-  // GET /api/tickets/:id/assignees — кандидаты в исполнители: те, кто состоит
-  // в отделе заявки, плюс администраторы (могут подхватить любую заявку в
-  // порядке эскалации). Отделов у человека может быть несколько, поэтому
+  // GET /api/tickets/:id/assignees — кандидаты в исполнители: только те, кто
+  // состоит в отделе заявки. Отделов у человека может быть несколько, поэтому
   // отбор идёт по списку roles, а не по одной role.
+  //
+  // Администратор сюда не попадает по одному лишь признаку is_admin: он
+  // управляет платформой, а не разбирает заявки. Раньше здесь стояло
+  // "OR is_admin = 1" — из-за этого исполнитель ХОЗ видел в списке людей из
+  // чужих отделов. Нужен админ в очереди отдела — его добавляют в доменную
+  // группу этого отдела, и он появится наравне со всеми.
   router.get("/:id/assignees", (req, res) => {
     const id = parseTicketId(req.params.id);
     if (id === null) return res.status(400).json({ error: "Некорректный идентификатор заявки" });
@@ -379,10 +386,18 @@ module.exports = function ticketRoutes(db) {
     if (!canAccessTicket(req.session.user, ticket)) {
       return res.status(403).json({ error: "Недостаточно прав" });
     }
-    const deptRole = DEPT_ROLE[ticket.category];
+    const deptRole = DEPT_ROLE[ticket.category] || DEFAULT_DEPT_ROLE;
     const rows = db.prepare(
-      "SELECT id, full_name, role FROM users WHERE roles LIKE ? OR is_admin = 1 ORDER BY full_name"
-    ).all(roleLike(deptRole || "it"));
+      "SELECT id, full_name, role FROM users WHERE roles LIKE ? ORDER BY full_name"
+    ).all(roleLike(deptRole));
+
+    // Тот, кто уже назначен, остаётся в списке, даже если его вывели из
+    // отдела: иначе выпадающий список показал бы "не назначено" на заявке,
+    // у которой исполнитель есть.
+    if (ticket.assigned_to && !rows.some((u) => u.id === ticket.assigned_to)) {
+      const current = db.prepare("SELECT id, full_name, role FROM users WHERE id = ?").get(ticket.assigned_to);
+      if (current) rows.unshift(current);
+    }
     res.json({ users: rows });
   });
 
@@ -415,10 +430,10 @@ module.exports = function ticketRoutes(db) {
     let assignee;
     if (assigned_to !== undefined && assigned_to !== null && assigned_to !== "") {
       const assigneeId = parseTicketId(assigned_to);
-      const deptRole = DEPT_ROLE[ticket.category];
+      const deptRole = DEPT_ROLE[ticket.category] || DEFAULT_DEPT_ROLE;
       assignee = assigneeId === null ? null : db.prepare(
-        "SELECT id FROM users WHERE id = ? AND (roles LIKE ? OR is_admin = 1)"
-      ).get(assigneeId, roleLike(deptRole || "it"));
+        "SELECT id FROM users WHERE id = ? AND roles LIKE ?"
+      ).get(assigneeId, roleLike(deptRole));
       if (!assignee) return res.status(400).json({ error: "Такого исполнителя нельзя назначить на эту заявку" });
     }
 

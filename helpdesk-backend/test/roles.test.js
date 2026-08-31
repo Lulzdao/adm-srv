@@ -164,6 +164,8 @@ async function двухотдельный(t) {
 
   await makeLocalUser(db, { login: "!оба", name: "Универсал Тестовый", roles: ["it", "hoz"] });
   await makeLocalUser(db, { login: "!толькоит", name: "Только ИТ Тестовый", role: "it" });
+  await makeLocalUser(db, { login: "!егрпо", name: "Егрпо Тестовый", role: "egrpo" });
+  await makeLocalUser(db, { login: "!админ", name: "Админ Тестовый", role: "it", isAdmin: true });
   await makeLocalUser(db, { login: "!сотрудник", name: "Сотрудник Тестовый", role: "user" });
 
   const сотрудник = await войти(app, "!сотрудник");
@@ -237,4 +239,49 @@ test("оповещения о новых заявках приходят по о
 
   assert.deepStrictEqual(отметки, ["ticket_new:hoz", "ticket_new:it"],
     "он должен получить отметки и по заявке ИТ, и по заявке ХОЗ");
+});
+
+// Список кандидатов в исполнители ограничен отделом заявки. Раньше запрос
+// добирал ещё и всех, у кого is_admin = 1, и исполнитель ХОЗ видел в списке
+// людей из чужих отделов.
+test("в кандидаты по заявке ХОЗ не попадают ни админ, ни соседние отделы", async (t) => {
+  const { db, app, хоз } = await двухотдельный(t);
+  const исполнитель = await войти(app, "!оба");
+
+  const ответ = await исполнитель.get(`/api/tickets/${хоз}/assignees`);
+  assert.strictEqual(ответ.status, 200, ответ.text);
+  const логин = (id) => db.prepare("SELECT ad_login FROM users WHERE id = ?").get(id).ad_login;
+  const логины = ответ.json.users.map((u) => логин(u.id)).sort();
+
+  assert.deepStrictEqual(логины, ["!оба"],
+    "в отделе ХОЗ состоит ровно один исполнитель — только он и должен предлагаться");
+});
+
+test("назначить на заявку ХОЗ человека не из ХОЗ нельзя даже админа", async (t) => {
+  const { db, app, хоз } = await двухотдельный(t);
+  const исполнитель = await войти(app, "!оба");
+  const админ = db.prepare("SELECT id FROM users WHERE ad_login = ?").get("!админ").id;
+  const егрпо = db.prepare("SELECT id FROM users WHERE ad_login = ?").get("!егрпо").id;
+
+  for (const [имя, id] of [["админ", админ], ["исполнитель ЕГРПО", егрпо]]) {
+    const r = await исполнитель.patch(`/api/tickets/${хоз}`, { assigned_to: id });
+    assert.strictEqual(r.status, 400, `${имя} не должен назначаться на заявку чужого отдела: ${r.text}`);
+  }
+  const после = db.prepare("SELECT assigned_to FROM tickets WHERE id = ?").get(хоз);
+  assert.strictEqual(после.assigned_to, null, "исполнитель не должен был смениться");
+});
+
+// Человека вывели из отдела, а заявка за ним числится: выпадающий список
+// обязан показать его как есть, иначе карточка соврёт про "не назначено".
+test("уже назначенный исполнитель остаётся в списке после смены отделов", async (t) => {
+  const { db, app, хоз } = await двухотдельный(t);
+  const исполнитель = await войти(app, "!оба");
+  const id = db.prepare("SELECT id FROM users WHERE ad_login = ?").get("!оба").id;
+
+  assert.strictEqual((await исполнитель.patch(`/api/tickets/${хоз}`, { assigned_to: id })).status, 200);
+  db.prepare("UPDATE users SET roles = ',it,' WHERE id = ?").run(id);
+
+  const ответ = await исполнитель.get(`/api/tickets/${хоз}/assignees`);
+  assert.ok(ответ.json.users.some((u) => u.id === id),
+    "текущий исполнитель обязан остаться в списке, даже выйдя из отдела");
 });
