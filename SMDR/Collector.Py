@@ -36,16 +36,53 @@ def read_env_text(env_path):
     return data.decode('utf-8', errors='replace')
 
 
+# Откуда взято каждое значение и что при этом случилось. Заполняется до
+# настройки логирования, поэтому копим в списке и пишем в журнал сразу после
+# basicConfig — иначе самое нужное сообщение теряется.
+ENV_SOURCE = {}
+ENV_NOTES = []
+
+
 def load_env():
     env_path = Path(__file__).with_name('.env')
     if not env_path.exists():
+        # Блокнот на Windows дописывает .txt, если имя файла не взять в кавычки.
+        # Рядом оказывается .env.txt: на вид всё настроено, а читать нечего.
+        alt = Path(__file__).with_name('.env.txt')
+        if alt.exists():
+            ENV_NOTES.append(
+                f"Файл {env_path.name} не найден, но рядом лежит {alt.name}. "
+                "Блокнот дописал расширение — переименуйте файл в .env "
+                "(в проводнике включите показ расширений или задайте имя в кавычках)."
+            )
+        else:
+            ENV_NOTES.append(f"Файл {env_path} не найден — значения берутся только из окружения.")
         return
+
     for raw in read_env_text(env_path).splitlines():
         line = raw.strip()
         if not line or line.startswith('#') or '=' not in line:
             continue
         key, value = line.split('=', 1)
-        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+        key = key.strip()
+        cleaned = value.strip().strip('"').strip("'")
+
+        # ВНИМАНИЕ: значение из окружения побеждает значение из .env.
+        # Так задумано (служба вправе задать своё), но молча это опаснее всего:
+        # .env выглядит настроенным, а работает совсем другой пароль. Поэтому
+        # источник каждого значения пишется в журнал.
+        if key in os.environ:
+            ENV_SOURCE[key] = 'окружение процесса (значение из .env НЕ применено)'
+        else:
+            os.environ[key] = cleaned
+            ENV_SOURCE[key] = '.env'
+            if cleaned != value.strip():
+                ENV_NOTES.append(
+                    f"{key}: с краёв значения сняты кавычки. Если они часть самого значения, "
+                    "экранировать их этот разбор не умеет — уберите кавычки и проверьте."
+                )
+            if value != value.rstrip() or value.strip() != value.strip(' '):
+                ENV_NOTES.append(f"{key}: в строке .env были пробелы по краям, они отброшены.")
 
 
 load_env()
@@ -68,14 +105,42 @@ IDLE_RECONNECT_MIN = int(os.environ.get('SMDR_IDLE_RECONNECT_MIN', '30'))
 IDLE_NOTE_MIN = int(os.environ.get('SMDR_IDLE_NOTE_MIN', '5'))
 
 if not HOST or not os.environ.get('SMDR_PASSWORD'):
+    # Подсказки из load_env печатаем ЗДЕСЬ же. Логирование к этому моменту ещё
+    # не настроено, а именно сейчас они нужнее всего: «файл называется .env.txt»
+    # объясняет отказ полностью, а общий текст про .env.example — нет.
     raise SystemExit(
         'Не заданы SMDR_HOST и/или SMDR_PASSWORD.\n'
-        'Скопируйте .env.example в .env рядом с этим файлом и укажите адрес АТС '
+        + ''.join(f'  {note}\n' for note in ENV_NOTES)
+        + 'Скопируйте .env.example в .env рядом с этим файлом и укажите адрес АТС '
         'и пароль SMDR (см. SMDR/README.md).'
     )
 
 logging.basicConfig(filename='collector.log', level=logging.INFO,
                      format='%(asctime)s %(message)s')
+
+for _note in ENV_NOTES:
+    logging.warning(_note)
+
+
+def describe_secret(name):
+    """Как выглядит значение, не показывая его самого.
+
+    Пароль в журнал попасть не должен, но отличить «пароль не тот» от «пароля
+    нет» по журналу необходимо. Длины и источника для этого достаточно: их
+    можно сверить с работающей копией, не называя значения вслух.
+    """
+    value = os.environ.get(name, '')
+    parts = [f"источник {ENV_SOURCE.get(name, 'окружение процесса')}", f"длина {len(value)}"]
+    if value != value.strip():
+        parts.append("ПО КРАЯМ ЕСТЬ ПРОБЕЛЫ")
+    if not value:
+        parts.append("ПУСТО")
+    return f"{name}: " + ", ".join(parts)
+
+
+logging.info("Настройки: " + "; ".join(
+    describe_secret(n) for n in ('SMDR_HOST', 'SMDR_LOGIN', 'SMDR_PASSWORD')
+))
 
 LINE_RE = re.compile(
     r"^(?P<date>\d{2}/\d{2}/\d{2})\s+"
@@ -257,51 +322,106 @@ def connect_and_listen(conn):
     # пароле АТС просто не начинает слать записи, а в журнале стояло, что вход
     # выполнен. Отличить «пароль не тот» от «звонков нет» было невозможно.
     # Сам пароль не логируем — только приглашение и ответ АТС.
+    secret = os.environ.get('SMDR_PASSWORD', '')
+
     def short(data):
-        return data.decode(errors='replace').strip().replace('\r', ' ').replace('\n', ' ')[:120]
+        text = data.decode(errors='replace').strip().replace('\r', ' ').replace('\n', ' ')
+        # АТС вполне может отразить пароль обратно. В журнал он попасть не должен.
+        if secret:
+            text = text.replace(secret, '***')
+        return text[:120]
 
     prompt = sock.recv(4096)
     sock.sendall(LOGIN)
     time.sleep(0.3)
     after_login = sock.recv(4096)
     sock.sendall(PASSWORD)
+
+    # Ответ на ПАРОЛЬ читаем обязательно.
+    #
+    # Раньше после отправки пароля не читалось ничего, и «АТС пароль не
+    # приняла» выглядело в журнале ровно как «звонков нет»: те же строки
+    # «Тишина N мин — соединение держим». Отличить одно от другого было нельзя.
+    #
+    # Ждём коротко: при верном пароле АТС может молчать до первого завершённого
+    # разговора, и висеть на этом полминуты незачем. А то, что всё-таки
+    # пришло, НЕ выбрасываем — прочитанное уходит в общий разбор ниже. Иначе
+    # первая же запись о звонке пропала бы именно здесь.
+    sock.settimeout(3)
+    try:
+        after_password = sock.recv(4096)
+    except socket.timeout:
+        after_password = b''
+    finally:
+        sock.settimeout(30)
+
     logging.info(
         f"Отправили учётные данные (логин {os.environ.get('SMDR_LOGIN', 'SMDR')!r}). "
-        f"АТС до логина: {short(prompt)!r}; после логина: {short(after_login)!r}"
+        f"АТС до логина: {short(prompt)!r}; после логина: {short(after_login)!r}; "
+        f"после пароля: {short(after_password)!r}"
     )
 
-    buf = b''
+    # Повторное приглашение к вводу пароля означает отказ. Говорим об этом
+    # прямо и один раз за подключение — молчание здесь и есть та самая
+    # неотличимость, из-за которой поломку ищут в базе, а не в пароле.
+    ответ = after_password.decode(errors='replace').lower()
+    if 'password' in ответ or 'invalid' in ответ:
+        logging.error(
+            "АТС НЕ ПРИНЯЛА ПАРОЛЬ: она снова просит его ввести. Записи о звонках "
+            "приходить не будут. Сверьте SMDR_PASSWORD (см. строку «Настройки» выше: "
+            "источник и длина) с тем, что задано на самой АТС "
+            "(Maintenance Console -> SMDR Options)."
+        )
+
+    # Всё, что уже пришло, кладём в буфер разбора, а не теряем.
+    buf = after_password
     last_data = time.monotonic()
     last_note = last_data
+    def drain(buf):
+        """Разобрать все целые строки, что уже лежат в буфере. Вернуть остаток."""
+        while b'\r\n' in buf:
+            line, buf = buf.split(b'\r\n', 1)
+            text = line.decode(errors='ignore').strip()
+            if not text:
+                continue
+
+            # Отражённый АТС пароль не должен осесть ни в журнале, ни в базе:
+            # raw_line сохраняется как есть, и на нераспознанной строке он ушёл
+            # бы в таблицу звонков открытым текстом.
+            if secret and secret in text:
+                text = text.replace(secret, '***')
+
+            logging.info(f"RAW: {text}")
+
+            parsed = parse_line(text)
+            if parsed is None:
+                logging.warning(f"НЕ РАСПОЗНАНО: {text}")
+                save_call(conn, (None, None, None, None, None, None, None, None,
+                                 'unknown', None, None, None, None, text,
+                                 datetime.now().isoformat()), text)
+                continue
+
+            save_call(conn, (parsed['call_dt'], parsed['call_date'], parsed['call_time'],
+                             parsed['ext'], parsed['co'], parsed['number'], parsed['ring'],
+                             parsed['duration'], parsed['direction'], parsed['status'],
+                             parsed['did'], parsed['caller'], parsed['internal_to'], text,
+                             datetime.now().isoformat()), text)
+            logging.info(f"CALL: {text}")
+        return buf
+
     while True:
         try:
+            # Разбираем ДО ожидания, а не после. В буфере уже может лежать
+            # запись, пришедшая вместе с ответом на пароль: если разбирать
+            # только после recv, она пролежала бы там до следующего звонка —
+            # то есть, ночью, до утра.
+            buf = drain(buf)
+
             data = sock.recv(4096)
             if not data:
                 raise ConnectionError("АТС закрыла соединение")
             last_data = last_note = time.monotonic()
-            buf += data
-            while b'\r\n' in buf:
-                line, buf = buf.split(b'\r\n', 1)
-                text = line.decode(errors='ignore').strip()
-                if not text:
-                    continue
-
-                logging.info(f"RAW: {text}")
-
-                parsed = parse_line(text)
-                if parsed is None:
-                    logging.warning(f"НЕ РАСПОЗНАНО: {text}")
-                    save_call(conn, (None, None, None, None, None, None, None, None,
-                                     'unknown', None, None, None, None, text,
-                                     datetime.now().isoformat()), text)
-                    continue
-
-                save_call(conn, (parsed['call_dt'], parsed['call_date'], parsed['call_time'],
-                                 parsed['ext'], parsed['co'], parsed['number'], parsed['ring'],
-                                 parsed['duration'], parsed['direction'], parsed['status'],
-                                 parsed['did'], parsed['caller'], parsed['internal_to'], text,
-                                 datetime.now().isoformat()), text)
-                logging.info(f"CALL: {text}")
+            buf = drain(buf + data)
         except socket.timeout:
             # Записи приходят только по завершении разговора, так что тишина
             # сама по себе не признак поломки. Отмечаем её в журнале и рвём
