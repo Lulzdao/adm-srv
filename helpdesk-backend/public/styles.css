@@ -167,6 +167,12 @@ a { color: var(--md-primary); }
   transition: border-color 0.12s ease, box-shadow 0.12s ease;
 }
 .field-input:focus { border-color: var(--md-primary); box-shadow: inset 0 0 0 1px var(--md-primary); }
+/* Подсказка в поле — намеренно бледная: это пояснение, а не значение, и
+   спутать её с введённым текстом нельзя. Подсказка про пароль ещё и мельче:
+   «пароль учётной записи компьютера» в поле по умолчанию не помещалась и
+   обрывалась на середине слова. */
+.field-input::placeholder { color: var(--md-on-surface-variant); opacity: 0.42; }
+.field-input.hint-long::placeholder { font-size: 11.5px; }
 .btn-primary {
   width: 100%; padding: 14px 0; background: var(--md-primary); color: var(--md-on-primary); border: none;
   border-radius: var(--md-shape-full); font-size: 14px; font-weight: 600; letter-spacing: 0.1px;
@@ -239,9 +245,21 @@ a { color: var(--md-primary); }
 }
 .nav-group-header:hover { background: var(--md-state-hover); color: var(--md-on-surface); }
 .nav-chevron { margin-left: auto; display: inline-flex; color: var(--md-on-surface-variant); transition: transform 0.18s ease; }
-.nav-chevron.open { transform: rotate(90deg); }
-.nav-subgroup { margin-bottom: 6px; }
-.nav-divider { height: 1px; background: var(--md-outline-variant); margin: 12px 16px; }
+.nav-group.open .nav-chevron { transform: rotate(90deg); }
+/* Вложенные пункты лежат в разметке всегда, а видимостью управляет max-height —
+   его, в отличие от height, браузер умеет анимировать от нуля. Отступ снизу —
+   именно padding, а не margin: он входит в scrollHeight и потому сворачивается
+   вместе с содержимым, тогда как margin остался бы висеть пустой полосой. */
+.nav-subgroup { overflow: hidden; transition: max-height 0.24s cubic-bezier(0.4, 0, 0.2, 1); }
+/* Отступ снизу — на последнем пункте, а не на самой группе: при max-height:0
+   собственный padding группы остался бы видимой полоской, сквозь которую
+   просвечивал верх первого пункта (у свёрнутых «Заявок» это выглядело как
+   жёлтая черта под заголовком). У пункта же он клипается вместе с ним. */
+.nav-subgroup .nav-btn:last-child { margin-bottom: 6px; }
+@media (prefers-reduced-motion: reduce) {
+  .nav-subgroup { transition: none; }
+  .nav-chevron { transition: none; }
+}
 .nav-icon { display: inline-flex; align-items: center; }
 .nav-icon svg, .search-icon svg, .row-arrow svg, .chevron-icon svg { display: block; }
 .nav-badge {
@@ -250,10 +268,6 @@ a { color: var(--md-primary); }
 }
 .sidebar-foot { padding: 12px 16px 16px; flex-shrink: 0; }
 .user-row { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; padding: 0 4px; }
-.user-avatar {
-  width: 40px; height: 40px; border-radius: 50%; background: var(--md-primary-container); color: var(--md-on-primary-container);
-  display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; flex-shrink: 0;
-}
 .user-name { font-size: 13px; font-weight: 500; color: var(--md-on-surface); word-wrap: break-word; overflow-wrap: break-word; line-height: 1.35; }
 .user-dept { font-size: 11.5px; color: var(--md-on-surface-variant); }
 .user-role-badge {

@@ -1016,12 +1016,24 @@ function openUserMenu(id, anchor) {
 function userVersion(id) { return usersCache.find(u => u.id === id)?.version; }
 function applyUserVersion(id, version) { const u = usersCache.find(x => x.id === id); if (u && version !== undefined) u.version = version; }
 
+// Переименование меняет и ФИО, и логин — они здесь одно и то же. Пользователя
+// так и заводят: логином служит ФИО целиком. Раньше правилось только
+// отображаемое имя, и опечатка в фамилии навсегда оставалась в логине.
 async function renameUser(id) {
   const u = usersCache.find(x => x.id === id);
-  const val = (prompt('Отображаемое имя:', u ? (u.display_name || '') : '') || '').trim();
-  if (!val || (u && val === u.display_name)) return;
-  try { await api(`api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify({ display_name: val, version: userVersion(id) }) }); refreshAll(); } catch (e) { alert(e.message); refreshAll(); }
+  if (!u) return;
+  const фио = (prompt('ФИО (оно же логин для входа):', u.display_name || u.username) || '').trim();
+  if (!фио || (фио === u.display_name && фио === u.username)) return;
+
+  try {
+    await api(`api/admin/users/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ display_name: фио, username: фио, version: userVersion(id) }),
+    });
+    refreshAll();
+  } catch (e) { alert(e.message); refreshAll(); }
 }
+
 async function toggleUserCap(id, cap, checked) {
   try {
     const r = await api(`api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify({ [cap]: checked, version: userVersion(id) }) });

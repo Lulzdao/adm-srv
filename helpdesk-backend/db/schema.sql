@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS tickets (
   description TEXT,
   category_id INTEGER REFERENCES categories(id),
   priority TEXT NOT NULL DEFAULT 'medium' CHECK (priority IN ('low', 'medium', 'high', 'critical')),
-  status TEXT NOT NULL DEFAULT 'new' CHECK (status IN ('new', 'progress', 'waiting', 'resolved', 'closed', 'cancelled')),
+  status TEXT NOT NULL DEFAULT 'new' CHECK (status IN ('new', 'progress', 'closed')),
   room TEXT,                            -- номер кабинета заявителя
   extension TEXT,                       -- внутренний номер телефона
   created_by INTEGER NOT NULL REFERENCES users(id),

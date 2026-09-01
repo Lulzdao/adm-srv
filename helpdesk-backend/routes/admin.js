@@ -98,9 +98,9 @@ module.exports = function adminRoutes(db) {
     const totals = db.prepare(`
       SELECT
         COUNT(*) AS total,
-        SUM(CASE WHEN status NOT IN ('resolved','closed','cancelled') THEN 1 ELSE 0 END) AS open,
-        SUM(CASE WHEN priority = 'critical' AND status NOT IN ('closed','cancelled') THEN 1 ELSE 0 END) AS critical,
-        SUM(CASE WHEN status IN ('closed','resolved') THEN 1 ELSE 0 END) AS closedTotal
+        SUM(CASE WHEN status != 'closed' THEN 1 ELSE 0 END) AS open,
+        SUM(CASE WHEN priority = 'critical' AND status != 'closed' THEN 1 ELSE 0 END) AS critical,
+        SUM(CASE WHEN status = 'closed' THEN 1 ELSE 0 END) AS closedTotal
       FROM tickets
     `).get();
 

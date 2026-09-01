@@ -31,6 +31,7 @@ function initDb() {
   migrateIsAdmin(db);
   migrateRoles(db);
   migrateNotifications(db);
+  migrateStatuses(db);
 
   return db;
 }
@@ -59,6 +60,27 @@ function migrateRoles(db) {
     "UPDATE users SET roles = ',' || role || ',' WHERE role != 'user' AND roles = ''"
   ).run();
   console.log(`В таблицу users добавлен список отделов roles (перенесено записей: ${info.changes})`);
+}
+
+// Перевод заявок на сокращённый набор статусов.
+//
+// Статусов стало три: новая, в работе, закрыта. Прежние «ожидание», «выполнена»
+// и «отменена» убраны — на практике «ожидание» от «в работе» никто не отличал, а
+// «выполнена» и «отменена» одинаково означали, что заявкой больше не занимаются.
+// Без этого перевода такие заявки стали бы невидимками: список фильтрует по
+// новому набору, и строка со статусом «отменена» не попала бы ни в текущие
+// (там условие «не закрыта»), ни в архив.
+//
+// История переходов (status_history) остаётся как есть: это летопись, и
+// переписывать её нельзя. Подписи для исчезнувших значений держит клиент.
+function migrateStatuses(db) {
+  const map = { waiting: "progress", resolved: "closed", cancelled: "closed" };
+  let total = 0;
+  for (const [from, to] of Object.entries(map)) {
+    const info = db.prepare("UPDATE tickets SET status = ? WHERE status = ?").run(to, from);
+    total += info.changes;
+  }
+  if (total) console.log(`Заявки переведены на сокращённый набор статусов (затронуто: ${total})`);
 }
 
 // Перенос из старой таблицы notifications в пару events/deliveries.
@@ -173,4 +195,4 @@ if (require.main === module) {
   db.close();
 }
 
-module.exports = { initDb, ensureLocalAccounts };
+module.exports = { initDb, ensureLocalAccounts, migrateStatuses };
