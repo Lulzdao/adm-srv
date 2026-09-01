@@ -1,6 +1,23 @@
 const { Client } = require("ldapts");
 const config = require("../config/config");
 
+// Настройки подключения к контроллеру домена.
+//
+// tlsOptions передаём ТОЛЬКО для ldaps://. Библиотека решает, шифровать ли
+// соединение, так: this.secure = isSecureProtocol || hasTlsOptions — то есть
+// один лишь факт наличия tlsOptions включает TLS, даже если в URL стоит
+// открытая схема ldap://. Для домена на ldap://…:389 это означало, что мы
+// отправляли в незашифрованный порт TLS ClientHello; контроллер видел мусор
+// вместо LDAP-запроса и рвал соединение, а наружу это выходило неотличимо от
+// сетевой аварии: "read ECONNRESET" при bind.
+function clientOptions(url) {
+  const opts = { url, connectTimeout: 5000 };
+  if (/^ldaps:/i.test(url)) {
+    opts.tlsOptions = { rejectUnauthorized: config.ldapTlsRejectUnauthorized };
+  }
+  return opts;
+}
+
 /**
  * Аутентификация сотрудника через LDAP-контроллер одного из доменов.
  *
@@ -24,11 +41,7 @@ async function authenticate(domainKey, login, password, db) {
     throw new LdapAuthError("BAD_INPUT", "Логин и пароль обязательны");
   }
 
-  const svcClient = new Client({
-    url: cfg.url,
-    tlsOptions: { rejectUnauthorized: config.ldapTlsRejectUnauthorized },
-    connectTimeout: 5000,
-  });
+  const svcClient = new Client(clientOptions(cfg.url));
 
   let userEntry;
   try {
@@ -61,11 +74,7 @@ async function authenticate(domainKey, login, password, db) {
   }
 
   // Проверка пароля — отдельное подключение под самим пользователем.
-  const userClient = new Client({
-    url: cfg.url,
-    tlsOptions: { rejectUnauthorized: config.ldapTlsRejectUnauthorized },
-    connectTimeout: 5000,
-  });
+  const userClient = new Client(clientOptions(cfg.url));
   try {
     await userClient.bind(userEntry.dn, password);
   } catch (err) {
@@ -175,4 +184,4 @@ class LdapAuthError extends Error {
   }
 }
 
-module.exports = { authenticate, LdapAuthError, isMemberOfGroup };
+module.exports = { authenticate, clientOptions, LdapAuthError, isMemberOfGroup };
