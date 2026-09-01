@@ -195,19 +195,35 @@ const PRIORITIES = [
 const STATUSES = [
   { id: "new", label: "Новая" },
   { id: "progress", label: "В работе" },
-  { id: "waiting", label: "Ожидает ответа" },
-  { id: "resolved", label: "Решена" },
   { id: "closed", label: "Закрыта" },
-  { id: "cancelled", label: "Отменена" },
 ];
+// Подписи статусов, которых больше нет. Нужны ровно в одном месте — в истории
+// заявки: сами заявки при обновлении переведены на новый набор (см. migrateStatuses
+// в db/init.js), а записи о прежних переходах остались, и без этих подписей в
+// истории вместо «Решена» показывалось бы английское resolved.
+const LEGACY_STATUS_LABELS = { waiting: "Ожидает ответа", resolved: "Решена", cancelled: "Отменена" };
+const statusLabel = (id) => (STATUSES.find(s => s.id === id) || {}).label || LEGACY_STATUS_LABELS[id] || id;
 // [цвет текста, цвет подложки] — тональные пары Material 3.
 const STATUS_COLORS = {
-  new: ["#101C33", "#DCE3F9"], progress: ["#2E1500", "#FFDCC2"], waiting: ["#21005D", "#EADDFF"],
-  resolved: ["#08210F", "#CDEBD5"], closed: ["#302A24", "#EFE5DB"], cancelled: ["#302A24", "#EFE5DB"],
+  new: ["#101C33", "#DCE3F9"], progress: ["#2E1500", "#FFDCC2"], closed: ["#302A24", "#EFE5DB"],
 };
 
 // ====== Состояние ======
-const state = { user: null, view: "inbox", currentTicket: null, notifications: [], departments: [], modules: [], navGroupOpen: {} };
+// Какие группы бокового меню раскрыты. По умолчанию закрыты все — меню при
+// входе умещается целиком, и человек сам решает, что ему держать открытым.
+//
+// Хранится в sessionStorage, а не только в памяти: без этого каждое F5
+// схлопывало то, что человек только что раскрыл. Именно session, а не local, —
+// по той же причине, что и позиция прокрутки меню ниже: у двух открытых вкладок
+// панели своё состояние, и это правильно.
+const NAV_GROUPS_KEY = "adm.navGroups";
+function loadNavGroups() {
+  try { return JSON.parse(sessionStorage.getItem(NAV_GROUPS_KEY)) || {}; } catch { return {}; }
+}
+function saveNavGroups() {
+  try { sessionStorage.setItem(NAV_GROUPS_KEY, JSON.stringify(state.navGroupOpen)); } catch { /* приватный режим */ }
+}
+const state = { user: null, view: "inbox", currentTicket: null, notifications: [], departments: [], modules: [], navGroupOpen: loadNavGroups() };
 let viewPollHandle = null;   // интервал автообновления текущего экрана (список/карточка)
 let notifPollHandle = null;  // интервал обновления счётчика уведомлений (работает всегда)
 
@@ -230,9 +246,6 @@ async function api(path, opts = {}) {
   return data;
 }
 
-function initials(name) {
-  return (name || "").split(" ").map(w => w[0]).slice(0, 2).join("").toUpperCase();
-}
 // Экранируем и КАВЫЧКИ тоже. Прежняя реализация шла через textContent +
 // innerHTML, а сериализатор HTML в текстовом узле кавычки не трогает — они там
 // законны. Значение же почти всегда подставляется внутрь атрибута
@@ -320,9 +333,9 @@ async function renderLogin(errorMsg) {
         <div id="manualSwitch" style="display:none;margin-bottom:16px;"></div>
         ${errorMsg ? `<div class="error-box">${esc(errorMsg)}</div>` : ""}
         <div class="field-label">Логин</div>
-        <input class="field-input" id="loginInput" placeholder="d.volkov" autocomplete="username">
+        <input class="field-input" id="loginInput" placeholder="48.ivanovii" autocomplete="username">
         <div class="field-label">Пароль</div>
-        <input class="field-input" id="passwordInput" type="password" placeholder="••••••••" autocomplete="current-password">
+        <input class="field-input hint-long" id="passwordInput" type="password" placeholder="пароль учётной записи компьютера" autocomplete="current-password">
         <button class="btn-primary" id="loginBtn">Войти</button>
         <div style="margin-top:12px;font-size:11px;color:var(--ink-soft);">Для локального аварийного входа начните логин с «!»</div>
       </div>
@@ -533,15 +546,51 @@ function navBtnHtml(it, active, indented) {
     </button>`;
 }
 
+// Вложенные пункты рисуются ВСЕГДА, даже у закрытой группы: без них в разметке
+// анимировать было бы нечего — раскрытие через появление узла происходит мгновенно.
+// Видимостью управляет max-height (см. toggleNavGroup и .nav-subgroup в стилях).
+//
+// max-height проставляется прямо в разметке, а не классом: у раскрытой группы это
+// "none", иначе содержимое обрезалось бы по произвольному числу, а вычислить
+// настоящую высоту в момент сборки строки ещё нельзя — узла в документе нет.
 function navGroupHtml(groupId, label, iconName, badge, items) {
-  const open = state.navGroupOpen[groupId] !== false; // по умолчанию раскрыта
+  const open = state.navGroupOpen[groupId] === true; // по умолчанию свёрнута
   return `
-    <button class="nav-group-header" data-group="${groupId}">
-      <span class="nav-icon">${icon(iconName)}</span>${esc(label)}
-      ${badge ? `<span class="nav-badge">${badge}</span>` : ""}
-      <span class="nav-chevron ${open ? "open" : ""}">${icon("chevron", 13)}</span>
-    </button>
-    ${open ? `<div class="nav-subgroup">${items.map(it => navBtnHtml(it, state.view === it.id, true)).join("")}</div>` : ""}`;
+    <div class="nav-group${open ? " open" : ""}" data-group="${groupId}">
+      <button class="nav-group-header">
+        <span class="nav-icon">${icon(iconName)}</span>${esc(label)}
+        ${badge ? `<span class="nav-badge">${badge}</span>` : ""}
+        <span class="nav-chevron">${icon("chevron", 13)}</span>
+      </button>
+      <div class="nav-subgroup" style="max-height:${open ? "none" : "0"}">${items.map(it => navBtnHtml(it, state.view === it.id, true)).join("")}</div>
+    </div>`;
+}
+
+// Раскрытие и сворачивание группы меню.
+//
+// Всю оболочку при этом не пересобираем — иначе анимации не было бы вовсе:
+// новый узел появляется сразу в конечном состоянии, анимировать нечего.
+function toggleNavGroup(group) {
+  const sub = group.querySelector(".nav-subgroup");
+  const open = !group.classList.contains("open");
+  state.navGroupOpen[group.dataset.group] = open;
+  saveNavGroups();
+  group.classList.toggle("open", open);
+
+  // От "none" браузер не анимирует — в обе стороны сначала подставляем
+  // конкретную высоту содержимого, и только от неё идёт переход.
+  sub.style.maxHeight = `${sub.scrollHeight}px`;
+  if (open) {
+    // После раскрытия ограничение снимаем: иначе появившийся позже счётчик
+    // непрочитанных или новый пункт оказался бы обрезан.
+    sub.addEventListener("transitionend", function done() {
+      sub.style.maxHeight = "none";
+      sub.removeEventListener("transitionend", done);
+    });
+  } else {
+    void sub.offsetHeight; // заставляем браузер принять высоту как начальную
+    sub.style.maxHeight = "0px";
+  }
 }
 
 const MODULE_VIEW_ICONS = { log: "inbox", stats: "chart", directory: "folder", certs: "seal", mchd: "doc", root: "box" };
@@ -611,6 +660,9 @@ function renderShell() {
     : `${depts.join(", ")}${isAdmin ? " · администратор" : ""}`;
 
   let navHtml;
+  // Раздел оповещений собирается здесь, а приписывается в самый конец меню —
+  // после модулей: это настройка, а не ежедневная работа, и место ей внизу.
+  let notifHtml = "";
   if (isAdmin) {
     const subItems = [
       { id: "inbox", label: "Входящие заявки", icon: "inbox", badge: totalUnread },
@@ -622,7 +674,7 @@ function renderShell() {
     navHtml = navGroupHtml("tickets", "Заявки", "folder", totalUnread, subItems);
     // Раздел оповещений — только у ИТ. Исполнителям ХОЗ и ЕГРПО он не нужен:
     // им хватает «Входящих заявок» с бейджем, который работает как работал.
-    navHtml += navGroupHtml("notif", "Оповещения", "bell", 0, [
+    notifHtml = navGroupHtml("notif", "Оповещения", "bell", 0, [
       { id: "notif:feed", label: "Лента", icon: "bell" },
       { id: "notif:templates", label: "Шаблоны", icon: "pen" },
       { id: "notif:smtp", label: "Отправка", icon: "mail" },
@@ -643,7 +695,7 @@ function renderShell() {
   }
 
   if (state.modules.length) {
-    navHtml += `<div class="nav-divider"></div>` + state.modules.map(m => {
+    navHtml += state.modules.map(m => {
       const views = (m.views && m.views.length) ? m.views : [{ id: "root", label: m.label, sub: "" }];
       if (views.length === 1) {
         const it = { id: `module:${m.id}:${views[0].id}`, label: m.label, icon: moduleIcon(m.id) };
@@ -653,6 +705,8 @@ function renderShell() {
       return navGroupHtml(`mod-${m.id}`, m.label, moduleIcon(m.id), 0, items);
     }).join("");
   }
+
+  navHtml += notifHtml;
 
   root.innerHTML = `
     <div class="app-shell">
@@ -668,7 +722,6 @@ function renderShell() {
         <div class="sidebar-nav">${navHtml}</div>
         <div class="sidebar-foot">
           <div class="user-row">
-            <div class="user-avatar">${initials(u.full_name)}</div>
             <div style="min-width:0;">
               <div class="user-name">${esc(u.full_name)}</div>
               <div class="user-dept">${esc(u.department || u.ad_login)}</div>
@@ -687,11 +740,7 @@ function renderShell() {
   if (certsBtn) certsBtn.onclick = () => setView("certs");
 
   root.querySelectorAll(".nav-btn").forEach(btn => btn.onclick = () => setView(btn.dataset.view));
-  root.querySelectorAll(".nav-group-header").forEach(btn => btn.onclick = () => {
-    const g = btn.dataset.group;
-    state.navGroupOpen[g] = state.navGroupOpen[g] === false ? true : false;
-    renderShell();
-  });
+  root.querySelectorAll(".nav-group-header").forEach(btn => btn.onclick = () => toggleNavGroup(btn.closest(".nav-group")));
 
   document.getElementById("logoutBtn").onclick = async () => {
     clearViewPoll();
@@ -814,7 +863,7 @@ async function renderList(main, opts = {}) {
       rowsEl.innerHTML = tickets.map(t => {
         const p = PRIORITIES.find(x => x.id === t.priority) || PRIORITIES[2];
         const [sc, ss] = STATUS_COLORS[t.status] || STATUS_COLORS.new;
-        const sLabel = (STATUSES.find(s => s.id === t.status) || {}).label || t.status;
+        const sLabel = statusLabel(t.status);
         const isUnread = unreadTicketIds.has(t.id);
         return `
         <div class="ticket-row" data-id="${t.id}" style="grid-template-columns:${gridCols};">
@@ -1043,7 +1092,7 @@ function renderDetail(main, ticket) {
 
   function renderStatusRow() {
     const [sc, ss] = STATUS_COLORS[ticket.status] || STATUS_COLORS.new;
-    const sLabel = (STATUSES.find(s => s.id === ticket.status) || {}).label || ticket.status;
+    const sLabel = statusLabel(ticket.status);
     document.getElementById("statusRow").innerHTML = `
       <span class="badge" style="color:${sc};background:${ss};">${sLabel}</span>
       <span class="badge" style="color:var(--ink-soft);background:var(--line-soft);">${esc(ticket.category || "—")}</span>`;
@@ -1071,8 +1120,8 @@ function renderDetail(main, ticket) {
     document.getElementById("historyList").innerHTML = list.length ? list.map(h => `
       <div style="font-size:12px;color:var(--ink-soft);margin-bottom:8px;">
         <span class="mono" style="color:var(--ink);">${fmtDate(h.changed_at)}</span> —
-        ${esc((STATUSES.find(s=>s.id===h.old_status)||{}).label || h.old_status || "—")} →
-        <b style="color:var(--ink);">${esc((STATUSES.find(s=>s.id===h.new_status)||{}).label || h.new_status)}</b>, ${esc(h.changed_by)}
+        ${esc(h.old_status ? statusLabel(h.old_status) : "—")} →
+        <b style="color:var(--ink);">${esc(statusLabel(h.new_status))}</b>, ${esc(h.changed_by)}
       </div>`).join("") : `<div style="font-size:12px;color:var(--ink-soft);">Изменений не было.</div>`;
   }
   async function renderAssigneeSelect() {
@@ -1591,7 +1640,7 @@ async function renderNotifFeed(page, filters = {}) {
   ]);
 
   page.innerHTML = `
-    <div style="max-width:1000px;">
+    <div>
       <div class="card" style="margin-bottom:16px;display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;">
         <div style="flex:1;min-width:200px;">
           <div class="field-label">Поиск по теме</div>
@@ -1694,7 +1743,7 @@ function renderNotifTemplates(page, kinds) {
   if (!kinds.some(k => k.kind === picked)) picked = kinds.length ? kinds[0].kind : null;
 
   page.innerHTML = `
-    <div style="max-width:900px;">
+    <div>
       <div class="card" style="margin-bottom:18px;">
         <div class="field-label">Шаблон какой категории править</div>
         <select class="input field-select" id="tplPick" style="width:100%;">
@@ -1810,7 +1859,7 @@ async function renderNotifSmtp(page, kinds) {
   const derived = kinds.filter(k => k.recipients !== "list");
 
   page.innerHTML = `
-    <div style="max-width:900px;">
+    <div>
       <div class="card" style="margin-bottom:20px;">
         <div class="section-label">Почтовый сервер</div>
         ${!smtp.configured ? `<div class="warn-box" style="margin-bottom:14px;"><div>

@@ -284,3 +284,81 @@ test("сводка для дашборда считается на сервер�
   const чужой = await заявитель.get("/api/admin/stats");
   assert.strictEqual(чужой.status, 403);
 });
+
+// ---------------------------------------------------------------------------
+//  Сокращённый набор статусов
+//
+//  Статусов осталось три: новая, в работе, закрыта. Прежние «ожидание»,
+//  «выполнена» и «отменена» убраны, и важно, чтобы их не осталось ни во входе
+//  (сервер обязан их отвергать), ни в базе (существующие заявки переводятся при
+//  запуске — иначе они выпали бы и из текущих, и из архива).
+// ---------------------------------------------------------------------------
+
+test("сервер принимает только три статуса", async (t) => {
+  const { app, ids, ticketId } = await stand(t);
+  void ids;
+  const админ = client(app.url);
+  await админ.login("!ит");
+
+  for (const статус of ["new", "progress", "closed"]) {
+    const r = await админ.patch(`/api/tickets/${ticketId}`, { status: статус });
+    assert.strictEqual(r.status, 200, `«${статус}» обязан приниматься: ${r.text}`);
+  }
+  for (const статус of ["waiting", "resolved", "cancelled", "готово"]) {
+    const r = await админ.patch(`/api/tickets/${ticketId}`, { status: статус });
+    assert.strictEqual(r.status, 400, `«${статус}» больше не существует и должен отвергаться`);
+  }
+});
+
+test("закрытая заявка уходит из текущих в архив", async (t) => {
+  const { app, ticketId } = await stand(t);
+  const админ = client(app.url);
+  await админ.login("!ит");
+
+  assert.strictEqual((await админ.get("/api/tickets?status=")).json.total, 1, "пока не закрыта — в текущих");
+  assert.strictEqual((await админ.get("/api/tickets?status=archive")).json.total, 0);
+
+  await админ.patch(`/api/tickets/${ticketId}`, { status: "closed" });
+  assert.strictEqual((await админ.get("/api/tickets?status=")).json.total, 0, "закрытая в текущих остаться не должна");
+  assert.strictEqual((await админ.get("/api/tickets?status=archive")).json.total, 1, "и обязана быть в архиве");
+});
+
+test("заявки со снятыми статусами переводятся, а история не трогается", async (t) => {
+  // База из прошлой версии: та же таблица, но со старым CHECK — в нынешней
+  // схеме значения вроде "cancelled" уже не записать, а именно с ними
+  // миграция и должна разбираться.
+  const { DatabaseSync } = require("node:sqlite");
+  const fs = require("node:fs");
+  const os = require("node:os");
+  const path = require("node:path");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "adm-srv-old-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  const старая = new DatabaseSync(path.join(dir, "old.db"));
+  старая.exec(`
+    CREATE TABLE tickets (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      status TEXT NOT NULL DEFAULT 'new'
+        CHECK (status IN ('new', 'progress', 'waiting', 'resolved', 'closed', 'cancelled')));
+    CREATE TABLE status_history (id INTEGER PRIMARY KEY AUTOINCREMENT, new_status TEXT NOT NULL);
+  `);
+  for (const st of ["new", "progress", "waiting", "resolved", "closed", "cancelled"]) {
+    старая.prepare("INSERT INTO tickets (status) VALUES (?)").run(st);
+    старая.prepare("INSERT INTO status_history (new_status) VALUES (?)").run(st);
+  }
+
+  const { migrateStatuses } = require("../db/init");
+  migrateStatuses(старая);
+
+  // node:sqlite отдаёт строки объектами без прототипа — deepStrictEqual их не примет.
+  const стало = старая.prepare("SELECT status, COUNT(*) n FROM tickets GROUP BY status ORDER BY status").all().map((r) => ({ ...r }));
+  const история = старая.prepare("SELECT COUNT(*) n FROM status_history WHERE new_status IN ('waiting','resolved','cancelled')").get();
+  старая.close();
+
+  assert.deepStrictEqual(стало, [
+    { status: "closed", n: 3 },   // closed + resolved + cancelled
+    { status: "new", n: 1 },
+    { status: "progress", n: 2 }, // progress + waiting
+  ], "иначе заявка со снятым статусом не попадёт ни в текущие, ни в архив");
+  assert.strictEqual(история.n, 3, "история переходов — летопись, переписывать её нельзя");
+});

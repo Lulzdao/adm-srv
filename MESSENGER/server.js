@@ -393,6 +393,7 @@ const setUserDepartments = db.transaction((userId, ids) => {
 });
 const updateUserPassword = db.prepare('UPDATE users SET password_hash = ? WHERE id = ?');
 const updateDisplayName = db.prepare('UPDATE users SET display_name = ? WHERE id = ?');
+const updateUsername = db.prepare('UPDATE users SET username = ? WHERE id = ?');
 const bumpUserVersion = db.prepare('UPDATE users SET version = version + 1 WHERE id = ?');
 const deleteUserStmt = db.prepare('DELETE FROM users WHERE id = ?');
 
@@ -1223,7 +1224,7 @@ app.post('/api/admin/users', auth, requireCapability('can_admin'), (req, res) =>
 
 app.patch('/api/admin/users/:id', auth, requireCapability('can_admin'), (req, res) => {
   const id = Number(req.params.id);
-  const { department_id, department_ids, password, display_name, can_broadcast, can_admin, version } = req.body || {};
+  const { department_id, department_ids, password, display_name, username, can_broadcast, can_admin, version } = req.body || {};
   const current = db.prepare('SELECT can_broadcast, can_admin, version FROM users WHERE id = ?').get(id);
   if (!current) return res.status(404).json({ error: 'Пользователь не найден' });
   // Оптимистичная блокировка: панель присылает версию строки, которую видела при загрузке. Если она
@@ -1249,6 +1250,22 @@ app.patch('/api/admin/users/:id', auth, requireCapability('can_admin'), (req, re
     const clean = String(display_name).trim();
     if (!clean) return res.status(400).json({ error: 'Имя не может быть пустым' });
     updateDisplayName.run(clean.slice(0, 60), id);
+  }
+  // Логин меняется вместе с ФИО — иначе после смены фамилии человек остаётся с
+  // прежним, и связь между строкой в списке и живым сотрудником теряется.
+  //
+  // Правим именно тут, а не отдельным маршрутом: переименование — одно действие,
+  // и разъехаться его половины не должны. Токен у сотрудника при этом остаётся
+  // рабочим (в нём id, а не логин) — из клиента его не выкинет, но следующий вход
+  // будет уже по новому логину.
+  if (username !== undefined) {
+    const clean = String(username).trim().toLowerCase();
+    if (!/^[a-z0-9][a-z0-9._-]{2,31}$/.test(clean)) {
+      return res.status(400).json({ error: 'Логин: латиница, цифры, точка, дефис или подчёркивание, от 3 до 32 символов' });
+    }
+    const занят = db.prepare('SELECT id FROM users WHERE username = ? AND id != ?').get(clean, id);
+    if (занят) return res.status(409).json({ error: 'Такой логин уже занят' });
+    updateUsername.run(clean, id);
   }
   bumpUserVersion.run(id);
   broadcastUsersChanged();

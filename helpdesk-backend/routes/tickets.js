@@ -29,7 +29,7 @@ const COMMENT_MAX = 5000;
 // вместо внятного 400 — а строка при этом успевала осесть в
 // status_history (у той таблицы CHECK нет) и потом отрисовывалась в
 // истории заявки на фронтенде.
-const STATUSES = new Set(["new", "progress", "waiting", "resolved", "closed", "cancelled"]);
+const STATUSES = new Set(["new", "progress", "closed"]);
 const PRIORITIES = new Set(["low", "medium", "high", "critical"]);
 
 // Идентификатор заявки в URL — только положительное целое. Проверять
@@ -66,13 +66,16 @@ const DEFAULT_DEPARTMENT = departments[0].name;
 // редактор шаблонов начал бы обещать то, чего в payload нет.
 
 const PRIORITY_LABEL = { low: "низкая", medium: "обычная", high: "высокая", critical: "критическая" };
-const STATUS_LABEL = {
-  new: "новая", progress: "в работе", waiting: "ожидание",
-  resolved: "выполнена", closed: "закрыта", cancelled: "отменена",
-};
-// Завершающие статусы: у них своё письмо — «ваша заявка выполнена» читается
+// Статусов ровно три. Прежние «ожидание», «выполнена» и «отменена» убраны: на
+// практике «ожидание» от «в работе» никто не отличал, а «выполнена» и «отменена»
+// обе означали, что заявкой больше не занимаются, то есть «закрыта». Старые
+// значения в существующих базах переводятся при запуске (см. migrateStatuses в
+// db/init.js), а в истории заявок остаются как были — переписывать прошлое
+// незачем, для показа их подписи хранит клиент.
+const STATUS_LABEL = { new: "новая", progress: "в работе", closed: "закрыта" };
+// Завершающий статус: у него своё письмо — «ваша заявка закрыта» читается
 // совсем не так, как «статус изменён на в работе».
-const DONE_STATUSES = new Set(["resolved", "closed"]);
+const DONE_STATUSES = new Set(["closed"]);
 
 function ticketPayload(db, ticketId) {
   const t = db.prepare(`
@@ -220,9 +223,9 @@ module.exports = function ticketRoutes(db) {
     const clauses = [];
     const params = {};
 
-    if (status === "archive") { clauses.push("t.status IN ('closed', 'cancelled')"); }
+    if (status === "archive") { clauses.push("t.status = 'closed'"); }
     else if (status && status !== "all") { clauses.push("t.status = @status"); params.status = status; }
-    else if (!status) { clauses.push("t.status NOT IN ('closed', 'cancelled')"); }
+    else if (!status) { clauses.push("t.status != 'closed'"); }
 
     if (category) { clauses.push("c.name = @category"); params.category = category; }
     if (q) { clauses.push("(t.title LIKE @q OR t.display_id LIKE @q)"); params.q = `%${q}%`; }
@@ -439,11 +442,11 @@ module.exports = function ticketRoutes(db) {
 
     if (status && status !== ticket.status) {
       // Идентификатор записи в истории служит ключом от повторов: статус может
-      // ходить туда-обратно (в работу → ожидание → в работу), и каждый переход
+      // ходить туда-обратно (новая → в работе → новая), и каждый переход
       // заслуживает своего письма, а вот один переход — ровно одного.
       const hist = db.prepare("INSERT INTO status_history (ticket_id, old_status, new_status, changed_by) VALUES (?, ?, ?, ?)")
         .run(ticket.id, ticket.status, status, user.id);
-      db.prepare("UPDATE tickets SET status = ?, updated_at = datetime('now'), closed_at = CASE WHEN ? IN ('closed','cancelled','resolved') THEN datetime('now') ELSE closed_at END WHERE id = ?")
+      db.prepare("UPDATE tickets SET status = ?, updated_at = datetime('now'), closed_at = CASE WHEN ? = 'closed' THEN datetime('now') ELSE closed_at END WHERE id = ?")
         .run(status, status, ticket.id);
 
       // Взял заявку в работу — стал исполнителем, если ещё никто не назначен.
