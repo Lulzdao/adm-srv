@@ -1697,6 +1697,20 @@ async function sendBroadcast() {
   try { await api('api/broadcast', { method: 'POST', body: JSON.stringify({ text }) }); el.value = ''; loadBroadcastFeed(); } catch (e) { alert(e.message); }
 }
 
+// Отметка присутствия по HTTP — чтобы администратор, сидящий в панели, числился в сети и у
+// сотрудников в клиенте. Одного WebSocket ниже для этого мало: панель открывают через прокси
+// платформы, где апгрейд до WS не пробрасывается, и тогда сокет не поднимается вовсе, а панель
+// продолжает работать. Отметка живёт на сервере минуту и гаснет сама, если вкладку закрыли.
+const PRESENCE_HEARTBEAT_MS = 20000;
+async function sendPresenceHeartbeat() {
+  try { await api('api/presence/heartbeat', { method: 'POST', body: JSON.stringify({}) }); }
+  catch { /* сервер недоступен — следующий тик попробует снова, специально ничего не показываем */ }
+}
+function startPresenceHeartbeat() {
+  sendPresenceHeartbeat();
+  setInterval(sendPresenceHeartbeat, PRESENCE_HEARTBEAT_MS);
+}
+
 function connectPresenceWs() {
   const wsUrl = location.origin.replace(/^http/, 'ws');
   const ws = new WebSocket(`${wsUrl}?token=${token}&host=${encodeURIComponent('Веб-панель администратора')}`);
@@ -1731,6 +1745,7 @@ async function startDash() {
   await loadLogs();
   await loadClients();
   connectPresenceWs();
+  startPresenceHeartbeat();
   // Открываем раздел, отмеченный активным в разметке, через ту же функцию, что
   // и клик. Иначе всё, что раздел включает при открытии (опрос присутствия),
   // при загрузке панели не запускается.

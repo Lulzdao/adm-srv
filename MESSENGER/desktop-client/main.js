@@ -5,6 +5,7 @@ const fs = require('fs');
 const http = require('http');
 const https = require('https');
 const tls = require('tls');
+const { diagnoseServer } = require('./diagnose');
 const { SERVER_URL } = require('./config');
 const { autoUpdater } = require('electron-updater');
 
@@ -75,10 +76,16 @@ function readCaFile(file) {
   try { return fs.readFileSync(file, 'utf8'); } catch { return null; }
 }
 
+// Корни, которые видит САМА Windows (без вшитого файла и без папки ca/). Нужны диагностике:
+// по ним отличается «сервер недоступен» от «сервер жив, но корневого сертификата нет в системе» —
+// а это принципиально разные поручения администратору. Заполняется в collectTrustAnchors ниже.
+let windowsStoreAnchors = [];
+
 function collectTrustAnchors() {
   const anchors = [];
 
   const fromStore = readWindowsRootStore();
+  windowsStoreAnchors = fromStore;
   anchors.push(...fromStore);
 
   // Вшитый корень — запасной вариант и страховка на время, пока новый корень ещё не доехал
@@ -1001,6 +1008,17 @@ ipcMain.handle('set-server-url', (event, url) => {
 // Чем именно окна связаны с сервером — для индикатора шифрования в ростере. Отдельный канал, а не
 // расширение get-server-url: тот возвращает голую строку и используется во всех трёх окнах при
 // подключении, а это нужно одному ростеру и раз в сеанс.
+// ---------- Диагностика подключения ----------
+// Сам разбор живёт в diagnose.js рядом — он ничего не знает ни про Electron, ни про настройки,
+// принимает адрес и список корней, которые видит система. Так его можно прогнать настоящими
+// TLS-серверами в тесте, а не проверять на живом домене.
+ipcMain.handle('diagnose-server', () => diagnoseServer(
+  effectiveServerUrl(),
+  // Явный список корней = «глазами Windows»: вшитый файл, папка ca/ и корни из машинной политики
+  // сюда НЕ входят, и именно на этой разнице ловится «сертификат не установлен в системе».
+  [...tls.rootCertificates, ...windowsStoreAnchors],
+));
+
 ipcMain.handle('get-connection-info', () => ({
   url: effectiveServerUrl(),
   builtIn: SERVER_URL,                              // что зашито в config.js при сборке

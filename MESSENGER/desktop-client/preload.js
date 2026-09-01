@@ -37,6 +37,9 @@ contextBridge.exposeInMainWorld('desktop', {
   getAppInfo: () => ipcRenderer.invoke('get-app-info'),
   // Индикатор шифрования и служебное окно смены адреса в ростере (Ctrl+Shift+S).
   getConnectionInfo: () => ipcRenderer.invoke('get-connection-info'),
+  // Почему не удалось достучаться до сервера. Chromium не раскрывает окну причину сбоя fetch —
+  // отвечает главный процесс, см. diagnoseServer в main.js.
+  diagnoseServer: () => ipcRenderer.invoke('diagnose-server'),
   relaunch: () => ipcRenderer.send('relaunch'),
   // Обновление приложения — см. setupUpdater в main.js.
   getUpdateState: () => ipcRenderer.invoke('get-update-state'),
