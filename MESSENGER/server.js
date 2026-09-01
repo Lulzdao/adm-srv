@@ -827,6 +827,27 @@ app.post('/api/register', ipRateLimit({ windowMs: 60 * 60 * 1000, max: 10 }), (r
 // по этому же адресу и так отдаётся страница входа в панель.
 app.get('/api/ping', (req, res) => res.json({ ok: true, app: 'iskra', secure: Boolean(req.secure) }));
 
+// Присутствие для тех, кто пришёл не по WebSocket.
+//
+// Веб-панель администратора открывают через прокси платформы, а он не пробрасывает
+// апгрейд до WebSocket: панель работает, а сокет не поднимается. Из-за этого
+// администратор, сидящий в панели, числился «не в сети» — ни в ростере у сотрудников,
+// ни в собственном списке присутствия. Здесь он отмечается обычным POST'ом раз в
+// PRESENCE_HEARTBEAT_SEC секунд; отметка живёт WEB_PRESENCE_TTL_MS и гаснет сама, если
+// вкладку закрыли (никакого события «закрыл вкладку» у нас нет и быть не может).
+//
+// Имя хоста приходит от клиента и никуда, кроме снимка присутствия, не идёт — обрезаем
+// по длине, как и у WebSocket-подключений.
+app.post('/api/presence/heartbeat', auth, (req, res) => {
+  const hostname = String((req.body || {}).host || ADMIN_WEB_HOSTNAME).slice(0, 64);
+  const known = webPresence.has(req.user.id);
+  webPresence.set(req.user.id, { hostname, lastSeen: Date.now() });
+  // Рассылаем только на появление: продление уже известной отметки снимок не меняет, а
+  // broadcastPresence всё равно сравнивает payload и промолчит — но и стрингифай лишний.
+  if (!known) broadcastPresence();
+  res.json({ ok: true, ttlSec: Math.round(WEB_PRESENCE_TTL_MS / 1000) });
+});
+
 app.post('/api/login', ipRateLimit({ windowMs: 10 * 60 * 1000, max: 30 }), (req, res) => {
   const { username, password } = req.body || {};
   const lockedSec = checkLoginLock(username);
@@ -1938,6 +1959,23 @@ const wss = new WebSocketServer({ server });
 const online = new Map();   // userId -> Set(ws)              — для маршрутизации сообщений
 const connMeta = new Map(); // ws -> { userId, hostname, state } — для presence (может быть несколько ПК на юзера)
 
+// Присутствие без WebSocket — см. /api/presence/heartbeat выше. userId -> { hostname, lastSeen }.
+// Ровно одна отметка на человека: веб-панель у него одна, а если он к тому же сидит в клиенте,
+// его хосты из connMeta добавятся к этой отметке обычным порядком.
+const webPresence = new Map();
+const WEB_PRESENCE_TTL_MS = 60000;   // отметка живёт минуту без продления
+const PRESENCE_SWEEP_MS = 15000;     // как часто выметаем протухшие
+
+function sweepWebPresence() {
+  const deadline = Date.now() - WEB_PRESENCE_TTL_MS;
+  let changed = false;
+  for (const [userId, entry] of webPresence) {
+    if (entry.lastSeen < deadline) { webPresence.delete(userId); changed = true; }
+  }
+  if (changed) broadcastPresence();
+}
+setInterval(sweepWebPresence, PRESENCE_SWEEP_MS).unref();
+
 // Отправка в сокет всегда через это, а не ws.send() напрямую. Между обрывом связи и событием
 // 'close' сокет какое-то время ещё числится в connMeta, но писать в него уже нельзя — а рассылок
 // "всем подключённым" здесь много, и попасть в этот промежуток тем легче, чем больше людей онлайн.
@@ -1972,6 +2010,13 @@ const statusSince = new Map();
 
 function presenceSnapshot() {
   const onlineByUser = new Map(); // не путать с внешней online (userId -> Set(ws) для маршрутизации)
+  // Сначала отметки веб-панели, потом живые сокеты: если человек одновременно и в панели, и в
+  // клиенте, его хосты сложатся, а состояние определит клиент (сокет знает про "отошёл", панель нет).
+  const webDeadline = Date.now() - WEB_PRESENCE_TTL_MS;
+  for (const [userId, entry] of webPresence) {
+    if (entry.lastSeen < webDeadline) continue; // протухла, но подметальщик до неё ещё не дошёл
+    onlineByUser.set(userId, { state: 'active', hosts: new Set([entry.hostname]), idleSince: null });
+  }
   for (const meta of connMeta.values()) {
     if (!onlineByUser.has(meta.userId)) onlineByUser.set(meta.userId, { state: 'offline', hosts: new Set(), idleSince: null });
     const entry = onlineByUser.get(meta.userId);

@@ -1,7 +1,7 @@
 const express = require("express");
 const bcrypt = require("bcrypt");
 const { authenticate, LdapAuthError } = require("../services/ldapAuth");
-const { upsertFromLdap } = require("../services/userStore");
+const { upsertFromLdap, unpackRoles } = require("../services/userStore");
 const { detectDomain, normalizeIp } = require("../services/network");
 const { resolveTlsOptions } = require("../services/tls");
 const config = require("../config/config");
@@ -18,24 +18,34 @@ function attemptKey(req, login) {
   return `${normalizeIp(req.socket.remoteAddress) || "?"}|${String(login).toLowerCase()}`;
 }
 
-function tooManyAttempts(key) {
-  const entry = loginAttempts.get(key);
-  if (!entry) return false;
-  if (Date.now() - entry.first > LOGIN_WINDOW_MS) {
-    loginAttempts.delete(key);
-    return false;
-  }
-  return entry.count >= LOGIN_MAX_ATTEMPTS;
-}
-
-function registerFailure(key) {
+// Попытку засчитываем СРАЗУ, до проверки пароля, и тут же отвечаем, можно ли
+// её делать. Прежний порядок — сначала посмотреть счётчик, потом, уже после
+// await (bcrypt или поход в домен), увеличить — против подбора не защищал
+// вовсе: между этими двумя моментами через ещё не изменившийся счётчик
+// успевала пройти целая пачка одновременных запросов, и десять разрешённых
+// попыток превращались в шестьдесят. Проверка и увеличение обязаны быть одним
+// синхронным действием — тогда очередь событий не может вклиниться между ними.
+function claimAttempt(key) {
   const now = Date.now();
   const entry = loginAttempts.get(key);
   if (!entry || now - entry.first > LOGIN_WINDOW_MS) {
     loginAttempts.set(key, { count: 1, first: now });
-    return;
+    return true;
   }
+  if (entry.count >= LOGIN_MAX_ATTEMPTS) return false;
   entry.count += 1;
+  return true;
+}
+
+// Недоступность контроллера домена и наши собственные сбои попыткой подбора не
+// являются — возвращаем счётчик назад. Иначе получасовое отсутствие домена
+// заблокировало бы вход всем, кто в это время пытался войти, и лечить это
+// пришлось бы перезапуском службы.
+function refundAttempt(key) {
+  const entry = loginAttempts.get(key);
+  if (!entry) return;
+  entry.count -= 1;
+  if (entry.count <= 0) loginAttempts.delete(key);
 }
 
 // Подчищаем накопленные ключи, чтобы карта не росла бесконечно на длинном
@@ -71,17 +81,19 @@ module.exports = function authRoutes(db) {
       return res.status(400).json({ error: "Слишком длинный логин или пароль" });
     }
 
+    // Неизвестный домен отсекаем ДО счётчика: это ошибка обращения к API, а не
+    // попытка подобрать пароль, и засчитывать её незачем.
+    if (mode !== "A" && mode !== "B" && mode !== "local") {
+      return res.status(400).json({ error: "Неизвестный домен" });
+    }
+
     const key = attemptKey(req, login);
-    if (tooManyAttempts(key)) {
+    if (!claimAttempt(key)) {
       return res.status(429).json({ error: "Слишком много попыток входа. Попробуйте через несколько минут." });
     }
 
     if (mode === "local") {
       return handleLocalLogin(db, req, res, login, password, key);
-    }
-
-    if (mode !== "A" && mode !== "B") {
-      return res.status(400).json({ error: "Неизвестный домен" });
     }
 
     try {
@@ -93,10 +105,11 @@ module.exports = function authRoutes(db) {
       if (err instanceof LdapAuthError) {
         const status = ["DC_UNAVAILABLE", "SEARCH_FAILED"].includes(err.code) ? 503 : 401;
         // Недоступность контроллера — не повод засчитывать попытку подбора.
-        if (status === 401) registerFailure(key);
+        if (status !== 401) refundAttempt(key);
         if (err.cause) console.error(`LDAP ${err.code} для логина "${login}" (домен ${mode}):`, err.cause.message || err.cause);
         return res.status(status).json({ error: err.message, code: err.code });
       }
+      refundAttempt(key); // наш собственный сбой не должен приближать блокировку
       console.error(`Необработанная ошибка входа для "${login}" (домен ${mode}):`, err);
       return res.status(500).json({ error: "Внутренняя ошибка аутентификации" });
     }
@@ -129,12 +142,10 @@ module.exports = function authRoutes(db) {
 async function handleLocalLogin(db, req, res, login, password, attemptsKey) {
   const user = db.prepare("SELECT * FROM users WHERE ad_login = ? AND auth_type = 'local'").get(login);
   if (!user || !user.local_password_hash) {
-    registerFailure(attemptsKey);
     return res.status(401).json({ error: "Неверный логин или пароль" });
   }
   const ok = await bcrypt.compare(password, user.local_password_hash);
   if (!ok) {
-    registerFailure(attemptsKey);
     return res.status(401).json({ error: "Неверный логин или пароль" });
   }
   db.prepare("UPDATE users SET last_domain = 'local', last_login_at = datetime('now') WHERE id = ?").run(user.id);
@@ -164,6 +175,12 @@ function publicUser(user) {
     department: user.department,
     email: user.email,
     role: user.role,
+    // Полный список отделов: их может быть несколько, и права на очередь
+    // считаются именно по нему, а не по одной role.
+    roles: unpackRoles(user.roles),
+    // Снимок на момент входа, как и роль: смена членства в группе домена
+    // вступит в силу при следующем входе.
+    is_admin: Boolean(user.is_admin),
     auth_type: user.auth_type,
   };
 }

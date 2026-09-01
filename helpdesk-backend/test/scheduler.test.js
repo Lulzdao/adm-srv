@@ -192,3 +192,30 @@ test("tick: падение одного задания не мешает дру�
   assert.equal(st.find((j) => j.id === "expiry").last.ok, false);
   assert.equal(st.find((j) => j.id === "minutes").last.ok, true, "минуты не должны пострадать");
 });
+
+test("tick: второй обход не начинается, пока идёт первый", async (t) => {
+  const { db, scheduler, cv } = await withModules(t);
+
+  // Заставляем модуль отвечать медленно: так первый обход заведомо ещё идёт,
+  // когда setInterval выстрелил бы второй раз.
+  cv.state.delayMs = 300;
+
+  const первый = scheduler.tick(db);
+  await new Promise((r) => setTimeout(r, 50)); // даём дойти до похода в модуль
+  assert.equal(scheduler.isTicking(), true, "первый обход должен быть в работе");
+
+  const запросовДо = cv.state.requests;
+  await scheduler.tick(db);
+  assert.equal(cv.state.requests, запросовДо,
+    "второй обход сходил в модуль, пока шёл первый — обходы наложились");
+
+  await первый;
+  assert.equal(scheduler.isTicking(), false, "после завершения флаг обязан сняться");
+
+  // Пропуск часа не блокирует навсегда: следующий обход снова проходит.
+  // Окно суток первый обход уже закрыл, поэтому проверяем именно возможность
+  // запуска, а не повторный поход в модуль.
+  cv.state.delayMs = 0;
+  await scheduler.runJob(db, scheduler.JOBS.find((j) => j.id === "expiry"), { force: true });
+  assert.ok(cv.state.requests > запросовДо, "после снятия флага обход снова возможен");
+});

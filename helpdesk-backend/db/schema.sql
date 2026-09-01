@@ -9,6 +9,22 @@ CREATE TABLE IF NOT EXISTS users (
   email TEXT,
   phone TEXT,
   role TEXT NOT NULL DEFAULT 'user', -- допустимые значения см. config/departments.js + 'user'
+  -- Администратор — НЕ роль, а отдельный признак.
+  --
+  -- Роль отвечает на вопрос «в каком отделе человек исполнитель», и она одна:
+  -- совместить «исполнитель ИТ» и «администратор платформы» в одном поле
+  -- нельзя, а настоящий администратор обычно и то и другое. Кроме того,
+  -- источники у них разные: роль настраивается из панели, а признак
+  -- администратора выводится ТОЛЬКО из группы в .env и из панели недостижим.
+  is_admin INTEGER NOT NULL DEFAULT 0,
+  -- Отделов у исполнителя может быть НЕСКОЛЬКО: человек состоит и в группе ИТ,
+  -- и в группе ХОЗ — значит видит очереди обоих. Колонка role хранит лишь
+  -- первый по порядку (для подписи и совместимости), а полный список живёт
+  -- здесь в виде ",it,hoz," — с запятыми по краям, чтобы точное совпадение
+  -- искалось простым LIKE '%,it,%' и не цеплялось за похожие имена.
+  -- Отдельная таблица связей была бы правильнее по форме, но на трёх отделах
+  -- и двух сотнях сотрудников она даёт только лишние соединения.
+  roles TEXT NOT NULL DEFAULT '',
   auth_type TEXT NOT NULL DEFAULT 'ad' CHECK (auth_type IN ('ad', 'local')),
   local_password_hash TEXT,
   last_domain TEXT,
@@ -88,6 +104,11 @@ CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets(status);
 CREATE INDEX IF NOT EXISTS idx_tickets_assigned ON tickets(assigned_to);
 CREATE INDEX IF NOT EXISTS idx_tickets_created_by ON tickets(created_by);
 CREATE INDEX IF NOT EXISTS idx_comments_ticket ON comments(ticket_id);
+-- Карточка заявки читает историю и вложения по ticket_id. Индекса на них не было,
+-- и каждое открытие карточки перебирало обе таблицы целиком. Замер на 20 000
+-- заявок (60 000 строк истории): история 2,44 -> 0,02 мс, вложения 0,23 -> 0,012 мс.
+CREATE INDEX IF NOT EXISTS idx_status_history_ticket ON status_history(ticket_id);
+CREATE INDEX IF NOT EXISTS idx_attachments_ticket ON attachments(ticket_id);
 CREATE INDEX IF NOT EXISTS idx_notifications_user_unread ON notifications(user_id, is_read);
 
 -- Отделы-исполнители (ИТ/ХОЗ/ЕГРПО и то, что вы добавите) заполняются
@@ -159,3 +180,9 @@ CREATE INDEX IF NOT EXISTS idx_notif_deliv_event ON notification_deliveries(even
 CREATE INDEX IF NOT EXISTS idx_notif_deliv_inapp ON notification_deliveries(user_id, is_read) WHERE channel = 'inapp';
 -- Повтор неудачных отправок на следующем тике планировщика.
 CREATE INDEX IF NOT EXISTS idx_notif_deliv_pending ON notification_deliveries(status) WHERE status = 'pending';
+-- Бейдж «непрочитанные» берёт последние 50 отметок пользователя. Существующий
+-- индекс (user_id, is_read) годится для отбора, но не для сортировки: порядок
+-- строился временной таблицей по ВСЕЙ переписке человека. Этот индекс даёт и
+-- отбор, и порядок сразу — но работает только в паре с ORDER BY d.id DESC
+-- (см. routes/notifications.js). Замер при 20 000 отметок: 8,16 -> 0,11 мс.
+CREATE INDEX IF NOT EXISTS idx_notif_deliv_inapp_id ON notification_deliveries(user_id, id DESC) WHERE channel = 'inapp';

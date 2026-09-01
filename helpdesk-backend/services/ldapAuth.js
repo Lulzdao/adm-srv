@@ -1,6 +1,23 @@
 const { Client } = require("ldapts");
 const config = require("../config/config");
 
+// Настройки подключения к контроллеру домена.
+//
+// tlsOptions передаём ТОЛЬКО для ldaps://. Библиотека решает, шифровать ли
+// соединение, так: this.secure = isSecureProtocol || hasTlsOptions — то есть
+// один лишь факт наличия tlsOptions включает TLS, даже если в URL стоит
+// открытая схема ldap://. Для домена на ldap://…:389 это означало, что мы
+// отправляли в незашифрованный порт TLS ClientHello; контроллер видел мусор
+// вместо LDAP-запроса и рвал соединение, а наружу это выходило неотличимо от
+// сетевой аварии: "read ECONNRESET" при bind.
+function clientOptions(url) {
+  const opts = { url, connectTimeout: 5000 };
+  if (/^ldaps:/i.test(url)) {
+    opts.tlsOptions = { rejectUnauthorized: config.ldapTlsRejectUnauthorized };
+  }
+  return opts;
+}
+
 /**
  * Аутентификация сотрудника через LDAP-контроллер одного из доменов.
  *
@@ -24,11 +41,7 @@ async function authenticate(domainKey, login, password, db) {
     throw new LdapAuthError("BAD_INPUT", "Логин и пароль обязательны");
   }
 
-  const svcClient = new Client({
-    url: cfg.url,
-    tlsOptions: { rejectUnauthorized: config.ldapTlsRejectUnauthorized },
-    connectTimeout: 5000,
-  });
+  const svcClient = new Client(clientOptions(cfg.url));
 
   let userEntry;
   try {
@@ -61,11 +74,7 @@ async function authenticate(domainKey, login, password, db) {
   }
 
   // Проверка пароля — отдельное подключение под самим пользователем.
-  const userClient = new Client({
-    url: cfg.url,
-    tlsOptions: { rejectUnauthorized: config.ldapTlsRejectUnauthorized },
-    connectTimeout: 5000,
-  });
+  const userClient = new Client(clientOptions(cfg.url));
   try {
     await userClient.bind(userEntry.dn, password);
   } catch (err) {
@@ -83,14 +92,29 @@ async function authenticate(domainKey, login, password, db) {
   // Порядок в config/departments.js — это и порядок приоритета: первое
   // совпадение побеждает (обычно "it" стоит первым, чтобы сотрудник,
   // случайно оказавшийся в двух группах, получил более широкую роль).
-  let role = "user";
+  // Признак администратора выводится ТОЛЬКО из группы в .env. Через панель
+  // администрирования его выдать нельзя — там настраиваются группы отделов, и
+  // это разные ключи. Иначе получалось так: добавили в панели группу к отделу
+  // ИТ — и её участники стали администраторами платформы; хуже того, значение
+  // из панели ЗАМЕЩАЛО группу из .env (там стоял ||), и настоящие
+  // администраторы могли разом лишиться прав.
+  const isAdmin = inGroup(cfg.adminGroup);
+
+  // Отделов у исполнителя может быть НЕСКОЛЬКО. Раньше цикл выходил по первому
+  // совпадению, и сотрудник, состоящий и в группе ИТ, и в группе ХОЗ, видел
+  // очередь только того отдела, что стоит раньше в config/departments.js —
+  // заявки второго до него просто не доходили.
+  //
+  // Группа отдела ИТ значит ровно то, чем выглядит: исполнители ИТ, без
+  // каких-либо прав администратора.
+  const roles = [];
   for (const dept of departments) {
-    // Для роли it совместимость: если новую группу под неё ещё не задали
-    // через панель администрирования, используем старое поле из .env.
-    const groupName = (db && getSetting(db, `${dept.role}_group_${domainKey}`))
-      || (dept.role === "it" ? cfg.adminGroup : null);
-    if (inGroup(groupName)) { role = dept.role; break; }
+    const groupName = db && getSetting(db, `${dept.role}_group_${domainKey}`);
+    if (inGroup(groupName)) roles.push(dept.role);
   }
+  // role — первый по порядку из config/departments.js. Нужен там, где отдел
+  // должен быть один: подпись в интерфейсе, префикс, «основной» отдел.
+  const role = roles[0] || "user";
 
   return {
     login,
@@ -100,6 +124,8 @@ async function authenticate(domainKey, login, password, db) {
     department: singleValue(userEntry.department),
     phone: singleValue(userEntry.telephoneNumber),
     role,
+    roles,
+    isAdmin,
   };
 }
 
@@ -158,4 +184,4 @@ class LdapAuthError extends Error {
   }
 }
 
-module.exports = { authenticate, LdapAuthError, isMemberOfGroup };
+module.exports = { authenticate, clientOptions, LdapAuthError, isMemberOfGroup };

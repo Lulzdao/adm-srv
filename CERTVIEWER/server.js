@@ -324,7 +324,15 @@ function requireAuthApi(req, res, next) {
 
 // ---------- Express ----------
 const app = express();
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
+// defParamCharset: имя файла в multipart приходит байтами UTF-8, а busboy по
+// умолчанию читает их как latin1. Без этого «Доверенность_Иванов.zip»
+// превращается в «ÐÐ¾Ð²ÐµÑ€ÐµÐ½Ð½Ð¾ÑÑ‚ÑŒ...» — и в сообщениях об ошибках
+// разбора, и там, где имя исходного файла сохраняется.
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  defParamCharset: 'utf8',
+});
 
 app.disable('x-powered-by');
 app.use(express.json({ limit: '32kb' }));
@@ -362,6 +370,24 @@ app.post('/login', (req, res) => {
 app.get('/logout', (req, res) => {
   res.setHeader('Set-Cookie', 'session=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0');
   res.redirect('login');
+});
+
+// Охрана защищённых страниц. Перечислять адреса в маршрутах оказалось
+// недостаточно: Express сопоставляет маршрут с НЕраскодированным путём, а
+// express.static свой путь раскодирует. Из-за этого /%69ndex.html мимо
+// маршрута /index.html проваливался в статику, и каркас страницы отдавался без
+// входа (сам реестр при этом не утекал — /api/* так не обойти, там выходит
+// 404). Проверяем раскодированный путь ОДИН раз и до статики, чтобы список
+// адресов не приходилось держать в согласии с двумя разными способами
+// сопоставления.
+const PROTECTED_PAGES = new Set(['/', '/index.html', '/mchd', '/mchd.html']);
+
+app.use((req, res, next) => {
+  let decoded;
+  try { decoded = decodeURIComponent(req.path); }
+  catch { return res.status(400).send('Некорректный адрес'); }
+  if (!PROTECTED_PAGES.has(decoded)) return next();
+  return requireAuthPage(req, res, next);
 });
 
 // Защищённая страница. Оба адреса — и корень, и прямой /index.html —

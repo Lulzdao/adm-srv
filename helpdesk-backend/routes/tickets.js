@@ -3,6 +3,7 @@ const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
 const config = require("../config/config");
+const { roleLike } = require("../services/userStore");
 const { requireAuth } = require("../middleware/auth");
 const { emit } = require("../services/notifications");
 const { ticketNewKind } = require("../config/notifications");
@@ -53,7 +54,9 @@ function optionalShortText(value) {
 // здесь ничего трогать не нужно.
 const DEPT_PREFIX = Object.fromEntries(departments.map((d) => [d.name, d.prefix]));
 const DEPT_ROLE = Object.fromEntries(departments.map((d) => [d.name, d.role]));
-const ROLE_DEPT = Object.fromEntries(departments.filter((d) => d.role !== "it").map((d) => [d.role, d.name]));
+const ROLE_DEPT = Object.fromEntries(departments.map((d) => [d.role, d.name]));
+// Роль отдела по умолчанию — для строк без категории (наследие ранних версий).
+const DEFAULT_DEPT_ROLE = departments[0].role;
 const DEFAULT_DEPARTMENT = departments[0].name;
 
 // --- Оповещения по заявке ---------------------------------------------------
@@ -100,29 +103,40 @@ const ticketSubject = (payload) => `${payload["номер"]} — ${payload["те
 
 // Кому зажечь бейдж у «Входящих заявок». Это персональная отметка, поэтому
 // исполнителей ищем по роли отдела: очередь разбирает любой из них.
+// Сотрудники отдела — по СПИСКУ отделов, а не по единственной роли: человек
+// может состоять и в ИТ, и в ХОЗ, и уведомления о новых заявках должны
+// приходить ему по обоим.
 const deptUserIds = (db, role, exceptId) =>
-  db.prepare("SELECT id FROM users WHERE role = ? AND id != ?").all(role, exceptId || 0).map((u) => u.id);
+  db.prepare("SELECT id FROM users WHERE roles LIKE ? AND id != ?")
+    .all(roleLike(role), exceptId || 0).map((u) => u.id);
+
+/** Названия отделов, в которых человек исполнитель. Пусто — он не исполнитель. */
+function userDepts(user) {
+  const roles = user.roles && user.roles.length ? user.roles : (user.role ? [user.role] : []);
+  return roles.map((r) => ROLE_DEPT[r]).filter(Boolean);
+}
 
 // Единое правило видимости конкретной заявки, используется во всех местах,
 // где нужно решить "может ли этот человек её увидеть/менять":
-// — it видит всё;
-// — hoz/egrpo видят очередь своего отдела ПЛЮС собственные заявки в любом
-//   отделе (если сотрудник хоз.отдела сам завёл заявку в ИТ, он её не теряет);
+// — администратор видит всё (признак is_admin, выдаётся группой из .env);
+// — исполнитель видит очереди ВСЕХ отделов, где он состоит, ПЛЮС собственные
+//   заявки в любом отделе (если сотрудник хозотдела сам завёл заявку в ИТ, он
+//   её не теряет);
 // — все остальные — только то, что сами создали или на что назначены.
 function canAccessTicket(user, ticket) {
-  if (user.role === "it") return true;
-  if (ROLE_DEPT[user.role] && ticket.category === ROLE_DEPT[user.role]) return true;
+  if (user.is_admin) return true;
+  if (userDepts(user).includes(ticket.category)) return true;
   return ticket.created_by === user.id || ticket.assigned_to === user.id;
 }
 
 // Право МЕНЯТЬ заявку (статус, исполнитель, приоритет) — уже, чем право её
-// видеть: только ИТ и исполнители того отдела, куда заявка заведена.
+// видеть: только администраторы и исполнители того отдела, куда заявка заведена.
 // Ровно это и показывает фронтенд (блок "Управление" виден по тому же
 // условию), но раньше проверка была только на клиенте — по API заявитель
 // мог сменить статус, приоритет и назначить исполнителем кого угодно.
 function canManageTicket(user, ticket) {
-  if (user.role === "it") return true;
-  return Boolean(ROLE_DEPT[user.role]) && ticket.category === ROLE_DEPT[user.role];
+  if (user.is_admin) return true;
+  return userDepts(user).includes(ticket.category);
 }
 
 module.exports = function ticketRoutes(db) {
@@ -130,6 +144,13 @@ module.exports = function ticketRoutes(db) {
   router.use(requireAuth);
 
   const upload = multer({
+    // Имя файла в multipart приходит байтами UTF-8, а busboy по умолчанию
+    // читает их как latin1 — и «записка.txt» оседала в базе как
+    // «Ð·Ð°Ð¿Ð¸Ñ\x81ÐºÐ°.txt». В организации, где по-русски названо всё,
+    // это означало искажённое имя у каждого вложения — и в карточке, и при
+    // скачивании. Одна строка вместо ручного перекодирования Buffer из latin1:
+    // так правка не сломается, если multer однажды сменит умолчание.
+    defParamCharset: "utf8",
     storage: multer.diskStorage({
       destination: (req, file, cb) => {
         // req.ticket проставлен в authorizeAttachment ниже — там же :id уже
@@ -209,17 +230,52 @@ module.exports = function ticketRoutes(db) {
     if (mine === "1") {
       clauses.push("t.created_by = @uid");
       params.uid = user.id;
-    } else if (user.role === "it") {
-      // "Входящие" для админа — без ограничений, видит все отделы.
-    } else if (ROLE_DEPT[user.role]) {
-      clauses.push("c.name = @deptName");
-      params.deptName = ROLE_DEPT[user.role];
+    } else if (user.is_admin) {
+      // "Входящие" для администратора — без ограничений, видит все отделы.
+      // Исполнитель отдела ИТ сюда не попадает: его отсекает следующая ветка,
+      // и он видит очередь своего отдела, как исполнители остальных отделов.
+    } else if (userDepts(user).length) {
+      // Отделов может быть несколько — во «Входящих» показываем очереди всех,
+      // где человек исполнитель.
+      const depts = userDepts(user);
+      const места = depts.map((_, i) => `@dept${i}`).join(", ");
+      clauses.push(`c.name IN (${места})`);
+      depts.forEach((name, i) => { params[`dept${i}`] = name; });
     } else {
       clauses.push("(t.created_by = @uid OR t.assigned_to = @uid)");
       params.uid = user.id;
     }
 
     const where = clauses.length ? "WHERE " + clauses.join(" AND ") : "";
+
+    // Предел на выдачу.
+    //
+    // Раньше маршрут отдавал ВСЮ таблицу. На 5000 заявок это 1,27 МБ ответа и
+    // 22-30 мс, которые node:sqlite и сериализация JSON держат синхронно — то
+    // есть платформа в это время не отвечает никому: ни другому сотруднику, ни
+    // проксируемому модулю. А список опрашивается таймером раз в 20 секунд с
+    // КАЖДОГО открытого рабочего места: при десяти таких местах замеренная
+    // задержка цикла событий доходила до 149 мс. Кэш браузера тут не помогает —
+    // ответ 304 стоит столько же, потому что тело всё равно строится: по нему
+    // считается ETag.
+    //
+    // Заявок только прибывает: маршрута удаления в платформе нет вовсе.
+    const PAGE_SIZE = 200;
+
+    // Полное число нужно подписи «N заявок»: без него на экране было бы
+    // написано «200 заявок» независимо от того, сколько их на самом деле.
+    // Отдельный COUNT дешевле выдачи строк — он не собирает тексты и не ходит
+    // в users за именами.
+    const total = db.prepare(`
+      SELECT COUNT(*) AS n
+      FROM tickets t
+      LEFT JOIN categories c ON c.id = t.category_id
+      ${where}
+    `).get(params).n;
+
+    // Наборы параметров РАЗНЫЕ: node:sqlite отвергает именованный параметр,
+    // которого нет в запросе («Unknown named parameter»), поэтому один объект
+    // на оба запроса подать нельзя.
     const rows = db.prepare(`
       SELECT t.id, t.display_id, t.title, t.priority, t.status, t.room, t.extension,
              t.created_at, t.updated_at,
@@ -232,9 +288,10 @@ module.exports = function ticketRoutes(db) {
       LEFT JOIN users assignee ON assignee.id = t.assigned_to
       ${where}
       ORDER BY t.updated_at DESC
-    `).all(params);
+      LIMIT @limit
+    `).all({ ...params, limit: PAGE_SIZE });
 
-    res.json({ tickets: rows });
+    res.json({ tickets: rows, total, limit: PAGE_SIZE });
   });
 
   // POST /api/tickets
@@ -292,7 +349,7 @@ module.exports = function ticketRoutes(db) {
       inappUserIds: deptUserIds(db, deptRole, user.id),
     });
 
-    res.status(201).json(getTicketDetail(db, ticketId));
+    res.status(201).json(getTicketDetail(db, ticketId, user));
   });
 
   // GET /api/tickets/:id
@@ -300,7 +357,7 @@ module.exports = function ticketRoutes(db) {
     const id = parseTicketId(req.params.id);
     if (id === null) return res.status(400).json({ error: "Некорректный идентификатор заявки" });
 
-    const ticket = getTicketDetail(db, id);
+    const ticket = getTicketDetail(db, id, req.session.user);
     if (!ticket) return res.status(404).json({ error: "Заявка не найдена" });
     if (!canAccessTicket(req.session.user, ticket)) {
       return res.status(403).json({ error: "Недостаточно прав для просмотра этой заявки" });
@@ -308,9 +365,15 @@ module.exports = function ticketRoutes(db) {
     res.json({ ticket });
   });
 
-  // GET /api/tickets/:id/assignees — кандидаты в исполнители: те, у кого
-  // роль соответствует отделу заявки, плюс всегда it (могут подхватить
-  // любую заявку в порядке эскалации).
+  // GET /api/tickets/:id/assignees — кандидаты в исполнители: только те, кто
+  // состоит в отделе заявки. Отделов у человека может быть несколько, поэтому
+  // отбор идёт по списку roles, а не по одной role.
+  //
+  // Администратор сюда не попадает по одному лишь признаку is_admin: он
+  // управляет платформой, а не разбирает заявки. Раньше здесь стояло
+  // "OR is_admin = 1" — из-за этого исполнитель ХОЗ видел в списке людей из
+  // чужих отделов. Нужен админ в очереди отдела — его добавляют в доменную
+  // группу этого отдела, и он появится наравне со всеми.
   router.get("/:id/assignees", (req, res) => {
     const id = parseTicketId(req.params.id);
     if (id === null) return res.status(400).json({ error: "Некорректный идентификатор заявки" });
@@ -323,10 +386,18 @@ module.exports = function ticketRoutes(db) {
     if (!canAccessTicket(req.session.user, ticket)) {
       return res.status(403).json({ error: "Недостаточно прав" });
     }
-    const deptRole = DEPT_ROLE[ticket.category];
+    const deptRole = DEPT_ROLE[ticket.category] || DEFAULT_DEPT_ROLE;
     const rows = db.prepare(
-      "SELECT id, full_name, role FROM users WHERE role = ? OR role = 'it' ORDER BY full_name"
-    ).all(deptRole || "it");
+      "SELECT id, full_name, role FROM users WHERE roles LIKE ? ORDER BY full_name"
+    ).all(roleLike(deptRole));
+
+    // Тот, кто уже назначен, остаётся в списке, даже если его вывели из
+    // отдела: иначе выпадающий список показал бы "не назначено" на заявке,
+    // у которой исполнитель есть.
+    if (ticket.assigned_to && !rows.some((u) => u.id === ticket.assigned_to)) {
+      const current = db.prepare("SELECT id, full_name, role FROM users WHERE id = ?").get(ticket.assigned_to);
+      if (current) rows.unshift(current);
+    }
     res.json({ users: rows });
   });
 
@@ -359,10 +430,10 @@ module.exports = function ticketRoutes(db) {
     let assignee;
     if (assigned_to !== undefined && assigned_to !== null && assigned_to !== "") {
       const assigneeId = parseTicketId(assigned_to);
-      const deptRole = DEPT_ROLE[ticket.category];
+      const deptRole = DEPT_ROLE[ticket.category] || DEFAULT_DEPT_ROLE;
       assignee = assigneeId === null ? null : db.prepare(
-        "SELECT id FROM users WHERE id = ? AND (role = ? OR role = 'it')"
-      ).get(assigneeId, deptRole || "it");
+        "SELECT id FROM users WHERE id = ? AND roles LIKE ?"
+      ).get(assigneeId, roleLike(deptRole));
       if (!assignee) return res.status(400).json({ error: "Такого исполнителя нельзя назначить на эту заявку" });
     }
 
@@ -407,7 +478,7 @@ module.exports = function ticketRoutes(db) {
         .run(priority, ticket.id);
     }
 
-    res.json(getTicketDetail(db, ticket.id));
+    res.json(getTicketDetail(db, ticket.id, user));
   });
 
   // POST /api/tickets/:id/comments  { text, is_internal }
@@ -432,7 +503,11 @@ module.exports = function ticketRoutes(db) {
       return res.status(403).json({ error: "Недостаточно прав на комментирование этой заявки" });
     }
 
-    const internal = is_internal && user.role !== "user" ? 1 : 0;
+    // Право пометить заметку внутренней — ровно у того, кто её потом увидит
+    // (см. getTicketDetail). Раньше здесь стояло role !== "user", и сотрудник
+    // хозотдела, заведя заявку в ИТ, мог создать в ней пометку, невидимую ему
+    // самому: писать её он был вправе, а читать — уже нет.
+    const internal = is_internal && canManageTicket(user, ticket) ? 1 : 0;
 
     const info = db.prepare("INSERT INTO comments (ticket_id, user_id, text, is_internal) VALUES (?, ?, ?, ?)")
       .run(ticket.id, user.id, text.trim(), internal);
@@ -536,7 +611,14 @@ module.exports = function ticketRoutes(db) {
   return router;
 };
 
-function getTicketDetail(db, id) {
+// Внутренние заметки — переписка исполнителей между собой. Видит их тот, кто
+// заявкой УПРАВЛЯЕТ (ИТ и исполнители того отдела), а не всякий, кто вправе её
+// открыть: у заявителя есть право читать свою заявку, но не служебные пометки о
+// ней. Фильтра здесь не было вовсе — карточка отдавала все комментарии подряд,
+// и фронтенд честно рисовал заявителю чужую заметку с плашкой
+// «ВНУТРЕННЯЯ ЗАМЕТКА». Отсюда и параметр viewer: без него функция не может
+// решить, что показывать, а звать её без зрителя больше негде.
+function getTicketDetail(db, id, viewer) {
   const ticket = db.prepare(`
     SELECT t.*, c.name AS category, creator.full_name AS created_by_name, assignee.full_name AS assigned_to_name
     FROM tickets t
@@ -547,11 +629,15 @@ function getTicketDetail(db, id) {
   `).get(id);
   if (!ticket) return null;
 
+  // Отсев делает БД, а не вызывающий: забыть фильтр на одном из трёх вызовов
+  // куда легче, чем не передать зрителя — а без него заметки не покажутся вовсе.
+  const seesInternal = viewer && canManageTicket(viewer, ticket) ? 1 : 0;
   ticket.comments = db.prepare(`
     SELECT co.id, co.text, co.is_internal, co.created_at, u.full_name AS author
     FROM comments co JOIN users u ON u.id = co.user_id
-    WHERE co.ticket_id = ? ORDER BY co.created_at ASC
-  `).all(id);
+    WHERE co.ticket_id = ? AND (? = 1 OR co.is_internal = 0)
+    ORDER BY co.created_at ASC
+  `).all(id, seesInternal);
 
   ticket.attachments = db.prepare(`
     SELECT id, filename, filesize, mime_type, uploaded_at FROM attachments WHERE ticket_id = ?
@@ -568,12 +654,22 @@ function getTicketDetail(db, id) {
 
 // Номер зависит от отдела: ИТ-0001, ХОЗ-0001, ЕГРПО-0001 — свой счётчик
 // на каждый отдел, а не общий сквозной.
+//
+// Считаем от НАИБОЛЬШЕГО уже выданного номера, а не от количества заявок.
+// Через COUNT(*) счётчик откатывается назад при первом же удалении строки из
+// tickets: следующая заявка получает номер, который уже занят, и вставка
+// падает на UNIQUE display_id. Заявки перестали бы создаваться совсем — до тех
+// пор, пока счётчик не догонит удалённое. Маршрута удаления сейчас нет, но
+// чистка тестовых заявок прямо в базе — обычное дело, и цена ошибки тут
+// несоразмерна цене правки.
+//
+// substr в SQLite считает СИМВОЛЫ, а не байты, поэтому кириллический префикс
+// длиной в буквах даёт верное смещение: «ИТ-0007» -> позиция 4.
 function nextDisplayId(db, deptName) {
   const prefix = DEPT_PREFIX[deptName] || "ЗАЯВ";
   const row = db.prepare(`
-    SELECT COUNT(*) AS n FROM tickets t
-    JOIN categories c ON c.id = t.category_id
-    WHERE c.name = ?
-  `).get(deptName);
-  return `${prefix}-${String(row.n + 1).padStart(4, "0")}`;
+    SELECT MAX(CAST(substr(display_id, ?) AS INTEGER)) AS n
+    FROM tickets WHERE display_id LIKE ?
+  `).get(prefix.length + 2, `${prefix}-%`);
+  return `${prefix}-${String((row.n || 0) + 1).padStart(4, "0")}`;
 }

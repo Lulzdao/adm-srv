@@ -12,6 +12,10 @@ certs/
 *.pem
 !MESSENGER/desktop-client/rosstat-root-ca.crt
 
+# Скомпилированный байт-код Python: появляется от любого импорта Collector.Py
+__pycache__/
+*.pyc
+
 # Рантайм-данные (базы SQLite, логи, загруженные файлы) — не часть исходников
 *.db
 *.db-shm

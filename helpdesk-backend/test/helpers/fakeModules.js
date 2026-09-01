@@ -34,6 +34,8 @@ async function startFakeCertviewer(initial = {}) {
     attorneys: initial.attorneys || [],
     fail: false,        // имитация лежащего модуля
     garbage: false,     // имитация ответа не-JSON (страница логина)
+    delayMs: 0,         // имитация медленного модуля: нужна, чтобы застать обход в работе
+    requests: 0,        // сколько раз модуль дёрнули — по этому видно, был ли обход на самом деле
   };
 
   const server = http.createServer((req, res) => {
@@ -47,10 +49,16 @@ async function startFakeCertviewer(initial = {}) {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(obj));
     };
-    const p = new URL(req.url, "http://x").pathname;
-    if (p === "/api/certificates") return send(state.certificates);
-    if (p === "/api/mchd") return send(state.attorneys);
-    res.writeHead(404); res.end("{}");
+    const answer = () => {
+      const p = new URL(req.url, "http://x").pathname;
+      if (p === "/api/certificates" || p === "/api/mchd") state.requests++;
+      if (p === "/api/certificates") return send(state.certificates);
+      if (p === "/api/mchd") return send(state.attorneys);
+      res.writeHead(404); res.end("{}");
+    };
+    // Таймер не держим unref-ом: сервер всё равно закрывают в t.after.
+    if (state.delayMs > 0) setTimeout(answer, state.delayMs);
+    else answer();
   });
 
   await new Promise((r) => server.listen(0, "127.0.0.1", r));

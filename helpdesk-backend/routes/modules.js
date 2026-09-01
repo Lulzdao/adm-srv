@@ -13,9 +13,18 @@ module.exports = function () {
 
   // Список модулей, доступных текущей роли — фронтенд строит по нему пункты
   // меню, не зная заранее, что вообще подключено на платформе.
+  // Модуль доступен администратору всегда, а роли отдела — если она названа
+  // в `roles`. Раньше проверялась только роль, а роль "it" означала и
+  // «исполнитель ИТ», и «администратор» разом; теперь это разные вещи, и
+  // список `roles` служит ровно одному: открыть модуль исполнителям, если он
+  // им нужен по работе.
+  const allowed = (user, mod) => Boolean(user.is_admin) || mod.roles.includes(user.role);
+
+  // Список модулей, доступных текущему пользователю — фронтенд строит по нему
+  // пункты меню, не зная заранее, что вообще подключено на платформе.
   router.get("/api/modules", requireAuth, (req, res) => {
     const visible = modules
-      .filter((m) => m.roles.includes(req.session.user.role))
+      .filter((m) => allowed(req.session.user, m))
       .map((m) => ({ id: m.id, label: m.label, path: m.path, views: m.views }));
     res.json({ modules: visible });
   });
@@ -25,7 +34,7 @@ module.exports = function () {
       mod.path,
       requireAuth,
       (req, res, next) => {
-        if (!mod.roles.includes(req.session.user.role)) {
+        if (!allowed(req.session.user, mod)) {
           return res.status(403).json({ error: "Недостаточно прав для этого модуля" });
         }
         next();
@@ -47,16 +56,20 @@ module.exports = function () {
         // запускается с флагом --use-system-ca (см. package.json). На машине
         // вне домена корневой сертификат придётся указать в NODE_EXTRA_CA_CERTS.
         secure: true,
-        // express.json()/urlencoded() в server.js уже разбирают тело запроса
-        // раньше, чем оно доходит сюда — без этого POST-запросы (например,
-        // форма логина или загрузка сертификата) уходили бы в модуль с
-        // пустым телом. fixRequestBody пересобирает req.body обратно перед
-        // пересылкой.
+        // express.json() в app.js разбирает тело запроса раньше, чем оно
+        // доходит сюда — без этого POST с JSON уходил бы в модуль пустым.
+        // fixRequestBody пересобирает req.body обратно перед пересылкой.
+        //
+        // Формы (x-www-form-urlencoded) платформа НЕ разбирает: express.urlencoded()
+        // не подключён, req.body остаётся неопределённым, и тело идёт в модуль
+        // потоком как есть. Так и надо — но раньше здесь было написано
+        // «express.json()/urlencoded()», и по комментарию выходило, будто формы
+        // тоже разбираются и теряются. Проверено тестом test/proxy.test.js.
         on: {
           proxyReq: (proxyReq, req, res) => {
-            // express.json()/urlencoded() кладут в req.body пустой объект {}
-            // даже для запросов, которые сами не разбирают (multipart они не
-            // трогают). {} — truthy, поэтому fixRequestBody решает, что тело
+            // express.json() кладёт в req.body пустой объект {} для запросов
+            // с телом, которые сам не разбирает (multipart он не трогает).
+            // {} — truthy, поэтому fixRequestBody решает, что тело
             // уже разобрано, и пытается пересобрать multipart из пустого
             // объекта — реальный файл при этом теряется, и Сертвивер получает
             // оборванную форму ("Unexpected end of form" в busboy). Файлы

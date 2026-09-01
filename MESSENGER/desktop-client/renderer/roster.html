@@ -13,7 +13,12 @@
   body { display: flex; flex-direction: column; }
 
   /* ---- Логин ---- */
-  #auth { flex: 1; display: flex; flex-direction: column; justify-content: center; padding: 26px; gap: 8px; }
+  /* safe center + прокрутка — на случай длинного объяснения отказа: при минимальном размере
+     окна (260×420) развёрнутое сообщение про сертификат сдвигало поля ввода за верхний край,
+     и добраться до них было нельзя. safe center при нехватке места ведёт себя как flex-start,
+     то есть содержимое прижимается к началу и остаётся прокручиваемым. */
+  #auth { flex: 1; display: flex; flex-direction: column; justify-content: safe center; overflow-y: auto; padding: 26px; gap: 8px; }
+  #auth > * { flex-shrink: 0; }
   #authForm { display: flex; flex-direction: column; gap: 8px; }
   #authLogo { display: block; height: 110px; width: auto; margin: 0 auto 12px; }
   #auth h1 { font-size: 22px; margin: 0 0 4px; text-align: center; font-weight: 800; letter-spacing: .3px; }
@@ -23,7 +28,12 @@
   #auth button.primary { -webkit-app-region: no-drag; margin-top: 8px; padding: 11px; border: none; border-radius: 9px; background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff; font-weight: 700; cursor: pointer; font-size: 13px; }
   #auth .switch { -webkit-app-region: no-drag; text-align: center; color: var(--muted); cursor: pointer; margin-top: 6px; }
   #auth .switch:hover { color: var(--text); }
-  #auth .err { color: var(--danger); text-align: center; min-height: 16px; font-size: 12px; }
+  /* white-space:pre-line — сообщение об отказе состоит из двух частей: что случилось и что
+     с этим делать. Разрывы строк ставит сам текст (см. describeAuthFailure). */
+  /* overflow-wrap:anywhere — в сообщении бывает адрес сервера одним длинным словом,
+     без этого он вылезал за край окна. */
+  #auth .err { color: var(--danger); text-align: center; min-height: 16px; font-size: 11.5px; line-height: 1.45; white-space: pre-line; overflow-wrap: anywhere; }
+  #auth .err.neutral { color: var(--muted); }
   /* Подсказка про Caps Lock (см. refreshCapsHint) — пароль в поле не виден, и набранный с зажатым
      Caps Lock он выглядит точно так же, как правильный: человек несколько раз получает "неверный
      логин или пароль", не понимая, почему. Показываем ровно тогда, когда Caps Lock действительно
@@ -57,7 +67,14 @@
      кроссфейд между ними без "прыжка" высоты, который был бы неизбежен, если бы оба по очереди
      занимали место в обычном потоке (46px то появлялись, то исчезали бы независимо друг от друга). */
   #topSlot { display: grid; flex-shrink: 0; }
-  #me-bar, #searchBar { grid-area: 1 / 1; -webkit-app-region: no-drag; display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--panel); min-height: 46px; transition: opacity .15s ease; }
+  /* min-width:0 — не косметика, а условие того, что длинное ФИО обрежется многоточием.
+     Строка лежит в гриде (#topSlot), а у элемента грида min-width по умолчанию auto —
+     то есть он отказывается становиться уже своего min-content. min-content строки
+     считается по её содержимому, и min-width:0 у самого имени внутри флексбокса на это
+     НЕ влияет: он снимает нижнюю границу при сжатии, но не уменьшает вклад имени в
+     min-content контейнера. Из-за этого при полном ФИО строка получалась шире окна и
+     шестерёнка уезжала за правый край: 393px строки в окне 260px. */
+  #me-bar, #searchBar { grid-area: 1 / 1; min-width: 0; -webkit-app-region: no-drag; display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--panel); min-height: 46px; transition: opacity .15s ease; }
   #me-bar { cursor: pointer; }
   #me-bar:hover { background: var(--panel-2); }
   #me-bar.open { background: var(--panel-2); }
@@ -74,6 +91,13 @@
   #me-bar .gear { margin-left: auto; color: var(--muted); display: flex; flex-shrink: 0; transform: rotate(0deg); transition: transform .35s cubic-bezier(.4, 0, .2, 1), color .15s; }
   #me-bar.open .gear { transform: rotate(180deg); color: var(--text); }
   .avatar { width: 26px; height: 26px; border-radius: 50%; background: linear-gradient(135deg, var(--accent), #8f6ee8); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 10.5px; font-weight: 700; flex-shrink: 0; position: relative; }
+  /* Строка профиля: вместо круга с инициалами — герб организации. Круг и градиент
+     убираем совсем (герб — не аватар, рамка ему не нужна), значок статуса остаётся на
+     прежнем месте. Размер чуть больше круга: у герба много воздуха по краям, и при
+     26px он выглядит мельче соседних элементов. */
+  .avatar.emblem { width: 30px; height: 30px; border-radius: 0; background: none; color: var(--emblem); }
+  .avatar.emblem svg { width: 100%; height: 100%; display: block; }
+  .avatar.emblem .dot { right: -1px; bottom: 0; }
   .avatar .dot { position: absolute; right: -2px; bottom: -2px; border: 2px solid var(--panel); -webkit-app-region: no-drag; }
   /* flex:1 + nowrap/ellipsis — гарантирует, что #topSlot всегда ровно 46px высотой (для top:46px у
      #profilePanel ниже), даже если отображаемое имя очень длинное: без этого строка могла бы
@@ -379,7 +403,6 @@ let ws, presence = {}, usersCache = [];
 let collapsedDepts = new Set(JSON.parse(localStorage.getItem('collapsedDepts') || '[]'));
 let searchQuery = '';
 
-function initials(name) { return (name || '?').slice(0, 2).toUpperCase(); }
 function displayNameOf(u) { return u.display_name || u.username; }
 
 // Caps Lock отслеживаем на уровне документа, а не поля пароля: клавишу почти всегда нажимают ДО
@@ -400,25 +423,110 @@ function toggleMode() {
   document.getElementById('switchMode').textContent = mode === 'login' ? 'Нет аккаунта? Зарегистрироваться' : 'Уже есть аккаунт? Войти';
 }
 
+// Расшифровка отказа связи в текст для сотрудника. Приходит из diagnoseServer (main.js):
+// само окно причину сбоя fetch не знает — Chromium её не раскрывает, и раньше здесь на любой
+// сбой писалось «Сервер недоступен», даже когда сервер работал, а на машине просто не было
+// корневого сертификата организации.
+//
+// Каждый текст устроен одинаково: первая строка — что произошло, вторая — что с этим делать.
+// Вторая строка адресована в первую очередь тому, кто придёт разбираться (администратору), но
+// написана так, чтобы сотрудник мог просто её процитировать.
+function describeAuthFailure(d) {
+  const адрес = d && d.url ? `\nАдрес сервера: ${d.url}` : '';
+  switch (d && d.code) {
+    case 'ca-missing-in-system':
+      return 'Сервер работает, но Windows на этом компьютере не доверяет его сертификату.\n'
+        + 'Не установлен корневой сертификат организации — администратору нужно добавить его в «Доверенные корневые центры сертификации».' + адрес;
+    case 'cert-expired':
+      return 'Срок действия сертификата сервера истёк.\nНужно выпустить новый сертификат — это делается на сервере.' + адрес;
+    case 'cert-name':
+      return 'Сертификат сервера выписан на другое имя.\nК серверу надо обращаться тем именем, которое записано в сертификате, а не по адресу.' + адрес;
+    case 'cert-untrusted':
+      return 'Сертификат сервера не проходит проверку.\nПокажите администратору этот код: ' + (d.detail || 'без кода') + адрес;
+    case 'dns':
+      return 'Имя сервера не удаётся определить в сети.\nПроверьте адрес сервера или доступность DNS.' + адрес;
+    case 'refused':
+      return 'Сервер отказывает в подключении.\nВероятно, служба «Искра» на нём не запущена или занят другой порт.' + адрес;
+    case 'timeout':
+      return 'Сервер не ответил вовремя.\nОбычно так ведёт себя закрытый порт на межсетевом экране или пропавшая связь с подсетью.' + адрес;
+    case 'unreachable':
+      return 'До сервера нет сети с этого компьютера.\nПроверьте подключение к сети и маршрут до сервера.' + адрес;
+    case 'reset':
+      return 'Соединение с сервером обрывается.\nТак бывает, когда на пути стоит фильтрация трафика или перепутаны http и https.' + адрес;
+    case 'protocol':
+      return 'Сервер отвечает не тем протоколом, которого ждёт клиент.\nСкорее всего, в адресе перепутаны http и https или указан не тот порт.' + адрес;
+    case 'not-iskra':
+      return 'По этому адресу отвечает не «Искра».\nПроверьте адрес и порт сервера.' + адрес;
+    case 'http-status':
+      return `Сервер ответил ошибкой ${d.status} на проверку связи.\nРазбираться нужно на самом сервере — в его журнале.` + адрес;
+    case 'bad-url':
+      return 'Адрес сервера записан неверно.\nИсправить его можно на этом экране: Ctrl+S.' + адрес;
+    case 'ok':
+      return 'Сервер отвечает, но подключиться из окна не получилось.\n'
+        + 'Так бывает, когда запрос перехватывает антивирус или прокси на этом компьютере.' + адрес;
+    default:
+      return 'Не удалось подключиться к серверу.\nПокажите администратору этот код: ' + ((d && d.detail) || 'неизвестно') + адрес;
+  }
+}
+
 async function doAuth() {
   const username = document.getElementById('username').value.trim();
   const password = document.getElementById('password').value;
   const errEl = document.getElementById('authErr');
+  errEl.className = 'err';
   errEl.textContent = '';
+
+  // Проверка до похода на сервер: пустые поля он всё равно отвергнет, а человеку понятнее
+  // увидеть причину сразу, чем после круга по сети.
+  if (!username || !password) {
+    errEl.textContent = mode === 'login' ? 'Введите логин и пароль' : 'Придумайте логин и пароль';
+    return;
+  }
+
+  let res;
   try {
-    const res = await fetch(`${serverUrl}/api/${mode}`, {
+    res = await fetch(`${serverUrl}/api/${mode}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password }),
     });
-    const data = await res.json();
-    if (!res.ok) { errEl.textContent = data.error || 'Ошибка'; return; }
-    token = data.token; me = data.user;
-    localStorage.setItem('token', token);
-    localStorage.setItem('me', JSON.stringify(me));
-    startApp();
   } catch {
-    errEl.textContent = 'Сервер недоступен. Обратитесь к администратору';
+    // До сервера не дошли. Что именно помешало — знает только главный процесс.
+    errEl.className = 'err neutral';
+    errEl.textContent = 'Проверяем связь с сервером…';
+    let diag = null;
+    try { diag = await desktop.diagnoseServer(); } catch { /* и диагностика не ответила — обойдёмся общим текстом */ }
+    errEl.className = 'err';
+    errEl.textContent = describeAuthFailure(diag);
+    return;
   }
+
+  // Сервер ответил — дальше разбираем именно его ответ. Тело может оказаться не JSON:
+  // на этом адресе может стоять прокси или совсем другая служба, отдающая HTML.
+  const data = await res.json().catch(() => null);
+  if (!data) {
+    errEl.textContent = `Ответ сервера не распознан (код ${res.status}).\nВозможно, по этому адресу отвечает не «Искра».\nАдрес сервера: ${serverUrl}`;
+    return;
+  }
+  if (!res.ok) {
+    // 401 и 429 сервер сопровождает точным текстом (неверный пароль, блокировка на N секунд) —
+    // его и показываем. Своё добавляем только там, где ответ сервера сам по себе непонятен.
+    if (res.status >= 500) {
+      errEl.textContent = `Сервер ответил ошибкой ${res.status}.\nЭто сбой на самой «Искре» — разбираться нужно в её журнале.`;
+      return;
+    }
+    let text = data.error || `Сервер отклонил запрос (код ${res.status})`;
+    // Подсказка про Caps Lock уместна ровно здесь: пароль не подошёл, а клавиша нажата.
+    if (res.status === 401 && document.getElementById('capsHint').classList.contains('show')) {
+      text += '\nОбратите внимание: включён Caps Lock.';
+    }
+    errEl.textContent = text;
+    return;
+  }
+
+  token = data.token; me = data.user;
+  localStorage.setItem('token', token);
+  localStorage.setItem('me', JSON.stringify(me));
+  startApp();
 }
 
 // Адрес сервера обычно зашит при сборке (см. config.js) — неудобно пересобирать .exe ради смены IP.
@@ -1222,7 +1330,11 @@ async function startApp() {
   installErrorReporting(serverUrl, token, 'roster'); // см. ui-kit.js — токен/сервер уже точно известны
   document.getElementById('auth').style.display = 'none';
   document.getElementById('app').classList.add('active');
-  document.getElementById('meAvatar').prepend(initials(displayNameOf(me)));
+  // Герб вместо инициалов — insertAdjacentHTML, а не innerHTML: внутри уже лежит
+  // значок статуса (#meDot), и перезаписывать содержимое целиком нельзя.
+  const meAvatar = document.getElementById('meAvatar');
+  meAvatar.classList.add('emblem');
+  meAvatar.insertAdjacentHTML('afterbegin', uiIcon('emblem'));
   document.getElementById('meName').textContent = displayNameOf(me);
   document.querySelector('#me-bar .gear').innerHTML = uiIcon('gear');
   document.getElementById('me-bar').onclick = toggleProfilePanel;

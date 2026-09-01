@@ -21,6 +21,7 @@ require("dotenv").config();
 const net = require("net");
 const tls = require("tls");
 const { Client } = require("ldapts");
+const { clientOptions } = require("../services/ldapAuth");
 const config = require("../config/config");
 
 const domainKey = process.argv[2];
@@ -142,12 +143,19 @@ async function main() {
     fail(`DOMAIN_${domainKey}_SVC_DN или DOMAIN_${domainKey}_SVC_PASSWORD пусты в .env`);
     process.exit(1);
   }
-  const client = new Client({ url: cfg.url, tlsOptions: { rejectUnauthorized: config.ldapTlsRejectUnauthorized }, connectTimeout: 5000 });
+  // Те же настройки подключения, что у самой службы (см. clientOptions в ldapAuth).
+  const client = new Client(clientOptions(cfg.url));
   try {
     await client.bind(cfg.svcDn, cfg.svcPassword);
     ok(`Bind успешен`);
   } catch (err) {
     fail(`Bind не удался: ${err.message}`);
+    if (/ECONNRESET|EPIPE/i.test(err.message)) {
+      console.log(`  Соединение оборвано, а не отвергнуто — это НЕ похоже на неверный пароль:`);
+      console.log(`  на неверные учётные данные DC отвечает ошибкой 49 (invalidCredentials).`);
+      console.log(`  Проверьте, что схема в URL совпадает с портом (ldap:// — 389, ldaps:// — 636),`);
+      console.log(`  и что между сервером и DC нет фильтрации, рвущей сессию на первом пакете.`);
+    }
     console.log(`  Частые причины:`);
     console.log(`  — неверный формат DN (проверьте точное написание OU= и DC= через ADUC → свойства учётки → Attribute Editor → distinguishedName);`);
     console.log(`  — неверный пароль сервисной учётки, либо пароль истёк / требует смены при следующем входе;`);

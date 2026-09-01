@@ -83,6 +83,11 @@ module.exports = {
       login: process.env.LOCAL_ADMIN_LOGIN || "!admin",
       passwordHash: process.env.LOCAL_ADMIN_PASSWORD_HASH || "",
       role: "it",
+      // Права администратора у аварийной учётки заданы здесь и не зависят от
+      // домена. Это единственная страховка на случай, когда группа
+      // администраторов в .env пуста или в ней никого не осталось: иначе
+      // администрировать платформу станет некому и починить это будет нечем.
+      isAdmin: true,
       fullName: "Локальный администратор",
       email: process.env.LOCAL_ADMIN_EMAIL || "48.11@rosstat.gov.ru",
     },

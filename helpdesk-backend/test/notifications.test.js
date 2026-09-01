@@ -282,3 +282,26 @@ test("backfillDeliveries: события, у которых доставки у�
   assert.equal(await notifications.backfillDeliveries(db, "expiry"), 0);
   assert.equal(smtp.messages.length, 0, "второго письма быть не должно");
 });
+
+test("рассылка и повтор не отправляют одно письмо дважды", async (t) => {
+  const { db, cleanup } = freshDb();
+  t.after(cleanup);
+  const { notifications, mailer } = load();
+  const smtp = await startFakeSmtp();
+  t.after(() => smtp.close());
+
+  mailer.writeSettings(db, { host: "127.0.0.1", port: smtp.port, secure: false, from: "it@example.test" });
+  db.prepare("INSERT INTO notification_settings (kind, enabled, emails) VALUES ('expiry', 1, ?)")
+    .run("bezopasnik@example.test");
+
+  // emit намеренно не ждёт отправку. Ровно в этот момент планировщик делает
+  // свой ежечасный повтор — и выбирает ту же самую ожидающую строку.
+  notifications.emit(db, { kind: "expiry", dedupKey: "гонка", payload: { "фио": "Образцов О." } });
+  await notifications.retryPending(db);
+  await new Promise((r) => setTimeout(r, 400));
+
+  assert.equal(smtp.messages.length, 1,
+    `получателю ушло ${smtp.messages.length} писем вместо одного — рассылка и повтор разобрали одну строку одновременно`);
+  const d = db.prepare("SELECT * FROM notification_deliveries WHERE channel='email'").get();
+  assert.equal(d.status, "sent");
+});

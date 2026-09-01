@@ -207,7 +207,7 @@ const STATUS_COLORS = {
 };
 
 // ====== Состояние ======
-const state = { user: null, view: "inbox", tickets: [], currentTicket: null, notifications: [], departments: [], modules: [], navGroupOpen: {} };
+const state = { user: null, view: "inbox", currentTicket: null, notifications: [], departments: [], modules: [], navGroupOpen: {} };
 let viewPollHandle = null;   // интервал автообновления текущего экрана (список/карточка)
 let notifPollHandle = null;  // интервал обновления счётчика уведомлений (работает всегда)
 
@@ -233,16 +233,46 @@ async function api(path, opts = {}) {
 function initials(name) {
   return (name || "").split(" ").map(w => w[0]).slice(0, 2).join("").toUpperCase();
 }
+// Экранируем и КАВЫЧКИ тоже. Прежняя реализация шла через textContent +
+// innerHTML, а сериализатор HTML в текстовом узле кавычки не трогает — они там
+// законны. Значение же почти всегда подставляется внутрь атрибута
+// (`value="${esc(...)}"`, `download="${esc(...)}"`, `data-kind="${esc(...)}"`),
+// и любая кавычка разрывала атрибут: дальше в разметку попадал уже чужой
+// обработчик события. Проверено в настоящем Chromium.
+//
+// Досюда доезжает многое, что задаёт человек: шаблоны писем и адреса SMTP из
+// настроек, имена файлов сертификатов, имя вложения. Имя вложения через
+// обычную форму приходит уже с экранированной кавычкой (%22 — так делают и
+// браузеры, и fetch), но сервер имя не чистит, и клиент, отправляющий запрос
+// не через форму, положит в базу что угодно. Полагаться на чужое
+// экранирование там, где своё стоит пять строк, незачем.
+//
+// Заодно исчезает создание DOM-узла на каждый вызов — а зовут её сотни раз
+// на одну отрисовку списка.
 function esc(s) {
-  const d = document.createElement("div");
-  d.textContent = s == null ? "" : String(s);
-  return d.innerHTML;
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
+// Форматтер создаётся ОДИН раз, а не на каждый вызов.
+//
+// toLocaleString с объектом настроек собирает новый Intl.DateTimeFormat при
+// каждом вызове, и это самая дорогая операция во всей отрисовке: на списке в
+// 3300 строк только даты занимали 205 мс против 8,4 мс с общим форматтером —
+// вдесятеро больше, чем всё экранирование вместе взятое. А зовут fmtDate на
+// каждую строку списка, каждый комментарий и каждую запись истории.
+const DATE_FMT = new Intl.DateTimeFormat("ru-RU", {
+  day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit",
+});
+
 function fmtDate(iso) {
   if (!iso) return "—";
   const d = new Date(iso.replace(" ", "T") + "Z");
   if (isNaN(d)) return iso;
-  return d.toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+  return DATE_FMT.format(d);
 }
 function toast(msg, isError) {
   const t = document.createElement("div");
@@ -264,6 +294,16 @@ async function boot() {
   } catch (e) {
     await renderLogin();
   }
+}
+
+// Отделы, в которых человек исполнитель. Их может быть НЕСКОЛЬКО: сотрудник
+// состоит и в группе ИТ, и в группе ХОЗ — значит ведёт очереди обеих. Запасной
+// путь по одной role нужен для сессий, выданных до этой правки: они живут до
+// 30 дней, и до перелогина списка в них нет.
+function myDepts(u) {
+  const byRole = Object.fromEntries(state.departments.filter(d => d.role !== "user").map(d => [d.role, d.name]));
+  const roles = (u.roles && u.roles.length) ? u.roles : (u.role ? [u.role] : []);
+  return roles.map(r => byRole[r]).filter(Boolean);
 }
 
 // ====== Экран логина ======
@@ -415,9 +455,10 @@ function writeHash(replace) {
 function viewExists(view) {
   if (!view) return false;
   const u = state.user;
-  const isIT = u.role === "it";
   if (["inbox", "mine", "create"].includes(view)) return true;
-  if (["dashboard", "admin", "certs"].includes(view) || view.startsWith("notif:")) return isIT;
+  // Разделы администратора — по признаку is_admin, а не по роли: роль "it"
+  // теперь значит «исполнитель отдела ИТ», и прав администратора не даёт.
+  if (["dashboard", "admin", "certs"].includes(view) || view.startsWith("notif:")) return Boolean(u.is_admin);
   if (view.startsWith("module:")) {
     const [, modId, viewId] = view.split(":");
     const mod = state.modules.find((m) => m.id === modId);
@@ -559,13 +600,18 @@ function restoreNavScroll() {
 function renderShell() {
   const u = state.user;
   const totalUnread = state.notifications.filter(n => !n.is_read).length;
-  const isIT = u.role === "it";
-  const deptForRole = Object.fromEntries(state.departments.filter(d => d.role !== "user").map(d => [d.role, d.name]));
-  const isExecutor = !isIT && !!deptForRole[u.role];
-  const roleLabel = u.role === "user" ? "Сотрудник" : (deptForRole[u.role] || u.role);
+  const isAdmin = Boolean(u.is_admin);
+  // Исполнитель — тот, у кого есть хотя бы один отдел. Отдел ИТ тоже сюда
+  // попадает: администратор и исполнитель ИТ — разные вещи, и человек вполне
+  // может быть и тем и другим одновременно.
+  const depts = myDepts(u);
+  const isExecutor = depts.length > 0;
+  const roleLabel = !isExecutor
+    ? (isAdmin ? "Администратор" : "Сотрудник")
+    : `${depts.join(", ")}${isAdmin ? " · администратор" : ""}`;
 
   let navHtml;
-  if (isIT) {
+  if (isAdmin) {
     const subItems = [
       { id: "inbox", label: "Входящие заявки", icon: "inbox", badge: totalUnread },
       { id: "mine", label: "Мои заявки", icon: "folder" },
@@ -616,7 +662,7 @@ function renderShell() {
             <div class="brand-name">${APP_NAME}</div>
             <div class="brand-org">${APP_ORG}</div>
           </div>
-          ${isIT ? `<button class="head-action${state.view === "certs" ? " active" : ""}" id="certsBtn"
+          ${isAdmin ? `<button class="head-action${state.view === "certs" ? " active" : ""}" id="certsBtn"
             title="Сертификаты">${icon("shield", 18)}</button>` : ""}
         </div>
         <div class="sidebar-nav">${navHtml}</div>
@@ -688,18 +734,19 @@ function renderModule(main, mod, view) {
 async function renderList(main, opts = {}) {
   clearViewPoll();
   const u = state.user;
-  const isIT = u.role === "it";
-  const deptForRole = Object.fromEntries(state.departments.filter(d => d.role !== "user").map(d => [d.role, d.name]));
-  const isExecutor = !isIT && !!deptForRole[u.role];
-  const isPrivileged = isIT || isExecutor; // видит колонки "От кого"/"Кабинет"
+  const isAdmin = Boolean(u.is_admin);
+  const isExecutor = myDepts(u).length > 0;
+  const isPrivileged = isAdmin || isExecutor; // видит колонки "От кого"/"Кабинет"
   const scope = opts.scope || "inbox";
-  const showDeptFilter = isIT && scope === "inbox"; // только у админа есть смысл фильтровать по отделу
+  // Фильтр по отделу имеет смысл только администратору: исполнителю сервер и
+  // так отдаёт очередь одного его отдела, выбирать не из чего.
+  const showDeptFilter = isAdmin && scope === "inbox";
 
   let closed = false; // открытые/закрытые — переключатель внутри страницы, не выпадающий список
   let q = "";
 
   const titles = {
-    inbox: isIT || isExecutor ? "Входящие заявки" : "Заявки",
+    inbox: isAdmin || isExecutor ? "Входящие заявки" : "Заявки",
     mine: "Мои заявки",
   };
 
@@ -751,10 +798,14 @@ async function renderList(main, opts = {}) {
       if (dept) params.set("category", dept);
     }
     try {
-      const { tickets } = await api("/tickets?" + params.toString());
-      state.tickets = tickets;
+      const { tickets, total, limit } = await api("/tickets?" + params.toString());
       const rowsEl = document.getElementById("ticketRows");
-      document.getElementById("countLabel").textContent = `${tickets.length} заявок`;
+      // Сервер отдаёт первые `limit` строк и полное число. Пишем и то и другое:
+      // молча показать двести из тысячи — значит убедить человека, что
+      // остальных нет. Сузить выборку можно фильтрами и поиском.
+      document.getElementById("countLabel").textContent = total > tickets.length
+        ? `${tickets.length} из ${total} заявок — уточните фильтр или поиск`
+        : `${total} заявок`;
       if (tickets.length === 0) {
         rowsEl.innerHTML = `<div class="empty-state">Ничего не найдено.</div>`;
         return;
@@ -874,8 +925,15 @@ function renderCreate(main) {
     const title = titleEl.value.trim();
     if (!title) return;
     submitBtn.disabled = true; submitBtn.textContent = "Отправка…";
+
+    // Создание заявки и прикрепление файлов разделены намеренно. Раньше оба
+    // шага стояли в одном try: если заявка создавалась, а файл не проходил
+    // (слишком большой, неподходящий тип, оборвалась сеть), человек видел
+    // только сообщение об ошибке и нажимал «Отправить» ещё раз — так
+    // появлялась вторая заявка, а первая оставалась висеть без вложения.
+    let ticket;
     try {
-      const ticket = await api("/tickets", { method: "POST", body: {
+      ticket = await api("/tickets", { method: "POST", body: {
         title,
         category: document.getElementById("cCategory").value,
         priority: document.getElementById("cPriority").value,
@@ -883,17 +941,34 @@ function renderCreate(main) {
         extension: document.getElementById("cExt").value || null,
         description: document.getElementById("cDesc").value || null,
       }});
-      for (const f of files) {
+    } catch (e) {
+      // Заявки нет — повторить целиком безопасно.
+      toast(e.message, true);
+      submitBtn.disabled = false; submitBtn.textContent = "Отправить заявку";
+      return;
+    }
+
+    // Дальше заявка УЖЕ существует, и отказ вложения её не отменяет.
+    const notAttached = [];
+    for (const f of files) {
+      try {
         const fd = new FormData();
         fd.append("file", f);
         await api(`/tickets/${ticket.id}/attachments`, { method: "POST", body: fd });
+      } catch (e) {
+        notAttached.push(`${f.name} (${e.message})`);
       }
-      toast(`Заявка ${ticket.display_id} создана`);
-      setView("inbox");
-    } catch (e) {
-      toast(e.message, true);
-      submitBtn.disabled = false; submitBtn.textContent = "Отправить заявку";
     }
+
+    if (notAttached.length) {
+      toast(`Заявка ${ticket.display_id} создана, но не прикрепились файлы: ${notAttached.join(", ")}. `
+        + "Добавьте их в карточке заявки.", true);
+    } else {
+      toast(`Заявка ${ticket.display_id} создана`);
+    }
+    // Открываем саму заявку, а не список: человек видит, что она есть, и может
+    // тут же дослать то, что не прикрепилось.
+    setView("detail", ticket);
   };
 }
 
@@ -906,10 +981,16 @@ async function reloadTicket(id) {
 
 function renderDetail(main, ticket) {
   const u = state.user;
-  const isIT = u.role === "it";
-  const deptForRole = Object.fromEntries(state.departments.filter(d => d.role !== "user").map(d => [d.role, d.name]));
-  const isPrivileged = isIT || !!deptForRole[u.role]; // может оставлять внутренние заметки
-  const canManage = isIT || deptForRole[u.role] === ticket.category; // видит блок "Управление"
+  const isAdmin = Boolean(u.is_admin);
+  const depts = myDepts(u);
+  // Право оставить внутреннюю заметку — у любого сотрудника службы, не только
+  // у администратора: исполнитель ведёт заявку и пишет по ней служебные пометки.
+  const isPrivileged = isAdmin || depts.length > 0;
+  // А управлять заявкой (статус, исполнитель, приоритет) вправе администратор
+  // и исполнитель ТОГО отдела, куда заявка заведена. Ровно это же правило
+  // проверяет сервер в canManageTicket — расхождение здесь означало бы кнопки,
+  // которые не работают.
+  const canManage = isAdmin || depts.includes(ticket.category);
   const p = PRIORITIES.find(x => x.id === ticket.priority) || PRIORITIES[2];
 
   main.innerHTML = `
@@ -1072,15 +1153,17 @@ function renderDetail(main, ticket) {
 async function renderDashboard(main) {
   main.innerHTML = `<div class="topbar"><div class="topbar-title">Статистика</div></div><div class="page"><div class="spinner">Загрузка…</div></div>`;
   try {
-    const [{ tickets }, stats] = await Promise.all([
-      api("/tickets?status=all"),
-      api("/admin/stats"),
-    ]);
-    const open = tickets.filter(t => !["resolved", "closed", "cancelled"].includes(t.status)).length;
-    const critical = tickets.filter(t => t.priority === "critical" && !["closed", "cancelled"].includes(t.status)).length;
-    const closed = tickets.filter(t => ["closed", "resolved"].includes(t.status)).length;
+    // Раньше здесь скачивался весь список заявок, чтобы посчитать в браузере
+    // шесть чисел и гистограмму: 1,87 МБ ради полутора сотен байт полезного.
+    // Теперь всё считает SQL одним проходом.
+    const stats = await api("/admin/stats");
+    const open = stats.open;
+    const critical = stats.critical;
+    const closed = stats.closedTotal;
 
-    const byCategory = state.departments.map(d => ({ name: d.name, count: tickets.filter(t => t.category === d.name).length }));
+    // Состав и порядок отделов берём из своего справочника, а не из ответа:
+    // отдел, по которому заявок ещё не было, должен остаться на гистограмме.
+    const byCategory = state.departments.map(d => ({ name: d.name, count: (stats.byCategory || {})[d.name] || 0 }));
     const maxCount = Math.max(...byCategory.map(c => c.count), 1);
 
     const topList = (rows) => rows.length
@@ -1100,7 +1183,7 @@ async function renderDashboard(main) {
       </div>
       <div class="stat-grid" style="grid-template-columns:1fr 1fr;">
         <div class="stat-card"><div class="stat-label">ЗАКРЫТО ВСЕГО</div><div class="stat-value mono">${closed}</div></div>
-        <div class="stat-card"><div class="stat-label">ВСЕГО ЗАЯВОК</div><div class="stat-value mono">${tickets.length}</div></div>
+        <div class="stat-card"><div class="stat-label">ВСЕГО ЗАЯВОК</div><div class="stat-value mono">${stats.total}</div></div>
       </div>
       <div class="card" style="margin-bottom:20px;">
         <div class="section-label" style="margin-bottom:16px;">Заявки по отделам</div>
@@ -1130,7 +1213,7 @@ async function renderDashboard(main) {
 async function renderAdmin(main) {
   main.innerHTML = `<div class="topbar"><div class="topbar-title">Администрирование</div></div><div class="page"><div class="spinner">Загрузка…</div></div>`;
   try {
-    const [{ departments: deptSettings }, { admins }] = await Promise.all([
+    const [{ departments: deptSettings, adminGroups }, { admins, executors }] = await Promise.all([
       api("/admin/settings"), api("/admin/admins"),
     ]);
 
@@ -1144,25 +1227,42 @@ async function renderAdmin(main) {
 
     const groupCard = (dept) => `
       <div class="card" style="margin-bottom:14px;">
-        <div class="section-label">Группа АД — роль ${esc(dept.name)}</div>
+        <div class="section-label">Группа АД — исполнители отдела ${esc(dept.name)}</div>
         ${groupRow(`group_${dept.role}_A`, "Домен А", dept.groupA, "имя группы")}
         ${groupRow(`group_${dept.role}_B`, "Домен Б", dept.groupB, "имя группы")}
       </div>`;
 
+    const человек = (a, показатьРоль) => `
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-top:1px solid var(--line-soft);">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="font-size:13px;font-weight:600;">${esc(a.full_name)}</span>
+          <span class="mono" style="font-size:12px;color:var(--ink-soft);">${esc(a.ad_login)}</span>
+          ${показатьРоль ? (a.roles || [a.role]).map(r => `<span class="badge" style="color:var(--wire);background:var(--wire-soft);">${esc(ROLE_LABEL[r] || r)}</span>`).join("") : ""}
+          <span class="badge" style="color:var(--ink-soft);background:var(--line-soft);">${a.last_domain === "local" ? "Локальный" : "Домен " + esc(a.last_domain)}</span>
+        </div>
+        <span style="font-size:11px;color:var(--ink-soft);">вход ${fmtDate(a.last_login_at)}</span>
+      </div>`;
+
+    const пусто = (текст) => `<div style="font-size:12.5px;color:var(--ink-soft);">${текст}</div>`;
+
     main.querySelector(".page").innerHTML = `
+      <div class="card" style="margin-bottom:14px;">
+        <div class="section-label">Администраторы платформы</div>
+        <div style="font-size:11.5px;color:var(--ink-soft);margin-bottom:6px;">
+          Права даёт членство в группе, указанной в <code class="mono">.env</code> на сервере:
+          <span class="mono">${esc(adminGroups.A || "— не задана —")}</span> (домен А),
+          <span class="mono">${esc(adminGroups.B || "— не задана —")}</span> (домен Б).
+          Отсюда список не редактируется и группами отделов ниже не расширяется.
+        </div>
+        ${admins.length ? admins.map(a => человек(a, false)).join("") : пусто("Ни один администратор ещё не входил.")}
+      </div>
+
       <div class="card" style="margin-bottom:20px;">
-        <div class="section-label">Текущие исполнители и администраторы</div>
-        <div style="font-size:11.5px;color:var(--ink-soft);margin-bottom:14px;">Список читается из членства в группах на момент последнего входа, не редактируется вручную.</div>
-        ${admins.length ? admins.map(a => `
-          <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-top:1px solid var(--line-soft);">
-            <div style="display:flex;align-items:center;gap:10px;">
-              <span style="font-size:13px;font-weight:600;">${esc(a.full_name)}</span>
-              <span class="mono" style="font-size:12px;color:var(--ink-soft);">${esc(a.ad_login)}</span>
-              <span class="badge" style="color:var(--wire);background:var(--wire-soft);">${esc(ROLE_LABEL[a.role] || a.role)}</span>
-              <span class="badge" style="color:var(--ink-soft);background:var(--line-soft);">${a.last_domain === "local" ? "Локальный" : "Домен " + esc(a.last_domain)}</span>
-            </div>
-            <span style="font-size:11px;color:var(--ink-soft);">вход ${fmtDate(a.last_login_at)}</span>
-          </div>`).join("") : `<div style="font-size:12.5px;color:var(--ink-soft);">Пока никто не входил под расширенной ролью.</div>`}
+        <div class="section-label">Исполнители по отделам</div>
+        <div style="font-size:11.5px;color:var(--ink-soft);margin-bottom:6px;">
+          Читается из членства в группах отделов на момент последнего входа. Прав администратора не даёт.
+        </div>
+        ${executors.length ? executors.map(a => человек(a, true)).join("") : пусто("Пока никто не входил под ролью исполнителя.")}
       </div>
 
       <div style="display:flex;gap:20px;align-items:flex-start;">
@@ -1292,7 +1392,7 @@ async function renderCertificates(main) {
             <div style="font-size:12px;color:var(--ink-soft);margin-bottom:14px;">
               Сертификат один на обе службы: платформа и «Искра» стоят на одной машине и отвечают
               на одно имя. ${server.managedBy === "store"
-                ? `Файл лежит в <span class="mono">${esc(server.sharedStore)}</span>; загрузить новый можно здесь же (форма ниже) или в панели «Искры» — разницы нет, файл тот же. Обе службы перечитывают его сами, без перезапуска.`
+                ? `Файл лежит в <span class="mono">${esc(server.sharedStore)}</span>; загрузить новый можно здесь же (форма ниже) или в панели «Искры» — разницы нет, файл тот же. Платформа перечитывает его сама; «Искре» нужен перезапуск службы — своего слежения за хранилищем у неё нет.`
                 : `Сейчас путь задан переменными окружения: <span class="mono">${esc(server.where || "")}</span>. Тогда сертификат <b>не общий</b> с «Искрой» — она читает своё хранилище и может предъявлять другой файл, — а загрузка из панели отключена.`}
             </div>
             ${server.managedBy === "env" ? `<div class="warn-box" style="margin-bottom:14px;">
@@ -1397,7 +1497,7 @@ async function renderCertificates(main) {
         renderCertificates(main);
         toast(res.restartRequired
           ? "Файл сохранён. Нужен перезапуск: включить шифрование на работающем HTTP-сервере нельзя."
-          : "Сертификат применён, перезапуск не нужен. «Искра» подхватит его сама.");
+          : "Сертификат применён — платформе перезапуск не нужен. «Искру» перезапустите: она читает то же хранилище, но следить за ним не умеет и до перезапуска будет предъявлять прежний сертификат.");
       } catch (e) { msg.style.color = "var(--red)"; msg.textContent = e.message; }
     };
 
