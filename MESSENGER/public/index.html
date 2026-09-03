@@ -4,54 +4,98 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Искра — панель администратора</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
 <style>
-  /* Material You (Material 3) — единая тема с платформой и остальными
-     модулями. Панель открывается в iframe внутри платформы, поэтому палитра,
-     скругления и типографика совпадают с helpdesk-backend/public/styles.css.
+  /* Фирменный стиль Росстата — тема веб-панели «Искры».
+
+     Панель открывается в iframe внутри платформы, поэтому палитра, скругления
+     и типографика те же, что в helpdesk-backend/public/styles.css. Значения из
+     «Руководства по использованию фирменного стиля», версия 1.0, апрель 2026:
+       2.2 Системный шрифт  — PT Root UI, а где он недоступен, Arial
+       3.1 Основные цвета   — голубая и сиреневая гаммы, обязательны
+       3.2 Текст            — серая гамма: тёмно-серый основной, серый вторичный
+       3.3 Дополнительные   — точечно, под сигналы
+       5.1 Стилеобразующие  — полностью круглые плашки только для малого объёма
+                              информации, остальное со скруглёнными углами
 
      Цвета в hex, а не в oklch: панель открывают с рабочих машин, где браузер
-     может быть старше Chrome 111. Веб-шрифты не подключаются — сеть изолирована.
+     может быть старше Chrome 111.
 
-     Имена --muted, --warn, --danger и т.п. сохранены: скрипт ниже подставляет
-     их в инлайновые стили при отрисовке таблиц и статусов. */
+     Имена --muted, --warn, --danger, --online сохранены: скрипт ниже
+     подставляет их в инлайновые стили при отрисовке таблиц и статусов.
+     Переименовывать их без правки скрипта нельзя. */
+
+  /* Фирменный шрифт лежит рядом, в public/fonts, — сеть изолирована, снаружи
+     ничего не подключить. Путь ОТНОСИТЕЛЬНЫЙ, и это важно: панель открывают
+     двумя способами — через платформу (адрес /modules/messenger/, прокси
+     срезает префикс) и напрямую по адресу самой «Искры». Относительный путь
+     верен в обоих случаях, абсолютный «/fonts/…» — только во втором.
+     Формат woff2 понимают все Chromium начиная с 36-го, на рабочих местах 109-й.
+     Лицензия SIL OFL 1.1, её текст — в public/fonts/OFL.txt рядом со шрифтом. */
+  @font-face {
+    font-family: "PT Root UI";
+    src: url("fonts/PTRootUI-Regular.woff2") format("woff2");
+    font-weight: 400; font-style: normal; font-display: swap;
+  }
+  @font-face {
+    font-family: "PT Root UI";
+    src: url("fonts/PTRootUI-Medium.woff2") format("woff2");
+    font-weight: 500; font-style: normal; font-display: swap;
+  }
+  @font-face {
+    font-family: "PT Root UI";
+    src: url("fonts/PTRootUI-Bold.woff2") format("woff2");
+    font-weight: 700; font-style: normal; font-display: swap;
+  }
+
   :root {
-    --md-primary: #7D5700;
+    /* --- Основные цвета (3.1) --- */
+    --md-primary: #0A61AE;              /* тёмно-голубой */
     --md-on-primary: #FFFFFF;
-    --md-primary-container: #FFDEA6;
-    --md-on-primary-container: #281900;
-    --md-secondary-container: #F0E0C8;
-    --md-on-secondary-container: #251A04;
+    --md-primary-container: #DCE7F6;
+    --md-on-primary-container: #0A61AE;
 
-    --md-surface: #FFF8F3;
+    /* --- Второй основной: сиреневая гамма --- */
+    --md-secondary-container: #E9E2F6;
+    --md-on-secondary-container: #663AB5;
+
+    /* --- Поверхности: белый и производные серой гаммы --- */
+    --md-surface: #E8EDF5;
     --md-surface-container-lowest: #FFFFFF;
-    --md-surface-container-low: #FBF1E9;
-    --md-surface-container: #F5ECE3;
-    --md-surface-container-high: #F0E6DE;
-    --md-surface-container-highest: #EAE1D9;
-    --md-on-surface: #1F1B16;
-    --md-on-surface-variant: #4F453A;
-    --md-outline: #817567;
-    --md-outline-variant: #D8CCBE;
+    --md-surface-container-low: #F7F9FC;
+    --md-surface-container: #F7F9FC;
+    --md-surface-container-high: #EDF1F8;
+    --md-surface-container-highest: #E8EDF5;
+    --md-on-surface: #282A2E;           /* тёмно-серый — основной текст (3.2) */
+    --md-on-surface-variant: #838383;   /* серый — второстепенное и сноски */
+    --md-outline: #DCE4EF;
+    --md-outline-variant: #E4EAF3;
 
-    --md-error: #8C1D18;
-    --md-error-container: #FFDAD6;
-    --md-on-error-container: #410002;
-    --md-success-container: #CDEBD5;
-    --md-on-success-container: #08210F;
-    --md-warn-container: #FFDCC2;
-    --md-on-warn-container: #2E1500;
+    /* --- Сигналы: из дополнительных цветов (3.3), в малом количестве --- */
+    --md-error: #E7004B;                /* тёмно-розовый */
+    --md-error-container: #FDE3EA;
+    --md-on-error-container: #E7004B;
+    --md-success-container: #DBF0F2;    /* изумрудная гамма — внутренние коммуникации */
+    --md-on-success-container: #008F9F;
+    --md-warn-container: #FFE7D6;
+    --md-on-warn-container: #C25A18;
 
-    --md-state-hover: rgba(31, 27, 22, 0.06);
-    --md-shape-xs: 8px;
-    --md-shape-s: 12px;
-    --md-shape-m: 16px;
-    --md-shape-l: 20px;
-    --md-shape-xl: 28px;
-    --md-shape-full: 100px;
-    --md-elev-1: 0 1px 2px rgba(31, 27, 22, 0.10);
-    --md-elev-3: 0 6px 18px rgba(31, 27, 22, 0.12);
+    --md-state-hover: #EDF1F8;
+    /* --- Форма (5.1): фиксированная лесенка скруглений --- */
+    --md-shape-xs: 4px;
+    --md-shape-s: 6px;
+    --md-shape-m: 8px;
+    --md-shape-l: 10px;
+    --md-shape-xl: 12px;
+    --md-shape-full: 6px;
+    /* Глубина делается тоном и линией, а не тенью. */
+    --md-elev-1: none;
+    --md-elev-3: 0 2px 10px rgba(40, 42, 46, 0.10);
 
-    --sans: Roboto, "Segoe UI", system-ui, -apple-system, Arial, sans-serif;
+    /* PT Root UI — фирменный шрифт, подключён выше. Arial следующим: брендбук
+       называет его системной заменой там, где основной недоступен. */
+    --sans: "PT Root UI", Arial, "Segoe UI", system-ui, -apple-system, sans-serif;
+    --mono: "Cascadia Mono", Consolas, "Roboto Mono", Menlo, monospace;
 
     /* Имена, на которые ссылается script ниже */
     --bg: var(--md-surface);
@@ -62,10 +106,18 @@
     --accent-2: var(--md-on-primary-container);
     --text: var(--md-on-surface);
     --muted: var(--md-on-surface-variant);
-    --online: #1F6B37;
+    --online: #008F9F;                  /* изумрудный — «в сети» */
     --danger: var(--md-error);
-    --warn: #8A4600;
+    --warn: #C25A18;
   }
+
+  /* Кернинг выключен намеренно, и это не вкусовщина. В PT Root UI есть
+     кернинговая пара «пробел + длинное тире», которая стягивает пробелы вокруг
+     тире в ноль: «Иванов — в сети» рисовалось как «Иванов—в сети». Проверено в
+     браузере: помогает только font-kerning:none, liga и calt на это не влияют.
+     Потеря невелика — кернинг заметен на крупных заголовках, а панель набрана
+     13–14 пунктами. */
+  html { font-kerning: none; }
   * { box-sizing: border-box; }
   html, body { height:100%; }
   body {
@@ -97,18 +149,20 @@
   /* ---- Логин ---- */
   #authScreen {
     height:100%; display:flex; align-items:center; justify-content:center;
-    background: var(--md-surface-container);
+    background: var(--md-surface);
   }
   #authBox {
-    width:380px; background:var(--md-surface-container-lowest); border:none;
+    width:380px; background:var(--md-surface-container-lowest);
+    border:1px solid var(--md-outline-variant);
     border-radius:var(--md-shape-xl); padding:40px 36px; box-shadow:var(--md-elev-3);
   }
+  /* Герб идёт без подложки: он сам по себе фирменный знак, а плашка под ним
+     превращала его в иконку приложения. */
   #authBox .seal {
-    display:flex; align-items:center; justify-content:center; margin:0 auto 18px;
-    width:56px; height:56px; border-radius:var(--md-shape-m);
-    background:var(--md-primary-container); color:var(--md-on-primary-container);
+    display:flex; align-items:center; justify-content:center; margin:0 auto 16px;
+    color:var(--md-primary);
   }
-  #authBox h1 { margin:0 0 6px; font-size:22px; font-weight:600; text-align:center; }
+  #authBox h1 { margin:0 0 6px; font-size:22px; font-weight:700; text-align:center; }
   #authBox p.sub { margin:0 0 26px; color:var(--md-on-surface-variant); font-size:13.5px; text-align:center; }
   #authBox label { display:block; font-size:12.5px; font-weight:500; color:var(--md-on-surface-variant); margin:0 0 7px; }
   #authBox input {
@@ -121,7 +175,7 @@
   #authBox button {
     width:100%; padding:14px; border:none; border-radius:var(--md-shape-full);
     background:var(--md-primary); color:var(--md-on-primary);
-    font-weight:600; font-size:14px; letter-spacing:.1px; cursor:pointer;
+    font-weight:700; font-size:14px; letter-spacing:.1px; cursor:pointer;
     transition:box-shadow .15s, filter .15s;
   }
   #authBox button:hover { box-shadow:var(--md-elev-1); filter:brightness(1.06); }
@@ -147,28 +201,35 @@
   }
   .mm-logout:hover { background:var(--md-error-container); color:var(--md-on-error-container); }
 
-  /* Вкладки M3: подчёркивание активной. Полоса белая — иначе она сливалась бы
-     с фоном страницы и граница между навигацией и содержимым пропадала. */
+  /* Разделы — сегментированный переключатель в лотке, как фильтры заявок на
+     платформе: активный сегмент залит фирменным голубым. Прежнее подчёркивание
+     активной вкладки было приёмом Material, а не брендбука, и рядом с
+     платформой читалось как чужая деталь. */
   #tabs {
-    flex-shrink:0; display:flex; align-items:center; gap:4px; padding:0 20px;
+    flex-shrink:0; display:flex; align-items:center; gap:4px; padding:14px 20px;
     border-bottom:1px solid var(--md-outline-variant);
     background:var(--md-surface-container-lowest); overflow-x:auto;
   }
-  .nav-item {
-    padding:15px 16px 13px; cursor:pointer; color:var(--md-on-surface-variant);
-    font-weight:500; font-size:13.5px; border-bottom:3px solid transparent;
-    white-space:nowrap; transition:color .13s ease, border-color .13s ease, background .13s ease;
-    border-radius:var(--md-shape-xs) var(--md-shape-xs) 0 0;
+  #tabGroup {
+    display:flex; gap:3px; padding:3px; border-radius:var(--md-shape-m);
+    background:var(--md-surface-container-highest);
   }
-  .nav-item:hover { color:var(--md-on-surface); background:var(--md-state-hover); }
-  .nav-item.active { color:var(--md-primary); border-bottom-color:var(--md-primary); font-weight:600; }
+  .nav-item {
+    padding:8px 16px; cursor:pointer; color:var(--md-on-surface-variant);
+    font-weight:700; font-size:13px; border-radius:var(--md-shape-s);
+    white-space:nowrap; transition:color .15s ease, background .15s ease;
+  }
+  /* Голубой с прозрачностью, а не переменная: нужен именно полупрозрачный
+     налёт поверх лотка, у --md-primary-container он был бы плотным. */
+  .nav-item:hover { color:var(--md-primary); background:rgba(10, 97, 174, 0.08); }
+  .nav-item.active, .nav-item.active:hover { color:var(--md-on-primary); background:var(--md-primary); }
 
   /* Белый — как контентная область платформы: панель встроена в неё через
      iframe. Тон из палитры остаётся на карточках и панелях внутри. */
   #main { flex:1; padding:26px 28px 30px; overflow-y:auto; min-height:0; background:var(--md-surface-container-lowest); }
   .view { display:none; }
   .view.active { display:block; }
-  h2 { margin:0 0 20px; font-size:24px; font-weight:600; letter-spacing:0; }
+  h2 { margin:0 0 20px; font-size:24px; font-weight:700; letter-spacing:0; }
 
   .cards { display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-bottom:22px; }
   .card { background:var(--md-surface-container); border:none; border-radius:var(--md-shape-l); padding:20px 24px; }
@@ -186,7 +247,7 @@
     background:var(--md-surface-container);
   }
   td { padding:12px 10px; border-bottom:1px solid var(--md-surface-container-high); vertical-align:middle; }
-  tbody tr:hover td { background:var(--md-surface-container); }
+  tbody tr:hover td { background:var(--md-state-hover); }
 
   select, input, textarea {
     background:var(--md-surface-container-lowest); border:1px solid var(--md-outline); color:var(--md-on-surface);
@@ -225,21 +286,21 @@
     padding:12px 14px; border-radius:var(--md-shape-m); background:var(--md-surface-container-lowest);
     margin-bottom:8px;
   }
-  .user-row:hover { background:var(--md-surface-container-low); }
+  .user-row:hover { background:var(--md-state-hover); }
   .user-id { display:flex; align-items:flex-start; gap:10px; min-width:0; }
   /* Точку сдвигаем на середину первой строки логина: при выравнивании по верху
      она иначе прилипает к самому краю строки. */
   .user-dot { width:9px; height:9px; border-radius:50%; flex-shrink:0; margin-top:5px; }
-  .user-dot.active { background:#1F6B37; }
-  .user-dot.idle { background:#8A5300; }
-  .user-dot.offline { background:var(--md-outline-variant); }
+  .user-dot.active { background:var(--online); }
+  .user-dot.idle { background:var(--warn); }
+  .user-dot.offline { background:#BFBFBF; }   /* светло-серый из палитры (3.2) */
   .user-login { font-weight:600; font-size:13.5px; }
   .user-sub { font-size:11.5px; color:var(--md-on-surface-variant); margin-top:2px; }
   .user-cell { min-width:0; font-size:12.5px; color:var(--md-on-surface-variant); }
   .user-hosts { font-family:var(--mono); font-size:11.5px; }
   .user-caps { display:flex; gap:6px; flex-wrap:wrap; }
   .cap-chip {
-    font-size:11px; font-weight:600; padding:3px 9px; border-radius:var(--md-shape-full);
+    font-size:11px; font-weight:700; padding:4px 10px; border-radius:var(--md-shape-xs);
     background:var(--md-secondary-container); color:var(--md-on-secondary-container); white-space:nowrap;
   }
   .user-menu-btn {
@@ -251,7 +312,7 @@
   #userMenu {
     position:fixed; z-index:60; min-width:210px; padding:6px;
     background:var(--md-surface-container-lowest); border:1px solid var(--md-outline-variant);
-    border-radius:var(--md-shape-m); box-shadow:0 6px 18px rgba(31,27,22,.16);
+    border-radius:var(--md-shape-m); box-shadow:var(--md-elev-3);
   }
   #userMenu button {
     display:flex; align-items:center; justify-content:space-between; gap:12px; width:100%;
@@ -324,7 +385,7 @@
   .select-menu {
     position: absolute; z-index: 40; top: calc(100% + 6px); left: 0; min-width: 100%;
     padding: 6px; border-radius: var(--md-shape-m); background: var(--md-surface-container-lowest);
-    box-shadow: var(--md-elev-1), 0 6px 18px rgba(31,27,22,.16); max-height: 300px; overflow-y: auto;
+    box-shadow: var(--md-elev-3); max-height: 300px; overflow-y: auto;
   }
   .select-option {
     padding: 10px 14px; border-radius: var(--md-shape-xs); font-size: 13.5px; cursor: pointer;
@@ -340,10 +401,16 @@
     font-family:inherit; transition:box-shadow .15s, filter .15s, background .15s;
   }
   button.action:hover { box-shadow:var(--md-elev-1); filter:brightness(1.06); }
-  button.action.danger { background:var(--md-error); }
+  /* Удаление — тональной кнопкой, а не залитой розовым. Брендбук (3.3) даёт
+     дополнительные цвета «в малом количестве», а в списке отделов таких кнопок
+     сразу столько же, сколько строк: залитые, они перетягивали на себя весь
+     экран. Цвет остаётся тем же и читается однозначно, а вес — по делу.
+     Под курсором кнопка заливается: подтверждение, что действие опасное. */
+  button.action.danger { background:var(--md-error-container); color:var(--md-error); }
+  button.action.danger:hover { background:var(--md-error); color:var(--md-on-primary); filter:none; }
   button.action.ghost { background:var(--md-secondary-container); color:var(--md-on-secondary-container); }
   button.action.ghost:hover { filter:brightness(0.96); box-shadow:none; }
-  button.action:disabled { background:var(--md-surface-container-high); color:rgba(31,27,22,0.38); cursor:not-allowed; box-shadow:none; filter:none; }
+  button.action:disabled { background:var(--md-surface-container-high); color:rgba(40,42,46,0.38); cursor:not-allowed; box-shadow:none; filter:none; }
 
   #histMessages {
     display:flex; flex-direction:column; gap:8px; max-height:440px; overflow-y:auto;
@@ -387,9 +454,7 @@
 <div id="authScreen">
   <div id="authBox">
     <div class="seal">
-      <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 8.9 8.9 0 0 1-3.8-.9L3 21l1.9-5.1A8.4 8.4 0 0 1 12 3a8.4 8.4 0 0 1 9 8.5z"/>
-      </svg>
+      <svg width="46" height="46" viewBox="0 0 201.9 208.3" fill="currentColor" fill-rule="evenodd"><path d="M99.2 0L99.6 3.4L96.2 3L96.2 7.1L99.6 6.6L99.6 6.6L97.7 16.1L95 9.2C87.3 9.4 81.6 16.6 83.4 24.1L88.6 37.5C89 49.6 68.6 51.7 66.3 46.5C64 41.2 67.4 39.2 70.7 37.2C73.3 35.5 75.9 33.9 75.4 30.7C75 28.3 69.6 27.2 64.5 26.1C63.7 26 63 25.8 62.3 25.7C61 25.4 60.8 24.6 60.5 23.8C60.1 22.7 59.7 21.6 57 21.5C49.7 21.2 41.3 24.4 40 27.7C38.3 31.6 39.9 33.6 41.6 35.5C42.9 37.2 44.3 38.8 43.7 41.7C43 45.4 40.8 44.9 38.2 44.2C36.4 43.8 34.3 43.3 32.4 44.2C28.8 46 28.1 49.3 27.9 51.8C28 51.6 28.1 51.4 28.3 51.2L28.3 51.2C29 50 29.6 49 31.2 48.5C32.1 48.2 32.5 48.1 33.2 48.1C33.8 48 34.6 47.9 36.2 47.5C34.9 48.8 33.8 49.1 32.8 49.4C31.8 49.7 30.9 50 30.2 51C28.4 53.5 30.7 55.8 30.7 55.8C30.7 55.8 30.4 52.5 32.9 51.8C35 51.1 37.4 51 39.8 50.9C44.5 50.7 49.1 50.4 50.5 46C52.1 41 50.8 39.3 49.6 37.8C48.7 36.7 47.8 35.6 48.5 33.2C50 27.7 61.7 26.6 62.1 31.4C62.2 33.7 61.1 34.7 59.8 35.9C58.4 37.2 56.8 38.7 56.5 42.2C56.2 46.5 62.3 54.8 81.4 51.3C92.1 49.3 98.7 43.5 98.7 38.2C98.7 38 98.7 37.8 98.7 37.7L103.8 37.7C103.7 37.8 103.7 38 103.7 38.2C103.7 43.5 110.3 49.3 121.1 51.3C140.2 54.8 146.3 46.5 145.9 42.2C145.7 38.7 144.1 37.2 142.6 35.9C141.4 34.7 140.2 33.7 140.4 31.4C140.8 26.6 152.5 27.7 154 33.2C154.6 35.6 153.8 36.7 152.9 37.8C151.7 39.3 150.4 41 152 46C153.4 50.4 158 50.7 162.7 50.9C165.1 51 167.5 51.1 169.6 51.8C172.1 52.5 171.8 55.8 171.8 55.8C171.8 55.8 174.1 53.5 172.3 51C171.6 50 170.7 49.7 169.7 49.4C168.7 49.1 167.6 48.8 166.3 47.5C167.9 47.9 168.7 48 169.3 48.1C169.9 48.1 170.4 48.2 171.3 48.5C172.9 49 173.5 50 174.2 51.2L174.2 51.2C174.3 51.4 174.5 51.6 174.6 51.8C174.4 49.3 173.7 46 170.1 44.2C168.2 43.3 166.1 43.8 164.3 44.2C161.7 44.9 159.5 45.4 158.8 41.7C158.2 38.8 159.6 37.2 160.9 35.5C162.5 33.6 164.2 31.6 162.5 27.7C161.2 24.4 152.8 21.2 145.4 21.5C142.8 21.6 142.4 22.7 142 23.8C141.7 24.6 141.4 25.4 140.2 25.7C139.5 25.8 138.7 26 138 26.1L138 26.1C132.9 27.2 127.5 28.3 127.1 30.7C126.5 33.9 129.1 35.5 131.8 37.2C135.1 39.2 138.4 41.2 136.1 46.5C133.9 51.7 113.3 49.5 113.9 37.3L119 24.1C120.8 16.6 115.1 9.4 107.4 9.2L104.8 16.1L102.8 6.6L102.8 6.6L106.2 7.1L106.2 3L102.8 3.4L103.3 0ZM195.5 48C180.9 58.1 166.3 68.1 151.7 78.1L152 78.9C155.7 88 152.9 99.1 145.5 104.2C144.3 105 143 105.7 141.8 106.1L141.7 106.1C140.3 106.6 138.9 106.8 137.5 106.8L137.5 106.8L137.4 106.8C137.4 106.8 137.3 106.8 137.3 106.8L136.5 106.8L136.5 129.3C136.5 132.6 138.3 135.5 141.1 136.2C141.9 136.4 142.8 136.6 143.6 136.7L144.8 136.9L142.3 125.8C143.2 125.6 144 125.3 144.9 125L146.1 130.5C147 134.5 150 137.5 153.5 137.3C154.4 137.3 155.3 137.2 156.1 137.1L157.3 137L150.3 122.4C150.7 122.1 151.2 121.8 151.6 121.5C151.9 121.3 152.3 121 152.6 120.8L157 129.9C158.9 133.8 162.7 136 166.3 134.6C167.4 134.2 168.5 133.7 169.6 133.2L170.7 132.7L157.3 116.6C157.9 115.8 158.6 115.1 159.2 114.3L168.5 125.5C171.3 128.9 175.8 129.6 179.2 127C180.6 125.9 182 124.8 182.8 124.1L183.6 123.2L162.7 108.8C163.2 107.9 163.7 106.9 164.1 106L177.8 115.5C182.5 118.7 188.6 118 191.9 112.6C192.5 111.6 193.1 110.6 193.7 109.5L194.2 108.5L166.3 99.5C166.6 98.5 166.8 97.5 167 96.4L186.1 102.6C191.6 104.3 197.7 101.3 199.4 94.6C199.8 93.3 200.1 92 200.3 90.6L200.5 89.5L167.8 89.5C167.8 88.4 167.8 87.4 167.8 86.3L190.4 86.3C196.5 86.3 201.9 80.9 201.6 73.4C201.5 72.1 201.4 70.8 201.3 69.4L201.2 68.4L167 79.3C166.8 78.3 166.6 77.3 166.3 76.3L189.5 68.8C195.7 66.8 199.9 59.1 197.1 51.8C196.7 50.8 196.3 49.9 195.9 48.9ZM6.4 48C21 58.1 35.6 68.1 50.2 78.1L49.9 78.9C46.2 88 49 99.1 56.4 104.2C57.6 105 58.9 105.7 60.2 106.1L60.2 106.1C61.6 106.6 63 106.8 64.4 106.8L64.4 106.8L64.5 106.8L64.6 106.8L64.6 106.8L65.4 106.8L65.4 129.3C65.4 132.6 63.6 135.5 60.9 136.2C60 136.4 59.2 136.6 58.3 136.7L57.1 136.9L59.6 125.8C58.8 125.6 57.9 125.3 57 125L55.8 130.5C54.9 134.5 52 137.5 48.4 137.3C47.5 137.3 46.7 137.2 45.8 137.1L44.6 137L51.6 122.4C51.2 122.1 50.8 121.8 50.3 121.5C50 121.3 49.6 121 49.3 120.8L44.9 129.9C43 133.8 39.3 136 35.6 134.6C34.5 134.2 33.4 133.7 32.3 133.2L31.2 132.7L44.7 116.6C44 115.8 43.4 115.1 42.8 114.3L33.4 125.5C30.6 128.9 26.1 129.6 22.7 127C21.3 125.9 19.9 124.8 19.2 124.1L18.3 123.2L39.2 108.8C38.7 107.9 38.3 106.9 37.9 106L24.2 115.5C19.5 118.7 13.3 118 10 112.6C9.4 111.6 8.8 110.6 8.3 109.5L7.7 108.5L35.6 99.5C35.3 98.5 35.1 97.5 34.9 96.4L15.8 102.6C10.3 104.3 4.2 101.3 2.5 94.6C2.2 93.3 1.9 92 1.6 90.6L1.4 89.5L34.2 89.5C34.1 88.4 34.1 87.4 34.2 86.3L11.5 86.3C5.5 86.3 0 80.9 0.4 73.4C0.4 72.1 0.5 70.8 0.7 69.4L0.8 68.4L34.9 79.3C35.1 78.3 35.4 77.3 35.6 76.3L12.4 68.8C6.2 66.8 2 59.1 4.8 51.8C5.2 50.8 5.6 49.9 6 48.9ZM61.4 177.8C61.4 170.6 67.8 164.3 77.6 160.4C83.9 165.9 92.1 169.3 101.1 169.3C110 169.3 118.1 166 124.4 160.6C134 164.5 140.2 170.7 140.2 177.8C140.2 182.3 137.5 186.5 133.1 190C133.2 189 133.3 188 133.3 187C133.3 181.1 130.4 175.6 125.6 171.4C128.5 174.9 130.2 179.1 130.2 183.6C130.2 191.2 125.4 197.9 118.1 202.1C115.5 203.2 112.8 204 109.9 204.6C112.5 201.7 114.1 197.5 114.1 192.9C114.1 187.9 112.2 183.4 109.2 180.4C110 183.7 110.4 186.8 110.4 189C110.4 196.4 106.8 203.2 100.8 208.3C94.8 203.2 91.1 196.4 91.1 189C91.1 186.7 91.6 183.3 92.4 179.7C89.1 182.7 87 187.5 87 192.9C87 197.5 88.5 201.7 91.1 204.6C89 204.2 87.1 203.6 85.2 202.9C76.9 198.9 71.3 191.7 71.3 183.6C71.3 179.1 73 174.9 75.9 171.4C71.1 175.6 68.2 181.1 68.2 187C68.2 188 68.3 189 68.4 190C64 186.5 61.4 182.3 61.4 177.8M72 148.9L72 148.9C71.6 149.1 71.2 149.4 70.7 149.7C72.5 148.6 74.2 148 75.6 147.8C75.8 147.8 76.1 147.7 76.3 147.7C77.3 147.7 78 147.9 78.3 148.4C78.6 148.9 78.4 149.6 77.9 150.4C77.3 151.3 76.2 152.4 74.8 153.4L74.8 153.4C74.4 153.7 73.9 154 73.4 154.3C73.9 154 74.4 153.7 74.9 153.5L74.9 153.5C76.4 152.7 77.9 152.3 79 152.2C79.9 152.2 80.6 152.4 80.9 152.8C81.3 153.6 80.5 155 78.9 156.5C78.1 157.2 77.1 157.9 75.9 158.6C72.5 160.6 69.2 161.2 68.5 160C67.8 158.8 70 156.2 73.4 154.3C70 156.2 66.6 156.8 65.9 155.5C65.2 154.2 67.3 151.6 70.7 149.7C67.3 151.6 64 152.2 63.3 151C62.6 149.8 64.8 147.3 68.2 145.3C70.8 143.8 73.4 143.1 74.7 143.4C75.2 143.5 75.5 143.6 75.7 144C76 144.4 75.8 145.1 75.3 145.9C74.7 146.8 73.5 147.9 72 148.9M133.4 145.3C130 143.3 126.7 142.7 126 143.9C125.3 145.1 127.5 147.7 130.9 149.7C130.5 149.5 130.2 149.3 129.9 149.1L129.9 149.1C128.2 148.2 126.6 147.8 125.4 147.7C124.8 147.7 124.2 147.8 123.9 148C123.7 148.1 123.5 148.2 123.4 148.4C122.7 149.7 124.8 152.3 128.2 154.3C127.8 154 127.4 153.8 127 153.6L127 153.5C125.4 152.8 123.9 152.3 122.7 152.2C121.8 152.2 121.1 152.3 120.9 152.8C120.8 152.8 120.8 152.8 120.8 152.9C120.8 152.9 120.8 152.9 120.8 152.9C120.1 154.1 122.3 156.7 125.7 158.6C129.1 160.6 132.4 161.2 133.1 160C133.8 158.8 131.6 156.2 128.2 154.3C131.6 156.2 134.9 156.8 135.7 155.5C136.4 154.2 134.3 151.6 130.9 149.7C134.3 151.6 137.6 152.2 138.3 151C139 149.8 136.8 147.3 133.4 145.3M133.7 97.7L68.2 97.7L68.2 133.7C68.2 136.8 68.7 139.7 69.5 142.6C70.6 142.1 71.7 141.7 72.7 141.5C73.5 141.4 74.3 141.3 75.1 141.5C75.9 141.6 76.8 142 77.4 143C78 144 77.8 145 77.6 145.7C77.6 145.8 77.5 145.8 77.5 145.8C77.6 145.8 77.6 145.9 77.6 145.9C77.7 145.9 77.7 145.9 77.7 145.9C78.5 146 79.4 146.4 80 147.4C80.6 148.4 80.4 149.4 80.2 150.2C80.2 150.2 80.2 150.3 80.1 150.3L80.2 150.3L80.2 150.3C80.2 150.3 80.2 150.3 80.3 150.3C81 150.5 82 150.9 82.6 151.9C83.2 152.8 83 153.9 82.7 154.6C82.5 155.3 82 156 81.5 156.6C80.9 157.3 80.3 157.9 79.5 158.5C85.3 163.4 92.8 166.4 101 166.4C109.1 166.4 116.6 163.5 122.3 158.5C121.5 157.9 120.8 157.3 120.3 156.6C119.7 156 119.3 155.3 119 154.6C118.7 153.9 118.6 152.8 119.1 151.9C119.7 150.9 120.7 150.5 121.5 150.3C121.5 150.3 121.5 150.3 121.6 150.3L121.6 150.3C121.6 150.3 121.6 150.2 121.5 150.2L121.5 150.2C121.3 149.4 121.2 148.4 121.7 147.4C122.3 146.4 123.2 146 124 145.9C124.1 145.9 124.1 145.8 124.2 145.8C124.2 145.8 124.2 145.8 124.2 145.7C123.9 145 123.7 144 124.3 143C124.9 142 125.9 141.6 126.6 141.5C127.4 141.3 128.2 141.4 129 141.5C130.1 141.7 131.3 142.1 132.5 142.7C133.3 139.8 133.7 136.8 133.7 133.7ZM101 101.8L107.1 107.9L101 112.3L95 107.9ZM84 105C80.7 102.9 76.3 105.2 76.3 109.1L76.3 120L76.3 129.2L76.3 134C76.3 136.5 78.3 138.6 80.8 138.6C82.9 138.6 84.7 137 85.1 135L99.5 144.4L96.9 152.5L101 161.2L105 152.5L102.5 144.4L116.8 135C117.3 137 119 138.6 121.2 138.6C123.6 138.6 125.6 136.5 125.6 134L125.6 129.2L125.6 120L125.6 109.1C125.6 105.2 121.2 102.9 118 105L101 116.2ZM101 153.6C101.6 153.6 102.1 153.2 102.1 152.6C102.1 152 101.6 151.5 101 151.5C100.4 151.5 99.9 152 99.9 152.6C99.9 153.2 100.4 153.6 101 153.6M64.1 54.7L64.1 54.7L87.6 54.7C87.2 58.9 85.4 61 82.7 62C91.9 68.7 98.1 79.8 99.2 95.1L83.5 95.1C82.6 81.2 77.7 74 70.4 70.7C61.8 66.9 58.3 68 49.2 73.4C45.2 66.9 47.3 58.3 54.7 56.3C58.7 55.2 61.5 54.7 64.1 54.7M131.1 70.7C123.8 74 119 81.2 118.1 95.1L102.3 95.1C103.4 79.8 109.6 68.7 118.9 62C116.2 61 114.5 58.9 114 54.7L137.5 54.7C140.1 54.7 142.9 55.3 146.9 56.3C154.2 58.3 156.3 66.9 152.4 73.4C143.3 68 139.7 66.9 131.1 70.7"/></svg>
     </div>
     <h1>Искра</h1>
     <p class="sub">Панель администратора</p>
@@ -406,14 +471,16 @@
 
 <div id="dash">
   <div id="tabs">
-    <div class="nav-item active" data-view="overview">Обзор</div>
-    <div class="nav-item" data-view="users">Пользователи</div>
-    <div class="nav-item" data-view="history">Переписки</div>
-    <div class="nav-item" data-view="broadcast">Рассылка</div>
-    <div class="nav-item" data-view="files">Файлы</div>
-    <div class="nav-item" data-view="updates">Клиенты</div>
-    <div class="nav-item" data-view="tls">Сертификат</div>
-    <div class="nav-item" data-view="logs">Логи</div>
+    <div id="tabGroup">
+      <div class="nav-item active" data-view="overview">Обзор</div>
+      <div class="nav-item" data-view="users">Пользователи</div>
+      <div class="nav-item" data-view="history">Переписки</div>
+      <div class="nav-item" data-view="broadcast">Рассылка</div>
+      <div class="nav-item" data-view="files">Файлы</div>
+      <div class="nav-item" data-view="updates">Клиенты</div>
+      <div class="nav-item" data-view="tls">Сертификат</div>
+      <div class="nav-item" data-view="logs">Логи</div>
+    </div>
     <div class="mm-user">
       <div class="mm-user-text">
         <div id="whoName"></div>

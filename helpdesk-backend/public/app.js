@@ -346,6 +346,10 @@ function myDepts(u) {
 async function renderLogin(errorMsg) {
   let detectedMode = null;
   let manualMode = null; // если автоопределение не сработало, пользователь может выбрать сам
+  // Имена доменов приезжают с сервера (DOMAIN_A_LABEL / DOMAIN_B_LABEL).
+  // До ответа /auth/detect вкладок на экране всё равно нет, но подстраховка
+  // нужна: иначе при недоступном сервере на кнопках было бы «undefined».
+  let domainLabels = { A: "rosstat.local", B: "in.local" };
 
   root.innerHTML = `
     <div class="login-screen">
@@ -370,8 +374,8 @@ async function renderLogin(errorMsg) {
     manualSwitch.style.display = "block";
     manualSwitch.innerHTML = `
       <div class="tab-group">
-        <button class="tab-btn ${manualMode === "A" ? "active" : ""}" data-mode="A">Домен А</button>
-        <button class="tab-btn ${manualMode === "B" ? "active" : ""}" data-mode="B">Домен Б</button>
+        <button class="tab-btn ${manualMode === "A" ? "active" : ""}" data-mode="A">${esc(domainLabels.A)}</button>
+        <button class="tab-btn ${manualMode === "B" ? "active" : ""}" data-mode="B">${esc(domainLabels.B)}</button>
       </div>`;
     manualSwitch.querySelectorAll(".tab-btn").forEach(btn => {
       btn.onclick = () => { manualMode = btn.dataset.mode; renderManualSwitch(); };
@@ -379,10 +383,11 @@ async function renderLogin(errorMsg) {
   }
 
   try {
-    const { mode } = await api("/auth/detect");
+    const { mode, labels } = await api("/auth/detect");
     detectedMode = mode;
+    if (labels) domainLabels = labels;
     if (mode) {
-      note.textContent = `Определена сеть: Домен ${mode}`;
+      note.textContent = `Определена сеть: ${domainLabels[mode] || mode}`;
     } else {
       note.textContent = "Не удалось определить сеть автоматически — выберите домен вручную.";
       manualMode = "A";
@@ -1293,23 +1298,24 @@ async function renderDashboard(main) {
 async function renderAdmin(main) {
   main.innerHTML = `<div class="topbar"><div class="topbar-title">Администрирование</div></div><div class="page"><div class="spinner">Загрузка…</div></div>`;
   try {
-    const [{ departments: deptSettings, adminGroups }, { admins, executors }] = await Promise.all([
+    const [{ departments: deptSettings, adminGroups, domainLabels }, { admins, executors }] = await Promise.all([
       api("/admin/settings"), api("/admin/admins"),
     ]);
+    const ИМЯ_ДОМЕНА = domainLabels || { A: "rosstat.local", B: "in.local" };
 
     const ROLE_LABEL = Object.fromEntries(deptSettings.map(d => [d.role, d.name]));
 
     const groupRow = (id, label, value, placeholder) => `
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">
-        <span style="width:70px;font-size:12px;color:var(--ink-soft);font-weight:600;">${label}</span>
+        <span style="width:104px;font-size:12px;color:var(--ink-soft);font-weight:600;white-space:nowrap;">${label}</span>
         <input class="input" id="${id}" style="flex:1;" value="${esc(value)}" placeholder="${esc(placeholder)}">
       </div>`;
 
     const groupCard = (dept) => `
       <div class="card" style="margin-bottom:14px;">
         <div class="section-label">Группа АД — исполнители отдела ${esc(dept.name)}</div>
-        ${groupRow(`group_${dept.role}_A`, "Домен А", dept.groupA, "имя группы")}
-        ${groupRow(`group_${dept.role}_B`, "Домен Б", dept.groupB, "имя группы")}
+        ${groupRow(`group_${dept.role}_A`, esc(ИМЯ_ДОМЕНА.A), dept.groupA, "имя группы")}
+        ${groupRow(`group_${dept.role}_B`, esc(ИМЯ_ДОМЕНА.B), dept.groupB, "имя группы")}
       </div>`;
 
     const человек = (a, показатьРоль) => `
@@ -1318,7 +1324,7 @@ async function renderAdmin(main) {
           <span style="font-size:13px;font-weight:600;">${esc(a.full_name)}</span>
           <span class="mono" style="font-size:12px;color:var(--ink-soft);">${esc(a.ad_login)}</span>
           ${показатьРоль ? (a.roles || [a.role]).map(r => `<span class="badge" style="color:var(--wire);background:var(--wire-soft);">${esc(ROLE_LABEL[r] || r)}</span>`).join("") : ""}
-          <span class="badge" style="color:var(--ink-soft);background:var(--line-soft);">${a.last_domain === "local" ? "Локальный" : "Домен " + esc(a.last_domain)}</span>
+          <span class="badge" style="color:var(--ink-soft);background:var(--line-soft);">${a.last_domain === "local" ? "Локальный" : esc(ИМЯ_ДОМЕНА[a.last_domain] || a.last_domain)}</span>
         </div>
         <span style="font-size:11px;color:var(--ink-soft);">вход ${fmtDate(a.last_login_at)}</span>
       </div>`;
@@ -1330,8 +1336,8 @@ async function renderAdmin(main) {
         <div class="section-label">Администраторы платформы</div>
         <div style="font-size:11.5px;color:var(--ink-soft);margin-bottom:6px;">
           Права даёт членство в группе, указанной в <code class="mono">.env</code> на сервере:
-          <span class="mono">${esc(adminGroups.A || "— не задана —")}</span> (домен А),
-          <span class="mono">${esc(adminGroups.B || "— не задана —")}</span> (домен Б).
+          <span class="mono">${esc(adminGroups.A || "— не задана —")}</span> (${esc(ИМЯ_ДОМЕНА.A)}),
+          <span class="mono">${esc(adminGroups.B || "— не задана —")}</span> (${esc(ИМЯ_ДОМЕНА.B)}).
           Отсюда список не редактируется и группами отделов ниже не расширяется.
         </div>
         ${admins.length ? admins.map(a => человек(a, false)).join("") : пусто("Ни один администратор ещё не входил.")}
@@ -1546,7 +1552,7 @@ async function renderCertificates(main) {
           </div>
           <div style="width:380px;flex-shrink:0;">
             <div class="field-label">Добавить корень</div>
-            <input class="field-input" id="rootName" placeholder="например domain-b-root.crt" style="margin-bottom:10px;">
+            <input class="field-input" id="rootName" placeholder="например in-local-root.crt" style="margin-bottom:10px;">
             <textarea class="input" id="rootPem" rows="5" placeholder="-----BEGIN CERTIFICATE-----" style="width:100%;font-family:var(--mono);font-size:11px;margin-bottom:10px;"></textarea>
             <button class="btn btn-wire" id="addRoot" style="width:100%;justify-content:center;">Добавить</button>
             <div id="rootMsg" style="margin-top:8px;font-size:12px;text-align:center;"></div>

@@ -58,7 +58,10 @@ cp .env.example .env
   переменной нет, сервер возьмёт случайный секрет на время работы процесса, и
   после каждого перезапуска всем придётся войти заново.
   Сгенерировать: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
-- адреса контроллеров доменов А и Б (`DOMAIN_A_LDAP_URL`, `DOMAIN_B_LDAP_URL`) — лучше `ldaps://` (порт 636)
+- адреса контроллеров доменов `rosstat.local` и `in.local` (`DOMAIN_A_LDAP_URL`,
+  `DOMAIN_B_LDAP_URL`) — лучше `ldaps://` (порт 636). Ключи в `.env` остались
+  буквенными: `DOMAIN_A_*` — это `rosstat.local`, `DOMAIN_B_*` — `in.local`,
+  а подписи для интерфейса задаются в `DOMAIN_A_LABEL` / `DOMAIN_B_LABEL`
 - `DOMAIN_A_SVC_DN` / `DOMAIN_B_SVC_DN` и пароли — сервисная учётка только на чтение
 - `DOMAIN_A_ADMIN_GROUP` / `DOMAIN_B_ADMIN_GROUP` — группы **администраторов
   платформы** в каждом домене
@@ -100,8 +103,8 @@ node scripts/set-local-admin-password.js "ДругойПароль"
 # вставьте в .env как LOCAL_USER_PASSWORD_HASH
 ```
 
-Автоопределение домена по подсети клиента: `NETWORK_DOMAIN_A_CIDR` /
-`NETWORK_DOMAIN_B_CIDR`. Экран входа не показывает вкладки выбора домена —
+Автоопределение домена по подсети клиента: `NETWORK_DOMAIN_A_CIDR`
+(`rosstat.local`) / `NETWORK_DOMAIN_B_CIDR` (`in.local`). Экран входа не показывает вкладки выбора домена —
 определяет его по IP запроса (`req.socket.remoteAddress`; заголовки вроде
 `X-Forwarded-For` игнорируются, чтобы домен нельзя было подделать). Если
 сервер окажется за reverse proxy, потребуется отдельно настроить `trust proxy`

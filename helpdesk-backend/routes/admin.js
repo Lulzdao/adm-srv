@@ -31,6 +31,10 @@ module.exports = function adminRoutes(db) {
         A: config.domains.A.adminGroup || "",
         B: config.domains.B.adminGroup || "",
       },
+      domainLabels: {
+        A: config.domains.A.label,
+        B: config.domains.B.label,
+      },
     });
   });
 

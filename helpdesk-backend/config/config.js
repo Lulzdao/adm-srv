@@ -42,9 +42,13 @@ function sessionSecret() {
   return crypto.randomBytes(32).toString("hex");
 }
 
-function domainConfig(prefix) {
+// Имя домена в интерфейсе. Задаётся в .env, но осмысленное значение по
+// умолчанию тут обязательно: подпись уходит и на экран входа, и в тексты
+// ошибок LDAP, и без неё пользователь видел «Контроллер домена undefined
+// недоступен».
+function domainConfig(prefix, defaultLabel) {
   return {
-    label: process.env[`${prefix}_LABEL`],
+    label: process.env[`${prefix}_LABEL`] || defaultLabel,
     url: process.env[`${prefix}_LDAP_URL`],
     baseDn: process.env[`${prefix}_BASE_DN`],
     svcDn: process.env[`${prefix}_SVC_DN`],
@@ -61,8 +65,8 @@ module.exports = {
   uploadsDir: process.env.UPLOADS_DIR || "./uploads",
 
   domains: {
-    A: domainConfig("DOMAIN_A"),
-    B: domainConfig("DOMAIN_B"),
+    A: domainConfig("DOMAIN_A", "rosstat.local"),
+    B: domainConfig("DOMAIN_B", "in.local"),
   },
 
   ldapTlsRejectUnauthorized: process.env.LDAP_TLS_REJECT_UNAUTHORIZED !== "false",
