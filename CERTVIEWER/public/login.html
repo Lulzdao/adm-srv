@@ -4,29 +4,45 @@
 <meta charset="UTF-8" />
 <title>Вход — Реестр сертификатов</title>
 <style>
-  /* Material You — единая тема с платформой и остальными модулями. */
-  :root {
-    --md-primary: #7D5700;
-    --md-on-primary: #FFFFFF;
-    --md-primary-container: #FFDEA6;
-    --md-on-primary-container: #281900;
-    --md-surface: #FFF8F3;
-    --md-surface-container: #F5ECE3;
-    --md-surface-container-lowest: #FFFFFF;
-    --md-on-surface: #1F1B16;
-    --md-on-surface-variant: #4F453A;
-    --md-outline: #817567;
-    --md-outline-variant: #D8CCBE;
-    --md-error: #8C1D18;
-    --md-shape-xs: 8px;
-    --md-shape-m: 16px;
-    --md-shape-xl: 28px;
-    --md-shape-full: 100px;
-    --sans: Roboto, "Segoe UI", system-ui, -apple-system, Arial, sans-serif;
+  /* Фирменный стиль Росстата — единая тема с платформой и остальными модулями.
+     Значения продублированы прямо здесь, а не взяты из app.css, потому что
+     страница входа обязана открываться и тогда, когда всё остальное недоступно.
+     Держите их в согласии с public/app.css при правках. */
+  @font-face {
+    font-family: "PT Root UI";
+    src: url("/fonts/PTRootUI-Regular.woff2") format("woff2");
+    font-weight: 400; font-style: normal; font-display: swap;
   }
+  @font-face {
+    font-family: "PT Root UI";
+    src: url("/fonts/PTRootUI-Bold.woff2") format("woff2");
+    font-weight: 700; font-style: normal; font-display: swap;
+  }
+  :root {
+    --md-primary: #0A61AE;
+    --md-on-primary: #FFFFFF;
+    --md-primary-container: #DCE7F6;
+    --md-on-primary-container: #0A61AE;
+    --md-surface: #E8EDF5;
+    --md-surface-container: #FFFFFF;
+    --md-surface-container-lowest: #FFFFFF;
+    --md-on-surface: #282A2E;
+    --md-on-surface-variant: #838383;
+    --md-outline: #DCE4EF;
+    --md-outline-variant: #E4EAF3;
+    --md-error: #E7004B;
+    --md-shape-xs: 4px;
+    --md-shape-m: 8px;
+    --md-shape-xl: 12px;
+    --md-shape-full: 6px;
+    --sans: "PT Root UI", Arial, "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  /* Кернинг выключен: в PT Root UI пара «пробел + длинное тире» стягивает
+     пробелы в ноль. Подробности — в public/app.css. */
+  html { font-kerning: none; }
   * { box-sizing: border-box; }
   /* --- Полоса прокрутки ---
-     Штатная светло-серая полоса Chromium выбивалась из тёплой палитры. Стилизуем
+     Штатная светло-серая полоса Chromium выбивалась из палитры. Стилизуем
      через ::-webkit-scrollbar: эти псевдоэлементы понимают все Chromium, включая
      109-й на рабочих машинах. Стандартные scrollbar-width/scrollbar-color
      появились только в Chrome 121 — они ниже и лишь повторяют тот же вид в новых

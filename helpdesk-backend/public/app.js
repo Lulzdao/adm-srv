@@ -154,6 +154,13 @@ function enhanceSelect(sel) {
   // Значение могли поменять из кода (например, сбросом фильтров) — подпись
   // должна следовать за ним, иначе покажет уже не то, что выбрано.
   sel.addEventListener("change", syncLabel);
+  // ...а варианты могли приехать позже самой отрисовки. Список исполнителей
+  // заполняется отдельным запросом уже после того, как карточка нарисована, и
+  // подмена вариантов через innerHTML никаких событий не порождает — на кнопке
+  // так и оставалась заглушка «Загрузка…», хотя в самом select уже лежало
+  // «— не назначено —». Наблюдатель чинит это для любого списка, который
+  // наполняется позже, а не только для исполнителя.
+  new MutationObserver(syncLabel).observe(sel, { childList: true });
   document.addEventListener("click", (e) => { if (!wrap.contains(e.target)) close(); });
   syncLabel();
 }
@@ -186,11 +193,14 @@ const DESCRIPTION_MAX = 140;
 // светлый «container» для подложки). Держите их в согласии с палитрой
 // public/styles.css: значения продублированы здесь, потому что подставляются
 // в инлайновые стили при отрисовке.
+// Приоритет виден в списке цветной кромкой слева у строки (см. .ticket-row
+// в styles.css) и подложкой в карточке. Цвета — из дополнительной гаммы
+// брендбука (3.3): её он и предлагает для акцентов и сигналов.
 const PRIORITIES = [
-  { id: "critical", label: "Критичный", color: "#8C1D18", soft: "#FFDAD6" },
-  { id: "high", label: "Высокий", color: "#8A4600", soft: "#FFDCC2" },
-  { id: "medium", label: "Средний", color: "#7D5700", soft: "#FFDEA6" },
-  { id: "low", label: "Низкий", color: "#5A5248", soft: "#EFE5DB" },
+  { id: "critical", label: "Критичный", color: "#E7004B", soft: "#FDE3EA" },
+  { id: "high", label: "Высокий", color: "#C25A18", soft: "#FFE7D6" },
+  { id: "medium", label: "Средний", color: "#0A61AE", soft: "#DCE7F6" },
+  { id: "low", label: "Низкий", color: "#5A5A5A", soft: "#ECECEC" },
 ];
 const STATUSES = [
   { id: "new", label: "Новая" },
@@ -203,9 +213,11 @@ const STATUSES = [
 // истории вместо «Решена» показывалось бы английское resolved.
 const LEGACY_STATUS_LABELS = { waiting: "Ожидает ответа", resolved: "Решена", cancelled: "Отменена" };
 const statusLabel = (id) => (STATUSES.find(s => s.id === id) || {}).label || LEGACY_STATUS_LABELS[id] || id;
-// [цвет текста, цвет подложки] — тональные пары Material 3.
+// [цвет текста, цвет подложки]. Новая — голубая гамма, в работе — сиреневая
+// (два основных цвета брендбука), закрыта — серая. Текст тёмный: правило 3.4
+// требует тёмно-серого на светлых фонах.
 const STATUS_COLORS = {
-  new: ["#101C33", "#DCE3F9"], progress: ["#2E1500", "#FFDCC2"], closed: ["#302A24", "#EFE5DB"],
+  new: ["#0A61AE", "#DCE7F6"], progress: ["#663AB5", "#E9E2F6"], closed: ["#5A5A5A", "#ECECEC"],
 };
 
 // ====== Состояние ======
@@ -281,6 +293,17 @@ const DATE_FMT = new Intl.DateTimeFormat("ru-RU", {
   day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit",
 });
 
+// Русское склонение после числа: 1 заявка, 2 заявки, 5 заявок.
+// Правило обычное: 11–14 всегда «заявок», дальше по последней цифре.
+function склонение(n, одна, две, много) {
+  const сотня = Math.abs(n) % 100;
+  const единицы = сотня % 10;
+  if (сотня > 10 && сотня < 20) return много;
+  if (единицы > 1 && единицы < 5) return две;
+  if (единицы === 1) return одна;
+  return много;
+}
+
 function fmtDate(iso) {
   if (!iso) return "—";
   const d = new Date(iso.replace(" ", "T") + "Z");
@@ -337,7 +360,6 @@ async function renderLogin(errorMsg) {
         <div class="field-label">Пароль</div>
         <input class="field-input hint-long" id="passwordInput" type="password" placeholder="пароль учётной записи компьютера" autocomplete="current-password">
         <button class="btn-primary" id="loginBtn">Войти</button>
-        <div style="margin-top:12px;font-size:11px;color:var(--ink-soft);">Для локального аварийного входа начните логин с «!»</div>
       </div>
     </div>`;
 
@@ -806,6 +828,16 @@ async function renderList(main, opts = {}) {
   const gridCols = isPrivileged
     ? "92px minmax(220px,1fr) 150px 80px 130px 150px 140px"
     : "92px minmax(220px,1fr) 130px 150px 140px";
+  // Минимальная ширина строки — сумма колонок, промежутков и полей. Нужна
+  // и шапке, и строкам: без общей ширины доля 1fr считалась бы по содержимому
+  // каждой строки отдельно, и колонки разъезжались (см. .ticket-row в стилях).
+  // Считаем из той же строки описания сетки, чтобы два места не разошлись.
+  const колонки = gridCols.split(" ");
+  const TEMA_MIN = 160;   // до какой ширины разрешаем сжать колонку «Тема»
+  const gridMin = колонки.reduce((сумма, track) => {
+    const число = Number((track.match(/^(\d+)px$/) || [])[1] || 0);
+    return сумма + число;
+  }, 0) + TEMA_MIN + (колонки.length - 1) * 18 + 32;
 
   main.innerHTML = `
     <div class="topbar">
@@ -828,7 +860,7 @@ async function renderList(main, opts = {}) {
         <div class="filters-count" id="countLabel">Загрузка…</div>
       </div>
       <div class="ticket-table">
-        <div class="ticket-row-head" style="grid-template-columns:${gridCols};">
+        <div class="ticket-row-head" style="grid-template-columns:${gridCols};min-width:${gridMin}px;">
           <div>Номер</div><div>Тема</div>
           ${isPrivileged ? `<div>От кого</div><div>Кабинет</div>` : ""}
           <div>Статус</div><div>Исполнитель</div><div>Обновлено</div>
@@ -854,7 +886,7 @@ async function renderList(main, opts = {}) {
       // остальных нет. Сузить выборку можно фильтрами и поиском.
       document.getElementById("countLabel").textContent = total > tickets.length
         ? `${tickets.length} из ${total} заявок — уточните фильтр или поиск`
-        : `${total} заявок`;
+        : `${total} ${склонение(total, "заявка", "заявки", "заявок")}`;
       if (tickets.length === 0) {
         rowsEl.innerHTML = `<div class="empty-state">Ничего не найдено.</div>`;
         return;
@@ -866,10 +898,9 @@ async function renderList(main, opts = {}) {
         const sLabel = statusLabel(t.status);
         const isUnread = unreadTicketIds.has(t.id);
         return `
-        <div class="ticket-row" data-id="${t.id}" style="grid-template-columns:${gridCols};">
+        <div class="ticket-row" data-id="${t.id}" data-prio="${t.priority}" title="Приоритет: ${p.label.toLowerCase()}" style="grid-template-columns:${gridCols};min-width:${gridMin}px;">
           <div class="ticket-id mono">${esc(t.display_id)}</div>
           <div class="ticket-title-cell">
-            <span class="priority-dot" style="background:${p.color}"></span>
             <span class="title" style="${isUnread ? "font-weight:700;" : ""}">${esc(t.title)}</span>
             ${isUnread ? `<span class="unread-dot" title="Есть новые комментарии"></span>` : ""}
           </div>
@@ -1109,7 +1140,7 @@ function renderDetail(main, ticket) {
     document.getElementById("commentsList").innerHTML = list.length ? list.map(c => `
       <div class="comment-box ${c.is_internal ? "internal" : "public"}">
         <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
-          <span style="font-size:12px;font-weight:700;">${esc(c.author)} ${c.is_internal ? `<span style="color:var(--amber);font-size:10.5px;">ВНУТРЕННЯЯ ЗАМЕТКА</span>` : ""}</span>
+          <span style="font-size:12px;font-weight:700;">${esc(c.author)} ${c.is_internal ? `<span style="color:var(--note);font-size:10.5px;">ВНУТРЕННЯЯ ЗАМЕТКА</span>` : ""}</span>
           <span style="font-size:11px;color:var(--ink-soft);">${fmtDate(c.created_at)}</span>
         </div>
         <div style="font-size:13px;line-height:1.5;">${esc(c.text)}</div>

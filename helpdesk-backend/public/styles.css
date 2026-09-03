@@ -1,15 +1,23 @@
 /* ============================================================================
-   Material You (Material 3) — тональная тема платформы.
+   Фирменный стиль Росстата — тема платформы.
 
-   Палитра построена от фирменного тёплого золотого (#A97F45): из него взяты
-   тона primary и нейтральные поверхности. Отсюда основные отличия от прежнего
-   оформления: вместо тёмно-синей боковой панели и белых карточек на сером —
-   набор близких тональных поверхностей, крупные скругления и «таблетки»
-   (pill) вместо прямоугольных кнопок.
+   Значения из «Руководства по использованию фирменного стиля», версия 1.0,
+   апрель 2026:
+     2.2 Системный шрифт  — PT Root UI, а где он недоступен, Arial
+     3.1 Основные цвета   — голубая и сиреневая гаммы, обязательны и преобладают
+     3.2 Текст            — серая гамма: тёмно-серый основной, серый вторичный
+     3.3 Дополнительные   — точечно, под сигналы: срок, критичность
+     3.4 Очередность      — на светлых фонах текст тёмно-серый, на тёмных белый
+     5.1 Стилеобразующие  — полностью круглые плашки только для малого объёма
+                            информации (бейдж, счётчик), остальное со
+                            скруглёнными углами
 
-   Цвета заданы в hex, а не в oklch: интерфейс открывают с рабочих машин, где
-   может стоять браузер старше Chrome 111, — oklch там просто не применится и
-   элемент останется без цвета.
+   Голубой здесь не акцент на кнопке, а основа макета: боковая панель залита
+   фирменным цветом целиком. Именно этого требует брендбук словом
+   «преобладающие», и именно это отличает вид от прежней тёплой тональной темы.
+
+   Цвета в hex, а не в oklch: интерфейс открывают с рабочих машин, где браузер
+   может быть старше Chrome 111, — oklch там просто не применится.
 
    ВАЖНО про имена: старые переменные (--ink, --wire, --line-soft и т.д.)
    сохранены и переназначены на новые тона, потому что public/app.js
@@ -17,86 +25,113 @@
    нельзя. Имена классов по той же причине не менялись.
    ========================================================================= */
 
+/* Фирменный шрифт. Файлы лежат рядом, в public/fonts, — сеть изолирована, и
+   ничего внешнего подключать нельзя. Формат woff2 понимают все Chromium
+   начиная с 36-го, на рабочих местах стоит 109-й.
+   Лицензия SIL OFL 1.1, её текст — в public/fonts/OFL.txt рядом со шрифтом. */
+@font-face {
+  font-family: "PT Root UI";
+  src: url("/fonts/PTRootUI-Regular.woff2") format("woff2");
+  font-weight: 400; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: "PT Root UI";
+  src: url("/fonts/PTRootUI-Medium.woff2") format("woff2");
+  font-weight: 500; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: "PT Root UI";
+  src: url("/fonts/PTRootUI-Bold.woff2") format("woff2");
+  font-weight: 700; font-style: normal; font-display: swap;
+}
+
 :root {
-  /* --- Material 3: primary --- */
-  --md-primary: #7D5700;
+  /* --- Основные цвета (3.1) --- */
+  --md-primary: #0A61AE;              /* тёмно-голубой */
   --md-on-primary: #FFFFFF;
-  --md-primary-container: #FFDEA6;
-  --md-on-primary-container: #281900;
+  --md-primary-container: #DCE7F6;
+  --md-on-primary-container: #0A61AE;
 
-  /* --- Material 3: secondary (активные пункты меню, мягкие акценты) --- */
-  --md-secondary-container: #F0E0C8;
-  --md-on-secondary-container: #251A04;
+  /* --- Второй основной: сиреневая гамма --- */
+  --md-secondary-container: #E9E2F6;
+  --md-on-secondary-container: #663AB5;
 
-  /* --- Material 3: нейтральные поверхности (тёплый нейтральный) --- */
-  --md-surface: #FFF8F3;
+  /* --- Поверхности: белый и производные серой гаммы --- */
+  --md-surface: #E8EDF5;              /* фон под панелями */
   --md-surface-container-lowest: #FFFFFF;
-  --md-surface-container-low: #FBF1E9;
-  --md-surface-container: #F5ECE3;
-  --md-surface-container-high: #F0E6DE;
-  --md-surface-container-highest: #EAE1D9;
-  --md-on-surface: #1F1B16;
-  --md-on-surface-variant: #4F453A;
-  --md-outline: #817567;
-  --md-outline-variant: #D8CCBE;
+  --md-surface-container-low: #F7F9FC; /* плитки и карточки внутри рабочей области */
+  --md-surface-container: #FFFFFF;
+  --md-surface-container-high: #F7F9FC;
+  --md-surface-container-highest: #EDF1F8;
+  --md-on-surface: #282A2E;           /* тёмно-серый — основной текст (3.2) */
+  --md-on-surface-variant: #838383;   /* серый — второстепенное и сноски */
+  --md-outline: #DCE4EF;
+  --md-outline-variant: #E4EAF3;
 
-  /* --- Тональные пары под статусы и сигналы --- */
-  --md-error: #8C1D18;
-  --md-error-container: #FFDAD6;
-  --md-on-error-container: #410002;
-  --md-warn-container: #FFDCC2;
-  --md-on-warn-container: #2E1500;
-  --md-info-container: #DCE3F9;
-  --md-on-info-container: #101C33;
-  --md-success-container: #CDEBD5;
-  --md-on-success-container: #08210F;
-  --md-neutral-container: #EFE5DB;
-  --md-on-neutral-container: #302A24;
+  /* --- Сигналы: из дополнительных цветов (3.3), в малом количестве --- */
+  --md-error: #E7004B;                /* тёмно-розовый */
+  --md-error-container: #FDE3EA;
+  --md-on-error-container: #E7004B;
+  --md-warn-container: #FFE7D6;
+  --md-on-warn-container: #C25A18;
+  --md-info-container: #DCE7F6;
+  --md-on-info-container: #0A61AE;
+  --md-success-container: #DBF0F2;    /* изумрудная гамма — внутренние коммуникации */
+  --md-on-success-container: #008F9F;
+  --md-neutral-container: #ECECEC;
+  --md-on-neutral-container: #5A5A5A;
 
-  /* --- Слой состояния (hover/press): M3 кладёт полупрозрачный тон сверху --- */
-  --md-state-hover: rgba(31, 27, 22, 0.06);
-  --md-state-hover-strong: rgba(31, 27, 22, 0.10);
+  /* --- Слой состояния (hover/press) --- */
+  --md-state-hover: #EDF1F8;
+  --md-state-hover-strong: #DCE7F6;
 
-  /* --- Форма --- */
-  --md-shape-xs: 8px;
-  --md-shape-s: 12px;
-  --md-shape-m: 16px;
-  --md-shape-l: 20px;
-  --md-shape-xl: 28px;
-  --md-shape-full: 100px;
+  /* --- Форма ---
+     Полностью круглые плашки брендбук оставляет малому объёму информации —
+     это бейдж статуса и счётчик непрочитанных, им радиус задаётся отдельно.
+     Всё остальное — фиксированная лесенка скруглений. */
+  --md-shape-xs: 4px;
+  --md-shape-s: 6px;
+  --md-shape-m: 8px;
+  --md-shape-l: 10px;
+  --md-shape-xl: 12px;
+  --md-shape-full: 6px;
 
-  /* --- Тень: в M3 её мало, глубина делается тоном --- */
-  --md-elev-1: 0 1px 2px rgba(31, 27, 22, 0.10);
-  --md-elev-2: 0 2px 6px rgba(31, 27, 22, 0.10);
-  --md-elev-3: 0 6px 18px rgba(31, 27, 22, 0.12);
+  /* --- Тени: глубина делается тоном и линией, а не тенью --- */
+  --md-elev-1: none;
+  --md-elev-2: none;
+  --md-elev-3: 0 2px 10px rgba(40, 42, 46, 0.10);
 
   /* --- Совместимость: имена, на которые ссылается app.js --- */
   --ink: var(--md-on-surface);
   --ink-soft: var(--md-on-surface-variant);
   --line: var(--md-outline-variant);
-  --line-soft: var(--md-surface-container-high);
+  --line-soft: var(--md-surface-container-highest);
   --wire: var(--md-primary);
   --wire-soft: var(--md-primary-container);
-  --amber: #8A5300;
+  --amber: #C25A18;
   --amber-soft: var(--md-warn-container);
   --red: var(--md-error);
   --red-soft: var(--md-error-container);
-  --green: #1F6B37;
+  --green: #008F9F;
+  /* Подпись «внутренняя заметка» — сиреневая, в тон её подложке. Отдельная
+     переменная, а не --amber: оранжевый в палитре занят сигналом «истекает
+     срок», и подпись читалась бы предупреждением. */
+  --note: #663AB5;
   --green-soft: var(--md-success-container);
   --bg: var(--md-surface);
   --paper: var(--md-surface-container-lowest);
-  --sidebar: var(--md-surface-container);
+  --sidebar: var(--md-primary);
 
-  /* Roboto — штатный шрифт Material; на рабочих Windows-машинах его обычно
-     нет, поэтому первым запасным идёт Segoe UI. Веб-шрифты не подключаем:
-     сеть изолирована, до fonts.googleapis.com запрос не уйдёт. */
-  --sans: Roboto, "Segoe UI", system-ui, -apple-system, Arial, sans-serif;
-  --serif: var(--sans); /* M3 не использует засечки; имя оставлено для app.js */
+  /* PT Root UI — фирменный шрифт, файлы подключены выше. Arial следующим:
+     брендбук называет его системной заменой там, где основной шрифт
+     недоступен по техническим причинам. */
+  --sans: "PT Root UI", Arial, "Segoe UI", system-ui, -apple-system, sans-serif;
+  --serif: var(--sans);
   --mono: "Cascadia Mono", Consolas, "Roboto Mono", Menlo, monospace;
 }
 
 /* --- Полоса прокрутки ---
-   Штатная светло-серая полоса Chromium выбивалась из тёплой палитры и
+   Штатная светло-серая полоса Chromium выбивалась из палитры и
    выглядела как чужая деталь на каждом экране. Стилизуем через
    ::-webkit-scrollbar: этот набор псевдоэлементов понимают все Chromium,
    включая 109-й, который стоит на рабочих машинах. Стандартные
@@ -118,6 +153,18 @@
 html { scrollbar-width: thin; scrollbar-color: var(--md-outline-variant) transparent; }
 
 * { box-sizing: border-box; }
+
+/* Кернинг выключен намеренно, и это не вкусовщина.
+   В PT Root UI есть кернинговая пара «пробел + длинное тире», которая стягивает
+   пробелы вокруг тире в ноль: «Оповещения — Отправка» рисовалось как
+   «Оповещения—Отправка». Проверено в браузере: с font-kerning:none пробелы
+   возвращаются, а liga и calt на это не влияют вовсе. Шрифт так задуман —
+   он рассчитан на набор тире вплотную, — но у нас тире ставят и в темах заявок,
+   и в комментариях, и переучивать сотрудников из-за начертания нельзя.
+   Потеря невелика: кернинг заметен на крупных заголовках, а интерфейс набран
+   13–14 пунктами, где разница неразличима. */
+html { font-kerning: none; }
+
 html, body { height: 100%; }
 body {
   margin: 0;
@@ -132,41 +179,48 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; }
 a { color: var(--md-primary); }
 
 /* --- Login --- */
+/* Фон входа — тот же, что под панелями внутри платформы. Раньше здесь стояла
+   поверхность карточек: в новой теме она белая, и карточка терялась на белом. */
 .login-screen {
-  min-height: 100vh; background: var(--md-surface-container);
+  min-height: 100vh; background: var(--md-surface);
   display: flex; align-items: center; justify-content: center;
 }
 .login-card {
   width: 400px; background: var(--md-surface-container-lowest); border-radius: var(--md-shape-xl);
   padding: 40px 36px; box-shadow: var(--md-elev-3);
 }
+/* Кнопка входа стояла почти вплотную к полю пароля. */
+.login-card .btn-primary { margin-top: 14px; }
 .login-logo { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
 /* Герб вместо прежней плитки с буквой: у ведомственной системы уместнее
    государственный символ, а не инициал. Подложки нет намеренно — герб рисуется
    прямо на поверхности, как на бланках. */
 .brand-emblem { flex-shrink: 0; color: var(--md-primary); display: block; }
+/* В панели герб на тёмно-голубом — белым силуэтом (брендбук 1.2 допускает
+   белую версию знака). На экране входа он остаётся цветным. */
+.sidebar .brand-emblem { filter: brightness(0) invert(1); }
 /* Подпись системы и ведомство под ней. Строки прижаты друг к другу (line-height
    1.2), иначе на 32-пиксельном гербе они разъезжаются и блок перестаёт
    читаться как один заголовок. */
 .brand-text { min-width: 0; line-height: 1.2; }
-.brand-name { font-family: var(--serif); font-weight: 600; font-size: 14.5px; color: var(--md-on-surface); }
-.brand-org { font-size: 11.5px; color: var(--md-on-surface-variant); letter-spacing: 0.2px; margin-top: 2px; }
-.login-title { font-weight: 600; font-size: 22px; letter-spacing: 0; }
+.brand-name { font-family: var(--serif); font-weight: 700; font-size: 14.5px; color: #FFFFFF; }
+.brand-org { font-size: 11.5px; color: #B0C8E7; letter-spacing: 0.2px; margin-top: 2px; }
+.login-title { font-weight: 700; font-size: 22px; letter-spacing: 0; }
 .login-sub { font-size: 13.5px; color: var(--md-on-surface-variant); margin-bottom: 28px; }
-.tab-group { display: flex; gap: 4px; margin-bottom: 22px; background: var(--md-surface-container-high); padding: 4px; border-radius: var(--md-shape-full); }
+.tab-group { display: flex; gap: 3px; margin-bottom: 22px; background: var(--md-surface-container-highest); padding: 3px; border-radius: var(--md-shape-m); }
 .tab-btn {
-  flex: 1; padding: 9px 4px; font-size: 13px; font-weight: 600; border: none; border-radius: var(--md-shape-full);
+  flex: 1; padding: 9px 4px; font-size: 13px; font-weight: 700; border: none; border-radius: var(--md-shape-s);
   background: transparent; color: var(--md-on-surface-variant); cursor: pointer; transition: background 0.15s ease, color 0.15s ease;
 }
-.tab-btn:hover { background: var(--md-state-hover); }
-.tab-btn.active { background: var(--md-primary-container); color: var(--md-on-primary-container); }
+.tab-btn:hover { background: rgba(10, 97, 174, 0.08); color: var(--md-primary); }
+.tab-btn.active, .tab-btn.active:hover { background: var(--md-primary); color: var(--md-on-primary); }
 .field-label { font-size: 12.5px; font-weight: 500; color: var(--md-on-surface-variant); display: block; margin-bottom: 7px; }
 .field-input {
   width: 100%; padding: 14px 16px; border: 1px solid var(--md-outline); border-radius: var(--md-shape-xs);
   outline: none; margin-bottom: 16px; background: var(--md-surface-container-lowest); color: var(--md-on-surface);
   transition: border-color 0.12s ease, box-shadow 0.12s ease;
 }
-.field-input:focus { border-color: var(--md-primary); box-shadow: inset 0 0 0 1px var(--md-primary); }
+.field-input:focus { border-color: var(--md-primary); box-shadow: 0 0 0 3px rgba(10, 97, 174, 0.12); }
 /* Подсказка в поле — намеренно бледная: это пояснение, а не значение, и
    спутать её с введённым текстом нельзя. Подсказка про пароль ещё и мельче:
    «пароль учётной записи компьютера» в поле по умолчанию не помещалась и
@@ -176,10 +230,10 @@ a { color: var(--md-primary); }
 .btn-primary {
   width: 100%; padding: 14px 0; background: var(--md-primary); color: var(--md-on-primary); border: none;
   border-radius: var(--md-shape-full); font-size: 14px; font-weight: 600; letter-spacing: 0.1px;
-  cursor: pointer; transition: box-shadow 0.15s ease, filter 0.15s ease;
+  cursor: pointer; transition: background 0.15s ease, color 0.15s ease;
 }
-.btn-primary:hover { box-shadow: var(--md-elev-2); filter: brightness(1.06); }
-.btn-primary:disabled { background: rgba(31,27,22,0.12); color: rgba(31,27,22,0.38); cursor: not-allowed; box-shadow: none; filter: none; }
+.btn-primary:hover { background: #08528F; }
+.btn-primary:disabled { background: #DCE4EF; color: #9AA3AF; cursor: not-allowed; }
 .note-box {
   display: flex; gap: 8px; align-items: flex-start; font-size: 12px; color: var(--md-on-surface-variant);
   margin-bottom: 18px; background: var(--md-surface-container); padding: 12px 14px; border-radius: var(--md-shape-s);
@@ -205,8 +259,10 @@ a { color: var(--md-primary); }
 /* Navigation drawer: светлая тональная поверхность вместо тёмной панели.
    Тон на ступень глубже фона страницы (surface): на surface-container-low
    панель почти сливалась с фоном и граница читалась только по скруглению. */
+/* Боковая панель залита фирменным тёмно-голубым целиком — см. пояснение в
+   шапке файла. Всё, что внутри неё, поэтому светлое. */
 .sidebar {
-  width: 260px; background: var(--md-surface-container); color: var(--md-on-surface);
+  width: 260px; background: var(--md-primary); color: #FFFFFF;
   display: flex; flex-direction: column; flex-shrink: 0;
   border-radius: var(--md-shape-xl);
   min-height: 0;
@@ -220,31 +276,34 @@ a { color: var(--md-primary); }
 .head-action {
   margin-left: auto; flex-shrink: 0;
   display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px;
-  border: none; border-radius: 50%; background: transparent; color: var(--md-on-surface-variant);
-  cursor: pointer; transition: background 0.13s ease, color 0.13s ease;
+  border: none; border-radius: var(--md-shape-s); background: rgba(255, 255, 255, 0.14); color: #FFFFFF;
+  cursor: pointer; transition: background 0.15s ease, color 0.15s ease;
 }
-.head-action:hover { background: var(--md-state-hover); color: var(--md-on-surface); }
-.head-action.active { background: var(--md-primary-container); color: var(--md-on-primary-container); }
+.head-action:hover, .head-action.active { background: #FFFFFF; color: var(--md-primary); }
 .sidebar-nav { padding: 4px 12px 12px; flex: 1; min-height: 0; overflow-y: auto; }
-/* Пункт меню в M3 — «таблетка» на всю ширину */
+/* Пункт меню — плашка на всю ширину. Верхний уровень белый и полужирный,
+   вложенные пункты бледнее и со сдвигом. Модуль из одной страницы («Искра»)
+   рисуется обычной кнопкой, а не заголовком группы, — поэтому вес задаётся
+   через :not(.nav-btn-sub), иначе он оказывался светлее соседей. */
 .nav-btn {
-  width: 100%; display: flex; align-items: center; gap: 12px; padding: 13px 16px;
-  background: transparent; border: none; border-radius: var(--md-shape-full); color: var(--md-on-surface-variant);
-  font-size: 13.5px; font-weight: 500; cursor: pointer; margin-bottom: 4px; text-align: left;
+  width: 100%; display: flex; align-items: center; gap: 12px; padding: 11px 14px;
+  background: transparent; border: none; border-radius: var(--md-shape-m); color: #D7E3F4;
+  font-size: 13.5px; font-weight: 500; cursor: pointer; margin-bottom: 2px; text-align: left;
   white-space: nowrap; /* «Входящие заявки» рядом со счётчиком иначе рвётся на две строки */
-  transition: background 0.13s ease, color 0.13s ease;
+  transition: background 0.15s ease, color 0.15s ease;
 }
-.nav-btn:hover { background: var(--md-state-hover); color: var(--md-on-surface); }
-.nav-btn.active { background: var(--md-primary-container); color: var(--md-on-primary-container); font-weight: 600; }
-.nav-btn-sub { padding-left: 34px; font-size: 13px; }
+.nav-btn:not(.nav-btn-sub) { color: #FFFFFF; font-weight: 700; }
+.nav-btn:hover { background: rgba(255, 255, 255, 0.12); color: #FFFFFF; }
+.nav-btn.active { background: #FFFFFF; color: var(--md-primary); font-weight: 700; }
+.nav-btn-sub { padding-left: 32px; font-size: 13px; }
 .nav-group-header {
-  width: 100%; display: flex; align-items: center; gap: 12px; padding: 13px 16px;
-  background: transparent; border: none; border-radius: var(--md-shape-full); color: var(--md-on-surface-variant);
-  font-size: 13.5px; font-weight: 600; cursor: pointer; text-align: left; margin-bottom: 4px;
-  transition: background 0.13s ease, color 0.13s ease;
+  width: 100%; display: flex; align-items: center; gap: 12px; padding: 11px 14px;
+  background: transparent; border: none; border-radius: var(--md-shape-m); color: #FFFFFF;
+  font-size: 13.5px; font-weight: 700; cursor: pointer; text-align: left; margin-bottom: 2px;
+  transition: background 0.15s ease, color 0.15s ease;
 }
-.nav-group-header:hover { background: var(--md-state-hover); color: var(--md-on-surface); }
-.nav-chevron { margin-left: auto; display: inline-flex; color: var(--md-on-surface-variant); transition: transform 0.18s ease; }
+.nav-group-header:hover { background: rgba(255, 255, 255, 0.12); color: #FFFFFF; }
+.nav-chevron { margin-left: auto; display: inline-flex; color: #B0C8E7; transition: transform 0.18s ease; }
 .nav-group.open .nav-chevron { transform: rotate(90deg); }
 /* Вложенные пункты лежат в разметке всегда, а видимостью управляет max-height —
    его, в отличие от height, браузер умеет анимировать от нуля. Отступ снизу —
@@ -263,24 +322,24 @@ a { color: var(--md-primary); }
 .nav-icon { display: inline-flex; align-items: center; }
 .nav-icon svg, .search-icon svg, .row-arrow svg, .chevron-icon svg { display: block; }
 .nav-badge {
-  margin-left: auto; background: var(--md-error); color: #fff; font-size: 11px; font-weight: 600;
-  border-radius: var(--md-shape-full); padding: 2px 8px; min-width: 20px; text-align: center;
+  margin-left: auto; background: var(--md-error); color: #fff; font-size: 11px; font-weight: 700;
+  border-radius: var(--md-shape-xs); padding: 2px 7px; min-width: 20px; text-align: center;
 }
 .sidebar-foot { padding: 12px 16px 16px; flex-shrink: 0; }
 .user-row { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; padding: 0 4px; }
-.user-name { font-size: 13px; font-weight: 500; color: var(--md-on-surface); word-wrap: break-word; overflow-wrap: break-word; line-height: 1.35; }
-.user-dept { font-size: 11.5px; color: var(--md-on-surface-variant); }
+.user-name { font-size: 13px; font-weight: 700; color: #FFFFFF; word-wrap: break-word; overflow-wrap: break-word; line-height: 1.35; }
+.user-dept { font-size: 11.5px; color: #B0C8E7; }
 .user-role-badge {
-  display: inline-block; margin-top: 5px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.4px;
-  text-transform: uppercase; color: var(--md-on-secondary-container); background: var(--md-secondary-container);
-  padding: 3px 9px; border-radius: var(--md-shape-full);
+  display: inline-block; margin-top: 5px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.4px;
+  text-transform: uppercase; color: #FFFFFF; background: rgba(255, 255, 255, 0.16);
+  padding: 3px 9px; border-radius: var(--md-shape-xs);
 }
 .logout-btn {
   width: 100%; display: flex; align-items: center; gap: 12px; background: none; border: none;
-  color: var(--md-on-surface-variant); font-size: 13px; cursor: pointer; padding: 11px 16px;
-  border-radius: var(--md-shape-full); transition: background 0.13s ease, color 0.13s ease;
+  color: #D7E3F4; font-size: 13px; cursor: pointer; padding: 11px 14px;
+  border-radius: var(--md-shape-m); transition: background 0.15s ease, color 0.15s ease;
 }
-.logout-btn:hover { background: var(--md-error-container); color: var(--md-on-error-container); }
+.logout-btn:hover { background: rgba(255, 255, 255, 0.12); color: #FFFFFF; }
 
 .main {
   flex: 1; min-width: 0; background: var(--md-surface-container-lowest);
@@ -311,7 +370,7 @@ a { color: var(--md-primary); }
   display: inline-flex; align-items: center; gap: 8px; transition: box-shadow 0.15s ease, filter 0.15s ease, background 0.15s ease;
 }
 .btn-wire { background: var(--md-primary); color: var(--md-on-primary); }
-.btn-wire:hover { box-shadow: var(--md-elev-2); filter: brightness(1.06); }
+.btn-wire:hover { background: #08528F; }
 .btn-ghost { background: var(--md-surface-container-high); color: var(--md-on-surface); }
 .btn-ghost:hover { background: var(--md-surface-container-highest); }
 select, .input {
@@ -319,11 +378,11 @@ select, .input {
   background: var(--md-surface-container-lowest); color: var(--md-on-surface); outline: none;
   transition: border-color 0.12s ease, box-shadow 0.12s ease;
 }
-select:focus, .input:focus { border-color: var(--md-primary); box-shadow: inset 0 0 0 1px var(--md-primary); }
+select:focus, .input:focus { border-color: var(--md-primary); box-shadow: 0 0 0 3px rgba(10, 97, 174, 0.12); }
 
 /* --- Выпадающий список ---
    Системный <select> нельзя оформить: стрелка рисуется браузером, прижата к
-   краю, а раскрытый список берёт вид от системы и в тёплую палитру не
+   краю, а раскрытый список берёт вид от системы и в фирменную палитру не
    попадает совсем. Поэтому настоящий select остаётся в разметке (скрытый) —
    ради него работает весь код, который читает .value, — а видимую часть
    рисуем сами. Ставится ко всем select автоматически, см. enhanceSelects. */
@@ -336,10 +395,10 @@ select:focus, .input:focus { border-color: var(--md-primary); box-shadow: inset 
   padding: 11px 14px 11px 16px; font-size: 13.5px; font-family: inherit; text-align: left;
   border: 1px solid var(--md-outline-variant); border-radius: var(--md-shape-full);
   background: var(--md-surface-container-lowest); color: var(--md-on-surface);
-  cursor: pointer; transition: border-color 0.12s ease, background 0.13s ease;
+  cursor: pointer; transition: border-color 0.14s ease, background 0.14s ease, box-shadow 0.14s ease;
 }
 .select-btn:hover { background: var(--md-surface-container-low); }
-.select-wrap.open .select-btn { border-color: var(--md-primary); }
+.select-wrap.open .select-btn { border-color: var(--md-primary); box-shadow: 0 0 0 3px rgba(10, 97, 174, 0.12); }
 .select-btn .select-value { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Стрелка не прижата к грани: у системного select между ней и краем не было
    ничего, и поле выглядело обрезанным. */
@@ -348,11 +407,22 @@ select:focus, .input:focus { border-color: var(--md-primary); box-shadow: inset 
   transform: rotate(90deg); transition: transform 0.18s ease;
 }
 .select-wrap.open .select-btn .select-chevron { transform: rotate(-90deg); }
+/* Раскрытие списка. Именно анимация, а не переход: меню показывается снятием
+   атрибута hidden, а смену display браузер не анимирует в принципе — до этого
+   перечень появлялся мгновенным скачком. Закрытие остаётся мгновенным: ждать
+   исчезновения меню утомительно. */
+@keyframes select-drop {
+  from { opacity: 0; transform: translateY(-6px) scale(0.99); }
+  to   { opacity: 1; transform: none; }
+}
 .select-menu {
   position: absolute; z-index: 40; top: calc(100% + 6px); left: 0; min-width: 100%;
   padding: 6px; border-radius: var(--md-shape-m); background: var(--md-surface-container-lowest);
   box-shadow: var(--md-elev-3); max-height: 300px; overflow-y: auto;
+  border: 1px solid var(--md-outline-variant); transform-origin: top center;
 }
+.select-menu:not([hidden]) { animation: select-drop 0.14s cubic-bezier(0.2, 0, 0.2, 1); }
+@media (prefers-reduced-motion: reduce) { .select-menu:not([hidden]) { animation: none; } }
 .select-option {
   padding: 10px 14px; border-radius: var(--md-shape-xs); font-size: 13.5px; cursor: pointer;
   white-space: nowrap; transition: background 0.1s ease;
@@ -370,16 +440,18 @@ textarea.input { font-family: inherit; resize: vertical; }
 /* --- List screen --- */
 .filters-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 18px; }
 /* Сегментированный переключатель M3 */
+/* Переключатель «Открытые / Закрытые»: светлая подложка-контейнер, активная
+   кнопка залита фирменным цветом. */
 .toggle-group {
-  display: flex; gap: 4px; padding: 4px; border-radius: var(--md-shape-full);
-  background: var(--md-surface-container-lowest); border: 1px solid var(--md-outline-variant);
+  display: flex; gap: 3px; padding: 3px; border-radius: var(--md-shape-m);
+  background: var(--md-surface-container-highest); border: none;
 }
 .toggle-btn {
-  padding: 8px 18px; font-size: 13px; font-weight: 500; border: none; border-radius: var(--md-shape-full);
-  background: transparent; color: var(--md-on-surface-variant); cursor: pointer; transition: background 0.13s ease, color 0.13s ease;
+  padding: 8px 18px; font-size: 13px; font-weight: 700; border: none; border-radius: var(--md-shape-s);
+  background: transparent; color: var(--md-on-surface-variant); cursor: pointer; transition: background 0.15s ease, color 0.15s ease;
 }
-.toggle-btn:hover { background: var(--md-state-hover); }
-.toggle-btn.active { background: var(--md-primary-container); color: var(--md-on-primary-container); font-weight: 600; }
+.toggle-btn:hover { background: rgba(10, 97, 174, 0.08); color: var(--md-primary); }
+.toggle-btn.active, .toggle-btn.active:hover { background: var(--md-primary); color: var(--md-on-primary); }
 .filters-count { margin-left: auto; font-size: 12.5px; color: var(--md-on-surface-variant); }
 .search-wrap { position: relative; }
 .search-wrap input { padding: 11px 16px 11px 42px; width: 280px; border-radius: var(--md-shape-full); background: var(--md-surface-container-high); border: 1px solid transparent; }
@@ -392,24 +464,40 @@ textarea.input { font-family: inherit; resize: vertical; }
    текст висел на пустом месте. Теперь строка растёт до ширины содержимого
    (max-content), а прокручивается вся таблица целиком. */
 .ticket-table { background: transparent; border: none; border-radius: 0; overflow-x: auto; }
-.ticket-row-head, .ticket-row { width: max-content; min-width: 100%; }
+/* Ширина строки — общая для всех, а не по содержимому.
+   Раньше стояло width:max-content, и доля 1fr у колонки «Тема» считалась по
+   содержимому КАЖДОЙ строки отдельно: чем длиннее тема, тем правее уезжали все
+   последующие колонки. Замер на пяти заявках: ширина строк от 1110 до 1195 px
+   при шапке 1110 — колонки не сходились ни с шапкой, ни между собой.
+   Минимальную ширину задаёт app.js рядом с grid-template-columns: она разная
+   для сотрудника и для исполнителя, а прокрутку берёт на себя .ticket-table. */
+.ticket-row-head, .ticket-row { width: 100%; }
 .ticket-row-head, .ticket-row {
   display: grid; grid-template-columns: 96px 1fr 130px 130px 150px 140px 24px;
   column-gap: 18px; align-items: center; font-size: 13.5px;
 }
 .ticket-row-head {
-  background: transparent; font-size: 11px; font-weight: 600; color: var(--md-on-surface-variant);
-  text-transform: uppercase; letter-spacing: 0.5px; padding: 4px 20px 10px;
+  background: transparent; font-size: 11px; font-weight: 700; color: var(--md-on-surface-variant);
+  text-transform: uppercase; letter-spacing: 0.5px; padding: 4px 16px 10px;
 }
+/* Строка — отдельная плашка с цветной кромкой слева по приоритету. Кромка
+   заменила прежнюю точку: цвет виден на расстоянии, точка — нет. Значение
+   приоритета проставляет app.js в data-prio. */
 .ticket-row {
-  border: none; cursor: pointer; padding: 16px 20px; margin-bottom: 8px;
+  border: none; border-left: 3px solid var(--md-outline); cursor: pointer;
+  padding: 14px 16px; margin-bottom: 6px;
   background: var(--md-surface-container-low); border-radius: var(--md-shape-m);
-  transition: background 0.13s ease, box-shadow 0.13s ease;
+  transition: background 0.15s ease, transform 0.15s ease;
 }
-.ticket-row:hover { background: var(--md-surface-container-high); box-shadow: var(--md-elev-1); }
+.ticket-row:hover { background: var(--md-surface-container-highest); transform: translateX(2px); }
+.ticket-row[data-prio="critical"] { border-left-color: #E7004B; }
+.ticket-row[data-prio="high"]     { border-left-color: #FF8B3A; }
+.ticket-row[data-prio="medium"]   { border-left-color: var(--md-primary); }
+.ticket-row[data-prio="low"]      { border-left-color: #BFBFBF; }
+@media (prefers-reduced-motion: reduce) { .ticket-row:hover { transform: none; } }
 .row-arrow { display: flex; justify-content: flex-end; color: var(--md-on-surface-variant); }
 .mono { font-family: var(--mono); }
-.ticket-id { color: var(--md-primary); font-weight: 600; font-size: 12.5px; }
+.ticket-id { color: var(--md-primary); font-weight: 700; font-size: 12.5px; }
 .ticket-title-cell { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .ticket-title-cell span.title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .cell-ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
@@ -418,13 +506,14 @@ textarea.input { font-family: inherit; resize: vertical; }
 .priority-dot { display: inline-block; width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
 /* Chip (assist chip) */
 .badge {
-  display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500;
-  padding: 5px 12px; border-radius: var(--md-shape-xs); letter-spacing: 0.2px;
+  display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700;
+  padding: 5px 11px; border-radius: var(--md-shape-xs); letter-spacing: 0.2px;
 }
 .empty-state { padding: 56px 16px; text-align: center; color: var(--md-on-surface-variant); font-size: 13.5px; }
 
 /* --- Create screen --- */
-.card { background: var(--md-surface-container-low); border: none; border-radius: var(--md-shape-l); padding: 26px; }
+/* Карточка — светлая плитка без рамки и тени: глубина делается тоном. */
+.card { background: var(--md-surface-container-low); border: none; border-radius: var(--md-shape-l); padding: 22px 24px; }
 .form-row { display: flex; gap: 16px; margin-bottom: 18px; }
 .form-row > div { flex: 1; }
 .dropzone {
@@ -454,21 +543,23 @@ textarea.input { font-family: inherit; resize: vertical; }
 .detail-main { flex: 1; min-width: 0; }
 .detail-side { width: 264px; flex-shrink: 0; }
 .comment-box { padding: 14px 16px; border-radius: var(--md-shape-m); margin-bottom: 12px; }
-.comment-box.internal { background: var(--md-warn-container); color: var(--md-on-warn-container); border-left: none; }
-.comment-box.public { background: var(--md-surface-container-low); border-left: none; }
+/* Внутренняя заметка — сиреневая гамма как второй основной цвет. Оранжевый в
+   палитре занят сигналом «истекает срок» и здесь читался бы предупреждением. */
+.comment-box.internal { background: #F6F2FD; color: var(--md-on-surface); border: 1px solid var(--md-secondary-container); }
+.comment-box.public { background: var(--md-surface-container-lowest); border: 1px solid var(--md-outline-variant); }
 .field-mini { margin-bottom: 14px; }
 .field-mini-label { font-size: 11.5px; color: var(--md-on-surface-variant); margin-bottom: 3px; }
 .field-mini-value { font-size: 13.5px; font-weight: 500; }
-.section-label { font-size: 11px; font-weight: 600; color: var(--md-on-surface-variant); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; }
+.section-label { font-size: 11px; font-weight: 700; color: var(--md-on-surface-variant); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; }
 
 /* --- Dashboard --- */
 .stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
-.stat-card { background: var(--md-surface-container-low); border: none; border-radius: var(--md-shape-l); padding: 22px 24px; }
-.stat-label { font-size: 12px; color: var(--md-on-surface-variant); font-weight: 500; margin-bottom: 10px; }
-.stat-value { font-size: 32px; font-weight: 600; letter-spacing: -0.5px; }
+.stat-card { background: var(--md-surface-container-low); border: none; border-radius: var(--md-shape-l); padding: 22px 24px; transition: background 0.15s ease; }
+.stat-label { font-size: 12px; color: var(--md-on-surface-variant); font-weight: 700; margin-bottom: 10px; }
+.stat-value { font-size: 32px; font-weight: 700; letter-spacing: -0.5px; }
 .bar-row { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; }
-.bar-track { flex: 1; background: var(--md-surface-container-highest); border-radius: var(--md-shape-full); height: 16px; overflow: hidden; }
-.bar-fill { height: 100%; background: var(--md-primary); border-radius: var(--md-shape-full); }
+.bar-track { flex: 1; background: var(--md-surface-container-highest); border-radius: var(--md-shape-xs); height: 16px; overflow: hidden; }
+.bar-fill { height: 100%; background: var(--md-primary); border-radius: var(--md-shape-xs); }
 
 /* --- Notifications --- */
 .notif-item {
@@ -481,7 +572,7 @@ textarea.input { font-family: inherit; resize: vertical; }
 /* Snackbar */
 .toast {
   position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
-  background: #37322B; color: #F6EEE6; padding: 14px 22px;
-  border-radius: var(--md-shape-xs); font-size: 13.5px; z-index: 100; box-shadow: var(--md-elev-3);
+  background: #282A2E; color: #FFFFFF; padding: 14px 22px;
+  border-radius: var(--md-shape-s); font-size: 13.5px; z-index: 100; box-shadow: var(--md-elev-3);
 }
 .toast.error { background: var(--md-error); color: #fff; }

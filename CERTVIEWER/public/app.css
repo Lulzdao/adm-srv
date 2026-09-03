@@ -6,43 +6,65 @@
      типографика совпадают один в один. Цвета в hex (не oklch): интерфейс
      открывают с рабочих машин, где браузер может быть старше Chrome 111.
      Веб-шрифты не подключаем — сеть изолированная. */
+/* Фирменный шрифт. Файлы лежат в public/fonts платформы — модуль всегда
+   открывается через её прокси (см. config/modules.js), поэтому абсолютный
+   путь /fonts/… ведёт именно туда, и второй копии файлов не нужно. При
+   запуске модуля напрямую, в обход платформы, шрифт не найдётся и подхватится
+   Arial — брендбук называет его системной заменой (раздел 2.2).
+   Лицензия SIL OFL 1.1, текст — рядом со шрифтом. */
+@font-face {
+  font-family: "PT Root UI";
+  src: url("/fonts/PTRootUI-Regular.woff2") format("woff2");
+  font-weight: 400; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: "PT Root UI";
+  src: url("/fonts/PTRootUI-Medium.woff2") format("woff2");
+  font-weight: 500; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: "PT Root UI";
+  src: url("/fonts/PTRootUI-Bold.woff2") format("woff2");
+  font-weight: 700; font-style: normal; font-display: swap;
+}
+
   :root {
-    --md-primary: #7D5700;
+    --md-primary: #0A61AE;
     --md-on-primary: #FFFFFF;
-    --md-primary-container: #FFDEA6;
-    --md-on-primary-container: #281900;
-    --md-secondary-container: #F0E0C8;
-    --md-on-secondary-container: #251A04;
+    --md-primary-container: #DCE7F6;
+    --md-on-primary-container: #0A61AE;
+    --md-secondary-container: #E9E2F6;
+    --md-on-secondary-container: #663AB5;
 
-    --md-surface: #FFF8F3;
+    --md-surface: #E8EDF5;
     --md-surface-container-lowest: #FFFFFF;
-    --md-surface-container-low: #FBF1E9;
-    --md-surface-container: #F5ECE3;
-    --md-surface-container-high: #F0E6DE;
-    --md-surface-container-highest: #EAE1D9;
-    --md-on-surface: #1F1B16;
-    --md-on-surface-variant: #4F453A;
-    --md-outline: #817567;
-    --md-outline-variant: #D8CCBE;
+    --md-surface-container-low: #F7F9FC;
+    --md-surface-container: #FFFFFF;
+    --md-surface-container-high: #F7F9FC;
+    --md-surface-container-highest: #EDF1F8;
+    --md-on-surface: #282A2E;
+    --md-on-surface-variant: #838383;
+    --md-outline: #DCE4EF;
+    --md-outline-variant: #E4EAF3;
 
-    --md-error: #8C1D18;
-    --md-error-container: #FFDAD6;
-    --md-on-error-container: #410002;
-    --md-warn-container: #FFDCC2;
-    --md-on-warn-container: #2E1500;
-    --md-success-container: #CDEBD5;
-    --md-on-success-container: #08210F;
+    --md-error: #E7004B;
+    --md-error-container: #FDE3EA;
+    --md-on-error-container: #E7004B;
+    --md-warn-container: #FFE7D6;
+    --md-on-warn-container: #C25A18;
+    --md-success-container: #DBF0F2;
+    --md-on-success-container: #008F9F;
 
-    --md-state-hover: rgba(31, 27, 22, 0.06);
-    --md-shape-xs: 8px;
-    --md-shape-m: 16px;
-    --md-shape-l: 20px;
-    --md-shape-xl: 28px;
-    --md-shape-full: 100px;
-    --md-elev-1: 0 1px 2px rgba(31, 27, 22, 0.10);
-    --md-elev-3: 0 6px 18px rgba(31, 27, 22, 0.12);
+    --md-state-hover: #EDF1F8;
+    --md-shape-xs: 4px;
+    --md-shape-m: 8px;
+    --md-shape-l: 10px;
+    --md-shape-xl: 12px;
+    --md-shape-full: 6px;
+    --md-elev-1: none;
+    --md-elev-3: 0 2px 10px rgba(40, 42, 46, 0.10);
 
-    --sans: Roboto, "Segoe UI", system-ui, -apple-system, Arial, sans-serif;
+    --sans: "PT Root UI", Arial, "Segoe UI", system-ui, -apple-system, sans-serif;
 
     /* Имена, на которые ссылается скрипт и разметка ниже */
     --bg: var(--md-surface);
@@ -83,6 +105,18 @@
   html { scrollbar-width: thin; scrollbar-color: var(--md-outline-variant) transparent; }
 
   * { box-sizing: border-box; }
+
+/* Кернинг выключен намеренно, и это не вкусовщина.
+   В PT Root UI есть кернинговая пара «пробел + длинное тире», которая стягивает
+   пробелы вокруг тире в ноль: «Оповещения — Отправка» рисовалось как
+   «Оповещения—Отправка». Проверено в браузере: с font-kerning:none пробелы
+   возвращаются, а liga и calt на это не влияют вовсе. Шрифт так задуман —
+   он рассчитан на набор тире вплотную, — но у нас тире ставят и в темах заявок,
+   и в комментариях, и переучивать сотрудников из-за начертания нельзя.
+   Потеря невелика: кернинг заметен на крупных заголовках, а интерфейс набран
+   13–14 пунктами, где разница неразличима. */
+html { font-kerning: none; }
+
   html { height: 100%; }
   body {
     font-family: var(--sans);
