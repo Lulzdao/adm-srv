@@ -149,6 +149,15 @@ var HEAVY_ROWS = 100000;
 var modal = document.getElementById('exportModal');
 var optionsBox = document.getElementById('exportOptions');
 var chosenPeriod = 'current';
+// По умолчанию .xlsx: в нём номер +74951234567 остаётся номером, а в CSV его
+// приходится обезвреживать апострофом, иначе Excel считает ячейку формулой.
+var chosenFormat = 'xlsx';
+var lastPreview = null;
+
+var FORMAT_NOTE = {
+  xlsx: 'Готовая книга: шапка закреплена, включён автофильтр, номера не превращаются в формулы.',
+  csv: 'Простой текст, открывается везде. Номера вида +7495… Excel считает формулами, поэтому перед ними ставится апостроф.'
+};
 
 function formatRows(n) {
   return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
@@ -168,7 +177,15 @@ var WARN_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" str
   + '<path d="M12 3l9.5 17H2.5L12 3z"/><line x1="12" y1="10" x2="12" y2="14"/>'
   + '<line x1="12" y1="17" x2="12" y2="17"/></svg>';
 
+function bytesOf(info) {
+  // Сервер присылает оба размера: XML сжимается сильнее, чем текст с
+  // кириллическими ФИО, и на глаз это не угадать.
+  if (info.bytes && typeof info.bytes === 'object') return info.bytes[chosenFormat] || 0;
+  return info.bytes || 0;   // старый ответ без разбивки по форматам
+}
+
 function renderOptions(preview) {
+  lastPreview = preview;
   optionsBox.innerHTML = PERIOD_LABELS.map(function (pair) {
     var id = pair[0];
     var info = preview[id] || { rows: 0, bytes: 0 };
@@ -178,7 +195,7 @@ function renderOptions(preview) {
       + '<span class="name">' + escHtml(pair[1]) + '</span>'
       + '<span class="size' + (heavy ? ' warn' : '') + '">' + (heavy ? WARN_ICON : '')
       + formatRows(info.rows) + ' ' + plural(info.rows, 'строка', 'строки', 'строк')
-      + ' · ~' + formatBytes(info.bytes) + '</span></button>';
+      + ' · ~' + formatBytes(bytesOf(info)) + '</span></button>';
   }).join('');
   [].slice.call(optionsBox.querySelectorAll('.opt')).forEach(function (o) {
     o.addEventListener('click', function () {
@@ -198,8 +215,22 @@ function plural(n, one, few, many) {
   return many;
 }
 
+function syncFormat() {
+  [].slice.call(document.querySelectorAll('.fmt')).forEach(function (b) {
+    b.classList.toggle('on', b.dataset.fmt === chosenFormat);
+  });
+  document.getElementById('fmtNote').textContent = FORMAT_NOTE[chosenFormat];
+  // Размеры пересчитываем на месте, не спрашивая сервер заново.
+  if (lastPreview) renderOptions(lastPreview);
+}
+[].slice.call(document.querySelectorAll('.fmt')).forEach(function (b) {
+  b.addEventListener('click', function () { chosenFormat = b.dataset.fmt; syncFormat(); });
+});
+syncFormat();
+
 document.getElementById('exportBtn').addEventListener('click', function () {
   chosenPeriod = 'current';
+  lastPreview = null;
   optionsBox.innerHTML = '<p class="note" style="margin:0 0 8px;">Считаем…</p>';
   modal.hidden = false;
   fetch('api/export/preview?' + filterParams().toString())
@@ -224,7 +255,7 @@ document.getElementById('exportGo').addEventListener('click', function () {
   // Скачивание через временную ссылку, а не сменой location: страница живёт
   // в iframe внутри платформы, и переводить сам кадр на файл незачем.
   var a = document.createElement('a');
-  a.href = 'export.csv?' + p.toString();
+  a.href = 'export.' + chosenFormat + '?' + p.toString();
   a.download = '';
   document.body.appendChild(a);
   a.click();

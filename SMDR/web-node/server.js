@@ -5,6 +5,7 @@ const db = require('./db');
 const { buildWhereClause, countExtraFilters } = require('./filters');
 const { durationToSeconds } = require('./duration');
 const csv = require('./csv');
+const xlsx = require('./xlsx');
 
 const app = express();
 const PORT = process.env.PORT || 3102;
@@ -223,15 +224,37 @@ app.get('/api/export/preview', (req, res) => {
   const варианты = {};
   for (const period of Object.keys(PERIODS)) {
     const rows = countFor(queryForPeriod(req.query, period, now));
-    варианты[period] = { rows, bytes: rows * csv.BYTES_PER_ROW };
+    // Оба размера сразу: формат переключают прямо в окне, и бегать за
+    // пересчётом на сервер ради одного умножения незачем.
+    варианты[period] = {
+      rows,
+      bytes: { csv: rows * csv.BYTES_PER_ROW, xlsx: rows * xlsx.BYTES_PER_ROW },
+    };
   }
   res.json(варианты);
 });
 
+/** Строки выгрузки: тот же отбор и тот же порядок, что на экране. */
+function exportStatement(query) {
+  const period = typeof query.period === 'string' && query.period in PERIODS ? query.period : 'current';
+  const { where, params } = buildWhereClause(queryForPeriod(query, period));
+  const stmt = db.prepare(
+    `SELECT calls.*, employees.fio FROM calls LEFT JOIN employees ON calls.ext = employees.ext${where} ORDER BY calls.call_dt DESC`
+  );
+  return { stmt, params };
+}
+
+/** Значения одной строки — в том же порядке, что колонки на экране. */
+function exportValues(row) {
+  return [
+    row.call_date, row.call_time, row.ext,
+    csv.directionLabel(row), csv.details(row),
+    row.duration, row.ring, row.fio,
+  ];
+}
+
 app.get('/export.csv', (req, res) => {
-  const period = typeof req.query.period === 'string' && req.query.period in PERIODS
-    ? req.query.period : 'current';
-  const { where, params } = buildWhereClause(queryForPeriod(req.query, period));
+  const { stmt, params } = exportStatement(req.query);
 
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', csv.contentDisposition(csv.fileName()));
@@ -244,9 +267,6 @@ app.get('/export.csv', (req, res) => {
   // Пишем ПОТОКОМ, строка за строкой: год работы — это сотни тысяч записей,
   // и собирать их в одну строку в памяти нельзя. .iterate() отдаёт по одной,
   // а res.write сам притормаживает нас, когда сеть не успевает.
-  const stmt = db.prepare(
-    `SELECT calls.*, employees.fio FROM calls LEFT JOIN employees ON calls.ext = employees.ext${where} ORDER BY calls.call_dt DESC`
-  );
   try {
     for (const row of stmt.iterate(...params)) {
       res.write(csv.formatRow(row));
@@ -258,6 +278,34 @@ app.get('/export.csv', (req, res) => {
     res.write('\r\n# ВЫГРУЗКА ОБОРВАЛАСЬ, ФАЙЛ НЕПОЛНЫЙ\r\n');
   }
   res.end();
+});
+
+// В отличие от CSV, книга собирается целиком до отправки: заголовок записи
+// zip несёт её контрольную сумму и размеры, а их не узнать, пока не сжата
+// последняя строка. Зато и ошибку здесь ещё можно показать по-человечески —
+// заголовки ответа не ушли. В памяти лежит только сжатое, но на выгрузку за
+// пять лет разумнее CSV: в окне такие варианты помечены значком.
+app.get('/export.xlsx', async (req, res) => {
+  const { stmt, params } = exportStatement(req.query);
+  try {
+    const { file, rows, truncated } = await xlsx.build(stmt.iterate(...params), exportValues);
+    if (truncated) {
+      console.warn(`[выгрузка xlsx] строк больше ${xlsx.MAX_ROWS}, лист обрезан`);
+    }
+    res.setHeader('Content-Type', xlsx.CONTENT_TYPE);
+    res.setHeader('Content-Disposition', xlsx.contentDisposition(xlsx.fileName()));
+    res.setHeader('Content-Length', file.length);
+    res.setHeader('Cache-Control', 'no-store');
+    // Заголовок читает страница, чтобы предупредить человека: обрезанный лист
+    // сам по себе выглядит целым, и заметить пропажу неоткуда.
+    res.setHeader('X-Rows', String(rows));
+    if (truncated) res.setHeader('X-Rows-Truncated', String(xlsx.MAX_ROWS));
+    res.end(file);
+  } catch (e) {
+    console.error('[выгрузка xlsx] не собралась:', e.message);
+    res.status(500).type('text/plain; charset=utf-8')
+      .send('Не удалось собрать файл. Попробуйте выгрузку в CSV или период поменьше.');
+  }
 });
 
 app.listen(PORT, BIND_HOST, () => console.log(`Веб запущен на http://${BIND_HOST}:${PORT} (только для платформы, за прокси)`));

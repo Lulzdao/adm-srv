@@ -68,6 +68,11 @@ html { font-kerning: none; }
   --md-on-info-container: #0A61AE;
   --md-success-container: #DBF0F2;
   --md-on-success-container: #008F9F;
+  /* Значения из палитры платформы. Их тут не было, хотя .size.warn на них
+     ссылался: объявление молча оставалось без значения, и предупреждение о
+     тяжёлой выгрузке выходило обычным серым — ровно как было с --md-shape-xl. */
+  --md-warn-container: #FFE7D6;
+  --md-on-warn-container: #C25A18;
   --md-tertiary-container: #EADDFF;
   --md-on-tertiary-container: #21005D;
   --md-neutral-container: #ECECEC;
@@ -466,7 +471,27 @@ th.sortable.sort-desc::after { content: ' ▼'; font-size: 10px; color: var(--md
   box-shadow: var(--md-elev-3); padding: 24px 26px 20px;
 }
 .modal h2 { margin: 0 0 4px; font-size: 18px; font-weight: 700; color: var(--md-on-surface); }
-.modal .sub { margin: 0 0 18px; font-size: 12.5px; color: var(--md-on-surface-variant); }
+.modal .sub { margin: 0 0 16px; font-size: 12.5px; color: var(--md-on-surface-variant); }
+
+/* Выбор формата — сегментами в одну строку, а не третьим списком вариантов:
+   формат и период выбирают независимо, и мешать их в один перечень нельзя. */
+.modal .fmt-row {
+  display: flex; gap: 6px; padding: 4px; margin-bottom: 10px;
+  background: var(--md-surface-container-highest); border-radius: var(--md-shape-m);
+}
+.modal .fmt {
+  flex: 1; padding: 9px 12px; border: none; border-radius: var(--md-shape-s);
+  background: none; color: var(--md-on-surface-variant); cursor: pointer;
+  font-family: inherit; font-size: 13.5px; font-weight: 600;
+  transition: background .14s ease, color .14s ease, box-shadow .14s ease;
+}
+.modal .fmt span { font-weight: 500; opacity: .75; margin-left: 4px; }
+.modal .fmt:hover { color: var(--md-on-surface); }
+.modal .fmt.on {
+  background: var(--md-surface-container-lowest); color: var(--md-primary);
+  box-shadow: 0 1px 2px rgba(31,27,22,.10);
+}
+.modal .fmt-note { margin: 0 2px 16px; min-height: 34px; }
 .modal .opt {
   display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
   font-family: inherit; cursor: pointer; margin-bottom: 8px;

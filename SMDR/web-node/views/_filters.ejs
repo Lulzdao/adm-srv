@@ -110,8 +110,15 @@ const КОЛОНКИ = [
 
 <div class="modal-back" id="exportModal" hidden>
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="exportTitle">
-    <h2 id="exportTitle">Выгрузить в CSV</h2>
+    <h2 id="exportTitle">Выгрузить таблицу</h2>
     <p class="sub">Файл откроется в Excel двойным щелчком</p>
+
+    <div class="fmt-row" role="group" aria-label="Формат файла">
+      <button type="button" class="fmt on" data-fmt="xlsx">Excel <span>.xlsx</span></button>
+      <button type="button" class="fmt" data-fmt="csv">CSV <span>.csv</span></button>
+    </div>
+    <p class="note fmt-note" id="fmtNote"></p>
+
     <div id="exportOptions"></div>
     <p class="note">Период заменяется, остальные фильтры остаются как есть:
       направление, поиск, колонка, длительность. Выгружается вся выборка,
