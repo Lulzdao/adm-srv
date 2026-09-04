@@ -541,6 +541,127 @@ textarea.input { font-family: inherit; resize: vertical; }
 }
 .file-chip-remove:hover { background: var(--md-error-container); color: var(--md-on-error-container); }
 
+/* --- Новая заявка -------------------------------------------------------
+   Форма разбита на два смысловых блока — куда направить и что случилось.
+   Плашка светлая, без рамки и тени: глубина, как везде, делается тоном. */
+.form-narrow { max-width: 840px; margin: 0 auto; }
+.form-card {
+  background: var(--md-surface-container-low); border-radius: var(--md-shape-l);
+  padding: 22px 24px; margin-bottom: 18px;
+}
+.form-card-title {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase;
+  color: var(--md-on-surface-variant); margin-bottom: 4px;
+}
+.form-card-sub { font-size: 12.5px; color: var(--md-on-surface-variant); margin-bottom: 14px; }
+.counter { font-size: 11px; color: var(--md-on-surface-variant); text-align: right; margin: 0 0 6px; }
+/* Зона вложений идёт сразу за описанием, без отдельной подписи: надпись
+   внутри неё и так говорит, что это, а маленький отступ показывает, что
+   вложение принадлежит описанию, а не стоит рядом отдельным разделом. */
+.form-card .dropzone { margin-bottom: 10px; padding: 15px 16px; }
+/* Плашка файла — по содержимому, а не во всю ширину: иначе крестик уезжает
+   к правому краю формы и связь с именем файла теряется. */
+.form-card .file-chip { display: inline-flex; gap: 12px; }
+/* Незаполненное обязательное поле. Красная рамка появляется только после
+   попытки отправить и снимается, как только в поле начали печатать. */
+.field-input.invalid, .input.invalid { border-color: var(--md-error); }
+.form-foot .hint.invalid { color: var(--md-error); }
+
+/* --- Лента отделов ---
+   Плитки идут в РЯД с прокруткой, а не в сетку с переносом: отделы задаются в
+   config/departments.js и их число может вырасти, а при переносе четвёртая
+   плитка встала бы во вторую строку и подняла бы высоту всей формы. */
+.dept-strip { position: relative; }
+/* Место под кнопки прокрутки отводим ТОЛЬКО когда прокручивать есть что.
+   Иначе при трёх отделах, которые и так помещаются, две пустые колонки по
+   краям съели бы 68 px и лента поехала бы на ровном месте. Класс ставит
+   updateStrip() в app.js там же, где показывает кнопки. */
+.dept-strip.scrollable { padding: 0 34px; }
+.dept-scroll {
+  display: flex; gap: 12px; overflow-x: auto; scroll-behavior: smooth;
+  scroll-snap-type: x proximity; padding: 2px 2px 4px; margin: -2px -2px -4px;
+}
+/* Полосу прокрутки прячем: ездят колесом и кнопками, а тонкая линия под
+   плитками только шумит. Прокрутка с клавиатуры при этом работает. */
+.dept-scroll::-webkit-scrollbar { height: 0; }
+.dept-tile {
+  flex: 0 0 252px; scroll-snap-align: start; cursor: pointer; font-family: inherit; text-align: left;
+  display: grid; grid-template-columns: 34px 1fr 20px;
+  grid-template-areas: "icon name check" "icon hint hint";
+  column-gap: 12px; row-gap: 3px; align-items: center;
+  background: var(--md-surface-container-lowest); border: 1px solid var(--md-outline);
+  border-radius: var(--md-shape-m); padding: 12px 14px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.dept-tile:hover { border-color: var(--md-primary); }
+.dept-tile.active { border-color: var(--md-primary); box-shadow: inset 0 0 0 1px var(--md-primary); }
+.dept-tile .dept-icon { grid-area: icon; display: flex; align-items: center; justify-content: center; }
+.dept-tile .dept-name { grid-area: name; font-size: 14.5px; font-weight: 700; align-self: end; }
+.dept-tile .dept-hint {
+  grid-area: hint; font-size: 11.5px; line-height: 1.3; color: var(--md-on-surface-variant); align-self: start;
+  /* Не больше двух строк: подписи у отделов разной длины, а плитки в ленте
+     должны быть одной высоты. */
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.dept-check {
+  grid-area: check; align-self: start; width: 18px; height: 18px;
+  border: 1.5px solid var(--md-outline); border-radius: var(--md-shape-xs);
+  display: flex; align-items: center; justify-content: center; color: transparent;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.dept-tile.active .dept-check { background: var(--md-primary); border-color: var(--md-primary); color: #fff; }
+/* Кнопки прокрутки стоят в полях по краям ленты, растушёвка под ними
+   показывает, что плитка уходит за край, а не обрывается. */
+.dept-nav {
+  position: absolute; top: 50%; transform: translateY(-50%); z-index: 2;
+  width: 30px; height: 30px; border-radius: 50%; cursor: pointer;
+  background: var(--md-surface-container-lowest); border: 1px solid var(--md-outline);
+  color: var(--md-on-surface-variant); display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 1px 4px rgba(40, 42, 46, 0.12); transition: color 0.13s ease, border-color 0.13s ease;
+}
+.dept-nav:hover { color: var(--md-primary); border-color: var(--md-primary); }
+/* Своё display:flex перебивает display:none из атрибута hidden — без этой
+   строки кнопки видны и тогда, когда прокручивать нечего. */
+.dept-nav[hidden], .dept-fade[hidden] { display: none; }
+.dept-nav.prev { left: 0; }
+.dept-nav.next { right: 0; }
+.dept-fade { position: absolute; top: 0; bottom: 4px; width: 44px; pointer-events: none; z-index: 1; }
+.dept-fade.left { left: 34px; background: linear-gradient(90deg, var(--md-surface-container-low), transparent); }
+.dept-fade.right { right: 34px; background: linear-gradient(270deg, var(--md-surface-container-low), transparent); }
+
+/* --- Приоритет чипами ---
+   Был выпадающим списком: четыре значения помещаются в строку, а цветная
+   точка показывает шкалу сразу, без раскрытия. */
+.prio-row { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 18px; }
+.prio-chip {
+  display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-family: inherit;
+  padding: 10px 16px; font-size: 13px; font-weight: 500;
+  background: var(--md-surface-container-lowest); color: var(--md-on-surface);
+  border: 1px solid var(--md-outline); border-radius: var(--md-shape-m);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.prio-chip:hover { border-color: var(--md-primary); }
+.prio-chip.active { border-color: var(--md-primary); box-shadow: inset 0 0 0 1px var(--md-primary); font-weight: 700; }
+.prio-chip i { width: 9px; height: 9px; border-radius: 50%; display: block; }
+
+/* --- Подвал формы: подсказка «что дальше» слева, кнопки справа --- */
+.form-foot { display: flex; align-items: center; gap: 20px; padding: 4px 2px 0; }
+.form-foot .hint { font-size: 12.5px; color: var(--md-on-surface-variant); line-height: 1.4; max-width: 420px; }
+.form-foot .actions { margin-left: auto; display: flex; gap: 12px; align-items: center; }
+.btn-text {
+  background: none; border: none; font-family: inherit; font-size: 13.5px; font-weight: 600;
+  color: var(--md-on-surface-variant); padding: 12px 18px; border-radius: var(--md-shape-full); cursor: pointer;
+  transition: background 0.13s ease, color 0.13s ease;
+}
+.btn-text:hover { background: var(--md-state-hover); color: var(--md-on-surface); }
+.btn-send {
+  background: var(--md-primary); color: #fff; border: none; font-family: inherit;
+  font-size: 13.5px; font-weight: 700; padding: 13px 26px;
+  border-radius: var(--md-shape-full); cursor: pointer; transition: background 0.15s ease;
+}
+.btn-send:hover { background: #08528F; }
+.btn-send:disabled { background: var(--md-surface-container-highest); color: var(--md-on-surface-variant); cursor: not-allowed; }
+
 .history-toggle { display: flex; align-items: center; margin-top: 18px; color: var(--md-on-surface-variant); font-size: 13px; font-weight: 500; cursor: pointer; }
 .chevron-icon { display: inline-flex; margin-right: 8px; transition: transform 0.18s ease; }
 .history-toggle.open .chevron-icon { transform: rotate(90deg); }
@@ -577,9 +698,15 @@ textarea.input { font-family: inherit; resize: vertical; }
 
 .spinner { text-align: center; padding: 56px; color: var(--md-on-surface-variant); font-size: 13.5px; }
 /* Snackbar */
-.toast {
+/* Стопка сообщений: позиционируется контейнер, а сами сообщения — обычные
+   блоки в колонке. Свежее снизу, ближе к глазу. */
+#toastStack {
   position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
-  background: #282A2E; color: #FFFFFF; padding: 14px 22px;
-  border-radius: var(--md-shape-s); font-size: 13.5px; z-index: 100; box-shadow: var(--md-elev-3);
+  z-index: 100; display: flex; flex-direction: column; align-items: center; gap: 8px;
+  pointer-events: none;
+}
+.toast {
+  background: #282A2E; color: #FFFFFF; padding: 14px 22px; max-width: 70vw;
+  border-radius: var(--md-shape-s); font-size: 13.5px; box-shadow: var(--md-elev-3);
 }
 .toast.error { background: var(--md-error); color: #fff; }
