@@ -162,9 +162,8 @@ body.dashboard-page th { position: sticky; top: 0; z-index: 2; }
 
 .refresh-status {
   font-size: 13px; color: var(--md-on-surface-variant);
-  display: flex; align-items: center; gap: 14px; align-self: center;
+  display: flex; align-items: center; gap: 14px;
 }
-.refresh-status label { display: flex; align-items: center; gap: 7px; cursor: pointer; }
 
 h1 { font-size: 24px; font-weight: 600; letter-spacing: 0; }
 
@@ -364,7 +363,8 @@ th.sortable.sort-desc::after { content: ' ▼'; font-size: 10px; color: var(--md
 /* Раскрывающийся ряд. Высоту анимируем через max-height: переходами
    управляется она, а не display, а прыжок на пол-экрана без анимации
    читается как перезагрузка страницы. */
-.more-line { width: 100%; }
+.more-line { width: 100%; display: flex; align-items: center; gap: 16px; }
+.more-line .refresh-status { margin-left: auto; }
 .filters .more-toggle {
   align-self: flex-start; box-shadow: none; height: auto;
   display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-family: inherit;
@@ -379,6 +379,56 @@ th.sortable.sort-desc::after { content: ' ▼'; font-size: 10px; color: var(--md
   background: var(--md-primary-container); color: var(--md-on-primary-container);
 }
 .more-count[hidden] { display: none; }
+
+/* --- Переключатель автообновления ---
+   Штатный флажок Chromium рисует ОС, а не палитра: серый квадрат посреди
+   фирменной панели, к тому же неотличимый от поля формы — а это не поле,
+   которое ещё надо «Применить», а тумблер, действующий сразу.
+   Сам input не убираем в display: none — так он выпал бы из последовательности
+   табуляции и перестал нажиматься с клавиатуры; вместо этого прячем его
+   прозрачным в одну точку и рисуем дорожку с бегунком соседним span.
+   --md-shape-full здесь 6px, поэтому скругление дорожки задано явно: тумблер
+   должен быть овалом при любом значении токена. */
+.filters .auto-refresh {
+  display: inline-flex; align-items: center; gap: 10px; cursor: pointer;
+  margin: 0; font-size: 13px; font-weight: 500; line-height: 1;
+  color: var(--md-on-surface-variant); white-space: nowrap;
+  -webkit-user-select: none; user-select: none;
+}
+.filters .auto-refresh input {
+  position: absolute; width: 1px; height: 1px; min-width: 0;
+  margin: 0; padding: 0; border: none; opacity: 0; pointer-events: none;
+}
+.auto-refresh .switch {
+  position: relative; flex: none; box-sizing: border-box;
+  width: 44px; height: 26px; border-radius: 999px;
+  background: var(--md-surface-container-highest);
+  border: 2px solid var(--md-outline);
+  transition: background-color .18s ease, border-color .18s ease;
+}
+.auto-refresh .switch::before {
+  content: ''; position: absolute; top: 3px; left: 3px;
+  width: 16px; height: 16px; border-radius: 50%;
+  background: var(--md-on-surface-variant) no-repeat center; background-size: 0 0;
+  transition: transform .18s cubic-bezier(.2,0,.2,1), background-color .18s ease;
+}
+.auto-refresh:hover .switch { border-color: var(--md-on-surface-variant); }
+.filters .auto-refresh input:checked + .switch {
+  background: var(--md-primary); border-color: var(--md-primary);
+}
+.filters .auto-refresh input:checked + .switch::before {
+  /* 40px внутри рамки минус бегунок 16 и отступ 3 слева = 21; сдвиг 18. */
+  transform: translateX(18px);
+  background-color: var(--md-on-primary);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%230A61AE' stroke-width='3.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E");
+  background-size: 10px 10px;
+}
+.filters .auto-refresh input:checked + .switch,
+.filters .auto-refresh:hover input:checked + .switch { border-color: var(--md-primary); }
+/* Обводка по Tab: у спрятанного input своей рамки фокуса уже не видно. */
+.filters .auto-refresh input:focus-visible + .switch {
+  outline: 2px solid var(--md-primary); outline-offset: 2px;
+}
 .more-row { width: 100%; overflow: hidden; max-height: 0; transition: max-height .22s cubic-bezier(.2,0,.2,1); }
 .more-row.open { max-height: 300px; }
 .more-inner { display: flex; gap: 14px; flex-wrap: wrap; align-items: flex-start; padding: 6px 0 14px; }

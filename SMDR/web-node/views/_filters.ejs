@@ -52,6 +52,19 @@ const КОЛОНКИ = [
       <span class="chev"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg></span>
       Ещё фильтры <span class="more-count" id="moreCount" <%= extraCount ? '' : 'hidden' %>><%= extraCount %></span>
     </button>
+
+    <%# Автообновление — напротив «Ещё фильтры», на свободном правом краю этой
+        строки. В ряду пагинации оно стояло вплотную к кнопкам страниц и
+        читалось как часть перелистывания, хотя относится ко всей таблице.
+        У поля нет name — в запрос оно не уходит и «Применить» не трогает. %>
+    <div class="refresh-status">
+      <span id="lastUpdate"></span>
+      <label class="auto-refresh">
+        <input type="checkbox" id="autoRefresh" checked>
+        <span class="switch"></span>
+        Автообновление
+      </label>
+    </div>
   </div>
 
   <div class="more-row<%= extraCount ? ' open' : '' %>" id="moreRow">
