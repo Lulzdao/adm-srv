@@ -291,9 +291,13 @@ th.sortable.sort-desc::after { content: ' ▼'; font-size: 10px; color: var(--md
   transform: rotate(90deg); transition: transform .18s ease;
 }
 .select-wrap.open .select-btn .select-chevron { transform: rotate(-90deg); }
+/* fixed, а не absolute: внутри обёртки перечень обрезал любой предок с
+   overflow: hidden — раскрывающийся ряд «Ещё фильтры» прячет переполнение
+   ради анимации высоты, и список уходил под таблицу. Координаты ставит
+   select.js при каждом открытии. */
 .select-menu {
-  position: absolute; z-index: 40; top: calc(100% + 6px); left: 0; min-width: 100%;
-  padding: 6px; border-radius: var(--md-shape-m); background: var(--md-surface-container-lowest);
+  position: fixed; z-index: 40; padding: 6px;
+  border-radius: var(--md-shape-m); background: var(--md-surface-container-lowest);
   box-shadow: var(--md-elev-1), 0 6px 18px rgba(31,27,22,.16); max-height: 300px; overflow-y: auto;
 }
 .select-option {
