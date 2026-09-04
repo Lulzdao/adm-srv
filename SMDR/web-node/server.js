@@ -2,6 +2,9 @@ require('dotenv').config();
 const express = require('express');
 const path = require('path');
 const db = require('./db');
+const { buildWhereClause, countExtraFilters } = require('./filters');
+const { durationToSeconds } = require('./duration');
+const csv = require('./csv');
 
 const app = express();
 const PORT = process.env.PORT || 3102;
@@ -20,32 +23,6 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use('/vendor', express.static(path.join(__dirname, 'node_modules', 'chart.js', 'dist')));
 
 const PAGE_SIZE = 100;
-
-function buildWhereClause(query) {
-  const { date_from = '', date_to = '', time_from = '', time_to = '', search = '', direction = '' } = query;
-  let where = ' WHERE 1=1';
-  const params = [];
-
-  if (date_from) { where += ' AND date(calls.call_dt) >= date(?)'; params.push(date_from); }
-  if (date_to) { where += ' AND date(calls.call_dt) <= date(?)'; params.push(date_to); }
-  if (time_from) { where += ' AND time(calls.call_dt) >= time(?)'; params.push(time_from); }
-  if (time_to) { where += ' AND time(calls.call_dt) <= time(?)'; params.push(time_to); }
-  if (search) {
-    where += ` AND (
-      lower_ru(calls.number) LIKE lower_ru(?) OR
-      lower_ru(calls.ext) LIKE lower_ru(?) OR
-      lower_ru(calls.caller) LIKE lower_ru(?) OR
-      lower_ru(calls.did) LIKE lower_ru(?) OR
-      lower_ru(calls.internal_to) LIKE lower_ru(?) OR
-      lower_ru(employees.fio) LIKE lower_ru(?)
-    )`;
-    const s = `%${search}%`;
-    params.push(s, s, s, s, s, s);
-  }
-  if (direction) { where += ' AND calls.direction = ?'; params.push(direction); }
-
-  return { where, params };
-}
 
 function getCalls(query) {
   const { where, params } = buildWhereClause(query);
@@ -75,12 +52,23 @@ function buildPageUrl(req, targetPage) {
   return '?' + params.toString();
 }
 
+const { parseDirections } = require('./filters');
+
 app.get('/', (req, res) => {
-  const { date_from = '', date_to = '', time_from = '', time_to = '', search = '', direction = '' } = req.query;
+  const {
+    date_from = '', date_to = '', time_from = '', time_to = '',
+    search = '', col = '', colq = '', dur_min = '', ring_min = '',
+  } = req.query;
   const data = getCalls(req.query);
   const prevUrl = data.page > 1 ? buildPageUrl(req, data.page - 1) : null;
   const nextUrl = data.page < data.totalPages ? buildPageUrl(req, data.page + 1) : null;
-  res.render('dashboard', { ...data, date_from, date_to, time_from, time_to, search, direction, prevUrl, nextUrl });
+  res.render('dashboard', {
+    ...data,
+    date_from, date_to, time_from, time_to, search, col, colq, dur_min, ring_min,
+    directions: parseDirections(req.query),
+    extraCount: countExtraFilters(req.query),
+    prevUrl, nextUrl,
+  });
 });
 
 // Используется JS-скриптом на странице для периодического опроса без перезагрузки
@@ -136,13 +124,6 @@ app.post('/directory', (req, res) => {
   res.redirect('directory');
 });
 
-function parseDurationToSeconds(str) {
-  if (!str) return 0;
-  const m = str.match(/^(\d{1,2}):(\d{2})'(\d{2})$/);
-  if (!m) return 0;
-  return parseInt(m[1]) * 3600 + parseInt(m[2]) * 60 + parseInt(m[3]);
-}
-
 app.get('/api/stats/table', (req, res) => {
   const { date_from = '', date_to = '' } = req.query;
   let sql = `SELECT calls.ext, employees.fio, calls.direction, calls.duration
@@ -162,7 +143,7 @@ app.get('/api/stats/table', (req, res) => {
     a.total++;
     if (r.direction === 'outgoing') {
       a.outgoing++;
-      a.outgoingSeconds += parseDurationToSeconds(r.duration);
+      a.outgoingSeconds += durationToSeconds(r.duration);
     } else if (r.direction === 'incoming') {
       a.incoming++;
     } else if (r.direction === 'internal') {
@@ -183,7 +164,7 @@ app.get('/api/stats/daily-minutes', (req, res) => {
   const agg = {};
   rows.forEach(r => {
     const key = r.day + '|' + r.direction;
-    agg[key] = (agg[key] || 0) + parseDurationToSeconds(r.duration);
+    agg[key] = (agg[key] || 0) + durationToSeconds(r.duration);
   });
 
   const result = Object.entries(agg).map(([key, seconds]) => {
@@ -192,6 +173,91 @@ app.get('/api/stats/daily-minutes', (req, res) => {
   });
 
   res.json(result);
+});
+
+// ---------------------------------------------------------------------------
+//  Выгрузка журнала в CSV
+//
+//  Окно выгрузки предлагает несколько периодов, и рядом с каждым сразу
+//  написано, сколько строк уедет и сколько это весит. Это и есть
+//  подтверждение: отдельного вопроса «точно выгружать?» нет — по числам видно
+//  и так, а если в базе пять лет, а нужен последний месяц, период выбирается
+//  прямо здесь, без возврата к фильтрам.
+// ---------------------------------------------------------------------------
+
+// Период заменяет собой ДАТЫ, остальные фильтры остаются как есть.
+// 'current' — то, что человек уже настроил на экране.
+const PERIODS = {
+  current: null,
+  month: 30,
+  quarter: 92,
+  year: 365,
+  all: 0,   // без ограничения по дате
+};
+
+/** Копия параметров фильтра с датами, подменёнными выбранным периодом. */
+function queryForPeriod(query, period, now = new Date()) {
+  if (period === 'current' || !(period in PERIODS)) return query;
+  const q = { ...query };
+  delete q.date_from;
+  delete q.date_to;
+  const дней = PERIODS[period];
+  if (дней) {
+    const от = new Date(now.getTime() - дней * 86400000);
+    q.date_from = от.toISOString().slice(0, 10);
+  }
+  return q;
+}
+
+function countFor(query) {
+  const { where, params } = buildWhereClause(query);
+  return db.prepare(`SELECT COUNT(*) AS c FROM calls LEFT JOIN employees ON calls.ext = employees.ext${where}`)
+    .get(...params).c;
+}
+
+// Сколько строк уедет по каждому варианту. Пять запросов COUNT по индексу
+// idx_calls_dt — единицы миллисекунд даже на сотнях тысяч строк, и считаются
+// они один раз, при открытии окна.
+app.get('/api/export/preview', (req, res) => {
+  const now = new Date();
+  const варианты = {};
+  for (const period of Object.keys(PERIODS)) {
+    const rows = countFor(queryForPeriod(req.query, period, now));
+    варианты[period] = { rows, bytes: rows * csv.BYTES_PER_ROW };
+  }
+  res.json(варианты);
+});
+
+app.get('/export.csv', (req, res) => {
+  const period = typeof req.query.period === 'string' && req.query.period in PERIODS
+    ? req.query.period : 'current';
+  const { where, params } = buildWhereClause(queryForPeriod(req.query, period));
+
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', csv.contentDisposition(csv.fileName()));
+  // Файл собирается на лету, длина заранее неизвестна — просим прокси и
+  // браузер не буферизовать его целиком.
+  res.setHeader('Cache-Control', 'no-store');
+
+  res.write(csv.headerRow());
+
+  // Пишем ПОТОКОМ, строка за строкой: год работы — это сотни тысяч записей,
+  // и собирать их в одну строку в памяти нельзя. .iterate() отдаёт по одной,
+  // а res.write сам притормаживает нас, когда сеть не успевает.
+  const stmt = db.prepare(
+    `SELECT calls.*, employees.fio FROM calls LEFT JOIN employees ON calls.ext = employees.ext${where} ORDER BY calls.call_dt DESC`
+  );
+  try {
+    for (const row of stmt.iterate(...params)) {
+      res.write(csv.formatRow(row));
+    }
+  } catch (e) {
+    // Заголовки уже ушли, ответ подменить нечем. Пишем маркер в сам файл,
+    // чтобы обрыв было видно, и в лог — чтобы было что искать.
+    console.error('[выгрузка] оборвалась:', e.message);
+    res.write('\r\n# ВЫГРУЗКА ОБОРВАЛАСЬ, ФАЙЛ НЕПОЛНЫЙ\r\n');
+  }
+  res.end();
 });
 
 app.listen(PORT, BIND_HOST, () => console.log(`Веб запущен на http://${BIND_HOST}:${PORT} (только для платформы, за прокси)`));

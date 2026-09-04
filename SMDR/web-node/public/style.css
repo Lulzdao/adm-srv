@@ -78,6 +78,10 @@ html { font-kerning: none; }
   --md-shape-s: 6px;
   --md-shape-m: 8px;
   --md-shape-l: 10px;
+  /* Была пропущена, хотя в остальных сервисах есть: правило с
+     border-radius: var(--md-shape-xl) молча оставалось без значения, и углы
+     выходили прямыми. */
+  --md-shape-xl: 12px;
   --md-shape-full: 6px;
   --md-elev-1: none;
 
@@ -299,3 +303,147 @@ th.sortable.sort-desc::after { content: ' ▼'; font-size: 10px; color: var(--md
 }
 .select-option:hover { background: var(--md-state-hover); }
 .select-option.selected { background: var(--md-primary-container); color: var(--md-on-primary-container); font-weight: 600; }
+
+/* ===========================================================================
+   Панель фильтров и выгрузка
+   ========================================================================= */
+
+/* Выравнивание по ВЕРХУ, а не по низу.
+   Подсказка под полем есть не у всех: под «Время от» её нет, под «Разговор
+   дольше» есть. При выравнивании по нижнему краю поле с подсказкой
+   поднималось на её высоту, поле без подсказки опускалось — и ряд шёл
+   лесенкой. По верху все подписи начинаются с одной линии, а раз высота
+   подписи одинакова, то и поля встают на одну линию. */
+.filters { align-items: flex-start; }
+.filters .field { display: flex; flex-direction: column; }
+.filters .grow { flex: 1; min-width: 240px; }
+.filters .grow input { width: 100%; box-sizing: border-box; }
+/* Высота подписи задана явно и в одну строку: длинное название иначе
+   переносится и опускает своё поле относительно соседей. */
+.filters label { line-height: 15px; margin-bottom: 8px; white-space: nowrap; }
+/* У кнопок подписи нет, поэтому место под неё отводим вручную:
+   15 px строки плюс 8 px её нижнего поля. */
+.filters-actions { display: flex; gap: 8px; align-items: center; margin-left: auto; padding-top: 23px; }
+.filters .hint { font-size: 11px; color: var(--md-on-surface-variant); margin-top: 5px; min-height: 13px; }
+/* Единая высота всех органов управления. Без неё поля дат и времени на 2 px
+   выше остальных — браузер сам вставляет внутрь кнопку календаря и часов, —
+   а кнопки на 3 px ниже, потому что у них нет рамки. */
+.filters input, .filters .select-btn,
+.filters button, .filters .btn-reset, .filters .btn-export {
+  box-sizing: border-box; height: 40px;
+}
+
+/* Выбор колонки и поле поиска — одна деталь, а не два соседних поля. */
+.search-group { display: flex; gap: 0; }
+/* Правило `.filters button` красит ЛЮБУЮ кнопку внутри панели в фирменный
+   синий с белым текстом, а видимая часть выпадающего списка (select.js) —
+   как раз кнопка. Цвет возвращаем явно, иначе название колонки белое на
+   светлом. По той же причине ниже переопределены чипы и «Ещё фильтры». */
+.filters .select-btn { color: var(--md-on-surface); font-weight: 500; }
+.search-group .select-wrap > .select-btn {
+  border-top-right-radius: 0; border-bottom-right-radius: 0; border-right: none;
+  background: var(--md-surface-container-high); color: var(--md-on-surface); font-weight: 600;
+}
+.search-group input { border-top-left-radius: 0; border-bottom-left-radius: 0; flex: 1; min-width: 0; }
+
+/* Направление — переключатели, а не выпадающий список: их можно включить
+   несколько сразу («исходящие и пропущенные»), чего список не умел вовсе. */
+.dir-row { width: 100%; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.dir-label { font-size: 12.5px; font-weight: 500; color: var(--md-on-surface-variant); margin-right: 6px; }
+.filters .dir-chip {
+  display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-family: inherit;
+  padding: 9px 15px; font-size: 13px; font-weight: 500; height: auto;
+  background: var(--md-surface-container-lowest); color: var(--md-on-surface);
+  border: 1px solid var(--md-outline); border-radius: var(--md-shape-m);
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+.filters .dir-chip:hover { border-color: var(--md-primary); box-shadow: none; filter: none; }
+.filters .dir-chip.on { border-color: var(--md-primary); box-shadow: inset 0 0 0 1px var(--md-primary); font-weight: 700; }
+.filters .dir-chip i { width: 9px; height: 9px; border-radius: 50%; display: block; }
+
+/* Раскрывающийся ряд. Высоту анимируем через max-height: переходами
+   управляется она, а не display, а прыжок на пол-экрана без анимации
+   читается как перезагрузка страницы. */
+.more-line { width: 100%; }
+.filters .more-toggle {
+  align-self: flex-start; box-shadow: none; height: auto;
+  display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-family: inherit;
+  background: none; border: none; padding: 10px 4px; font-size: 13px; font-weight: 600;
+  color: var(--md-primary);
+}
+.filters .more-toggle:hover { box-shadow: none; filter: none; color: #08528F; }
+.filters .more-toggle .chev { display: inline-flex; transition: transform .18s ease; }
+.filters .more-toggle.open .chev { transform: rotate(90deg); }
+.more-count {
+  font-size: 11.5px; font-weight: 700; padding: 2px 8px; border-radius: var(--md-shape-xs);
+  background: var(--md-primary-container); color: var(--md-on-primary-container);
+}
+.more-count[hidden] { display: none; }
+.more-row { width: 100%; overflow: hidden; max-height: 0; transition: max-height .22s cubic-bezier(.2,0,.2,1); }
+.more-row.open { max-height: 300px; }
+.more-inner { display: flex; gap: 14px; flex-wrap: wrap; align-items: flex-start; padding: 6px 0 14px; }
+
+/* Выгрузка — второстепенное действие рядом с «Применить», поэтому тональная
+   кнопка, а не залитая: главная на панели одна. */
+.filters .btn-export {
+  display: inline-flex; align-items: center; gap: 9px; padding: 12px 20px; cursor: pointer;
+  font-family: inherit; font-size: 13.5px; font-weight: 600; border: none;
+  background: var(--md-secondary-container); color: var(--md-on-secondary-container);
+  border-radius: var(--md-shape-full); transition: filter .15s;
+}
+.filters .btn-export:hover { filter: brightness(.96); box-shadow: none; }
+.filters .sep { width: 1px; height: 26px; background: var(--md-outline-variant); margin: 0 6px; }
+
+/* --- Окно выгрузки ---
+   Не «продолжить / отмена», а выбор периода. Если в базе пять лет, а нужен
+   последний месяц, вопрос «продолжить?» заставил бы закрыть окно, поправить
+   фильтр и нажать заново. Рядом с каждым вариантом написано, сколько строк
+   уедет и сколько это весит, — окно само и есть подтверждение. */
+.modal-back {
+  position: fixed; inset: 0; background: rgba(40, 42, 46, .35);
+  display: flex; align-items: center; justify-content: center; z-index: 50;
+  animation: modal-fade .13s ease-out;
+}
+.modal-back[hidden] { display: none; }
+@keyframes modal-fade { from { opacity: 0; } to { opacity: 1; } }
+.modal {
+  width: 520px; max-width: calc(100vw - 40px);
+  background: var(--md-surface-container-lowest); border-radius: var(--md-shape-xl);
+  box-shadow: var(--md-elev-3); padding: 24px 26px 20px;
+}
+.modal h2 { margin: 0 0 4px; font-size: 18px; font-weight: 700; color: var(--md-on-surface); }
+.modal .sub { margin: 0 0 18px; font-size: 12.5px; color: var(--md-on-surface-variant); }
+.modal .opt {
+  display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
+  font-family: inherit; cursor: pointer; margin-bottom: 8px;
+  padding: 12px 14px; border: 1px solid var(--md-outline); border-radius: var(--md-shape-m);
+  background: var(--md-surface-container-lowest); color: var(--md-on-surface);
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+.modal .opt:hover { border-color: var(--md-primary); }
+.modal .opt.on { border-color: var(--md-primary); box-shadow: inset 0 0 0 1px var(--md-primary); }
+/* Кружок, а не квадрат: вариант можно выбрать только один. */
+.modal .opt .radio {
+  width: 18px; height: 18px; border-radius: 50%; flex-shrink: 0;
+  border: 1.5px solid var(--md-outline); display: flex; align-items: center; justify-content: center;
+}
+.modal .opt.on .radio { border-color: var(--md-primary); }
+.modal .opt.on .radio::after { content: ''; width: 9px; height: 9px; border-radius: 50%; background: var(--md-primary); }
+.modal .opt .name { font-size: 13.5px; font-weight: 600; }
+.modal .opt.on .name { font-weight: 700; }
+.modal .opt .size { margin-left: auto; font-size: 12.5px; color: var(--md-on-surface-variant); white-space: nowrap; }
+.modal .opt .size.warn { display: flex; align-items: center; gap: 6px; color: var(--md-on-warn-container); }
+.modal .note { font-size: 12px; line-height: 1.4; color: var(--md-on-surface-variant); margin: 14px 2px 0; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+.modal-actions .btn-cancel {
+  background: none; border: none; font-family: inherit; font-size: 13.5px; font-weight: 600;
+  color: var(--md-on-surface-variant); padding: 12px 18px; border-radius: var(--md-shape-full); cursor: pointer;
+  transition: background .13s ease, color .13s ease;
+}
+.modal-actions .btn-cancel:hover { background: var(--md-state-hover); color: var(--md-on-surface); }
+.modal-actions .btn-go {
+  background: var(--md-primary); color: #fff; border: none; font-family: inherit;
+  font-size: 13.5px; font-weight: 700; padding: 12px 24px;
+  border-radius: var(--md-shape-full); cursor: pointer; transition: background .15s ease;
+}
+.modal-actions .btn-go:hover { background: #08528F; }

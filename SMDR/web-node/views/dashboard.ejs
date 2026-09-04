@@ -4,24 +4,7 @@
 <body class="dashboard-page">
 <div class="container">
 
-<form class="filters" id="filterForm" method="get">
-  <div><label>Дата от</label><input type="date" name="date_from" value="<%= date_from %>"></div>
-  <div><label>Дата до</label><input type="date" name="date_to" value="<%= date_to %>"></div>
-  <div><label>Время от</label><input type="time" name="time_from" value="<%= time_from %>"></div>
-  <div><label>Время до</label><input type="time" name="time_to" value="<%= time_to %>"></div>
-  <div><label>Направление</label>
-    <select name="direction">
-      <option value="">Все</option>
-      <option value="outgoing" <%= direction==='outgoing'?'selected':'' %>>Исходящие</option>
-      <option value="incoming" <%= direction==='incoming'?'selected':'' %>>Входящие</option>
-      <option value="internal" <%= direction==='internal'?'selected':'' %>>Внутренние</option>
-    </select>
-  </div>
-  <div><label>Поиск</label><input type="text" name="search" value="<%= search %>" placeholder="номер / ФИО / добавочный"></div>
-  <input type="hidden" name="page" id="pageInput" value="<%= page %>">
-  <div><button type="submit">Фильтр</button></div>
-  <div><a href="." class="btn-reset">Сброс</a></div>
-</form>
+<%- include('_filters') %>
 
 <div class="pagination">
   <div class="pagination-controls">
@@ -107,6 +90,7 @@ async function refreshData() {
   document.getElementById('callsBody').innerHTML = renderRows(data.rows);
   document.getElementById('pageInfo').textContent =
   'Страница ' + data.page + ' из ' + data.totalPages + ' · всего ' + data.filteredTotal + ' звонков';
+  syncExportLabel(data.filteredTotal);
   document.getElementById('lastUpdate').textContent = 'обновлено ' + new Date().toLocaleTimeString('ru-RU');
 }
 
@@ -121,6 +105,143 @@ document.getElementById('autoRefresh').addEventListener('change', function(e) {
 });
 
 startAutoRefresh();
+
+// ---------------------------------------------------------------------------
+//  Фильтры: переключатели направления и раскрывающийся ряд
+// ---------------------------------------------------------------------------
+
+var dirInput = document.getElementById('dirInput');
+var chips = [].slice.call(document.querySelectorAll('.dir-chip'));
+
+function syncDirections() {
+  dirInput.value = chips.filter(function (c) { return c.classList.contains('on'); })
+    .map(function (c) { return c.dataset.dir; }).join(',');
+}
+chips.forEach(function (c) {
+  c.addEventListener('click', function () { c.classList.toggle('on'); syncDirections(); });
+});
+
+var moreBtn = document.getElementById('moreBtn');
+var moreRow = document.getElementById('moreRow');
+moreBtn.addEventListener('click', function () {
+  var open = moreRow.classList.toggle('open');
+  moreBtn.classList.toggle('open', open);
+  moreBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+});
+
+// ---------------------------------------------------------------------------
+//  Выгрузка в CSV
+//
+//  Окно предлагает несколько периодов и рядом с каждым пишет, сколько строк
+//  уедет и сколько это весит. Это и есть подтверждение: отдельного вопроса
+//  «точно выгружать?» нет, а если в базе годы, а нужен последний месяц,
+//  период выбирается прямо здесь, без возврата к фильтрам.
+// ---------------------------------------------------------------------------
+
+var PERIOD_LABELS = [
+  ['current', 'Текущая выборка'],
+  ['month', 'За последний месяц'],
+  ['quarter', 'За последний квартал'],
+  ['year', 'За последний год'],
+  ['all', 'Весь журнал'],
+];
+// Выше этого числа строк рядом с вариантом появляется предупреждение: Excel
+// такой файл откроет, но заметно подумает. Значок только у тяжёлых вариантов —
+// на каждой строке он перестал бы что-либо значить.
+var HEAVY_ROWS = 100000;
+
+var modal = document.getElementById('exportModal');
+var optionsBox = document.getElementById('exportOptions');
+var chosenPeriod = 'current';
+
+function formatRows(n) {
+  return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+}
+function formatBytes(b) {
+  if (b < 1024 * 1024) return Math.max(1, Math.round(b / 1024)) + ' КБ';
+  return (b / 1024 / 1024).toFixed(b < 10 * 1024 * 1024 ? 1 : 0).replace('.', ',') + ' МБ';
+}
+function filterParams() {
+  var p = new URLSearchParams(new FormData(document.getElementById('filterForm')));
+  p.delete('page');
+  return p;
+}
+
+var WARN_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"'
+  + ' stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+  + '<path d="M12 3l9.5 17H2.5L12 3z"/><line x1="12" y1="10" x2="12" y2="14"/>'
+  + '<line x1="12" y1="17" x2="12" y2="17"/></svg>';
+
+function renderOptions(preview) {
+  optionsBox.innerHTML = PERIOD_LABELS.map(function (pair) {
+    var id = pair[0];
+    var info = preview[id] || { rows: 0, bytes: 0 };
+    var heavy = info.rows >= HEAVY_ROWS;
+    return '<button type="button" class="opt' + (id === chosenPeriod ? ' on' : '') + '" data-period="' + id + '">'
+      + '<span class="radio"></span>'
+      + '<span class="name">' + escHtml(pair[1]) + '</span>'
+      + '<span class="size' + (heavy ? ' warn' : '') + '">' + (heavy ? WARN_ICON : '')
+      + formatRows(info.rows) + ' ' + plural(info.rows, 'строка', 'строки', 'строк')
+      + ' · ~' + formatBytes(info.bytes) + '</span></button>';
+  }).join('');
+  [].slice.call(optionsBox.querySelectorAll('.opt')).forEach(function (o) {
+    o.addEventListener('click', function () {
+      chosenPeriod = o.dataset.period;
+      [].slice.call(optionsBox.querySelectorAll('.opt')).forEach(function (x) {
+        x.classList.toggle('on', x === o);
+      });
+    });
+  });
+}
+
+function plural(n, one, few, many) {
+  var m100 = n % 100, m10 = n % 10;
+  if (m100 >= 11 && m100 <= 14) return many;
+  if (m10 >= 2 && m10 <= 4) return few;
+  if (m10 === 1) return one;
+  return many;
+}
+
+document.getElementById('exportBtn').addEventListener('click', function () {
+  chosenPeriod = 'current';
+  optionsBox.innerHTML = '<p class="note" style="margin:0 0 8px;">Считаем…</p>';
+  modal.hidden = false;
+  fetch('api/export/preview?' + filterParams().toString())
+    .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error(r.status)); })
+    .then(renderOptions)
+    .catch(function () {
+      optionsBox.innerHTML = '<p class="note" style="margin:0 0 8px;">Не удалось посчитать строки. '
+        + 'Выгрузка текущей выборки всё равно доступна.</p>';
+    });
+});
+
+function closeModal() { modal.hidden = true; }
+document.getElementById('exportCancel').addEventListener('click', closeModal);
+// Щелчок мимо окна и Esc закрывают его: окно ничего не меняет, и запирать
+// человека в нём незачем.
+modal.addEventListener('click', function (e) { if (e.target === modal) closeModal(); });
+document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !modal.hidden) closeModal(); });
+
+document.getElementById('exportGo').addEventListener('click', function () {
+  var p = filterParams();
+  p.set('period', chosenPeriod);
+  // Скачивание через временную ссылку, а не сменой location: страница живёт
+  // в iframe внутри платформы, и переводить сам кадр на файл незачем.
+  var a = document.createElement('a');
+  a.href = 'export.csv?' + p.toString();
+  a.download = '';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  closeModal();
+});
+
+// Число строк на кнопке выгрузки — то же, что показывает счётчик страниц.
+function syncExportLabel(total) {
+  document.getElementById('exportLabel').textContent =
+    'Выгрузить ' + formatRows(total) + ' ' + plural(total, 'строку', 'строки', 'строк');
+}
+syncExportLabel(<%= filteredTotal %>);
 </script>
 <script src="select.js"></script>
 </body></html>

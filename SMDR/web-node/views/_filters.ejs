@@ -1,0 +1,111 @@
+<%
+// Панель фильтров журнала.
+//
+// Наверху то, чем пользуются каждый день: период, общий поиск и действия.
+// Остальное — в раскрывающемся ряду, но так, чтобы включённые в нём фильтры
+// были видны и в свёрнутом виде: иначе человек смотрит на неполную выборку и
+// не понимает почему. Отсюда счётчик рядом с «Ещё фильтры».
+const НАПРАВЛЕНИЯ = [
+  { id: 'outgoing', label: 'Исходящие', color: '#0A61AE' },
+  { id: 'incoming', label: 'Входящие', color: '#008F9F' },
+  { id: 'internal', label: 'Внутренние', color: '#663AB5' },
+  { id: 'missed', label: 'Пропущенные', color: '#E7004B' },
+];
+const КОЛОНКИ = [
+  { id: 'ext', label: 'Внутренний' },
+  { id: 'details', label: 'Детали' },
+  { id: 'fio', label: 'Сотрудник' },
+];
+%>
+<form class="filters" id="filterForm" method="get">
+  <div class="field"><label for="fDateFrom">Дата от</label>
+    <input type="date" id="fDateFrom" name="date_from" value="<%= date_from %>"></div>
+  <div class="field"><label for="fDateTo">Дата до</label>
+    <input type="date" id="fDateTo" name="date_to" value="<%= date_to %>"></div>
+
+  <div class="field grow"><label for="fSearch">Поиск везде</label>
+    <input type="text" id="fSearch" name="search" value="<%= search %>" placeholder="номер, ФИО, добавочный">
+    <div class="hint">ищет сразу по всем колонкам</div>
+  </div>
+
+  <input type="hidden" name="page" id="pageInput" value="<%= page %>">
+  <%# Выбранные направления скрытым полем: чипы ниже — кнопки, а не флажки,
+      и сами по себе в форму ничего не отправляют. %>
+  <input type="hidden" name="direction" id="dirInput" value="<%= directions.join(',') %>">
+
+  <div class="filters-actions">
+    <button type="submit">Применить</button>
+    <a href="." class="btn-reset">Сброс</a>
+    <span class="sep"></span>
+    <button type="button" class="btn-export" id="exportBtn">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><polyline points="7 11 12 16 17 11"/><path d="M4 20h16"/></svg>
+      <span id="exportLabel">Выгрузить</span>
+    </button>
+  </div>
+
+  <%# Обёртка на всю ширину — чтобы «Ещё фильтры» встали на СВОЮ строку.
+      Без неё кнопка помещается в конец верхнего ряда, отбирает у поля поиска
+      место и стоит сбоку от кнопок, а не под ними. %>
+  <div class="more-line">
+    <button type="button" class="more-toggle<%= extraCount ? ' open' : '' %>" id="moreBtn"
+            aria-expanded="<%= extraCount ? 'true' : 'false' %>">
+      <span class="chev"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg></span>
+      Ещё фильтры <span class="more-count" id="moreCount" <%= extraCount ? '' : 'hidden' %>><%= extraCount %></span>
+    </button>
+  </div>
+
+  <div class="more-row<%= extraCount ? ' open' : '' %>" id="moreRow">
+    <div class="more-inner">
+      <div class="dir-row">
+        <span class="dir-label">Направление</span>
+        <% НАПРАВЛЕНИЯ.forEach(d => { %>
+          <button type="button" class="dir-chip<%= directions.includes(d.id) ? ' on' : '' %>" data-dir="<%= d.id %>">
+            <i style="background:<%= d.color %>"></i><%= d.label %>
+          </button>
+        <% }) %>
+      </div>
+
+      <div class="field">
+        <label for="fColq">Искать в колонке</label>
+        <div class="search-group">
+          <select name="col" id="fCol" style="width:170px;">
+            <% КОЛОНКИ.forEach(c => { %>
+              <option value="<%= c.id %>" <%= col === c.id ? 'selected' : '' %>><%= c.label %></option>
+            <% }) %>
+          </select>
+          <input type="text" id="fColq" name="colq" value="<%= colq %>" style="width:180px;">
+        </div>
+        <div class="hint">несколько значений — через запятую</div>
+      </div>
+
+      <div class="field"><label for="fTimeFrom">Время от</label>
+        <input type="time" id="fTimeFrom" name="time_from" value="<%= time_from %>"></div>
+      <div class="field"><label for="fTimeTo">Время до</label>
+        <input type="time" id="fTimeTo" name="time_to" value="<%= time_to %>"></div>
+
+      <div class="field"><label for="fDur">Разговор дольше</label>
+        <input type="text" id="fDur" name="dur_min" value="<%= dur_min %>" placeholder="мм:сс" style="width:130px;">
+        <div class="hint">длительность от</div>
+      </div>
+      <div class="field"><label for="fRing">Ожидание дольше</label>
+        <input type="text" id="fRing" name="ring_min" value="<%= ring_min %>" placeholder="сек" style="width:130px;">
+        <div class="hint">до ответа или сброса</div>
+      </div>
+    </div>
+  </div>
+</form>
+
+<div class="modal-back" id="exportModal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="exportTitle">
+    <h2 id="exportTitle">Выгрузить в CSV</h2>
+    <p class="sub">Файл откроется в Excel двойным щелчком</p>
+    <div id="exportOptions"></div>
+    <p class="note">Период заменяется, остальные фильтры остаются как есть:
+      направление, поиск, колонка, длительность. Выгружается вся выборка,
+      а не видимая страница.</p>
+    <div class="modal-actions">
+      <button type="button" class="btn-cancel" id="exportCancel">Отмена</button>
+      <button type="button" class="btn-go" id="exportGo">Выгрузить</button>
+    </div>
+  </div>
+</div>
