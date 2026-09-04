@@ -76,7 +76,7 @@
     --panel-border: var(--md-outline-variant);
     --th-bg: var(--md-surface-container);
     --row-border: var(--md-surface-container-high);
-    --row-hover: var(--md-surface-container-low);
+    --row-hover: var(--md-surface-container-highest);
     --expired-bg: var(--md-error-container);
     --expired-hover: #FFCFC9;
     --soon-bg: var(--md-warn-container);
@@ -195,7 +195,13 @@ html { font-kerning: none; }
   tr.expired:hover { background: #FFCFC9; }
   tr.soon { background: var(--md-warn-container); color: var(--md-on-warn-container); }
   tr.soon:hover { background: #FFD0AC; }
-  tr:not(.expired):not(.soon):hover { background: var(--md-surface-container); }
+  /* Подсветка строки — на тон ТЕМНЕЕ подложки, как во входящих заявках
+     платформы. Раньше здесь стоял --md-surface-container, а он в этой палитре
+     ровно белый, то есть цвет самой панели: наведение попросту не было видно.
+     Значение то же, что у .ticket-row:hover на платформе, чтобы поведение
+     таблиц во всех модулях читалось одинаково. */
+  tr:not(.expired):not(.soon) { transition: background 0.13s ease; }
+  tr:not(.expired):not(.soon):hover { background: var(--md-surface-container-highest); }
 
   /* Text button M3 */
   .del-btn {

@@ -218,7 +218,11 @@ th {
   letter-spacing: .5px; border-bottom: 1px solid var(--md-outline-variant); font-weight: 600;
 }
 td { padding: 13px 16px; border-bottom: 1px solid var(--md-surface-container-high); }
-tr:hover td { background: var(--md-surface-container); }
+/* Подсветка строки — на тон ТЕМНЕЕ подложки, как во входящих заявках
+   платформы. Раньше здесь стоял --md-surface-container, а он в этой палитре
+   ровно белый, то есть цвет самой панели: наведение попросту не было видно. */
+td { transition: background 0.13s ease; }
+tr:hover td { background: var(--md-surface-container-highest); }
 tbody tr:last-child td { border-bottom: none; }
 
 /* Chip M3 — тональные пары под направление звонка */
