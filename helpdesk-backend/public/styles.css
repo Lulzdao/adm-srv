@@ -504,21 +504,19 @@ textarea.input { font-family: inherit; resize: vertical; }
 @media (prefers-reduced-motion: reduce) { .ticket-row:hover { transform: none; } }
 .row-arrow { display: flex; justify-content: flex-end; color: var(--md-on-surface-variant); }
 .mono { font-family: var(--mono); }
-.ticket-id { color: var(--md-primary); font-weight: 700; font-size: 12.5px; position: relative; }
-/* Непрочитанное — точка слева от номера. Стоит она в левом отступе строки,
-   между цветной кромкой и номером, а не в самой колонке: займи она место в
-   колонке, номер сдвигался бы при каждом появлении и исчезновении точки и
-   переставал бы стоять ровно под шапкой. В колонке темы, где точка была
-   раньше, она терялась в конце длинного заголовка.
-   Кольцо цвета фона отделяет точку от синей кромки приоритета «средний». */
-.ticket-id.unread::before {
-  content: ''; position: absolute; left: -12px; top: 50%;
+.ticket-id { color: var(--md-primary); font-weight: 700; font-size: 12.5px; }
+/* Непрочитанное — точка между номером и темой. Стоит она в промежутке между
+   колонками (column-gap 18px), а не в самой колонке: займи она там место,
+   текст сдвигался бы при каждом появлении и исчезновении точки и переставал
+   бы стоять ровно под шапкой. Привязана к ячейке темы, а не к номеру, —
+   так её место не зависит от длины номера («ИТ-0003» и «ЕГРПО-0003»).
+   В конце темы, где точка была раньше, она терялась за длинным заголовком. */
+.ticket-title-cell { position: relative; }
+.ticket-title-cell.unread::before {
+  content: ''; position: absolute; left: -13px; top: 50%;
   width: 8px; height: 8px; margin-top: -4px; border-radius: 50%;
   background: var(--md-primary);
-  box-shadow: 0 0 0 2px var(--md-surface-container-low);
-  transition: box-shadow 0.15s ease;
 }
-.ticket-row:hover .ticket-id.unread::before { box-shadow: 0 0 0 2px var(--md-surface-container-highest); }
 .ticket-title-cell { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .ticket-title-cell span.title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .cell-ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }

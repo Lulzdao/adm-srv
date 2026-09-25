@@ -947,8 +947,8 @@ async function renderList(main, opts = {}) {
         const isUnread = unreadTicketIds.has(t.id);
         return `
         <div class="ticket-row" data-id="${t.id}" data-prio="${t.priority}" title="Приоритет: ${p.label.toLowerCase()}" style="grid-template-columns:${gridCols};min-width:${gridMin}px;">
-          <div class="ticket-id mono${isUnread ? " unread" : ""}"${isUnread ? ` title="Есть новые комментарии"` : ""}>${esc(t.display_id)}</div>
-          <div class="ticket-title-cell">
+          <div class="ticket-id mono">${esc(t.display_id)}</div>
+          <div class="ticket-title-cell${isUnread ? " unread" : ""}"${isUnread ? ` title="Есть новые комментарии"` : ""}>
             <span class="title" style="${isUnread ? "font-weight:700;" : ""}">${esc(t.title)}</span>
           </div>
           ${isPrivileged ? `
