@@ -1715,6 +1715,7 @@ app.post('/api/admin/tls', auth, requireCapability('can_admin'), async (req, res
       applied = true;
       tlsSource = 'store';
       currentCertificate = info;
+      appliedStoreHash = storeHash();
     } catch (err) {
       logServer('ERROR', 'tls_apply_failed', { error: String((err && err.message) || err) });
     }
@@ -2059,6 +2060,86 @@ async function reportTlsCertificate() {
     warnIfExpiring();
   } catch (err) {
     logServer('WARN', 'tls_check_failed', { error: String((err && err.message) || err) });
+  }
+}
+
+// ---------- Замена сертификата со стороны: слежение за certs/ ----------
+// Сертификат в certs/ общий с платформой: загрузить новый можно и из её панели («Сертификаты»).
+// Своя загрузка (POST /api/admin/tls) применяет файл сразу, а о замене со стороны «Искра» раньше
+// не узнавала и до перезапуска отдавала клиентам прежний сертификат — «поменяли, а у сотрудников
+// старый», и искать это приходилось по журналам. Теперь, как и платформа, следим за каталогом и
+// применяем новый файл на лету. Уже открытые соединения доживают со старым сертификатом, новые
+// идут с новым.
+let appliedStoreHash = null; // что из хранилища сейчас стоит — тот же файл второй раз не применяем
+
+function storeHash() {
+  if (!fs.existsSync(CERT_STORE_PFX)) return null;
+  const h = crypto.createHash('sha256').update(fs.readFileSync(CERT_STORE_PFX));
+  if (fs.existsSync(CERT_STORE_PASS)) h.update('\0').update(fs.readFileSync(CERT_STORE_PASS));
+  return h.digest('hex');
+}
+
+async function reloadCertFromStore() {
+  let hash;
+  try { hash = storeHash(); } catch (err) {
+    logServer('WARN', 'tls_reload_failed', { error: String((err && err.message) || err) });
+    return;
+  }
+  // Файл убрали — прежний сертификат остаётся: перейти с https на http на ходу нельзя, да и незачем.
+  if (!hash || hash === appliedStoreHash) return;
+
+  if (!(server instanceof https.Server)) {
+    appliedStoreHash = hash; // не повторять предупреждение на каждое событие каталога
+    logServer('WARN', 'tls_restart_required', {
+      hint: 'В certs/ появился сертификат, а сервер запущен по http — на https на ходу его не перевести. Перезапустите службу',
+    });
+    return;
+  }
+
+  const options = { pfx: fs.readFileSync(CERT_STORE_PFX) };
+  if (fs.existsSync(CERT_STORE_PASS)) options.passphrase = fs.readFileSync(CERT_STORE_PASS, 'utf8');
+  let info;
+  try {
+    info = await inspectTlsOptions(options);
+    server.setSecureContext(options);
+  } catch (err) {
+    // Битый файл (неверный пароль, не PFX, запись ещё не закончена) не применяем: прежний сертификат
+    // остаётся рабочим, сервис продолжает отвечать.
+    logServer('ERROR', 'tls_reload_failed', {
+      where: CERT_STORE_PFX,
+      error: String((err && err.message) || err),
+      hint: 'Новый файл в certs/ не читается — продолжаю с прежним сертификатом',
+    });
+    return;
+  }
+  appliedStoreHash = hash;
+  tlsSource = 'store';
+  currentCertificate = info;
+  logServer('INFO', 'tls_certificate_reloaded', {
+    subject: info.subject, san: info.san, valid_to: info.validTo, days_left: info.daysLeft,
+  });
+}
+
+function watchCertStore() {
+  try {
+    ensureCertsDir();
+    if (tlsSource === 'store') appliedStoreHash = storeHash();
+  } catch (err) {
+    logServer('WARN', 'tls_watch_failed', { error: String((err && err.message) || err) });
+    return;
+  }
+  let timer = null;
+  try {
+    const watcher = fs.watch(certsDir, () => {
+      // .pfx и .pass пишутся по очереди, и запись не атомарна — ждём, пока файлы улягутся.
+      clearTimeout(timer);
+      timer = setTimeout(() => { reloadCertFromStore(); }, 1000);
+    });
+    // Без обработчика 'error' сбой слежения (каталог удалили, диск отвалился) пришёл бы событием
+    // и уронил весь сервер — а это мессенджер всей организации.
+    watcher.on('error', (err) => logServer('WARN', 'tls_watch_failed', { error: String((err && err.message) || err) }));
+  } catch (err) {
+    logServer('WARN', 'tls_watch_failed', { error: String((err && err.message) || err) });
   }
 }
 
@@ -2485,4 +2566,5 @@ server.listen(PORT, () => {
   const scheme = server instanceof https.Server ? 'https' : 'http';
   console.log(`Искра запущена: ${scheme}://localhost:${PORT}`);
   if (scheme === 'https') reportTlsCertificate();
+  watchCertStore();
 });
