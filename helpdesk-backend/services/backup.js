@@ -1,7 +1,9 @@
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 const { DatabaseSync } = require("node:sqlite");
 const config = require("../config/config");
+const { getSetting, setSetting } = require("./settings");
 
 // ============================================================================
 //  Ежемесячная резервная копия баз: один файл на базу и месяц
@@ -22,10 +24,80 @@ const config = require("../config/config");
 // ============================================================================
 
 const ROOT = path.join(__dirname, "..", "..");
+const DEFAULT_DIR = path.join(ROOT, "backups");
+const SETTING = "backup_dir";
 
-/** Каталог для копий: BACKUP_DIR или <корень установки>\backups. */
-function backupDir() {
-  return process.env.BACKUP_DIR || path.join(ROOT, "backups");
+/**
+ * Куда класть копии: папка из панели («Оповещения» → «Отправка» → «Резервные копии
+ * баз») → BACKUP_DIR из .env → <корень установки>\backups. source говорит, откуда
+ * взято, — в панели видно, правится ли путь там же или в файле на сервере.
+ */
+function backupDir(db) {
+  const fromPanel = db ? String(getSetting(db, SETTING) || "").trim() : "";
+  if (fromPanel) return { dir: fromPanel, source: "panel" };
+  if (process.env.BACKUP_DIR) return { dir: process.env.BACKUP_DIR, source: "env" };
+  return { dir: DEFAULT_DIR, source: "default" };
+}
+
+// Учётная запись, под которой служба ходит в сеть. Служба NSSM по умолчанию работает
+// как LocalSystem, а та в сети представляется учётной записью компьютера — ей и нужны
+// права на сетевую папку. Имя показываем в подсказке, чтобы не гадать, кому их давать.
+function networkAccount() {
+  const domain = process.env.USERDOMAIN && process.env.USERDOMAIN !== os.hostname() ? process.env.USERDOMAIN : "ДОМЕН";
+  return `${domain}\\${os.hostname().toUpperCase()}$`;
+}
+
+/**
+ * Проверить папку: создать (если нет), записать пробный файл, прочитать, удалить —
+ * от имени самой службы, то есть ровно с теми правами, с какими потом пойдёт копия.
+ * Возвращает { ok } или { ok: false, error, hint } и никогда не бросает.
+ */
+function checkDir(dir) {
+  const value = String(dir || "").trim();
+  if (!value) return { ok: false, error: "Путь не указан" };
+  if (!path.isAbsolute(value)) {
+    return { ok: false, error: "Нужен полный путь", hint: "Например \\\\сервер\\папка\\backups или D:\\backups" };
+  }
+  const isUnc = value.startsWith("\\\\");
+  const probe = path.join(value, `.adm-srv-проверка-${process.pid}-${Date.now()}`);
+  try {
+    fs.mkdirSync(value, { recursive: true });
+    fs.writeFileSync(probe, "проверка записи резервной копии");
+    const back = fs.readFileSync(probe, "utf8");
+    fs.unlinkSync(probe);
+    if (back !== "проверка записи резервной копии") throw new Error("записанное не читается обратно");
+    return { ok: true };
+  } catch (err) {
+    try { fs.unlinkSync(probe); } catch { /* его и не было */ }
+    const code = err.code || "";
+    let hint;
+    if (!isUnc && /^[A-Za-z]:/.test(value) && (code === "ENOENT" || code === "EPERM" || code === "EACCES")) {
+      hint = "Если это сетевой диск, подключённый буквой, служба его не видит: такие диски есть только в сеансе " +
+        "пользователя. Укажите сетевой путь: \\\\сервер\\папка\\backups.";
+    } else if (isUnc && (code === "EACCES" || code === "EPERM")) {
+      hint = `Нет прав на запись. Служба ходит в сеть под учётной записью компьютера — дайте ей права на ` +
+        `изменение в этой папке (и на уровне общего ресурса, и в свойствах папки): ${networkAccount()}.`;
+    } else if (isUnc) {
+      hint = "Сетевая папка недоступна: проверьте имя сервера и общего ресурса и что сервер в сети.";
+    }
+    return { ok: false, error: err.message, hint };
+  }
+}
+
+/** Копии, которые уже лежат в папке, — новые сверху. */
+function listCopies(dir, limit = 24) {
+  try {
+    return fs.readdirSync(dir)
+      .filter((f) => /^[A-Za-z0-9_-]+-\d{4}-\d{2}\.db$/.test(f))
+      .map((f) => {
+        const st = fs.statSync(path.join(dir, f));
+        return { name: f, size: st.size, modified: st.mtime.toISOString() };
+      })
+      .sort((a, b) => b.modified.localeCompare(a.modified) || b.name.localeCompare(a.name))
+      .slice(0, limit);
+  } catch (err) {
+    return { error: err.code === "ENOENT" ? "папки пока нет — появится с первой копией" : err.message };
+  }
 }
 
 /**
@@ -96,11 +168,14 @@ function snapshot(src, dest) {
  * сделанным и повторит через час (удачные копии просто перезапишутся).
  */
 async function run(db, now = new Date()) {
-  const dir = backupDir();
+  const { dir } = backupDir(db);
   const month = monthKey(now);
   const list = Object.entries(databases());
   if (!list.length) return { месяц: month, скопировано: "ничего — список баз пуст" };
-  fs.mkdirSync(dir, { recursive: true });
+  // Папку (в том числе сетевую) создаём сами; не выходит — понятная ошибка с подсказкой,
+  // окно месяца не закрывается, и через час будет новая попытка.
+  const access = checkDir(dir);
+  if (!access.ok) throw new Error(`папка для копий ${dir} недоступна: ${access.error}${access.hint ? ` — ${access.hint}` : ""}`);
   const done = [];
   const missing = [];
   const failed = [];
@@ -120,4 +195,9 @@ async function run(db, now = new Date()) {
   return detail;
 }
 
-module.exports = { run, databases, backupDir, snapshot };
+/** Сохранить папку из панели. Пусто — вернуться к .env / папке по умолчанию. */
+function setBackupDir(db, dir) {
+  setSetting(db, SETTING, String(dir || "").trim());
+}
+
+module.exports = { run, databases, backupDir, setBackupDir, checkDir, listCopies, snapshot, DEFAULT_DIR };

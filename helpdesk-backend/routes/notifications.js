@@ -2,9 +2,10 @@ const express = require("express");
 const { requireAuth, requireAdmin } = require("../middleware/auth");
 const { KINDS, byKind, RECIPIENTS } = require("../config/notifications");
 const { settingsFor, resolveEmails, render, retryPending, backfillDeliveries } = require("../services/notifications");
-const { setSetting } = require("../services/settings");
+const { getSetting, setSetting } = require("../services/settings");
 const mailer = require("../services/mailer");
 const scheduler = require("../services/scheduler");
+const backup = require("../services/backup");
 
 module.exports = function notificationRoutes(db) {
   const router = express.Router();
@@ -275,6 +276,42 @@ module.exports = function notificationRoutes(db) {
     if (!job) return res.status(404).json({ error: "Неизвестное задание" });
     const result = await scheduler.runJob(db, job, { force: true });
     res.json({ ...result, schedule: scheduler.status(db) });
+  });
+
+  // ---- Резервные копии баз: куда класть -----------------------------------
+  //
+  // Папку задаёт администратор из панели — обычно сетевая, чтобы копии не лежали на
+  // том же диске, что и базы. Сохраняется только проверенная: пробный файл пишется от
+  // имени службы, то есть ровно с теми правами, с какими потом пойдёт копия.
+
+  const backupInfo = () => {
+    const { dir, source } = backup.backupDir(db);
+    return {
+      dir, source,
+      panelDir: getSetting(db, "backup_dir") || "",
+      envDir: process.env.BACKUP_DIR || "",
+      defaultDir: backup.DEFAULT_DIR,
+      copies: backup.listCopies(dir),
+    };
+  };
+
+  router.get("/backup", it, (req, res) => res.json(backupInfo()));
+
+  router.post("/backup/check", it, (req, res) => {
+    const dir = (req.body || {}).dir;
+    if (typeof dir !== "string" || dir.length > 400) return res.status(400).json({ error: "Путь — строка до 400 символов" });
+    res.json(backup.checkDir(dir));
+  });
+
+  router.put("/backup", it, (req, res) => {
+    const dir = (req.body || {}).dir;
+    if (typeof dir !== "string" || dir.length > 400) return res.status(400).json({ error: "Путь — строка до 400 символов" });
+    if (dir.trim()) {
+      const check = backup.checkDir(dir);
+      if (!check.ok) return res.status(400).json({ error: `Папка недоступна: ${check.error}`, hint: check.hint });
+    }
+    backup.setBackupDir(db, dir);
+    res.json({ ok: true, ...backupInfo() });
   });
 
   // ---- Настройки почты -----------------------------------------------------
