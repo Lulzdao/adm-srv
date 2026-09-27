@@ -132,12 +132,23 @@ test("модули открыты администратору и закрыты
 });
 
 test("локальная аварийная учётка администратор по конфигу, а не по домену", async (t) => {
-  const { db, cleanup } = freshDb();
+  // Учётку без хэша в конфиге ensureLocalAccounts не трогает вовсе, поэтому хэш
+  // задаём сами. Раньше тест молча брал его из .env машины, на которой шёл, и
+  // без такого .env падал.
+  const saved = process.env.LOCAL_ADMIN_PASSWORD_HASH;
+  process.env.LOCAL_ADMIN_PASSWORD_HASH = "выдуманный-хэш";
+  t.after(() => {
+    if (saved === undefined) delete process.env.LOCAL_ADMIN_PASSWORD_HASH;
+    else process.env.LOCAL_ADMIN_PASSWORD_HASH = saved;
+  });
+
+  const { db, cleanup } = freshDb();   // сбрасывает кэш модулей — переменная подхватится
   t.after(cleanup);
   const { ensureLocalAccounts } = require("../db/init");
   const config = require("../config/config");
 
-  // Пароль в конфиге пустой, поэтому учётка не заводится — подкладываем хэш.
+  // Строка уже есть, но без признака администратора — как в базе, заведённой
+  // до появления is_admin. Признак должен приехать из конфига.
   db.prepare(`INSERT INTO users (ad_login, full_name, role, auth_type, local_password_hash)
               VALUES (?, ?, 'it', 'local', 'выдуманный-хэш')`)
     .run(config.localAccounts[0].login, "Локальный администратор");

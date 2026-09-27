@@ -9,7 +9,10 @@ const crypto = require("crypto");
 // сказать точно, откуда пришло значение, и не заставлять администратора это
 // выяснять.
 const beforeDotenv = { ...process.env };
-const parsed = require("dotenv").config().parsed || {};
+// HELPDESK_ENV_FILE — другой файл вместо .env рабочего каталога. Нужен тестам:
+// иначе они читали бы настоящий .env машины, и результат зависел бы от того,
+// что в нём лежит (см. test/helpers/isolateEnv.js). В работе не задаётся.
+const parsed = require("dotenv").config({ path: process.env.HELPDESK_ENV_FILE || undefined }).parsed || {};
 
 // Пустое значение в .env ОТМЕНЯЕТ переменную окружения. Без этого «TLS_PFX=»
 // в файле ничего бы не давало (dotenv пропускает ключ, раз он уже задан), и
