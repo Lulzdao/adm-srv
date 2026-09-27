@@ -214,6 +214,14 @@ function Get-ServicePort($svc) {
 #  Архив новой версии
 # ---------------------------------------------------------------------------
 
+# Системный прокси Windows — тот же, что у браузера, включая автонастройку (PAC). Вход на него —
+# под учётной записью, от которой запущен скрипт: без этого прокси с проверкой по домену отвечает
+# «407 Proxy Authentication Required», хотя браузер через него ходит.
+$SystemProxy = [Net.WebRequest]::GetSystemWebProxy()
+if ($Config.ProxyUseDefaultCredentials) { $SystemProxy.Credentials = [Net.CredentialCache]::DefaultNetworkCredentials }
+[Net.WebRequest]::DefaultWebProxy = $SystemProxy
+$script:ProxyEntered = $false
+
 function Get-WebParams {
   $p = @{ UseBasicParsing = $true; Headers = @{ 'User-Agent' = 'adm-srv-updater' } }
   if ($Config.Proxy) {
@@ -221,6 +229,69 @@ function Get-WebParams {
     if ($Config.ProxyUseDefaultCredentials) { $p.ProxyUseDefaultCredentials = $true }
   }
   return $p
+}
+
+# Как пойдёт запрос — для вывода: человек должен видеть, через что скрипт ходит в интернет.
+function Get-ProxyNote([string]$url) {
+  if ($Config.Proxy) { return "через прокси из настроек: $($Config.Proxy)" }
+  $px = $SystemProxy.GetProxy([Uri]$url)
+  if ($px -and $px.AbsoluteUri -ne ([Uri]$url).AbsoluteUri) { return "через системный прокси Windows: $($px.Authority)" }
+  return 'напрямую (системного прокси нет)'
+}
+
+# npm системные настройки прокси Windows не читает — адрес ему передаётся явно.
+function Get-NpmProxy {
+  if ($Config.Proxy) { return $Config.Proxy }
+  $u = [Uri]'https://registry.npmjs.org/'
+  $px = $SystemProxy.GetProxy($u)
+  if ($px -and $px.AbsoluteUri -ne $u.AbsoluteUri) { return $px.AbsoluteUri.TrimEnd('/') }
+  return $null
+}
+
+# Запомнить введённый прокси в update.config.psd1: остальные настройки файла не трогаются.
+function Save-ProxyToConfig([string]$proxy) {
+  $line = "  Proxy = '$($proxy.Replace("'", "''"))'"
+  $old = $null
+  if (Test-Path -LiteralPath $ConfigPath) {
+    $old = [IO.File]::ReadAllText($ConfigPath)
+    if ($old -match '(?m)^\s*Proxy\s*=.*$') { $new = [regex]::Replace($old, '(?m)^\s*Proxy\s*=.*$', $line) }
+    # После вставленной строки — перевод строки: файл может быть записан в одну строку
+    # (@{ InstallRoot = '...' }), и без него Proxy слипся бы со следующим параметром.
+    else { $new = ([regex]'@\{').Replace($old, "@{`r`n$line`r`n", 1) }
+  } else {
+    $new = "# Настройки обновления adm-srv (образец со всеми параметрами — deploy\update.config.example.psd1).`r`n@{`r`n$line`r`n}`r`n"
+  }
+  [IO.File]::WriteAllText($ConfigPath, $new, [Text.UTF8Encoding]::new($true))
+  try { Import-PowerShellDataFile -LiteralPath $ConfigPath | Out-Null }
+  catch {
+    # Файл перестал читаться — вернуть как было, настройки дороже удобства.
+    if ($null -ne $old) { [IO.File]::WriteAllText($ConfigPath, $old, [Text.UTF8Encoding]::new($true)) } else { Remove-Item -LiteralPath $ConfigPath -Force }
+    throw
+  }
+}
+
+# Скачать файл. Не вышло и рядом человек — спросить адрес прокси и попробовать снова.
+function Invoke-Download([string]$url, [string]$out) {
+  while ($true) {
+    Say "   $(Get-ProxyNote $url)"
+    $wp = Get-WebParams
+    try { Invoke-WebRequest @wp -Uri $url -OutFile $out; return }
+    catch {
+      $msg = $_.Exception.Message
+      if ($Yes -or -not [Environment]::UserInteractive) {
+        Fail "Не удалось скачать с GitHub: $msg. Укажите прокси в update.config.psd1 (Proxy = 'http://адрес:порт') или принесите архив и запустите с -SourceZip."
+      }
+      Say "   не удалось скачать: $msg" 'Yellow'
+      Say '   Если на этом сервере интернет только через прокси — введите его адрес,'
+      Say '   например http://proxy.rosstat.local:3128 (как в настройках браузера).'
+      $answer = Read-Host '   Адрес прокси (пусто и Enter — отменить обновление)'
+      if (-not $answer -or -not $answer.Trim()) { Fail 'Скачивание отменено, ничего не изменено.' }
+      $answer = $answer.Trim()
+      if ($answer -notmatch '^[a-z][a-z0-9+.-]*://') { $answer = "http://$answer" }
+      $Config.Proxy = $answer
+      $script:ProxyEntered = $true
+    }
+  }
 }
 
 # Архивы GitHub и git archive хранят идентификатор коммита в комментарии ZIP.
@@ -351,9 +422,11 @@ function Invoke-Update {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     $url = "https://codeload.github.com/$($Config.Repo)/zip/refs/heads/$($Config.Branch)"
     Say "   скачиваю $url"
-    $wp = Get-WebParams
-    try { Invoke-WebRequest @wp -Uri $url -OutFile $zip }
-    catch { Fail "Не удалось скачать с GitHub: $($_.Exception.Message). Проверьте прокси в update.config.psd1 или принесите архив и запустите с -SourceZip." }
+    Invoke-Download $url $zip
+    if ($script:ProxyEntered) {
+      $save = Read-Host "   Прокси сработал. Запомнить его в ${ConfigPath}? Введите Д (или Y) и Enter"
+      if ($save -match '^\s*(д|да|y|yes)\s*$') { Save-ProxyToConfig $Config.Proxy; Say '   запомнено — в следующий раз спрашивать не буду' 'Green' }
+    }
   }
   $newSha = Get-ZipComment $zip
   Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -478,7 +551,8 @@ function Invoke-Update {
       }
       Say "   npm ci в $($p.Dir)"
       $saved = @{ HTTP_PROXY = $env:HTTP_PROXY; HTTPS_PROXY = $env:HTTPS_PROXY }
-      if ($Config.Proxy) { $env:HTTP_PROXY = $Config.Proxy; $env:HTTPS_PROXY = $Config.Proxy }
+      $npmProxy = Get-NpmProxy
+      if ($npmProxy) { $env:HTTP_PROXY = $npmProxy; $env:HTTPS_PROXY = $npmProxy; Say "   npm через прокси $npmProxy" }
       Push-Location $p.Staged
       try {
         $out = & $npm.Source ci --omit=dev --no-audit --no-fund 2>&1
