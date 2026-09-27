@@ -35,24 +35,40 @@ function freePort() {
   });
 }
 
+// GET без проверки сертификата: сервер в тесте может работать по https с самоподписанным.
+function getStatus(url) {
+  const mod = url.startsWith('https:') ? require('node:https') : require('node:http');
+  return new Promise((resolve, reject) => {
+    const req = mod.get(url, { rejectUnauthorized: false }, (res) => { res.resume(); resolve(res.statusCode); });
+    req.on('error', reject);
+  });
+}
+
 async function waitForPing(url, proc, output) {
   const deadline = Date.now() + 15000;
   while (Date.now() < deadline) {
     if (proc.exitCode !== null) throw new Error(`сервер завершился при запуске:\n${output()}`);
     try {
-      const r = await fetch(`${url}/api/ping`);
-      if (r.ok) return;
+      if ((await getStatus(`${url}/api/ping`)) === 200) return;
     } catch { /* ещё не слушает */ }
     await new Promise((r) => setTimeout(r, 100));
   }
   throw new Error(`сервер не поднялся за 15 с:\n${output()}`);
 }
 
-/** Поднять сервер. Возвращает { url, dir, stop }. stop обязательно звать в after(). */
-async function startServer() {
+/**
+ * Поднять сервер. Возвращает { url, dir, stop }. stop обязательно звать в after().
+ * files — что положить рядом с server.js до запуска, например { 'certs/server.pfx': buffer }:
+ * с сертификатом в certs/ сервер поднимается по https, и url будет https://localhost:<порт>.
+ */
+async function startServer({ files = {} } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'iskra-test-'));
   fs.copyFileSync(path.join(SERVER_DIR, 'server.js'), path.join(dir, 'server.js'));
   fs.writeFileSync(path.join(dir, 'bootstrap-admin.js'), `module.exports = ${JSON.stringify(ADMIN)};\n`);
+  for (const [rel, content] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+    fs.writeFileSync(path.join(dir, rel), content);
+  }
 
   const port = await freePort();
   const env = { ...process.env, PORT: String(port), NODE_PATH: path.join(SERVER_DIR, 'node_modules') };
@@ -65,7 +81,8 @@ async function startServer() {
   proc.stdout.on('data', (d) => { log += d; });
   proc.stderr.on('data', (d) => { log += d; });
 
-  const url = `http://127.0.0.1:${port}`;
+  const secure = Object.keys(files).some((f) => f.split(path.sep).join('/') === 'certs/server.pfx');
+  const url = secure ? `https://localhost:${port}` : `http://127.0.0.1:${port}`;
   try {
     await waitForPing(url, proc, () => log);
   } catch (err) {
@@ -161,4 +178,4 @@ async function connect(url, token) {
   };
 }
 
-module.exports = { startServer, request, login, makeUser, upload, connect, ADMIN, PASSWORD };
+module.exports = { startServer, getStatus, request, login, makeUser, upload, connect, ADMIN, PASSWORD };

@@ -10,11 +10,10 @@
   "dependencies": {
     "express": "^4.19.2",
     "ws": "^8.18.0",
-    "better-sqlite3": "^11.3.0",
     "bcryptjs": "^2.4.3",
     "jsonwebtoken": "^9.0.2"
   },
-  "allowScripts": {
-    "better-sqlite3@11.10.0": true
+  "engines": {
+    "node": ">=22.13.0"
   }
 }
