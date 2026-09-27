@@ -32,3 +32,7 @@ MESSENGER/desktop-client/dist/
 MESSENGER/logs/
 # Готовые установщики клиента, которые сервер раздаёт на автообновление
 MESSENGER/updates/
+
+# Служебное обновления сервера (deploy/update.ps1) — на случай запуска из рабочей копии
+.update/
+update.config.psd1
