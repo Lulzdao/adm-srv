@@ -244,11 +244,10 @@ nssm restart SMDR_Web
 `C:\SMDR\web-node\`, не переносите `web-node` в другое место без
 правки пути в `db.js`.
 
-**После `npm install` ошибка компиляции `better-sqlite3` (нужен Visual Studio)**
-→ Значит версия пакета в `package.json` не имеет готового бинарника
-под установленную версию Node.js. Проверьте `node --version` и
-актуальную поддержку `better-sqlite3` на npm — возможно, нужно
-поднять версию пакета в `package.json`.
+**Веб не запускается: `No such built-in module: node:sqlite` или нет `db.function`**
+→ Слишком старый Node.js. База открывается встроенным модулем `node:sqlite`
+(нативных модулей и компиляции больше нет), ему нужен Node 22.13 или новее.
+Проверьте `node --version`.
 
 **Статистика (графики) не грузится**
 → `Chart.js` подключается с локального сервера (`/vendor/chart.umd.js`,
