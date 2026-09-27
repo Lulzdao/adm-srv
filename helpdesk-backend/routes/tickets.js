@@ -146,6 +146,36 @@ module.exports = function ticketRoutes(db) {
   const router = express.Router();
   router.use(requireAuth);
 
+  // Заявка из :id с именем отдела — то, с чем работают проверки прав.
+  //
+  // Раньше этот запрос и три проверки за ним были скопированы в пять
+  // обработчиков, и правка правила доступа в одном из них не доезжала до
+  // остальных. Теперь отказ у всех одинаковый: кривой номер — 400, нет заявки —
+  // 404, нет прав — 403 (см. тест «все маршруты одной заявки отказывают одинаково»).
+  //
+  // Ответ об отказе отправляет сама и возвращает null — вызывающему остаётся
+  // только выйти. `can` — какое право нужно: видеть (по умолчанию) или управлять.
+  function ticketFromParams(req, res, { can = canAccessTicket, denied = "Недостаточно прав" } = {}) {
+    const id = parseTicketId(req.params.id);
+    if (id === null) {
+      res.status(400).json({ error: "Некорректный идентификатор заявки" });
+      return null;
+    }
+    const ticket = db.prepare(`
+      SELECT t.*, c.name AS category FROM tickets t
+      LEFT JOIN categories c ON c.id = t.category_id WHERE t.id = ?
+    `).get(id);
+    if (!ticket) {
+      res.status(404).json({ error: "Заявка не найдена" });
+      return null;
+    }
+    if (!can(req.session.user, ticket)) {
+      res.status(403).json({ error: denied });
+      return null;
+    }
+    return ticket;
+  }
+
   const upload = multer({
     // Имя файла в multipart приходит байтами UTF-8, а busboy по умолчанию
     // читает их как latin1 — и «записка.txt» оседала в базе как
@@ -182,17 +212,8 @@ module.exports = function ticketRoutes(db) {
   // Проверка прав ДО multer: иначе файл успевал записаться на диск ещё до
   // того, как выяснится, что заявки нет или доступа к ней нет.
   function authorizeAttachment(req, res, next) {
-    const id = parseTicketId(req.params.id);
-    if (id === null) return res.status(400).json({ error: "Некорректный идентификатор заявки" });
-
-    const ticket = db.prepare(`
-      SELECT t.*, c.name AS category FROM tickets t
-      LEFT JOIN categories c ON c.id = t.category_id WHERE t.id = ?
-    `).get(id);
-    if (!ticket) return res.status(404).json({ error: "Заявка не найдена" });
-    if (!canAccessTicket(req.session.user, ticket)) {
-      return res.status(403).json({ error: "Недостаточно прав на прикрепление файлов к этой заявке" });
-    }
+    const ticket = ticketFromParams(req, res, { denied: "Недостаточно прав на прикрепление файлов к этой заявке" });
+    if (!ticket) return;
     req.ticket = ticket;
     next();
   }
@@ -378,17 +399,8 @@ module.exports = function ticketRoutes(db) {
   // чужих отделов. Нужен админ в очереди отдела — его добавляют в доменную
   // группу этого отдела, и он появится наравне со всеми.
   router.get("/:id/assignees", (req, res) => {
-    const id = parseTicketId(req.params.id);
-    if (id === null) return res.status(400).json({ error: "Некорректный идентификатор заявки" });
-
-    const ticket = db.prepare(`
-      SELECT t.*, c.name AS category FROM tickets t
-      LEFT JOIN categories c ON c.id = t.category_id WHERE t.id = ?
-    `).get(id);
-    if (!ticket) return res.status(404).json({ error: "Заявка не найдена" });
-    if (!canAccessTicket(req.session.user, ticket)) {
-      return res.status(403).json({ error: "Недостаточно прав" });
-    }
+    const ticket = ticketFromParams(req, res);
+    if (!ticket) return;
     const deptRole = DEPT_ROLE[ticket.category] || DEFAULT_DEPT_ROLE;
     const rows = db.prepare(
       "SELECT id, full_name, role FROM users WHERE roles LIKE ? ORDER BY full_name"
@@ -407,17 +419,10 @@ module.exports = function ticketRoutes(db) {
   // PATCH /api/tickets/:id  { status?, assigned_to?, priority? }
   router.patch("/:id", (req, res) => {
     const user = req.session.user;
-    const id = parseTicketId(req.params.id);
-    if (id === null) return res.status(400).json({ error: "Некорректный идентификатор заявки" });
-
-    const ticket = db.prepare(`
-      SELECT t.*, c.name AS category FROM tickets t
-      LEFT JOIN categories c ON c.id = t.category_id WHERE t.id = ?
-    `).get(id);
-    if (!ticket) return res.status(404).json({ error: "Заявка не найдена" });
-    if (!canManageTicket(user, ticket)) {
-      return res.status(403).json({ error: "Недостаточно прав на изменение этой заявки" });
-    }
+    const ticket = ticketFromParams(req, res, {
+      can: canManageTicket, denied: "Недостаточно прав на изменение этой заявки",
+    });
+    if (!ticket) return;
 
     const { status, assigned_to, priority } = req.body || {};
 
@@ -488,8 +493,9 @@ module.exports = function ticketRoutes(db) {
   router.post("/:id/comments", (req, res) => {
     const user = req.session.user;
     const { text, is_internal } = req.body || {};
-    const id = parseTicketId(req.params.id);
-    if (id === null) return res.status(400).json({ error: "Некорректный идентификатор заявки" });
+    if (parseTicketId(req.params.id) === null) {
+      return res.status(400).json({ error: "Некорректный идентификатор заявки" });
+    }
     if (typeof text !== "string" || !text.trim()) {
       return res.status(400).json({ error: "Текст комментария не может быть пустым" });
     }
@@ -497,14 +503,8 @@ module.exports = function ticketRoutes(db) {
       return res.status(400).json({ error: `Комментарий не может быть длиннее ${COMMENT_MAX} символов` });
     }
 
-    const ticket = db.prepare(`
-      SELECT t.*, c.name AS category FROM tickets t
-      LEFT JOIN categories c ON c.id = t.category_id WHERE t.id = ?
-    `).get(id);
-    if (!ticket) return res.status(404).json({ error: "Заявка не найдена" });
-    if (!canAccessTicket(user, ticket)) {
-      return res.status(403).json({ error: "Недостаточно прав на комментирование этой заявки" });
-    }
+    const ticket = ticketFromParams(req, res, { denied: "Недостаточно прав на комментирование этой заявки" });
+    if (!ticket) return;
 
     // Право пометить заметку внутренней — ровно у того, кто её потом увидит
     // (см. getTicketDetail). Раньше здесь стояло role !== "user", и сотрудник
@@ -572,20 +572,13 @@ module.exports = function ticketRoutes(db) {
   // вообще, каталог uploads/ статикой не раздаётся, и приложенный к заявке
   // файл нельзя было получить обратно ничем, кроме доступа к диску сервера.
   router.get("/:id/attachments/:attachmentId", (req, res) => {
-    const ticketId = parseTicketId(req.params.id);
     const attachmentId = parseTicketId(req.params.attachmentId);
-    if (ticketId === null || attachmentId === null) {
+    if (parseTicketId(req.params.id) === null || attachmentId === null) {
       return res.status(400).json({ error: "Некорректный идентификатор" });
     }
 
-    const ticket = db.prepare(`
-      SELECT t.*, c.name AS category FROM tickets t
-      LEFT JOIN categories c ON c.id = t.category_id WHERE t.id = ?
-    `).get(ticketId);
-    if (!ticket) return res.status(404).json({ error: "Заявка не найдена" });
-    if (!canAccessTicket(req.session.user, ticket)) {
-      return res.status(403).json({ error: "Недостаточно прав для просмотра этой заявки" });
-    }
+    const ticket = ticketFromParams(req, res, { denied: "Недостаточно прав для просмотра этой заявки" });
+    if (!ticket) return;
 
     // Вложение обязательно должно принадлежать именно этой заявке — иначе по
     // ссылке с доступной заявки можно было бы вытащить файл из чужой.
