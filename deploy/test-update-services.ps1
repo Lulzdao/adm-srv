@@ -13,9 +13,9 @@
   Стенд и службы удаляются в конце в любом случае.
 
   Нужно: права администратора, git, python, интернет (npm ci), nssm.exe и Node той же
-  версии, что на сервере (22). На Node 24 «Искра» падает сама — better-sqlite3 11
-  («Assertion failed: (env) != nullptr» при сборке мусора), — и проверка ловила бы
-  это, а не ошибки update.ps1. Переносной Node 22: nodejs.org/dist/latest-v22.x.
+  версии, что на сервере (22) — так проверка ближе всего к нему. (Пока «Искра» в
+  main была на better-sqlite3 11, на Node 24 она падала сама — «Assertion failed:
+  (env) != nullptr» при сборке мусора.) Переносной Node 22: nodejs.org/dist/latest-v22.x.
 
       powershell -ExecutionPolicy Bypass -File deploy\test-update-services.ps1 `
           -Nssm C:\tools\nssm.exe -NodeDir C:\tools\node-v22-win-x64

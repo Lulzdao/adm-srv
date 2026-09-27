@@ -1,5 +1,5 @@
 // Искра — корпоративный мессенджер Липецкстата, сервер на Node.js
-// Стек: Express (HTTP+статика) + ws (реалтайм) + better-sqlite3 (хранилище) + JWT (авторизация)
+// Стек: Express (HTTP+статика) + ws (реалтайм) + node:sqlite (хранилище) + JWT (авторизация)
 //
 // ВАЖНО: это единственный рабочий сервер проекта. Раньше в desktop-client/ лежала ещё одна копия
 // этого файла (более новая, с поддержкой файлов) — именно поэтому загрузка файлов не работала:
@@ -8,7 +8,7 @@
 
 const express = require('express');
 const { WebSocketServer } = require('ws');
-const Database = require('better-sqlite3');
+const { DatabaseSync } = require('node:sqlite');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const http = require('http');
@@ -61,8 +61,32 @@ process.on('unhandledRejection', (reason) => {
 });
 
 // ---------- База данных ----------
-const db = new Database(path.join(__dirname, 'messenger.db'));
-db.pragma('journal_mode = WAL');
+// node:sqlite — встроенный в Node модуль, как у платформы, Сертвивера и журнала звонков. Раньше
+// здесь был better-sqlite3: нативный модуль, собранный под конкретную версию Node. На закрытом
+// контуре его node_modules приходилось возить с машины с той же версией Node, а на Node 24
+// версия 11 падала сама через секунды после старта («Assertion failed: (env) != nullptr» в
+// деструкторе Statement при сборке мусора). Встроенному модулю собирать нечего. Файл базы тот же —
+// формат SQLite один, переносить или конвертировать ничего не нужно. Нужен Node 22.13+.
+const db = new DatabaseSync(path.join(__dirname, 'messenger.db'));
+db.exec('PRAGMA journal_mode = WAL');
+// better-sqlite3 по умолчанию ждал занятую базу 5 секунд, node:sqlite не ждёт вовсе — держим прежнее.
+db.exec('PRAGMA busy_timeout = 5000');
+
+// Транзакция «всё или ничего» — замена db.transaction из better-sqlite3, которого в node:sqlite нет.
+// Возвращает функцию: ошибка внутри откатывает всё, что она успела записать.
+function transaction(fn) {
+  return (...args) => {
+    db.exec('BEGIN');
+    try {
+      const result = fn(...args);
+      db.exec('COMMIT');
+      return result;
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    }
+  };
+}
 // SQLite lower() по умолчанию не понимает кириллицу (только ASCII) — регистронезависимый поиск
 // по-русски без этой функции не работал бы ("Отчёт" не совпадёт с "отчёт"). JS-овский toLowerCase()
 // работает с юникодом корректно.
@@ -227,7 +251,7 @@ db.exec(`
   if (!getSettingRaw('migrated_user_departments')) {
     const rows = db.prepare('SELECT id, department_id FROM users WHERE department_id IS NOT NULL').all();
     const link = db.prepare('INSERT OR IGNORE INTO user_departments (user_id, department_id) VALUES (?, ?)');
-    const run = db.transaction(() => { for (const r of rows) link.run(r.id, r.department_id); });
+    const run = transaction(() => { for (const r of rows) link.run(r.id, r.department_id); });
     run();
     setSettingRaw('migrated_user_departments', '1');
   }
@@ -381,7 +405,7 @@ function normalizeIncomingFiles(rawFiles, user) {
 
 // Реакции — отдельным батч-запросом по набору id (а не JOIN в каждый history-запрос: их SQL и
 // так довольно длинный, а групповая агрегация через GROUP_CONCAT усложнила бы normalizeRow).
-// json_each — встроенная в SQLite (JSON1, включён в бинарник better-sqlite3) функция "развернуть
+// json_each — встроенная в SQLite (JSON1, есть в SQLite, встроенном в Node) функция "развернуть
 // JSON-массив в строки", позволяет передать произвольный список id одним параметром.
 const reactionsForMessages = db.prepare(`
   SELECT message_id, emoji, user_id FROM message_reactions WHERE message_id IN (SELECT value FROM json_each(?))
@@ -451,7 +475,7 @@ const linkUserDepartment = db.prepare('INSERT OR IGNORE INTO user_departments (u
 const updateUserDept = db.prepare('UPDATE users SET department_id = ? WHERE id = ?');
 // Единственное место, где меняется состав отделов сотрудника. Транзакция — чтобы человек ни на
 // мгновение не оказался вообще без отделов, если запрос оборвётся на середине.
-const setUserDepartments = db.transaction((userId, ids) => {
+const setUserDepartments = transaction((userId, ids) => {
   const valid = [...new Set((Array.isArray(ids) ? ids : []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
   clearUserDepartments.run(userId);
   for (const id of valid) linkUserDepartment.run(userId, id);
@@ -1404,7 +1428,7 @@ app.patch('/api/admin/departments/:id', auth, requireCapability('can_admin'), (r
 app.post('/api/admin/departments/reorder', auth, requireCapability('can_admin'), (req, res) => {
   const order = Array.isArray((req.body || {}).order) ? req.body.order : [];
   if (!order.length) return res.status(400).json({ error: 'Пустой список порядка' });
-  const tx = db.transaction((ids) => { ids.forEach((id, i) => setDepartmentOrder.run(i, Number(id))); });
+  const tx = transaction((ids) => { ids.forEach((id, i) => setDepartmentOrder.run(i, Number(id))); });
   tx(order);
   broadcastUsersChanged();
   res.json({ ok: true });
@@ -2227,7 +2251,7 @@ wss.on('connection', (ws, req) => {
     try { msg = JSON.parse(raw); } catch { return; }
     // Всё тело обработчика — под try: исключение здесь ничем не перехватывается и убивает процесс.
     // Достаточно было прислать, например, {"type":"send","to":{},"text":"x"} — объект вместо числа
-    // роняет привязку параметров в better-sqlite3, и сервер выключался. То есть любой вошедший
+    // роняет привязку параметров в драйвере базы, и сервер выключался. То есть любой вошедший
     // сотрудник (или тот, кто добрался до порта) мог погасить мессенджер одной строкой.
     try {
       handleClientMessage(ws, user, msg);
