@@ -362,3 +362,29 @@ test("заявки со снятыми статусами переводятся
   ], "иначе заявка со снятым статусом не попадёт ни в текущие, ни в архив");
   assert.strictEqual(история.n, 3, "история переходов — летопись, переписывать её нельзя");
 });
+
+// Все маршруты, работающие с одной заявкой, отказывают одинаково: кривой номер —
+// 400, нет такой заявки — 404, нет прав — 403, и всегда JSON с текстом ошибки.
+// Держит в согласии пять обработчиков, у которых загрузка заявки и проверка прав
+// общие.
+test("все маршруты одной заявки отказывают одинаково: 400, 404, 403", async (t) => {
+  const { app, ticketId } = await stand(t);
+  const чужой = client(app.url);
+  await чужой.login("!чужой");
+
+  const маршруты = [
+    ["get", (id) => `/api/tickets/${id}/assignees`],
+    ["patch", (id) => `/api/tickets/${id}`, { priority: "high" }],
+    ["post", (id) => `/api/tickets/${id}/comments`, { text: "уточнение" }],
+    ["post", (id) => `/api/tickets/${id}/attachments`, {}],
+    ["get", (id) => `/api/tickets/${id}/attachments/1`],
+  ];
+
+  for (const [метод, адрес, тело] of маршруты) {
+    for (const [id, ждём] of [["abc", 400], ["999999", 404], [ticketId, 403]]) {
+      const r = await чужой[метод](адрес(id), тело);
+      assert.strictEqual(r.status, ждём, `${метод.toUpperCase()} ${адрес(id)}: ${r.text}`);
+      assert.ok(r.json && typeof r.json.error === "string", `${адрес(id)}: ответ не JSON с ошибкой`);
+    }
+  }
+});

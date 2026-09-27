@@ -122,3 +122,73 @@ test("без пароля учётка не создаётся вовсе", (t) 
   ensureLocalAccounts(db);
   assert.equal(db.prepare("SELECT COUNT(*) c FROM users").get().c, 0);
 });
+
+// ============================================================================
+//  .env — единственный источник пароля аварийных учёток
+//
+//  Хэш из .env раньше попадал в базу только при СОЗДАНИИ учётки и дальше не трогался. Отсюда две
+//  дыры: убрали LOCAL_ADMIN_PASSWORD_HASH из .env — а вход по старому паролю работает (строка с
+//  хэшем осталась в базе); сменили пароль в .env — а старый пароль действует по-прежнему. Теперь
+//  хэш сверяется с .env при каждом запуске, а учётка без хэша в .env войти не может.
+// ============================================================================
+
+const bcrypt = require("bcrypt");
+const { startApp } = require("./helpers/httpApp");
+
+/** «Перезапуск» с новым .env: те же переменные, свежий конфиг, та же база. */
+function restartWith(t, db, env) {
+  for (const [k, v] of Object.entries(env)) {
+    const saved = process.env[k];
+    t.after(() => { if (saved === undefined) delete process.env[k]; else process.env[k] = saved; });
+    if (v === undefined) delete process.env[k]; else process.env[k] = v;
+  }
+  delete require.cache[require.resolve("../config/config")];
+  delete require.cache[require.resolve("../db/init")];
+  require("../db/init").ensureLocalAccounts(db);
+}
+
+async function canLogin(t, db, login, password) {
+  const app = await startApp(db);
+  t.after(() => app.close());
+  const r = await fetch(`${app.url}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mode: "local", login, password }),
+  });
+  if (r.status === 200) return true;
+  assert.equal(r.status, 401, await r.text());
+  return false;
+}
+
+test("хэш убрали из .env — аварийный вход закрыт, хотя учётка в базе осталась", async (t) => {
+  const { db, ensureLocalAccounts } = withLocalAccounts(t, {
+    LOCAL_ADMIN_PASSWORD_HASH: bcrypt.hashSync("старый-пароль-1", 4),
+  });
+  ensureLocalAccounts(db);
+  assert.equal(await canLogin(t, db, "!admin", "старый-пароль-1"), true);
+
+  restartWith(t, db, { LOCAL_ADMIN_PASSWORD_HASH: "" });
+  assert.equal(await canLogin(t, db, "!admin", "старый-пароль-1"), false,
+    "без хэша в .env аварийная учётка не должна пускать никого");
+});
+
+test("пароль сменили в .env — старый перестаёт действовать", async (t) => {
+  const { db, ensureLocalAccounts } = withLocalAccounts(t, {
+    LOCAL_ADMIN_PASSWORD_HASH: bcrypt.hashSync("старый-пароль-1", 4),
+  });
+  ensureLocalAccounts(db);
+
+  restartWith(t, db, { LOCAL_ADMIN_PASSWORD_HASH: bcrypt.hashSync("новый-пароль-2", 4) });
+  assert.equal(await canLogin(t, db, "!admin", "старый-пароль-1"), false);
+  assert.equal(await canLogin(t, db, "!admin", "новый-пароль-2"), true);
+});
+
+test("логин аварийной учётки переименовали — прежний больше не входит", async (t) => {
+  const hash = bcrypt.hashSync("пароль-3", 4);
+  const { db, ensureLocalAccounts } = withLocalAccounts(t, { LOCAL_ADMIN_PASSWORD_HASH: hash });
+  ensureLocalAccounts(db);
+
+  restartWith(t, db, { LOCAL_ADMIN_LOGIN: "!аварийный", LOCAL_ADMIN_PASSWORD_HASH: hash });
+  assert.equal(await canLogin(t, db, "!admin", "пароль-3"), false, "осиротевшая учётка с паролем — та же дыра");
+  assert.equal(await canLogin(t, db, "!аварийный", "пароль-3"), true);
+});

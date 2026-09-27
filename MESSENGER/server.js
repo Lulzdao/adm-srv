@@ -165,6 +165,17 @@ db.exec(`
   // и вся инфраструктура ленты/истории/поиска работает для него без единой правки.
   if (!cols.includes('department_id')) db.exec('ALTER TABLE broadcasts ADD COLUMN department_id INTEGER');
 }
+// Кто загрузил файл. Нужен для права на скачивание (см. canAccessFile): раньше токен на скачивание
+// выдавался на любой файл любому вошедшему, и знания имени файла на диске хватало, чтобы открыть
+// вложение из чужой личной переписки. У файлов, загруженных до появления таблицы, владельца нет —
+// к ним доступ только через сообщения и объявления, в которых они лежат.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS uploads (
+    disk_name TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+`);
 
 // Права — два независимых флага прямо на пользователе: can_broadcast (может рассылать всем) и
 // can_admin (доступ к веб-панели). Раздаются только персонально, не на отдел — так исключений и
@@ -297,10 +308,63 @@ function fileExistsForUrl(url) {
   return !!diskName && uploadedFileNames().has(diskName);
 }
 
+// ---------- Право на файл ----------
+// Файл доступен тому, кто его загрузил, и тем, кто может прочитать сообщение или объявление, в
+// котором он лежит. Администратор видит всё — он и так читает любую переписку из веб-панели.
+//
+// Проверка нужна в двух местах, и второе важнее, чем кажется: список файлов в сообщении присылает
+// клиент. Если бы при отправке брали любой url, достаточно было бы отправить самому себе сообщение
+// с чужим файлом — и право «файл лежит в моём сообщении» появилось бы из ничего. Поэтому при
+// отправке файлы проходят ту же проверку (normalizeIncomingFiles ниже): переслать можно только то,
+// что уже доступно.
+
+// Имя файла на диске из url вида /uploads/<имя>. Всё прочее — не наш файл.
+function diskNameFromUrl(url) {
+  const m = /^\/uploads\/([^/\\?#]+)$/.exec(String(url || ''));
+  return m ? m[1] : null;
+}
+
+const insertUpload = db.prepare('INSERT OR IGNORE INTO uploads (disk_name, user_id, created_at) VALUES (?, ?, ?)');
+const uploadOwner = db.prepare('SELECT user_id FROM uploads WHERE disk_name = ?');
+// instr, а не LIKE: в имени файла бывают % и _, которые LIKE понял бы как шаблон. Внутри files_json
+// url записан строкой JSON — с кавычками по краям, поэтому ищем его вместе с ними: так имя «a.txt»
+// не совпадёт с «1a.txt». Индекса по файлам нет, запрос перебирает сообщения с вложениями, но зовут
+// его только при скачивании и при отправке файла — не на каждый запрос истории.
+const messagesWithFile = db.prepare(`
+  SELECT from_id, to_id, room FROM messages
+  WHERE (files_json IS NOT NULL AND instr(files_json, @quoted) > 0) OR file_url = @url
+`);
+const broadcastsWithFile = db.prepare(`
+  SELECT from_id, department_id FROM broadcasts
+  WHERE files_json IS NOT NULL AND instr(files_json, @quoted) > 0
+`);
+
+// Может ли человек прочитать это сообщение: комната — по правилам комнаты, личное — только его
+// участники.
+function canReadMessage(user, m) {
+  if (m.room) return canReadRoom(user, m.room);
+  return m.from_id === user.id || m.to_id === user.id;
+}
+
+function canAccessFile(user, diskName) {
+  if (user.can_admin) return true;
+  const owner = uploadOwner.get(diskName);
+  if (owner && owner.user_id === user.id) return true;
+  const url = `/uploads/${diskName}`;
+  const quoted = JSON.stringify(url);
+  if (messagesWithFile.all({ quoted, url }).some((m) => canReadMessage(user, m))) return true;
+  return broadcastsWithFile.all({ quoted }).some((b) =>
+    b.department_id === null || b.from_id === user.id || !!isDepartmentMember.get(user.id, b.department_id));
+}
+
 // Список файлов, пришедший от клиента (в сообщении или в рассылке) — приводим к безопасному виду:
 // только объекты с url, не больше 20 штук, все поля обрезаны по длине и приведены к нужному типу.
 // Раньше это было продублировано в двух местах слово в слово.
-function normalizeIncomingFiles(rawFiles) {
+//
+// Файлы, на которые у отправителя нет права, молча отбрасываются (см. «Право на файл» выше), как и
+// url не вида /uploads/<имя> — клиент других не присылает, а чужая ссылка в карточке файла
+// выглядела бы вложением с нашего сервера.
+function normalizeIncomingFiles(rawFiles, user) {
   if (!Array.isArray(rawFiles)) return [];
   return rawFiles.slice(0, 20)
     .filter((f) => f && typeof f === 'object' && typeof f.url === 'string' && f.url)
@@ -308,7 +372,11 @@ function normalizeIncomingFiles(rawFiles) {
       url: f.url.slice(0, 300),
       name: (typeof f.name === 'string' && f.name ? f.name : 'файл').slice(0, 200),
       size: Number.isFinite(Number(f.size)) ? Number(f.size) : 0,
-    }));
+    }))
+    .filter((f) => {
+      const diskName = diskNameFromUrl(f.url);
+      return diskName !== null && canAccessFile(user, diskName);
+    });
 }
 
 // Реакции — отдельным батч-запросом по набору id (а не JOIN в каждый history-запрос: их SQL и
@@ -447,7 +515,7 @@ function requireCapability(cap) {
 }
 
 const insertMessage = db.prepare('INSERT INTO messages (from_id, room, to_id, text, files_json, created_at, reply_to_id, reply_snapshot) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
-const getMessageForReply = db.prepare('SELECT id, from_id, text FROM messages WHERE id = ?');
+const getMessageForReply = db.prepare('SELECT id, from_id, to_id, room, text FROM messages WHERE id = ?');
 // Реакции — WS-обработчик 'react' ниже: чей маршрут (комната/личка) у сообщения, узнаём отдельным
 // запросом, чтобы разослать обновление тем же адресатам, что и само сообщение.
 const getMessageRoute = db.prepare('SELECT id, from_id, to_id, room FROM messages WHERE id = ?');
@@ -669,6 +737,7 @@ app.post('/api/upload', auth, (req, res, next) => {
   }
   const safeName = `${Date.now()}-${crypto.randomBytes(4).toString('hex')}-${originalName}`;
   fs.writeFileSync(path.join(uploadsDir, safeName), req.body);
+  insertUpload.run(safeName, req.user.id, Date.now()); // владелец — для права на скачивание
   invalidateUploadsCache(); // иначе только что загруженный файл до 2 секунд считался бы удалённым
   res.json({ url: `/uploads/${safeName}`, name: originalName, size: req.body.length });
 });
@@ -715,6 +784,10 @@ app.patch('/api/admin/upload-settings', auth, requireCapability('can_admin'), (r
 app.get('/api/download-token', auth, (req, res) => {
   const diskName = String(req.query.path || '').split('/').pop();
   if (!diskName) return res.status(400).json({ error: 'Не указан файл' });
+  if (!canAccessFile(req.user, diskName)) {
+    logServer('WARN', 'download_denied', { userId: req.user.id, diskName, ip: req.ip });
+    return res.status(403).json({ error: 'Нет доступа к этому файлу' });
+  }
   const token = jwt.sign({ purpose: 'download', diskName }, SECRET, { expiresIn: '60s' });
   res.json({ token });
 });
@@ -738,13 +811,18 @@ app.get('/uploads/:diskName', (req, res) => {
 // ---------- Rate-limiting против перебора паролей ----------
 // Два независимых счётчика, оба — простые in-memory Map с ленивым протуханием (для 20-200 человек
 // в локальной сети выделенный npm-пакет вроде express-rate-limit избыточен):
-//  1) ipAttempts — общий поток запросов с одного IP на /api/login и /api/register (защита от
-//     заливки запросами вообще, не только подбора пароля к конкретному логину);
+//  1) ipRateLimit — поток запросов с одного IP на /api/login и на /api/register (защита от
+//     заливки запросами вообще, не только подбора пароля к конкретному логину). Счётчик у каждого
+//     маршрута СВОЙ: раньше Map была одна на оба, а пределы разные (30 входов и 10 регистраций) —
+//     и после десяти обычных утренних входов из кабинета за одним NAT регистрация с этого адреса
+//     закрывалась на час;
 //  2) loginFails — счётчик подряд неверных паролей для КОНКРЕТНОГО логина: после нескольких
 //     промахов аккаунт временно блокируется, независимо от того, с какого IP или через сколько
 //     разных IP идёт перебор.
-const ipAttempts = new Map(); // ip -> { count, resetAt }
+const ipLimiters = []; // по Map на каждый ограничитель: ip -> { count, resetAt }
 function ipRateLimit({ windowMs, max }) {
+  const ipAttempts = new Map();
+  ipLimiters.push(ipAttempts);
   return (req, res, next) => {
     const now = Date.now();
     let entry = ipAttempts.get(req.ip);
@@ -782,10 +860,12 @@ function registerLoginFail(username) {
 function clearLoginFails(username) {
   loginFails.delete(String(username || '').toLowerCase());
 }
-// Периодическая уборка протухших записей, чтобы обе Map не росли бесконечно.
+// Периодическая уборка протухших записей, чтобы счётчики не росли бесконечно.
 setInterval(() => {
   const now = Date.now();
-  for (const [k, v] of ipAttempts) if (v.resetAt < now) ipAttempts.delete(k);
+  for (const ipAttempts of ipLimiters) {
+    for (const [k, v] of ipAttempts) if (v.resetAt < now) ipAttempts.delete(k);
+  }
   for (const [k, v] of loginFails) {
     const stale = v.lockedUntil ? v.lockedUntil < now : now - v.windowStart > LOGIN_FAIL_WINDOW_MS;
     if (stale) loginFails.delete(k);
@@ -1141,7 +1221,7 @@ app.get('/api/broadcasts/days', auth, (req, res) => {
 // список людей открыт), а экономит десяток одинаковых сообщений. Отправитель везде подписан именем.
 app.post('/api/broadcast', auth, (req, res) => {
   const text = String((req.body || {}).text || '').slice(0, 4000).trim();
-  const files = normalizeIncomingFiles((req.body || {}).files);
+  const files = normalizeIncomingFiles((req.body || {}).files, req.user);
   const rawDepartment = (req.body || {}).departmentId;
   if (!text && !files.length) return res.status(400).json({ error: 'Пустая рассылка' });
 
@@ -2280,7 +2360,7 @@ function handleClientMessage(ws, user, msg) {
     // Несколько файлов в одном сообщении: msg.files — массив; msg.file (в ед. числе) — старый формат,
     // поддерживаем на случай, если где-то остался не обновлённый клиент.
     const rawFiles = Array.isArray(msg.files) ? msg.files : (msg.file ? [msg.file] : []);
-    const files = normalizeIncomingFiles(rawFiles);
+    const files = normalizeIncomingFiles(rawFiles, user);
     if (!text && !files.length) return;
     const filesJson = files.length ? JSON.stringify(files) : null;
 
@@ -2292,7 +2372,9 @@ function handleClientMessage(ws, user, msg) {
     const replyToRaw = toUserId(msg.replyTo); // тот же критерий: целое положительное
     if (replyToRaw) {
       const target = getMessageForReply.get(replyToRaw);
-      if (target) {
+      // Только то, что отправитель и так может прочитать: снимок текста уходит в ответ всем
+      // адресатам, и по чужому id иначе вытаскивалось начало сообщения из чужой личной переписки.
+      if (target && canReadMessage(user, target)) {
         const targetUser = getUserById.get(target.from_id);
         replyToId = target.id;
         replyOut = { id: target.id, from_user: targetUser ? targetUser.display_name : '?', text: (target.text || '').slice(0, 300) };

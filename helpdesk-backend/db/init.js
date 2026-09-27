@@ -147,10 +147,29 @@ function migrateNotifications(db) {
 // Посев локальных аварийных аккаунтов ("break glass"), на случай если оба
 // домена недоступны. Пароли задаются заранее через
 // scripts/set-local-admin-password.js и хранятся только как bcrypt-хэш.
+//
+// Пароль аварийной учётки живёт ТОЛЬКО в .env, база — лишь его копия, и сверяется
+// она на каждом старте. Раньше хэш попадал в базу один раз, при создании учётки,
+// и дальше не трогался: убрали LOCAL_ADMIN_PASSWORD_HASH из .env — а вход по
+// старому паролю работал (строка с хэшем осталась); сменили пароль — действовал
+// и старый; переименовали логин — прежний оставался рабочей учёткой с паролем.
+// Теперь локальная учётка без хэша в .env войти не может: вход проверяет
+// local_password_hash, и здесь он обнуляется.
 function ensureLocalAccounts(db) {
+  const enabled = new Set(config.localAccounts.filter((a) => a.passwordHash).map((a) => a.login));
+  const stale = db.prepare(
+    "SELECT id, ad_login FROM users WHERE auth_type = 'local' AND local_password_hash IS NOT NULL"
+  ).all().filter((u) => !enabled.has(u.ad_login));
+  for (const u of stale) {
+    db.prepare("UPDATE users SET local_password_hash = NULL WHERE id = ?").run(u.id);
+    console.log(`Аварийный вход ${u.ad_login} закрыт: в .env для него не задан хэш пароля`);
+  }
+
   for (const acc of config.localAccounts) {
     if (!acc.passwordHash) continue;
-    const existing = db.prepare("SELECT id, email, is_admin, roles FROM users WHERE ad_login = ?").get(acc.login);
+    const existing = db.prepare(
+      "SELECT id, email, is_admin, roles, local_password_hash FROM users WHERE ad_login = ?"
+    ).get(acc.login);
     const wantAdmin = acc.isAdmin ? 1 : 0;
     // Список отделов у локальной учётки выводится из её роли: домена у неё нет,
     // а очередь своего отдела она видеть должна.
@@ -175,6 +194,10 @@ function ensureLocalAccounts(db) {
       if (Number(existing.is_admin || 0) !== wantAdmin) {
         db.prepare("UPDATE users SET is_admin = ? WHERE id = ?").run(wantAdmin, existing.id);
         console.log(`Локальному аккаунту ${acc.login} ${wantAdmin ? "выданы" : "сняты"} права администратора`);
+      }
+      if (existing.local_password_hash !== acc.passwordHash) {
+        db.prepare("UPDATE users SET local_password_hash = ? WHERE id = ?").run(acc.passwordHash, existing.id);
+        console.log(`Пароль локального аккаунта ${acc.login} взят из .env`);
       }
       continue;
     }
