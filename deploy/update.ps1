@@ -102,7 +102,7 @@ $DepDirs = @('helpdesk-backend', 'CERTVIEWER', 'SMDR\web-node', 'MESSENGER')
 # Страховка: даже если такое окажется в архиве, не записывать и не удалять.
 $Protected = @(
   '(^|\\)\.env$', '\.db(-shm|-wal)?$', '\.log$', '(^|\\)bootstrap-admin\.js$', '(^|\\)update\.config\.psd1$',
-  '(^|\\)(node_modules|uploads|data|logs|certs|updates|dist|\.update|\.claude)(\\|$)'
+  '(^|\\)(node_modules|uploads|data|logs|certs|updates|backups|dist|\.update|\.claude)(\\|$)'
 )
 # Документация и тесты: их изменение не требует перезапуска службы.
 $NoRestart = @('\.(md|txt|pdf)$', '(^|\\)test(\\|$)', '(^|\\)\.env\.example$', '(^|\\)public\\')
