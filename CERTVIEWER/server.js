@@ -335,6 +335,10 @@ const upload = multer({
 });
 
 app.disable('x-powered-by');
+// За платформой — только запросы с самого сервера и не со сторонних сайтов
+// (см. localOnly.js). В автономном режиме модуль слушает сеть и сам спрашивает
+// пароль, там Host — настоящее имя сервера, и проверка не нужна.
+if (BEHIND_GATEWAY) app.use(require('./localOnly').localOnly);
 app.use(express.json({ limit: '32kb' }));
 app.use(express.urlencoded({ extended: false, limit: '32kb' }));
 

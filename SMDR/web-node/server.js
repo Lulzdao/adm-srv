@@ -13,6 +13,8 @@ const PORT = process.env.PORT || 3102;
 const BIND_HOST = '127.0.0.1';
 
 app.disable('x-powered-by');
+// Только запросы с самого сервера и не со сторонних сайтов — см. localOnly.js.
+app.use(require('./localOnly').localOnly);
 app.set('view engine', 'ejs');
 app.use(express.urlencoded({ extended: true, limit: '32kb' }));
 app.use(express.static(path.join(__dirname, 'public')));
