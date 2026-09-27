@@ -99,8 +99,9 @@ Workflow({ scriptPath: ".claude/workflows/audit-full.js" })   # добор ше�
    (31%), `services/ldapAuth.js` (27%), `services/userStore.js` (15%).
 7. **Решить судьбу второго канала к модулям:** `services/moduleClient.js` ходит
    в модули напрямую, минуя прокси и авторизацию.
-8. **Ротация:** `collector.log` растёт без предела и дублирует каждую строку;
-   `notification_events` и `calls` растут вечно.
+8. **Ротация:** ~~`collector.log` растёт без предела и дублирует каждую строку~~ —
+   сделано: журнал по месяцам (`collector-ГГГГ-ММ.log`), звонок в нём одной строкой.
+   Таблицы `notification_events` и `calls` по-прежнему растут вечно.
 
 ---
 

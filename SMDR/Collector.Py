@@ -116,8 +116,39 @@ if not HOST or not os.environ.get('SMDR_PASSWORD'):
         'и пароль SMDR (см. SMDR/README.md).'
     )
 
-logging.basicConfig(filename='collector.log', level=logging.INFO,
-                     format='%(asctime)s %(message)s')
+class MonthlyFileHandler(logging.FileHandler):
+    """Журнал по месяцам: collector-2026-09.log, collector-2026-10.log, ...
+
+    Раньше всё писалось в один collector.log, который рос без предела: за год
+    работы АТС это сотни мегабайт, открыть их блокнотом уже не выходит, а
+    нужное ищется в последних днях. Теперь в файле ровно один календарный
+    месяц; первая запись нового месяца сама открывает новый файл. Старые файлы
+    не удаляются — сколько их хранить, решает администратор.
+
+    Месяц берётся из времени самой записи, а не из «сейчас»: так строка,
+    созданная в 23:59:59 последнего дня, не уедет в следующий месяц, если до
+    файла доберётся мгновением позже.
+    """
+
+    def __init__(self, pattern='collector-{}.log'):
+        self.pattern = pattern
+        self.month = datetime.now().strftime('%Y-%m')
+        super().__init__(pattern.format(self.month), delay=True)
+
+    def emit(self, record):
+        month = datetime.fromtimestamp(record.created).strftime('%Y-%m')
+        if month != self.month:
+            # emit вызывается под блокировкой обработчика, поэтому смена файла
+            # не пересечётся с записью из другого потока.
+            self.close()
+            self.month = month
+            self.baseFilename = os.path.abspath(self.pattern.format(month))
+        super().emit(record)
+
+
+_log_handler = MonthlyFileHandler()
+_log_handler.setFormatter(logging.Formatter('%(asctime)s %(message)s'))
+logging.basicConfig(level=logging.INFO, handlers=[_log_handler])
 
 for _note in ENV_NOTES:
     logging.warning(_note)
@@ -270,7 +301,7 @@ def save_call(conn, values, text):
     Раньше исключение отсюда улетало в главный цикл: тот закрывал сокет и ждал
     пять секунд до переподключения, а всё, что АТС отдавала за это время,
     пропадало без следа. Теперь неудачная запись стоит одной строки в журнале —
-    и сама строка SMDR там уже есть (её пишет RAW выше), так что данные можно
+    «НЕ ЗАПИСАНО В БАЗУ» вместе с самой строкой SMDR, так что данные можно
     восстановить из лога.
     """
     try:
@@ -467,12 +498,14 @@ def connect_and_listen(conn, недавние=None):
             if secret and secret in text:
                 text = text.replace(secret, '***')
 
-            logging.info(f"RAW: {text}")
+            # Отдельной строки «RAW» с принятым текстом больше нет: тот же текст
+            # стоит в CALL, ПОВТОР или НЕ РАСПОЗНАНО ниже, и каждый звонок
+            # ложился в журнал дважды.
 
             # Повторная выдача буфера АТС: та же строка уже в базе — не кладём
             # её второй раз. Именно так один звонок размножался на десятки.
             if text in недавние:
-                logging.info("ПОВТОР — уже есть в базе, пропускаем")
+                logging.info(f"ПОВТОР — уже есть в базе, пропускаем: {text}")
                 continue
 
             parsed = parse_line(text)
