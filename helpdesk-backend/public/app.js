@@ -780,6 +780,26 @@ function renderModule(main, mod, view) {
     </div>`;
 }
 
+// Где человек был в списке: страница, открытые/закрытые, поиск, отдел — отдельно для
+// «Входящих» и «Моих». Открыл заявку с пятой страницы, вернулся — снова на пятой, а не
+// на первой. Живёт, пока открыта вкладка: после обновления страницы начинать с начала
+// естественно.
+const listMemory = {};
+
+// Номера страниц для переключателя: первая, последняя и соседи текущей, между ними —
+// многоточие. 1 … 4 5 [6] 7 8 … 20 — а не двадцать кнопок в ряд.
+function pageNumbers(current, pages) {
+  const set = new Set([1, pages]);
+  for (let p = current - 2; p <= current + 2; p++) if (p >= 1 && p <= pages) set.add(p);
+  const sorted = [...set].sort((a, b) => a - b);
+  const out = [];
+  sorted.forEach((p, i) => {
+    if (i > 0 && p - sorted[i - 1] > 1) out.push("…");
+    out.push(p);
+  });
+  return out;
+}
+
 async function renderList(main, opts = {}) {
   clearViewPoll();
   const u = state.user;
@@ -791,8 +811,10 @@ async function renderList(main, opts = {}) {
   // так отдаёт очередь одного его отдела, выбирать не из чего.
   const showDeptFilter = isAdmin && scope === "inbox";
 
-  let closed = false; // открытые/закрытые — переключатель внутри страницы, не выпадающий список
-  let q = "";
+  const memory = listMemory[scope] || (listMemory[scope] = { page: 1, closed: false, q: "", dept: "" });
+  let closed = memory.closed; // открытые/закрытые — переключатель внутри страницы, не выпадающий список
+  let q = memory.q;
+  let page = memory.page;
 
   const titles = {
     inbox: isAdmin || isExecutor ? "Входящие заявки" : "Заявки",
@@ -817,13 +839,13 @@ async function renderList(main, opts = {}) {
     <div class="page">
       <div class="filters-row">
         <div class="toggle-group">
-          <button class="toggle-btn active" data-closed="0">Открытые</button>
-          <button class="toggle-btn" data-closed="1">Закрытые</button>
+          <button class="toggle-btn${closed ? "" : " active"}" data-closed="0">Открытые</button>
+          <button class="toggle-btn${closed ? " active" : ""}" data-closed="1">Закрытые</button>
         </div>
         ${showDeptFilter ? `
         <select class="input" id="deptFilter">
           <option value="">Все отделы</option>
-          ${state.departments.map(d => `<option>${esc(d.name)}</option>`).join("")}
+          ${state.departments.map(d => `<option${d.name === memory.dept ? " selected" : ""}>${esc(d.name)}</option>`).join("")}
         </select>` : ""}
         <div class="filters-count" id="countLabel">Загрузка…</div>
       </div>
@@ -835,7 +857,36 @@ async function renderList(main, opts = {}) {
         </div>
         <div id="ticketRows"><div class="spinner">Загрузка заявок…</div></div>
       </div>
+      <div class="pager" id="pager"></div>
     </div>`;
+  document.getElementById("searchInput").value = q;
+
+  const remember = () => {
+    memory.page = page; memory.closed = closed; memory.q = q;
+    if (showDeptFilter) memory.dept = document.getElementById("deptFilter").value;
+  };
+
+  const renderPager = (pages) => {
+    const el = document.getElementById("pager");
+    if (!el) return;
+    if (pages <= 1) { el.innerHTML = ""; return; }
+    const btn = (label, target, extra = "") =>
+      `<button class="btn btn-ghost pager-btn${extra}" data-page="${target}"${target === page ? ' aria-current="page"' : ""}>${label}</button>`;
+    el.innerHTML =
+      (page > 1 ? btn("‹", page - 1, " pager-step") : "") +
+      pageNumbers(page, pages).map(p => p === "…"
+        ? `<span class="pager-gap">…</span>`
+        : btn(String(p), p, p === page ? " pager-current" : "")).join("") +
+      (page < pages ? btn("›", page + 1, " pager-step") : "");
+    el.querySelectorAll(".pager-btn").forEach(b => {
+      b.onclick = () => {
+        page = Number(b.dataset.page);
+        load();
+        main.scrollTop = 0;
+        window.scrollTo(0, 0);
+      };
+    });
+  };
 
   const load = async () => {
     const params = new URLSearchParams();
@@ -846,15 +897,21 @@ async function renderList(main, opts = {}) {
       const dept = document.getElementById("deptFilter").value;
       if (dept) params.set("category", dept);
     }
+    params.set("page", String(page));
     try {
-      const { tickets, total, limit } = await api("/tickets?" + params.toString());
+      const res = await api("/tickets?" + params.toString());
+      const { tickets, total, limit } = res;
+      // Страницу мог поправить сервер (заявок стало меньше — пятой уже нет).
+      page = res.page || 1;
+      remember();
       const rowsEl = document.getElementById("ticketRows");
-      // Сервер отдаёт первые `limit` строк и полное число. Пишем и то и другое:
-      // молча показать двести из тысячи — значит убедить человека, что
-      // остальных нет. Сузить выборку можно фильтрами и поиском.
+      if (!rowsEl) return; // пока ждали ответ, человек ушёл в другой раздел
+      const from = (page - 1) * limit + 1;
+      const to = from + tickets.length - 1;
       document.getElementById("countLabel").textContent = total > tickets.length
-        ? `${tickets.length} из ${total} заявок — уточните фильтр или поиск`
-        : `${total} заявок`;
+        ? `Заявок: ${total} · показаны ${from}–${to}`
+        : `Заявок: ${total}`;
+      renderPager(res.pages || 1);
       if (tickets.length === 0) {
         rowsEl.innerHTML = `<div class="empty-state">Ничего не найдено.</div>`;
         return;
@@ -897,18 +954,22 @@ async function renderList(main, opts = {}) {
     }
   };
 
+  // Сменили условие отбора — начинаем с первой страницы: пятая страница прежнего
+  // списка к новому отношения не имеет.
   main.querySelectorAll(".toggle-btn").forEach(btn => {
     btn.onclick = () => {
       closed = btn.dataset.closed === "1";
       main.querySelectorAll(".toggle-btn").forEach(b => b.classList.remove("active"));
       btn.classList.add("active");
+      page = 1;
       load();
     };
   });
-  if (showDeptFilter) document.getElementById("deptFilter").onchange = load;
+  if (showDeptFilter) document.getElementById("deptFilter").onchange = () => { page = 1; load(); };
   let searchTimer;
   document.getElementById("searchInput").oninput = () => {
     q = document.getElementById("searchInput").value;
+    page = 1;
     clearTimeout(searchTimer); searchTimer = setTimeout(load, 300);
   };
 
