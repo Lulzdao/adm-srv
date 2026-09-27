@@ -124,3 +124,53 @@ test("задание планировщика: раз в месяц, видно 
   assert.strictEqual(s.last.ok, true);
   assert.ok(s.ranWindow, "месяц отмечен выполненным");
 });
+
+// ============================================================================
+//  Куда класть копии — из панели
+// ============================================================================
+
+test("папка для копий: панель важнее .env, .env важнее папки по умолчанию", (t) => {
+  withEnv(t, { BACKUP_DIR: String.raw`C:\из-env\backups` });
+  const { db, cleanup } = freshDb();
+  t.after(cleanup);
+  const backup = require("../services/backup");
+  assert.deepStrictEqual(backup.backupDir(db), { dir: String.raw`C:\из-env\backups`, source: "env" });
+  backup.setBackupDir(db, String.raw`\\сервер\копии\adm-srv`);
+  assert.deepStrictEqual(backup.backupDir(db), { dir: String.raw`\\сервер\копии\adm-srv`, source: "panel" });
+  backup.setBackupDir(db, "");
+  delete process.env.BACKUP_DIR;
+  assert.strictEqual(backup.backupDir(db).source, "default");
+});
+
+test("проверка папки: пишет пробный файл и убирает его; относительный путь и нет диска — понятный отказ", (t) => {
+  const { cleanup } = freshDb();
+  t.after(cleanup);
+  const backup = require("../services/backup");
+  const dir = path.join(tempDir("adm-srv-backup-check-"), "вложенная", "папка");
+  t.after(() => fs.rmSync(path.dirname(path.dirname(dir)), { recursive: true, force: true }));
+
+  assert.deepStrictEqual(backup.checkDir(dir), { ok: true });
+  assert.deepStrictEqual(fs.readdirSync(dir), [], "пробный файл не остаётся");
+
+  const rel = backup.checkDir(String.raw`backups\копии`);
+  assert.strictEqual(rel.ok, false);
+  assert.match(rel.error, /полный путь/);
+
+  // Буква, которой на этой машине нет, — как сетевой диск, которого не видит служба.
+  const free = "QRSTUVWXYZ".split("").find((l) => !fs.existsSync(`${l}:/`));
+  if (free) {
+    const r = backup.checkDir(`${free}:/backups`);
+    assert.strictEqual(r.ok, false);
+    assert.match(r.hint, /сетевой диск, подключённый буквой/, "подсказка про диск-букву и UNC-путь");
+  }
+});
+
+test("папка недоступна — задание падает с подсказкой, месяц не закрыт", async (t) => {
+  const { db, backups } = stand(t);
+  const backup = require("../services/backup");
+  const free = "QRSTUVWXYZ".split("").find((l) => !fs.existsSync(`${l}:/`));
+  if (!free) return;
+  backup.setBackupDir(db, `${free}:/backups`);
+  await assert.rejects(() => backup.run(db, new Date(2026, 9, 5)), /недоступна.*сетевой диск/);
+  assert.ok(!fs.existsSync(backups), "в папку по умолчанию втихую не пишем");
+});
