@@ -218,7 +218,7 @@ module.exports = function ticketRoutes(db) {
     next();
   }
 
-  // GET /api/tickets?status=&category=&q=&mine=1
+  // GET /api/tickets?status=&category=&q=&mine=1&page=N
   // status: пусто = скрыть закрытые/отменённые; "archive" = только они;
   // "all" = вообще без фильтра по статусу (для дашборда); конкретное
   // значение = точное совпадение.
@@ -235,10 +235,14 @@ module.exports = function ticketRoutes(db) {
     const category = asText(req.query.category);
     const q = asText(req.query.q);
     const mine = asText(req.query.mine);
+    const page = asText(req.query.page);
     const user = req.session.user;
 
-    if ([status, category, q].some((v) => v !== undefined && typeof v !== "string")) {
+    if ([status, category, q, page].some((v) => v !== undefined && typeof v !== "string")) {
       return res.status(400).json({ error: "Некорректные параметры фильтра" });
+    }
+    if (page !== undefined && page !== "" && !/^[1-9]\d{0,6}$/.test(page)) {
+      return res.status(400).json({ error: "Некорректный номер страницы" });
     }
 
     const clauses = [];
@@ -284,7 +288,11 @@ module.exports = function ticketRoutes(db) {
     // считается ETag.
     //
     // Заявок только прибывает: маршрута удаления в платформе нет вовсе.
-    const PAGE_SIZE = 200;
+    //
+    // Поэтому список — по страницам. Раньше отдавались первые 200 строк с
+    // подписью «200 из N — уточните фильтр», и до более старых заявок можно было
+    // добраться только поиском.
+    const PAGE_SIZE = 50;
 
     // Полное число нужно подписи «N заявок»: без него на экране было бы
     // написано «200 заявок» независимо от того, сколько их на самом деле.
@@ -296,6 +304,12 @@ module.exports = function ticketRoutes(db) {
       LEFT JOIN categories c ON c.id = t.category_id
       ${where}
     `).get(params).n;
+
+    // Страница за пределами списка (заявки закрыли, фильтр сузился, пока человек
+    // смотрел пятую) — отдаём последнюю, а не пустую: пустая страница выглядит
+    // как «заявок нет».
+    const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+    const pageNum = Math.min(Number(page) || 1, pages);
 
     // Наборы параметров РАЗНЫЕ: node:sqlite отвергает именованный параметр,
     // которого нет в запросе («Unknown named parameter»), поэтому один объект
@@ -311,11 +325,14 @@ module.exports = function ticketRoutes(db) {
       LEFT JOIN users creator ON creator.id = t.created_by
       LEFT JOIN users assignee ON assignee.id = t.assigned_to
       ${where}
-      ORDER BY t.updated_at DESC
-      LIMIT @limit
-    `).all({ ...params, limit: PAGE_SIZE });
+      -- t.id — для однозначного порядка: у updated_at точность в секунду, и
+      -- заявки с одинаковым временем могли бы переезжать между страницами —
+      -- одна показалась бы дважды, другая ни разу.
+      ORDER BY t.updated_at DESC, t.id DESC
+      LIMIT @limit OFFSET @offset
+    `).all({ ...params, limit: PAGE_SIZE, offset: (pageNum - 1) * PAGE_SIZE });
 
-    res.json({ tickets: rows, total, limit: PAGE_SIZE });
+    res.json({ tickets: rows, total, limit: PAGE_SIZE, page: pageNum, pages });
   });
 
   // POST /api/tickets

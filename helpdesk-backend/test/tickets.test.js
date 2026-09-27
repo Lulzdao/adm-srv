@@ -3,7 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert");
 
-const { freshDb } = require("./helpers/tempDb");
+const { freshDb, makeTicket } = require("./helpers/tempDb");
 const { startApp, makeLocalUser, client } = require("./helpers/httpApp");
 
 // ============================================================================
@@ -386,5 +386,47 @@ test("все маршруты одной заявки отказывают од�
       assert.strictEqual(r.status, ждём, `${метод.toUpperCase()} ${адрес(id)}: ${r.text}`);
       assert.ok(r.json && typeof r.json.error === "string", `${адрес(id)}: ответ не JSON с ошибкой`);
     }
+  }
+});
+
+// Список заявок — по страницам. Раньше отдавались первые 200 строк, и до более старых
+// можно было добраться только поиском.
+test("список по страницам: каждая заявка ровно на одной странице, край — последняя страница", async (t) => {
+  const { db, ids, заявитель } = await stand(t);
+  // 120 заявок с ОДИНАКОВЫМ временем изменения (вставлены в одну секунду) — ровно тот
+  // случай, когда без второго ключа сортировки строки переезжали бы между страницами.
+  for (let i = 1; i <= 120; i++) {
+    makeTicket(db, { displayId: `ИТ-${String(i + 1000)}`, title: `Заявка ${i}`, createdBy: ids.заявитель });
+  }
+  db.prepare("UPDATE tickets SET updated_at = '2026-01-01 10:00:00'").run();
+
+  const стр = async (n) => {
+    const r = await заявитель.get(`/api/tickets${n === undefined ? "" : `?page=${n}`}`);
+    assert.strictEqual(r.status, 200, r.text);
+    return r.json;
+  };
+  const p1 = await стр(1);
+  assert.strictEqual(p1.total, 121);
+  assert.strictEqual(p1.pages, 3);
+  assert.strictEqual(p1.page, 1);
+  assert.strictEqual(p1.tickets.length, p1.limit);
+
+  const всего = [];
+  for (let n = 1; n <= p1.pages; n++) всего.push(...(await стр(n)).tickets.map((x) => x.id));
+  assert.strictEqual(всего.length, 121, "сумма страниц — все заявки");
+  assert.strictEqual(new Set(всего).size, 121, "ни одна заявка не повторилась и не потерялась");
+
+  const заКраем = await стр(99);
+  assert.strictEqual(заКраем.page, 3, "страница за концом списка — это последняя, а не пустая");
+  assert.ok(заКраем.tickets.length > 0);
+  assert.strictEqual((await стр(undefined)).page, 1, "без номера — первая");
+
+  // Свежеизменённая заявка — первой на первой странице.
+  const последняя = всего[всего.length - 1];
+  db.prepare("UPDATE tickets SET updated_at = '2026-06-01 10:00:00' WHERE id = ?").run(последняя);
+  assert.strictEqual((await стр(1)).tickets[0].id, последняя);
+
+  for (const плохой of ["0", "-1", "abc", "1.5"]) {
+    assert.strictEqual((await заявитель.get(`/api/tickets?page=${плохой}`)).status, 400, `page=${плохой}`);
   }
 });

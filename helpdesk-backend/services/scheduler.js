@@ -2,6 +2,7 @@ const { getSetting, setSetting } = require("./settings");
 const { retryPending } = require("./notifications");
 const certs = require("./sources/certs");
 const smdr = require("./sources/smdr");
+const backup = require("./backup");
 
 // ============================================================================
 //  Планировщик
@@ -31,6 +32,14 @@ const JOBS = [
     label: "Исходящие минуты за месяц",
     period: "monthly",
     run: (db) => smdr.run(db),
+  },
+  {
+    // Базы — единственное, что не восстановить из репозитория: раз в месяц каждая
+    // копируется в отдельный файл (services/backup.js).
+    id: "backup",
+    label: "Резервная копия баз",
+    period: "monthly",
+    run: (db) => backup.run(db),
   },
 ];
 
