@@ -136,7 +136,9 @@ function Get-NssmServices {
   foreach ($svc in Get-CimInstance Win32_Service) {
     $params = "HKLM:\SYSTEM\CurrentControlSet\Services\$($svc.Name)\Parameters"
     if (-not (Test-Path -LiteralPath $params)) { continue }
-    $appDir = (Get-ItemProperty -LiteralPath $params -ErrorAction SilentlyContinue).AppDirectory
+    # Раздел Parameters есть у многих служб Windows, но AppDirectory — только у служб NSSM.
+    # GetValue отдаёт $null, если значения нет; обращение к свойству в строгом режиме упало бы.
+    $appDir = (Get-Item -LiteralPath $params).GetValue('AppDirectory')
     if (-not $appDir) { continue }
     $appDir = [IO.Path]::GetFullPath($appDir)
     foreach ($name in $Components.Keys) {
