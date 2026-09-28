@@ -110,8 +110,9 @@ test('сервер по http: появившийся сертификат не �
   fs.mkdirSync(path.join(srv.dir, 'certs'), { recursive: true });
   putStore(srv.dir, A);
   const logDir = path.join(srv.dir, 'logs');
-  const logged = await waitFor(() => fs.readdirSync(logDir).some((f) =>
-    fs.readFileSync(path.join(logDir, f), 'utf8').includes('tls_restart_required')));
+  const logged = await waitFor(() => fs.readdirSync(logDir, { recursive: true })
+    .filter((f) => f.endsWith('.log'))
+    .some((f) => fs.readFileSync(path.join(logDir, f), 'utf8').includes('tls_restart_required')));
   assert.ok(logged, 'в журнале сервера должно быть предупреждение tls_restart_required');
   assert.equal(await getStatus(`${srv.url}/api/ping`), 200, 'по http продолжает работать');
 });

@@ -196,4 +196,24 @@ app.get('/api/stats/daily-minutes', (req, res) => {
   res.json(result);
 });
 
-app.listen(PORT, BIND_HOST, () => console.log(`Веб запущен на http://${BIND_HOST}:${PORT} (только для платформы, за прокси)`));
+// Ошибки — одной строкой в журнал и коротким ответом. Раньше своего обработчика не было, и Express
+// отдавал страницу со стеком и путями на диске. Отдельно — «нет таблицы calls»: её создаёт
+// коллектор, и до его первого запуска на новой машине журнал просто пуст, это не сбой.
+app.use((err, req, res, next) => {
+  if (/no such table: calls/.test(err && err.message)) {
+    return res.status(503).type('text/plain; charset=utf-8')
+      .send('Звонков ещё нет: база пуста, коллектор (Collector.Py) ещё ни разу не записал в неё. Проверьте, что он запущен.');
+  }
+  console.error('[ошибка]', req.method, req.path, err && err.stack || err);
+  res.status(500).type('text/plain; charset=utf-8').send('Внутренняя ошибка журнала звонков — подробности в журнале службы.');
+});
+
+const server = app.listen(PORT, BIND_HOST, () => console.log(`Веб запущен на http://${BIND_HOST}:${PORT} (только для платформы, за прокси)`));
+server.on('error', (err) => {
+  console.error(
+    err.code === 'EADDRINUSE'
+      ? `[остановка] Порт ${PORT} уже занят — журнал звонков уже запущен (служба ITS-SmdrWeb или вручную) или порт занят другой программой.`
+      : `[остановка] Не удалось открыть порт ${PORT}: ${err.message}`
+  );
+  process.exit(1);
+});

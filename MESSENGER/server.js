@@ -32,22 +32,44 @@ const IDLE_AFTER_MS = 30 * 60 * 1000; // 30 минут бездействия = 
 // рабочих мест сотрудников (см. POST /api/client-log ниже), чтобы разбирать инциденты по логам на
 // сервере, а не просить каждого прислать скриншот или лезть к нему на ПК за файлом. Обе записи
 // дублируются в консоль, как и раньше (console.log/warn при старте никуда не делись).
+//
+// Файлы по дням разложены по папкам месяцев: logs/2026-09/server-2026-09-28.log. Журналы не
+// удаляются — старое администратор чистит сам, целыми месяцами (так решил пользователь). Панель
+// по-прежнему читает ровно один день, а не перебирает месячный файл.
 const logsDir = path.join(__dirname, 'logs');
 if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir);
 function dayStamp(d = new Date()) { return d.toISOString().slice(0, 10); }
-function writeLogLine(file, line) {
+function logFilePath(source, day) { return path.join(logsDir, day.slice(0, 7), `${source}-${day}.log`); }
+let readyMonthDir = null; // папка месяца, которая точно есть, — чтобы не проверять диск на каждую строку
+function writeLogLine(source, line) {
+  const file = logFilePath(source, dayStamp());
+  const dir = path.dirname(file);
+  if (dir !== readyMonthDir) {
+    try { fs.mkdirSync(dir, { recursive: true }); readyMonthDir = dir; } catch { /* запись ниже просто не удастся */ }
+  }
   // Запись лога не должна блокировать ответ на реальный запрос и не должна валить процесс, если
   // диск временно недоступен — поэтому асинхронно и без ожидания/обработки результата.
-  fs.appendFile(path.join(logsDir, file), line + '\n', () => {});
+  fs.appendFile(file, line + '\n', () => {});
+}
+// Журналы, написанные до раскладки по месяцам (logs/server-2026-09-28.log), — в папки месяцев.
+// Файл, для которого в папке уже есть одноимённый, не трогаем: ничего не теряем и не склеиваем.
+for (const name of fs.readdirSync(logsDir)) {
+  const m = /^(?:server|client)-(\d{4}-\d{2})-\d{2}\.log$/.exec(name);
+  if (!m) continue;
+  const target = path.join(logsDir, m[1], name);
+  try {
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    if (!fs.existsSync(target)) fs.renameSync(path.join(logsDir, name), target);
+  } catch { /* файл занят — останется на месте до следующего запуска */ }
 }
 function logServer(level, event, meta = {}) {
   const line = `${new Date().toISOString()} [${level}] ${event} ${JSON.stringify(meta)}`;
-  writeLogLine(`server-${dayStamp()}.log`, line);
+  writeLogLine('server', line);
   (level === 'ERROR' ? console.error : console.log)(line);
 }
 function logClient(entry) {
   const line = `${new Date().toISOString()} [CLIENT] ${JSON.stringify(entry)}`;
-  writeLogLine(`client-${dayStamp()}.log`, line);
+  writeLogLine('client', line);
   console.error(line); // ошибка на чьём-то рабочем месте — сразу видно и в консоли сервера, не только в файле
 }
 // Иначе процесс просто молча падает без единой строки в наших логах — эти два обработчика есть
@@ -67,10 +89,43 @@ process.on('unhandledRejection', (reason) => {
 // версия 11 падала сама через секунды после старта («Assertion failed: (env) != nullptr» в
 // деструкторе Statement при сборке мусора). Встроенному модулю собирать нечего. Файл базы тот же —
 // формат SQLite один, переносить или конвертировать ничего не нужно. Нужен Node 22.13+.
-const db = new DatabaseSync(path.join(__dirname, 'messenger.db'));
-db.exec('PRAGMA journal_mode = WAL');
+const DB_FILE = path.join(__dirname, 'messenger.db');
+const db = new DatabaseSync(DB_FILE);
 // better-sqlite3 по умолчанию ждал занятую базу 5 секунд, node:sqlite не ждёт вовсе — держим прежнее.
+// Первым делом, до любого обращения к файлу: раньше ожидание включалось после переключения в WAL, и
+// база, которую при запуске держала другая программа (DB Browser, копирование), роняла «Искру» сразу.
 db.exec('PRAGMA busy_timeout = 5000');
+// Испорченный или занятый файл — понятная строка в журнал вместо стека (как у платформы и модулей).
+try {
+  db.exec('PRAGMA journal_mode = WAL');
+} catch (err) {
+  const code = err && err.errcode;
+  if (code === 26 || code === 11) {
+    logServer('ERROR', 'db_corrupt', { file: DB_FILE, message: err.message,
+      hint: 'остановите службу, переименуйте файл (и -wal, -shm рядом) и положите на его место последнюю копию messenger-ГГГГ-ММ.db из папки резервных копий платформы (DEPLOY.md, «Резервные копии баз»)' });
+    process.exit(1);
+  }
+  if (code === 5 || code === 6) {
+    logServer('ERROR', 'db_locked', { file: DB_FILE, message: err.message,
+      hint: 'база занята другой программой дольше 5 секунд — закройте её (DB Browser и т.п.), служба перезапустится сама' });
+    process.exit(1);
+  }
+  throw err;
+}
+// Повреждение внутри базы запуск не останавливает, но громко пишется в журнал.
+{
+  let problems;
+  try {
+    const rows = db.prepare('PRAGMA quick_check').all().map((r) => Object.values(r)[0]);
+    problems = rows.length === 1 && rows[0] === 'ok' ? null : rows.slice(0, 5).join('; ');
+  } catch (err) {
+    problems = err.message;
+  }
+  if (problems) {
+    logServer('ERROR', 'db_damaged', { file: DB_FILE, problems,
+      hint: 'часть данных может не читаться — восстановите базу из резервной копии' });
+  }
+}
 
 // Транзакция «всё или ничего» — замена db.transaction из better-sqlite3, которого в node:sqlite нет.
 // Возвращает функцию: ошибка внутри откатывает всё, что она успела записать.
@@ -1887,7 +1942,7 @@ app.get('/api/admin/logs', auth, requireCapability('can_admin'), (req, res) => {
   let entries = [];
   for (const source of ['server', 'client']) {
     if (typeFilter !== 'all' && typeFilter !== source) continue;
-    const filePath = path.join(logsDir, `${source}-${day}.log`);
+    const filePath = logFilePath(source, day);
     if (!fs.existsSync(filePath)) continue;
     const lines = fs.readFileSync(filePath, 'utf8').split('\n').filter(Boolean);
     for (const line of lines) {
@@ -2647,6 +2702,16 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Внутренняя ошибка сервера' });
 });
 
+// Порт не открылся — выходим. Раньше ошибку перехватывал обработчик 'error' у WebSocketServer (он
+// пересылает ошибки HTTP-сервера себе) и только писал в журнал: процесс оставался жить, не слушая
+// ничего, — служба «работает», а подключиться нельзя (проверено на стенде со второй копией).
+server.on('error', (err) => {
+  logServer('ERROR', 'listen_failed', {
+    port: PORT, code: err.code, message: err.message,
+    hint: err.code === 'EADDRINUSE' ? 'порт занят — «Искра» уже запущена (служба ITS-Iskra или вручную) или порт занят другой программой' : undefined,
+  });
+  process.exit(1);
+});
 server.listen(PORT, () => {
   ensureBootstrapAdmin();
   const scheme = server instanceof https.Server ? 'https' : 'http';

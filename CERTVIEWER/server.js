@@ -76,7 +76,47 @@ if (!process.env.SESSION_SECRET && !BEHIND_GATEWAY) {
 // ---------- БД ----------
 // node:sqlite — встроенный в сам Node.js модуль (без npm-пакета и компиляции),
 // доступен без флагов начиная с Node 22.13 / 23.4.
-const db = new DatabaseSync(DB_PATH);
+//
+// Открытие объясняет сбои запуска (то же у платформы — helpdesk-backend/db/init.js):
+// busy_timeout первым делом — иначе база, которую держит другая программа (DB
+// Browser, ежемесячная копия платформы), роняла запуск и запись сразу, без
+// ожидания; испорченный файл останавливает службу с подсказкой; повреждение
+// внутри базы запуск не останавливает, но громко пишется в журнал.
+function openDatabase(file) {
+  let conn;
+  try {
+    conn = new DatabaseSync(file);
+    conn.exec('PRAGMA busy_timeout = 5000');
+    conn.prepare('SELECT count(*) FROM sqlite_master').get(); // заставить прочитать файл сейчас
+  } catch (err) {
+    const code = err && err.errcode;
+    if (code === 26 || code === 11) {
+      console.error(`[остановка] Файл базы ${file} повреждён или это не база SQLite (${err.message}).\n` +
+        '            Остановите службу, переименуйте этот файл (и -wal, -shm рядом) и положите на его место последнюю копию\n' +
+        '            certviewer-ГГГГ-ММ.db из папки резервных копий платформы (DEPLOY.md, «Резервные копии баз»).');
+      process.exit(1);
+    }
+    if (code === 5 || code === 6) {
+      console.error(`[остановка] База ${file} занята другой программой дольше 5 секунд (${err.message}).\n` +
+        '            Закройте программу, в которой она открыта (DB Browser и т.п.), — служба перезапустится сама.');
+      process.exit(1);
+    }
+    throw err;
+  }
+  let problems;
+  try {
+    const rows = conn.prepare('PRAGMA quick_check').all().map((r) => Object.values(r)[0]);
+    problems = rows.length === 1 && rows[0] === 'ok' ? null : rows.slice(0, 5).join('; ');
+  } catch (err) {
+    problems = err.message;
+  }
+  if (problems) {
+    console.error(`[внимание] База ${file} повреждена: ${problems}\n` +
+      '           Служба работает, но часть данных может не читаться. Восстановите базу из резервной копии.');
+  }
+  return conn;
+}
+const db = openDatabase(DB_PATH);
 db.exec(`
   CREATE TABLE IF NOT EXISTS certificates (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -491,6 +531,17 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: (err && err.message) || 'Внутренняя ошибка сервера' });
 });
 
-app.listen(PORT, BIND_HOST, () => {
+// Express 5 передаёт ошибку открытия порта прямо в этот обратный вызов. Раньше её
+// не смотрели: при занятом порте в журнале стояло «Сервер запущен», а процесс
+// тихо завершался с кодом 0 — служба выглядела здоровой и перезапускающейся.
+app.listen(PORT, BIND_HOST, (err) => {
+  if (err) {
+    console.error(
+      err.code === 'EADDRINUSE'
+        ? `[остановка] Порт ${PORT} уже занят — Сертвивер уже запущен (служба ITS-CertViewer или вручную) или порт занят другой программой.`
+        : `[остановка] Не удалось открыть порт ${PORT}: ${err.message}`
+    );
+    process.exit(1);
+  }
   console.log(`Сервер запущен: http://${BIND_HOST}:${PORT}${BEHIND_GATEWAY ? ' (только для платформы, за прокси)' : ''}`);
 });

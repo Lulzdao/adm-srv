@@ -6,7 +6,12 @@
 const { DatabaseSync } = require('node:sqlite');
 const path = require('path');
 
-const db = new DatabaseSync(path.join(__dirname, '..', 'smdr.db'));
+const DB_FILE = path.join(__dirname, '..', 'smdr.db');
+const db = new DatabaseSync(DB_FILE);
+// Ждать занятую запись — первым делом, до любого обращения к файлу: раньше оно стояло после
+// переключения в WAL, и база, которую в момент запуска держал коллектор или DB Browser, роняла
+// веб-часть сразу (проверено на стенде). Значение 10 с — см. ниже, у переключения в WAL.
+db.exec('PRAGMA busy_timeout = 10000');
 
 // WAL: читатель и писатель перестают мешать друг другу.
 //
@@ -19,9 +24,39 @@ const db = new DatabaseSync(path.join(__dirname, '..', 'smdr.db'));
 // Режим журнала записан в файле базы, поэтому достаточно выставить его один
 // раз — но выставляем и здесь, и в коллекторе: кто первый поднялся, тот и
 // починил, а порядок запуска служб не гарантирован.
-db.exec('PRAGMA journal_mode = WAL');
-// Если запись всё же занята — подождать, а не падать сразу.
-db.exec('PRAGMA busy_timeout = 10000');
+// Испорченный файл останавливает веб-часть с подсказкой (как у платформы и Сертвивера), а не стеком.
+try {
+  db.exec('PRAGMA journal_mode = WAL');
+} catch (err) {
+  const code = err && err.errcode;
+  if (code === 26 || code === 11) {
+    console.error(`[остановка] Файл базы ${DB_FILE} повреждён или это не база SQLite (${err.message}).\n` +
+      '            Остановите веб-часть и коллектор, переименуйте файл (и -wal, -shm рядом) и положите на его место\n' +
+      '            последнюю копию smdr-ГГГГ-ММ.db из папки резервных копий платформы (DEPLOY.md, «Резервные копии баз»).');
+    process.exit(1);
+  }
+  if (code === 5 || code === 6) {
+    console.error(`[остановка] База ${DB_FILE} занята другой программой дольше 10 секунд (${err.message}).\n` +
+      '            Закройте программу, в которой она открыта (DB Browser и т.п.), — служба перезапустится сама.');
+    process.exit(1);
+  }
+  throw err;
+}
+// Повреждение внутри базы запуск не останавливает — читается то, до чего оно не дотянулось, — но
+// пишется в журнал громко. quick_check на базе за год (~300 тыс. звонков) — доли секунды.
+{
+  let problems;
+  try {
+    const rows = db.prepare('PRAGMA quick_check').all().map((r) => Object.values(r)[0]);
+    problems = rows.length === 1 && rows[0] === 'ok' ? null : rows.slice(0, 5).join('; ');
+  } catch (err) {
+    problems = err.message;
+  }
+  if (problems) {
+    console.error(`[внимание] База ${DB_FILE} повреждена: ${problems}\n` +
+      '           Журнал звонков работает, но часть данных может не читаться. Восстановите базу из резервной копии.');
+  }
+}
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS employees (
