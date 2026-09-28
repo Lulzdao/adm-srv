@@ -9,6 +9,7 @@
     1. службы находятся по каталогам, хотя имена не из DEPLOY.md;
     2. обновление, меняющее платформу и «Искру», перезапускает ровно их, а Сертвивер
        и журнал звонков продолжают работать тем же процессом;
+    2б. правка только клиента «Искры» (desktop-client) не перезапускает ни одной службы;
     3. сломанная версия платформы не поднимается — откат, платформа снова отвечает.
   Стенд и службы удаляются в конце в любом случае.
 
@@ -103,6 +104,16 @@ try {
   Write-Host "`nСтенд: $root"
   foreach ($s in $services) { Check (Wait-Port $s.Port) "служба $($s.Name) поднялась на $($s.Port)" }
 
+  # Службы другой установки на этой машине (например, рабочая копия сервера ITS-*) — стенд их
+  # трогать не должен. Раньше update.ps1 выбирал для компонента первую найденную службу и
+  # обновлял файлы и перезапускал службы рабочей копии вместо тестовых.
+  $foreign = @{}
+  foreach ($svc in Get-CimInstance Win32_Service | Where-Object { $_.Name -notlike 'TST-Adm-*' -and $_.State -eq 'Running' }) {
+    $params = "HKLM:\SYSTEM\CurrentControlSet\Services\$($svc.Name)\Parameters"
+    if ((Test-Path $params) -and (Get-Item $params).GetValue('AppDirectory')) { $foreign[$svc.Name] = AppPid $svc.Name }
+  }
+  if ($foreign.Count) { Write-Host "   другие службы NSSM на машине: $($foreign.Keys -join ', ')" }
+
   $update = Join-Path $repo 'deploy\update.ps1'
   function Run([string]$zip, [string[]]$extra = @()) {
     $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $update, '-ConfigPath', $cfg, '-SourceZip', $zip, '-Yes') + $extra
@@ -137,6 +148,20 @@ try {
   $health = (Invoke-WebRequest -UseBasicParsing http://127.0.0.1:4000/api/health).Content
   Check ($health -match '"ok":true') "платформа отвечает: $health"
 
+  # --- 2б. Изменился только клиент «Искры» — служба не перезапускается ---------
+  Write-Host "`n2б. Изменился только клиент «Искры» (desktop-client)"
+  $zipClient = Join-Path $T 'client.zip'
+  & python "$sp\make_test_zip.py" "$src\adm-srv-main" $zipClient 'cccccccccccccccccccccccccccccccccccccccc' `
+      'helpdesk-backend/server.js=+// проверка обновления' 'MESSENGER/server.js=+// проверка обновления' `
+      'MESSENGER/desktop-client/main.js=+// правка только клиента' | Out-Null
+  $before = @{}; foreach ($s in $services) { $before[$s.Name] = AppPid $s.Name }
+  $r = Run $zipClient
+  Check ($r.Code -eq 0) "код выхода 0 (получен $($r.Code))"
+  if ($r.Code -ne 0) { Write-Host $r.Out }
+  Check ($r.Out -notmatch 'будут перезапущены') 'в плане перезапуска нет ни одной службы'
+  Check ((AppPid 'TST-Adm-Iskra') -eq $before['TST-Adm-Iskra']) '«Искра» не перезапущена (тот же процесс)'
+  Check ([IO.File]::ReadAllText("$root\MESSENGER\desktop-client\main.js", [Text.Encoding]::UTF8) -match 'правка только клиента') 'файл клиента обновлён'
+
   # --- 3. Сломанная версия: платформа не поднимается -> откат ------------------
   Write-Host "`n3. Сломанная версия платформы — откат"
   $zipBad = Join-Path $T 'bad.zip'
@@ -150,7 +175,12 @@ try {
   Check (Wait-Port 4000) 'платформа снова слушает 4000'
   $health = (Invoke-WebRequest -UseBasicParsing http://127.0.0.1:4000/api/health).Content
   Check ($health -match '"ok":true') "платформа снова отвечает: $health"
-  Check ((Get-Content "$root\.update\version.txt" -Raw).Trim() -eq 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa') 'версия осталась прежней'
+  Check ((Get-Content "$root\.update\version.txt" -Raw).Trim() -eq 'cccccccccccccccccccccccccccccccccccccccc') 'версия осталась прежней'
+
+  foreach ($name in $foreign.Keys) {
+    Check ((AppPid $name) -eq $foreign[$name]) "служба другой установки $name не перезапускалась"
+  }
+  if ($foreign.Count) { Check ($r.Out -match 'другая установка') 'в выводе update.ps1 — «другая установка, не трогаю»' }
 } finally {
   foreach ($s in $services) {
     $err = Join-Path $T "logs\$($s.Name).err.log"
