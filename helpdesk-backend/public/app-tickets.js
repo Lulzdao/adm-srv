@@ -47,9 +47,30 @@ async function renderList(main, opts = {}) {
   // на широком экране заголовок заявки иначе обрезался посреди слова.
   // Последней колонки со стрелкой больше нет: строка и так кликается целиком,
   // а стрелка только занимала место и намекала на несуществующее действие.
+  // Ширины подрезаны так, чтобы строка целиком помещалась на экране 1440
+  // рядом с боковой панелью: прежние (150/80/130/150/140) требовали 1105 px
+  // при доступных 1080, и горизонтальная полоса висела всегда, а не только
+  // при узком окне. Замерено в браузере; даты «04.09.2026, 06:18» хватает
+  // 132 px, бейджу статуса — 118.
   const gridCols = isPrivileged
-    ? "92px minmax(220px,1fr) 150px 80px 130px 150px 140px"
-    : "92px minmax(220px,1fr) 130px 150px 140px";
+    ? "92px minmax(200px,1fr) 140px 72px 118px 140px 132px"
+    : "92px minmax(200px,1fr) 118px 140px 132px";
+  // Минимальная ширина строки — сумма колонок, промежутков и полей. Нужна
+  // и шапке, и строкам: без общей ширины доля 1fr считалась бы по содержимому
+  // каждой строки отдельно, и колонки разъезжались (см. .ticket-row в стилях).
+  // Считаем из той же строки описания сетки, чтобы два места не разошлись.
+  //
+  // Колонка «Тема» задана как minmax(200px,1fr), и её нижнюю границу надо
+  // брать ОТТУДА ЖЕ. Раньше здесь стояла отдельная константа TEMA_MIN=160,
+  // которая ни на что не влияла: сетка всё равно не сжималась ниже 200, и
+  // объявленный min-width строки оказывался меньше её настоящего минимума —
+  // строка вылезала за собственную заявленную ширину.
+  const колонки = gridCols.split(" ");
+  const ПОЛЯ = 35;   // паддинги строки 16+16 и цветная кромка слева 3
+  const gridMin = колонки.reduce((сумма, track) => {
+    const м = track.match(/^(\d+)px$/) || track.match(/^minmax\((\d+)px,/);
+    return сумма + Number(м ? м[1] : 0);
+  }, 0) + (колонки.length - 1) * 18 + ПОЛЯ;
 
   main.innerHTML = `
     <div class="topbar">
@@ -72,7 +93,7 @@ async function renderList(main, opts = {}) {
         <div class="filters-count" id="countLabel">Загрузка…</div>
       </div>
       <div class="ticket-table">
-        <div class="ticket-row-head" style="grid-template-columns:${gridCols};">
+        <div class="ticket-row-head" style="grid-template-columns:${gridCols};min-width:${gridMin}px;">
           <div>Номер</div><div>Тема</div>
           ${isPrivileged ? `<div>От кого</div><div>Кабинет</div>` : ""}
           <div>Статус</div><div>Исполнитель</div><div>Обновлено</div>
@@ -145,12 +166,10 @@ async function renderList(main, opts = {}) {
         const sLabel = statusLabel(t.status);
         const isUnread = unreadTicketIds.has(t.id);
         return `
-        <div class="ticket-row" data-id="${t.id}" style="grid-template-columns:${gridCols};">
+        <div class="ticket-row" data-id="${t.id}" data-prio="${t.priority}" title="Приоритет: ${p.label.toLowerCase()}" style="grid-template-columns:${gridCols};min-width:${gridMin}px;">
           <div class="ticket-id mono">${esc(t.display_id)}</div>
-          <div class="ticket-title-cell">
-            <span class="priority-dot" style="background:${p.color}"></span>
+          <div class="ticket-title-cell${isUnread ? " unread" : ""}"${isUnread ? ` title="Есть новые комментарии"` : ""}>
             <span class="title" style="${isUnread ? "font-weight:700;" : ""}">${esc(t.title)}</span>
-            ${isUnread ? `<span class="unread-dot" title="Есть новые комментарии"></span>` : ""}
           </div>
           ${isPrivileged ? `
             <div class="cell-wrap" style="color:var(--ink-soft);font-size:13px;">${esc(t.created_by || "—")}</div>
@@ -199,49 +218,200 @@ async function renderList(main, opts = {}) {
   viewPollHandle = setInterval(load, 20000); // автообновление списка
 }
 
-// ====== Создание заявки ======
+// ====== Новая заявка ======
+//
+// Отдел выбирается плитками в ГОРИЗОНТАЛЬНОЙ ЛЕНТЕ, а не выпадающим списком и
+// не сеткой с переносом. Причин две.
+//
+// Список не годился потому, что «ЕГРПО» и «ХОЗ» человеку со стороны ни о чём
+// не говорят: под названием нужна строка с примерами, а в <option> ей места
+// нет. Плитка её вмещает.
+//
+// Лента, а не сетка, потому что отделы задаются в config/departments.js и их
+// число может вырасти. При переносе четвёртая плитка встала бы во вторую
+// строку, форма подросла бы, и всё под ней уехало вниз — а высота ленты
+// одинакова при любом числе отделов.
 function renderCreate(main) {
   let files = [];
+  const отделы = state.departments;
+  // Первый отдел выбран заранее — как и раньше, когда здесь стоял <select> и
+  // выбранным по умолчанию был первый пункт.
+  let отдел = отделы.length ? отделы[0].name : "";
+  let приоритет = "medium";
+
+  const плиткаHtml = (d, i) => `
+    <button type="button" class="dept-tile ${d.name === отдел ? "active" : ""}" data-dept="${esc(d.name)}">
+      <span class="dept-icon" style="color:${esc(deptColor(d, i))};">${icon(deptIcon(d), 22)}</span>
+      <span class="dept-name">${esc(d.name)}</span>
+      <span class="dept-hint">${esc(d.hint || "")}</span>
+      <span class="dept-check">${icon("check", 12)}</span>
+    </button>`;
+
   main.innerHTML = `
     <div class="topbar"><div class="topbar-title">Новая заявка</div></div>
     <div class="page">
-      <div style="max-width:640px;margin:0 auto;">
-      <div class="card">
-        <div class="field-label">Тема</div>
-        <input class="field-input" id="cTitle" maxlength="${TITLE_MAX}" placeholder="Коротко опишите проблему" style="margin-bottom:4px;">
-        <div id="titleCount" style="font-size:11px;color:var(--ink-soft);margin-bottom:12px;text-align:right;">0/${TITLE_MAX}</div>
-        <div class="form-row">
-          <div><div class="field-label">Отдел</div><select class="input" id="cCategory" style="width:100%;">${state.departments.map(d => `<option>${esc(d.name)}</option>`).join("")}</select></div>
-          <div><div class="field-label">Приоритет</div><select class="input" id="cPriority" style="width:100%;">${PRIORITIES.map(p => `<option value="${p.id}" ${p.id === "medium" ? "selected" : ""}>${p.label}</option>`).join("")}</select></div>
+      <div class="form-narrow">
+
+        <div class="form-card">
+          <div class="form-card-title">Куда направить</div>
+          <div class="form-card-sub">Выберите отдел, который решает такие вопросы</div>
+          <div class="dept-strip" id="deptStrip">
+            <div class="dept-fade left" hidden></div>
+            <button type="button" class="dept-nav prev" hidden aria-label="Предыдущие отделы">${icon("chevron-left", 16)}</button>
+            <div class="dept-scroll" id="deptScroll">${отделы.map(плиткаHtml).join("")}</div>
+            <div class="dept-fade right" hidden></div>
+            <button type="button" class="dept-nav next" hidden aria-label="Следующие отделы">${icon("chevron", 16)}</button>
+          </div>
         </div>
-        <div class="form-row">
-          <div><div class="field-label">Кабинет</div><input class="field-input" id="cRoom" placeholder="напр. 214" style="margin-bottom:0;"></div>
-          <div><div class="field-label">Внутренний номер</div><input class="field-input" id="cExt" placeholder="напр. 214" style="margin-bottom:0;"></div>
+
+        <div class="form-card">
+          <div class="form-card-title" style="margin-bottom:16px;">Суть обращения</div>
+
+          <div class="field-label">Тема</div>
+          <input class="field-input" id="cTitle" maxlength="${TITLE_MAX}" placeholder="Коротко опишите проблему" style="margin-bottom:4px;">
+          <div class="counter" style="margin-bottom:16px;" id="titleCount">0/${TITLE_MAX}</div>
+
+          <div class="field-label">Описание</div>
+          <textarea class="input field-input" id="cDesc" maxlength="${DESCRIPTION_MAX}" rows="4"
+            placeholder="Что произошло, когда началось, что уже пробовали"
+            style="width:100%;box-sizing:border-box;margin-bottom:4px;resize:vertical;"></textarea>
+          <div class="counter" id="descCount">0/${DESCRIPTION_MAX}</div>
+
+          <div class="dropzone" id="dropzone"><span class="dropzone-icon">${icon("paperclip", 18)}</span>Перетащите файлы сюда или нажмите, чтобы выбрать</div>
+          <input type="file" id="fileInput" multiple style="display:none;">
+          <div id="fileList" style="margin-bottom:18px;"></div>
+
+          <div class="field-label">Приоритет</div>
+          <div class="prio-row" id="prioRow">
+            ${PRIORITIES.map(p => `
+              <button type="button" class="prio-chip ${p.id === приоритет ? "active" : ""}" data-prio="${p.id}">
+                <i style="background:${p.color}"></i>${p.label}
+              </button>`).join("")}
+          </div>
+
+          <div class="form-row" style="margin-bottom:0;">
+            <div><div class="field-label">Кабинет</div><input class="field-input" id="cRoom" placeholder="напр. 214" style="margin-bottom:0;"></div>
+            <div><div class="field-label">Внутренний номер</div><input class="field-input" id="cExt" placeholder="напр. 214" style="margin-bottom:0;"></div>
+          </div>
         </div>
-        <div class="field-label" style="margin-top:16px;">Описание</div>
-        <textarea class="input field-input" id="cDesc" maxlength="${DESCRIPTION_MAX}" rows="4" placeholder="Что произошло, когда началось, что уже пробовали" style="width:100%;box-sizing:border-box;word-wrap:break-word;margin-bottom:4px;"></textarea>
-        <div id="descCount" style="font-size:11px;color:var(--ink-soft);margin-bottom:12px;text-align:right;">0/${DESCRIPTION_MAX}</div>
-        <div class="field-label">Вложения</div>
-        <div class="dropzone" id="dropzone"><span class="dropzone-icon">${icon("paperclip", 18)}</span>Перетащите файлы сюда или нажмите, чтобы выбрать</div>
-        <input type="file" id="fileInput" multiple style="display:none;">
-        <div id="fileList"></div>
-        <button class="btn btn-wire" id="submitBtn" style="margin-top:6px;" disabled>Отправить заявку</button>
-      </div>
+
+        <div class="form-foot">
+          <div class="hint" id="routeHint"></div>
+          <div class="actions">
+            <button class="btn-text" id="cancelBtn">Отмена</button>
+            <button class="btn-send" id="submitBtn">Отправить заявку</button>
+          </div>
+        </div>
+
       </div>
     </div>`;
 
   const titleEl = document.getElementById("cTitle");
   const descEl = document.getElementById("cDesc");
+  const roomEl = document.getElementById("cRoom");
+  const extEl = document.getElementById("cExt");
   const submitBtn = document.getElementById("submitBtn");
-  const titleCount = document.getElementById("titleCount");
-  const descCount = document.getElementById("descCount");
+  const routeHint = document.getElementById("routeHint");
 
-  titleEl.oninput = () => {
-    submitBtn.disabled = !titleEl.value.trim();
-    titleCount.textContent = `${titleEl.value.length}/${TITLE_MAX}`;
-  };
-  descEl.oninput = () => { descCount.textContent = `${descEl.value.length}/${DESCRIPTION_MAX}`; };
+  // --- Лента отделов ------------------------------------------------------
+  const strip = document.getElementById("deptStrip");
+  const scroll = document.getElementById("deptScroll");
+  const nav = { prev: strip.querySelector(".dept-nav.prev"), next: strip.querySelector(".dept-nav.next") };
+  const fade = { left: strip.querySelector(".dept-fade.left"), right: strip.querySelector(".dept-fade.right") };
 
+  function updateStrip() {
+    // Класс ставим ДО замеров: он отводит поля по краям под кнопки, и без него
+    // ширина ленты считалась бы по старой раскладке. Поля появляются только
+    // когда прокручивать есть что — иначе при трёх отделах, которые и так
+    // помещаются, две пустые колонки съели бы 68 px и лента поехала бы на
+    // ровном месте.
+    strip.classList.toggle("scrollable", scroll.scrollWidth > scroll.clientWidth + 4);
+    const влево = scroll.scrollLeft > 4;
+    const вправо = scroll.scrollLeft + scroll.clientWidth < scroll.scrollWidth - 4;
+    nav.prev.hidden = !влево; fade.left.hidden = !влево;
+    nav.next.hidden = !вправо; fade.right.hidden = !вправо;
+  }
+  const шаг = () => scroll.clientWidth * 0.8;
+  nav.prev.onclick = () => scroll.scrollBy({ left: -шаг(), behavior: "smooth" });
+  nav.next.onclick = () => scroll.scrollBy({ left: шаг(), behavior: "smooth" });
+  scroll.addEventListener("scroll", updateStrip);
+  // Колесо мыши крутит ленту вбок. Прокрутку страницы перехватываем только
+  // когда ленте есть куда ехать, иначе колесо над ней «залипало» бы.
+  scroll.addEventListener("wheel", (e) => {
+    if (scroll.scrollWidth <= scroll.clientWidth) return;
+    if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+    e.preventDefault();
+    scroll.scrollLeft += e.deltaY;
+  }, { passive: false });
+  window.addEventListener("resize", updateStrip);
+  updateStrip();
+
+  scroll.querySelectorAll(".dept-tile").forEach(tile => {
+    tile.onclick = () => {
+      отдел = tile.dataset.dept;
+      scroll.querySelectorAll(".dept-tile").forEach(t => t.classList.toggle("active", t === tile));
+      showRouteHint();
+    };
+  });
+
+  document.getElementById("prioRow").querySelectorAll(".prio-chip").forEach(chip => {
+    chip.onclick = () => {
+      приоритет = chip.dataset.prio;
+      document.getElementById("prioRow").querySelectorAll(".prio-chip")
+        .forEach(c => c.classList.toggle("active", c === chip));
+    };
+  });
+
+  function showRouteHint() {
+    routeHint.classList.remove("invalid");
+    routeHint.textContent = отдел
+      ? `Заявка попадёт в очередь отдела ${отдел}. Ход работы и ответы исполнителя придут в оповещения.`
+      : "Выберите отдел, в который отправить заявку.";
+  }
+  showRouteHint();
+
+  // --- Проверка заполнения ------------------------------------------------
+  //
+  // Кнопка НЕ блокируется: заблокированная кнопка молчит о том, чего не
+  // хватает, и человек жмёт на неё, не понимая, почему ничего не происходит.
+  // Отправку останавливаем на клике и сразу показываем, какие поля пустые.
+  //
+  // Вложения не обязательны: заявка про «не открывается диск» прикладывать
+  // нечего, и требовать файл значило бы заставлять людей прикладывать что
+  // попало.
+  const ОБЯЗАТЕЛЬНЫЕ = [
+    { el: titleEl, имя: "тема" },
+    { el: descEl, имя: "описание" },
+    { el: roomEl, имя: "кабинет" },
+    { el: extEl, имя: "внутренний номер" },
+  ];
+  ОБЯЗАТЕЛЬНЫЕ.forEach(({ el }) => el.oninput = () => el.classList.remove("invalid"));
+
+  titleEl.addEventListener("input", () => {
+    document.getElementById("titleCount").textContent = `${titleEl.value.length}/${TITLE_MAX}`;
+  });
+  descEl.addEventListener("input", () => {
+    document.getElementById("descCount").textContent = `${descEl.value.length}/${DESCRIPTION_MAX}`;
+  });
+
+  /** Отмечает пустые поля и возвращает список их названий. */
+  function пустые() {
+    const список = [];
+    for (const { el, имя } of ОБЯЗАТЕЛЬНЫЕ) {
+      const пусто = !el.value.trim();
+      el.classList.toggle("invalid", пусто);
+      if (пусто) список.push(имя);
+    }
+    if (!отдел) {
+      routeHint.classList.add("invalid");
+      список.unshift("отдел");
+    }
+    return список;
+  }
+
+  document.getElementById("cancelBtn").onclick = () => setView("inbox");
+
+  // --- Вложения -----------------------------------------------------------
   const dropzone = document.getElementById("dropzone");
   const fileInput = document.getElementById("fileInput");
   const fileList = document.getElementById("fileList");
@@ -254,8 +424,16 @@ function renderCreate(main) {
   }
 
   submitBtn.onclick = async () => {
+    const незаполнено = пустые();
+    if (незаполнено.length) {
+      toast(`Заполните: ${незаполнено.join(", ")}`, true);
+      const первое = ОБЯЗАТЕЛЬНЫЕ.find(({ el }) => el.classList.contains("invalid"));
+      if (первое) первое.el.focus();
+      else strip.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
+
     const title = titleEl.value.trim();
-    if (!title) return;
     submitBtn.disabled = true; submitBtn.textContent = "Отправка…";
 
     // Создание заявки и прикрепление файлов разделены намеренно. Раньше оба
@@ -267,11 +445,11 @@ function renderCreate(main) {
     try {
       ticket = await api("/tickets", { method: "POST", body: {
         title,
-        category: document.getElementById("cCategory").value,
-        priority: document.getElementById("cPriority").value,
-        room: document.getElementById("cRoom").value || null,
-        extension: document.getElementById("cExt").value || null,
-        description: document.getElementById("cDesc").value || null,
+        category: отдел,
+        priority: приоритет,
+        room: roomEl.value.trim(),
+        extension: extEl.value.trim(),
+        description: descEl.value.trim(),
       }});
     } catch (e) {
       // Заявки нет — повторить целиком безопасно.
@@ -392,7 +570,7 @@ function renderDetail(main, ticket) {
     document.getElementById("commentsList").innerHTML = list.length ? list.map(c => `
       <div class="comment-box ${c.is_internal ? "internal" : "public"}">
         <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
-          <span style="font-size:12px;font-weight:700;">${esc(c.author)} ${c.is_internal ? `<span style="color:var(--amber);font-size:10.5px;">ВНУТРЕННЯЯ ЗАМЕТКА</span>` : ""}</span>
+          <span style="font-size:12px;font-weight:700;">${esc(c.author)} ${c.is_internal ? `<span style="color:var(--note);font-size:10.5px;">ВНУТРЕННЯЯ ЗАМЕТКА</span>` : ""}</span>
           <span style="font-size:11px;color:var(--ink-soft);">${fmtDate(c.created_at)}</span>
         </div>
         <div style="font-size:13px;line-height:1.5;">${esc(c.text)}</div>

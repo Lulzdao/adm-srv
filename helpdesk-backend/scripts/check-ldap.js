@@ -6,9 +6,13 @@
 //
 //
 // Использование:
-//   node scripts/check-ldap.js A                      — проверить сеть + bind сервисной учётки для домена А
+//   node scripts/check-ldap.js A                      — проверить сеть + bind сервисной учётки для rosstat.local
 //   node scripts/check-ldap.js A d.volkov              — плюс поиск конкретного пользователя и его memberOf
 //   node scripts/check-ldap.js A d.volkov "пароль"     — плюс полная проверка входа этим пользователем
+//
+// Ключ домена в командной строке остался буквенным (A — rosstat.local,
+// B — in.local): это ключ настроек DOMAIN_A_* / DOMAIN_B_* в .env, а не имя,
+// которое видит пользователь.
 //
 // Если сертификат AD CS не проходит проверку доверия, повторите с флагом:
 //   node --use-system-ca scripts/check-ldap.js A
@@ -30,6 +34,7 @@ const testPassword = process.argv[4];
 
 if (!domainKey || !["A", "B"].includes(domainKey)) {
   console.error("Укажите домен: node scripts/check-ldap.js A|B [логин] [пароль]");
+  console.error(`  A — ${config.domains.A.label}, B — ${config.domains.B.label}`);
   process.exit(1);
 }
 

@@ -65,7 +65,14 @@ module.exports = function authRoutes(db) {
   router.get("/detect", (req, res) => {
     const ip = req.socket.remoteAddress;
     const mode = detectDomain(ip, config);
-    res.json({ mode, ip: normalizeIp(ip) });
+    // Подписи доменов отдаём вместе с режимом: на экране входа они стоят на
+    // вкладках выбора сети, а имя домена задаётся в .env и фронтенду больше
+    // взять его неоткуда.
+    res.json({
+      mode,
+      ip: normalizeIp(ip),
+      labels: { A: config.domains.A.label, B: config.domains.B.label },
+    });
   });
 
   // POST /api/auth/login  { mode: 'A' | 'B' | 'local', login, password }
