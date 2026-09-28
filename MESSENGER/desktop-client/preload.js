@@ -1,16 +1,14 @@
 const { contextBridge, ipcRenderer } = require('electron');
-const os = require('os');
-
-// Версия и трек сборки — синхронно, а не через IPC: они нужны в самый момент открытия соединения с
-// сервером (см. connectWs в окнах), а ждать там асинхронный ответ значило бы задерживать
-// подключение ради двух строк. В собранном приложении buildTrack проставлен при сборке
-// (extraMetadata), при запуске из исходников его нет — тогда 'dev'.
-const pkg = require('./package.json');
+// Имя ПК, версия и трек сборки — синхронно, а не через обычный асинхронный IPC: они нужны в самый
+// момент открытия соединения с сервером (см. connectWs в окнах), а ждать там ответ значило бы
+// задерживать подключение ради трёх строк. Отвечает главный процесс (get-static-info в main.js):
+// окна работают в песочнице, и сам preload ни require('os'), ни package.json прочитать не может.
+const STATIC = ipcRenderer.sendSync('get-static-info');
 
 contextBridge.exposeInMainWorld('desktop', {
-  hostname: os.hostname(),
-  appVersion: pkg.version,
-  buildTrack: pkg.buildTrack || 'dev',
+  hostname: STATIC.hostname,
+  appVersion: STATIC.appVersion,
+  buildTrack: STATIC.buildTrack,
   openChat: (payload) => ipcRenderer.send('open-chat', payload),
   openBroadcast: (payload) => ipcRenderer.send('open-broadcast', payload),
   showUserMenu: (payload) => ipcRenderer.send('show-user-menu', payload),

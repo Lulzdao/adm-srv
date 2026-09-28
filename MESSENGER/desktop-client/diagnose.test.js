@@ -26,10 +26,23 @@ const { diagnoseServer } = require('./diagnose');
 //  в репозитории не место, а истёкший сертификат приходится делать датами в прошлом — такой
 //  файл через год всё равно пришлось бы перевыпускать.
 // ---------------------------------------------------------------------------
+// openssl — из PATH или из Git для Windows (там он есть почти всегда, а в PATH его нет): без этого
+// на обычной рабочей машине вся TLS-часть тестов молча пропускалась.
+function findOpenssl() {
+  for (const bin of ['openssl', 'C:\\Program Files\\Git\\usr\\bin\\openssl.exe', 'C:\\Program Files\\Git\\mingw64\\bin\\openssl.exe']) {
+    try { execFileSync(bin, ['version'], { stdio: 'pipe' }); return bin; } catch { /* следующий */ }
+  }
+  return 'openssl';
+}
+
 let PKI = null;
+// Папка с одноразовыми ключами — убирается после всех тестов: раньше она оставалась во временной
+// папке после каждого прогона.
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'iskra-diag-'));
+test.after(() => fs.rmSync(dir, { recursive: true, force: true }));
 try {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'iskra-diag-'));
-  const ssl = (...args) => execFileSync('openssl', args, { cwd: dir, stdio: 'pipe' });
+  const OPENSSL = findOpenssl();
+  const ssl = (...args) => execFileSync(OPENSSL, args, { cwd: dir, stdio: 'pipe' });
   const f = (name) => path.join(dir, name);
 
   ssl('req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', 'ca.key', '-out', 'ca.pem',
@@ -44,9 +57,16 @@ try {
   };
   leaf('srv', 'localhost', 'DNS:localhost,IP:127.0.0.1', ['-days', '2']);
   leaf('other', 'чужое-имя.local', 'DNS:чужое-имя.local', ['-days', '2']);
-  // Отрицательный срок: notAfter получается вчерашним. Ключи -not_before/-not_after подошли бы
-  // лучше, но появились только в OpenSSL 3.2, а на машинах сборки встречается и 3.0.
-  leaf('old', 'localhost', 'DNS:localhost,IP:127.0.0.1', ['-days', '-1']);
+  // Истёкший: notAfter — вчера. Ключи -not_before/-not_after есть с OpenSSL 3.2, а отрицательный
+  // -days, наоборот, новые версии (3.5) не принимают; на машинах встречаются и 3.0, и 3.5 — пробуем
+  // новый способ, при отказе — старый.
+  const stamp = (d) => d.toISOString().replace(/[-:T]/g, '').slice(0, 14) + 'Z';
+  try {
+    leaf('old', 'localhost', 'DNS:localhost,IP:127.0.0.1',
+      ['-not_before', stamp(new Date(Date.now() - 3 * 86400000)), '-not_after', stamp(new Date(Date.now() - 86400000))]);
+  } catch {
+    leaf('old', 'localhost', 'DNS:localhost,IP:127.0.0.1', ['-days', '-1']);
+  }
 
   const read = (n) => fs.readFileSync(f(n), 'utf8');
   PKI = {
@@ -119,7 +139,16 @@ test('порт закрыт — отказ в подключении, а не «
   assert.strictEqual(d.code, 'refused', JSON.stringify(d));
 });
 
-test('имя не разрешается — dns', async () => {
+// Имя в зоне .invalid по стандарту не существует. Но DNS-прокси (например, у VPN-клиентов с режимом
+// «поддельных адресов») отвечает адресом на любое имя — тогда проверять тут нечего, и это видно по
+// тому, что имя «разрешилось».
+// И ещё: разбор ждёт ответа 6 секунд; если DNS машины отвечает «нет такого имени» дольше, честный
+// результат — «таймаут», и проверять код «dns» на такой машине тоже нечего.
+test('имя не разрешается — dns', async (t) => {
+  const started = Date.now();
+  const answered = await require('node:dns').promises.lookup('такого-имени-точно-нет.invalid').then(() => true, () => false);
+  if (answered) return t.skip('DNS этой машины отвечает адресом даже на несуществующее имя (DNS-прокси)');
+  if (Date.now() - started > 5000) return t.skip(`DNS этой машины отвечает «нет имени» за ${Math.round((Date.now() - started) / 1000)} с — дольше, чем ждёт разбор`);
   const d = await diagnoseServer('http://такого-имени-точно-нет.invalid:3103', СИСТЕМНЫЕ);
   assert.strictEqual(d.code, 'dns', JSON.stringify(d));
 });

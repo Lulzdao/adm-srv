@@ -1,0 +1,250 @@
+/* Окно «roster.html»: стили (вынесены из страницы). */
+  /* chat.html/broadcast.html задают это у себя, а здесь этого объявления не было — из-за чего body
+     не был flex-контейнером, #app/#auth ниже с их "flex: 1" ни на что не опирались (не было
+     flex-родителя) и фактически росли по контенту без предела, а не в границах окна. Из-за этого
+     #profilePanel/#list при уменьшении окна не получали свою настоящую (сжатую) высоту, и их
+     overflow-y:auto было нечему включать — контент просто обрезался снизу без скролла. */
+  body { display: flex; flex-direction: column; }
+
+  /* ---- Логин ---- */
+  /* safe center + прокрутка — на случай длинного объяснения отказа: при минимальном размере
+     окна (260×420) развёрнутое сообщение про сертификат сдвигало поля ввода за верхний край,
+     и добраться до них было нельзя. safe center при нехватке места ведёт себя как flex-start,
+     то есть содержимое прижимается к началу и остаётся прокручиваемым. */
+  #auth { flex: 1; display: flex; flex-direction: column; justify-content: safe center; overflow-y: auto; padding: 26px; gap: 8px; }
+  #auth > * { flex-shrink: 0; }
+  #authForm { display: flex; flex-direction: column; gap: 8px; }
+  #authLogo { display: block; height: 110px; width: auto; margin: 0 auto 12px; }
+  #auth h1 { font-size: 22px; margin: 0 0 4px; text-align: center; font-weight: 800; letter-spacing: .3px; }
+  #auth .auth-subtitle { font-size: 12px; margin: 0 0 16px; text-align: center; color: var(--muted); }
+  #auth input { -webkit-app-region: no-drag; width: 100%; padding: 10px 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 9px; color: var(--text); font-size: 13px; }
+  #auth input:focus { outline: none; border-color: var(--accent); }
+  #auth button.primary { -webkit-app-region: no-drag; margin-top: 8px; padding: 11px; border: none; border-radius: 9px; background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff; font-weight: 700; cursor: pointer; font-size: 13px; }
+  #auth .switch { -webkit-app-region: no-drag; text-align: center; color: var(--muted); cursor: pointer; margin-top: 6px; }
+  #auth .switch:hover { color: var(--text); }
+  /* white-space:pre-line — сообщение об отказе состоит из двух частей: что случилось и что
+     с этим делать. Разрывы строк ставит сам текст (см. describeAuthFailure). */
+  /* overflow-wrap:anywhere — в сообщении бывает адрес сервера одним длинным словом,
+     без этого он вылезал за край окна. */
+  #auth .err { color: var(--danger); text-align: center; min-height: 16px; font-size: 11.5px; line-height: 1.45; white-space: pre-line; overflow-wrap: anywhere; }
+  #auth .err.neutral { color: var(--muted); }
+  /* Подсказка про Caps Lock (см. refreshCapsHint) — пароль в поле не виден, и набранный с зажатым
+     Caps Lock он выглядит точно так же, как правильный: человек несколько раз получает "неверный
+     логин или пароль", не понимая, почему. Показываем ровно тогда, когда Caps Lock действительно
+     включён, — постоянная надпись быстро становится фоновым шумом и перестаёт читаться. */
+  #auth .caps-hint { display: none; align-items: center; gap: 6px; font-size: 11.5px; color: var(--afk); padding: 0 2px; }
+  #auth .caps-hint.show { display: flex; }
+  #auth .caps-hint svg { flex-shrink: 0; }
+
+  /* Индикатор шифрования канала. Пароль уходит на сервер именно с этого экрана, поэтому состояние
+     соединения показывается здесь, а не только в настройках. Защищённое — спокойная серая строка,
+     незащищённое — заметная: молчать о том, что пароль идёт открытым текстом, нельзя, а пугать
+     каждый раз, когда всё в порядке, незачем. */
+  #auth .conn-hint { display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 11px; color: var(--muted); margin-top: 10px; }
+  #auth .conn-hint.insecure { color: var(--danger); }
+  #auth .conn-hint svg { flex-shrink: 0; }
+
+  /* ---- Заголовок ---- */
+  .wintitlebar .title { font-weight: 600; font-size: 12px; letter-spacing: .3px; display: flex; align-items: center; gap: 6px; flex-shrink: 0; -webkit-app-region: drag; }
+  .wintitlebar .title .brand-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+
+  /* ---- Ростер ---- */
+  /* position:relative — чтобы #profilePanel ниже мог накладываться поверх списка абсолютным
+     позиционированием (как #historyPanel в окне чата/рассылок), а не толкать его через
+     max-height/flex-grow: та схема давала лёгкий рывок ближе к концу анимации, когда список под
+     панелью наконец получал display:none и высвобождал место, которое двум flex-элементам до этого
+     приходилось делить. */
+  #app { display: none; flex: 1; flex-direction: column; min-height: 0; position: relative; }
+  #app.active { display: flex; }
+
+  /* me-bar/searchBar занимают ОДНУ и ту же ячейку грида (наложены друг на друга) — это даёт честный
+     кроссфейд между ними без "прыжка" высоты, который был бы неизбежен, если бы оба по очереди
+     занимали место в обычном потоке (46px то появлялись, то исчезали бы независимо друг от друга). */
+  #topSlot { display: grid; flex-shrink: 0; }
+  /* min-width:0 — не косметика, а условие того, что длинное ФИО обрежется многоточием.
+     Строка лежит в гриде (#topSlot), а у элемента грида min-width по умолчанию auto —
+     то есть он отказывается становиться уже своего min-content. min-content строки
+     считается по её содержимому, и min-width:0 у самого имени внутри флексбокса на это
+     НЕ влияет: он снимает нижнюю границу при сжатии, но не уменьшает вклад имени в
+     min-content контейнера. Из-за этого при полном ФИО строка получалась шире окна и
+     шестерёнка уезжала за правый край: 393px строки в окне 260px. */
+  #me-bar, #searchBar { grid-area: 1 / 1; min-width: 0; -webkit-app-region: no-drag; display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--panel); min-height: 46px; transition: opacity .15s ease; }
+  #me-bar { cursor: pointer; }
+  #me-bar:hover { background: var(--panel-2); }
+  #me-bar.open { background: var(--panel-2); }
+  #me-bar.searching { opacity: 0; pointer-events: none; }
+  /* Шестерёнка вместо стрелки — крутится (не просто разворачивается) при открытии/закрытии панели
+     настроек, см. #me-bar.open ниже. */
+  /* Значок "без шифрования" в строке профиля: виден всё время, пока связь незащищена, и исчезает
+     совсем, когда всё в порядке. Постоянный зелёный замочек рядом с именем быстро стал бы фоновым
+     шумом — а нужно заметить именно неисправность. */
+  #me-bar .insecure-badge { margin-left: auto; display: none; align-items: center; gap: 4px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px; color: var(--danger); border: 1px solid var(--danger); border-radius: 20px; padding: 2px 7px; flex-shrink: 0; }
+  #me-bar .insecure-badge.show { display: flex; }
+  #me-bar .insecure-badge + .gear { margin-left: 8px; }
+
+  #me-bar .gear { margin-left: auto; color: var(--muted); display: flex; flex-shrink: 0; transform: rotate(0deg); transition: transform .35s cubic-bezier(.4, 0, .2, 1), color .15s; }
+  #me-bar.open .gear { transform: rotate(180deg); color: var(--text); }
+  .avatar { width: 26px; height: 26px; border-radius: 50%; background: linear-gradient(135deg, var(--accent), #8f6ee8); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 10.5px; font-weight: 700; flex-shrink: 0; position: relative; }
+  /* Строка профиля: вместо круга с инициалами — герб организации. Круг и градиент
+     убираем совсем (герб — не аватар, рамка ему не нужна), значок статуса остаётся на
+     прежнем месте. Размер чуть больше круга: у герба много воздуха по краям, и при
+     26px он выглядит мельче соседних элементов. */
+  .avatar.emblem { width: 30px; height: 30px; border-radius: 0; background: none; color: var(--emblem); }
+  .avatar.emblem svg { width: 100%; height: 100%; display: block; }
+  .avatar.emblem .dot { right: -1px; bottom: 0; }
+  .avatar .dot { position: absolute; right: -2px; bottom: -2px; border: 2px solid var(--panel); -webkit-app-region: no-drag; }
+  /* flex:1 + nowrap/ellipsis — гарантирует, что #topSlot всегда ровно 46px высотой (для top:46px у
+     #profilePanel ниже), даже если отображаемое имя очень длинное: без этого строка могла бы
+     перенестись на вторую строку и увеличить высоту шапки. */
+  #me-bar .name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600; font-size: 12.5px; }
+  #me-bar .dot { margin-right: -2px; }
+
+  #searchBar { opacity: 0; pointer-events: none; }
+  #searchBar.active { opacity: 1; pointer-events: auto; }
+  #searchBar svg { color: var(--muted); flex-shrink: 0; }
+  #searchBar input { flex: 1; background: transparent; border: none; color: var(--text); font-size: 13px; }
+  #searchBar input:focus { outline: none; }
+
+  /* "Объявления" — постоянный элемент (не пересоздаётся при каждом renderList(), в отличие от
+     остального списка), чтобы его можно было плавно прятать/показывать при поиске и открытии
+     профиля. Раньше высота схлопывалась мгновенным display:none с задержкой в 200мс (после
+     fade) — а поиск при этом всё время держит #list видимым (в отличие от открытия профиля, где
+     список тоже прячется одновременно), так что этот отложенный "прыжок" на 46px вверх было хорошо
+     видно каждый раз, когда начинался поиск. Высота у строки заранее известна и не меняется —
+     поэтому max-height можно анимировать по-настоящему (в отличие от #profilePanel, чей контент
+     заранее неизвестного размера), без скачка в конце. */
+  #historyRow { overflow: hidden; max-height: 48px; transition: opacity .15s ease, transform .2s ease, max-height .2s ease; }
+  #historyRow.hidden-up { opacity: 0; pointer-events: none; transform: translateY(-14px); max-height: 0; }
+
+  /* Плавно прячется, пока открыта панель профиля (см. hideListSmoothly/showListSmoothly) — сначала
+     гаснет (opacity), а когда переход закончится, по-настоящему убирается из раскладки
+     (display:none), иначе остаётся невидимым, но занимающим место. */
+  #list { flex: 1; overflow-y: auto; padding: 6px; transition: opacity .15s ease, transform .2s ease; }
+  #list.hidden { opacity: 0; pointer-events: none; transform: translateY(14px); }
+  .section { padding: 10px 8px 6px 10px; display: flex; align-items: center; gap: 6px; cursor: pointer; border-radius: 6px; user-select: none; }
+  .section .chev { color: var(--muted); display: flex; transition: transform .15s; flex-shrink: 0; }
+  .section.collapsed .chev { transform: rotate(-90deg); }
+  .section .stitle { font-size: 10.5px; color: var(--muted); letter-spacing: .5px; font-weight: 700; }
+  .section .scount { font-size: 10.5px; color: var(--muted); font-weight: 600; font-variant-numeric: tabular-nums; }
+  /* Сворачивание отдела — плавное (max-height), а не мгновенный display:none. Высота содержимого
+     заранее неизвестна (зависит от числа людей в отделе), поэтому конкретное значение max-height
+     на каждый показ/скрытие выставляет JS (см. animateDeptRows) через реально измеренный
+     scrollHeight — иначе пришлось бы либо угадывать с запасом (как у #profilePanel — там это
+     осознанный компромисс без анимации по существу), либо обрезать контент отдела побольше.
+     overflow:hidden обязателен — иначе max-height не будет ничего скрывать. */
+  .dept-rows { overflow: hidden; transition: max-height .2s ease; }
+
+  .row { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 9px; cursor: pointer; transition: background .12s; }
+  /* Интервал между СОСЕДНИМИ строками сотрудников — короче стандартного padding-based (на ~30%),
+     но только между ними: у первой строки отдела нет предыдущего .row (это заголовок отдела), так
+     что отступ от заголовка не трогается, как и отступ до следующего отдела/конца списка. */
+  .row + .row { margin-top: -4px; }
+  .row:hover { background: var(--panel-2); }
+  .row .n { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
+  .row .me-tag { font-weight: 500; font-size: 10.5px; color: var(--muted); margin-left: 6px; display: none; }
+  .row.is-me:hover .me-tag { display: inline; }
+  /* Недоступен для сообщений/файлов — подключён только через веб-панель администратора (см. пункт
+     ниже про canReceiveMessages в ui-kit.js): не кликабелен, приглушён, без обычной подсветки при наведении. */
+  .row.unreachable { opacity: .5; cursor: default; }
+  .row.unreachable:hover { background: transparent; }
+  /* Индикатор непрочитанного — счётчик справа в строке (не путать с точкой присутствия слева).
+     Состояние приходит от главного процесса (см. desktop.onUnreadState) — он же считает, какое
+     окно сейчас открыто/в фокусе, и сбрасывает счётчик при его открытии. */
+  .row .unread-badge { display: none; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--accent); color: #fff; font-size: 10px; font-weight: 700; align-items: center; justify-content: center; flex-shrink: 0; margin-left: 6px; box-sizing: border-box; }
+  .row.unread .unread-badge { display: flex; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--offline); flex-shrink: 0; }
+  .dot.active { background: var(--online); box-shadow: 0 0 6px 0 var(--online); }
+  .dot.idle { background: var(--afk); box-shadow: 0 0 6px 0 var(--afk); }
+  .badge-icon { width: 26px; height: 26px; border-radius: 8px; background: var(--panel-2); color: var(--accent-2); display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+  .empty-hint { padding: 20px 12px; text-align: center; color: var(--muted); font-size: 12px; }
+
+  /* ---- Группы ---- */
+  /* Заголовок секции групп — тот же визуальный класс .section, но не сворачивается (групп обычно
+     немного) и несёт кнопку создания справа, а не chevron слева. */
+  .section.groups-header { cursor: default; }
+  .section .group-add-btn { margin-left: auto; width: 20px; height: 20px; border: none; background: transparent; color: var(--muted); cursor: pointer; border-radius: 5px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .section .group-add-btn:hover { background: var(--hover); color: var(--text); }
+  .section .group-add-btn svg { width: 13px; height: 13px; }
+  .row .group-manage-btn { width: 22px; height: 22px; border: none; background: transparent; color: var(--muted); cursor: pointer; border-radius: 6px; display: none; align-items: center; justify-content: center; flex-shrink: 0; }
+  .row:hover .group-manage-btn { display: flex; }
+  .row .group-manage-btn:hover { background: var(--panel); color: var(--text); }
+  .row .group-manage-btn svg { width: 14px; height: 14px; }
+
+  /* ---- Модалка создания/управления группой ---- */
+  .group-modal-box { width: min(340px, 90%) !important; }
+  .gm-field { margin-bottom: 12px; }
+  .gm-field label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 5px; font-weight: 600; }
+  .gm-field input[type="text"] { width: 100%; box-sizing: border-box; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; color: var(--text); font-size: 13px; }
+  .gm-field input[type="text"]:focus { outline: none; border-color: var(--accent); }
+  .gm-members { max-height: 220px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; padding: 4px; }
+  .gm-member { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; font-size: 12.5px; }
+  .gm-member:hover { background: var(--hover); }
+  .gm-member input { flex-shrink: 0; }
+  .gm-member .n { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .gm-readonly-members { max-height: 220px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+  .gm-readonly-members .gm-member-name { padding: 5px 8px; font-size: 12.5px; }
+  .gm-owner-tag { color: var(--muted); font-size: 10.5px; margin-left: 4px; }
+
+  /* ---- Профиль и настройки — раскрывающаяся панель под me-bar, а не отдельное окно ----
+     Абсолютно спозиционированный оверлей поверх списка контактов (тот же приём, что у #historyPanel
+     в окне чата/рассылок) — только opacity/transform, ничего, что требует пересчёта раскладки.
+     Раньше панель росла через max-height+flex-grow, деля место со списком, который прятался через
+     display:none с задержкой — эти два независимых процесса недосчитывались друг о друга, и ближе к
+     концу анимации, когда список наконец схлопывался, панель заметно "довырастала" рывком. Оверлей
+     с самого начала имеет свою полную, неизменную высоту (top:46px = высота #topSlot, bottom:0) —
+     доращивать нечего, поэтому дёргаться нечему. */
+  #profilePanel {
+    position: absolute; top: 46px; left: 0; right: 0; bottom: 0; z-index: 20;
+    display: flex; flex-direction: column; background: var(--bg);
+    border-top: 2px solid transparent;
+    opacity: 0; transform: translateY(-8px); pointer-events: none;
+    transition: opacity .2s ease, transform .2s ease, border-color .2s ease;
+  }
+  #profilePanel.open { opacity: 1; transform: translateY(0); pointer-events: auto; border-top-color: var(--accent); }
+  #profilePanel .inner { flex: 1; min-height: 0; padding: 14px; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
+  #profilePanel .section-title { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; font-weight: 700; }
+  /* Версия и трек сборки — мелким шрифтом над кнопкой выхода. Нужно не пользователю, а поддержке:
+     "продиктуйте нижнюю строку в настройках" вместо выяснения, что за версия у человека стоит. */
+  #profilePanel .pp-about { font-size: 10.5px; color: var(--muted); text-align: center; margin-top: 10px; user-select: text; }
+  #profilePanel .theme-row + .section-title { margin-top: 10px; }
+  #profilePanel .theme-row { display: flex; gap: 8px; padding: 10px; border-radius: 9px; background: var(--panel); border: 1px solid var(--border); }
+  #profilePanel .theme-row .info { flex: 1; }
+  #profilePanel .theme-row .t { font-weight: 600; font-size: 12px; }
+  #profilePanel .theme-row .d { color: var(--muted); font-size: 11px; margin-top: 2px; line-height: 1.35; }
+  #profilePanel .theme-switch { position: relative; display: flex; align-items: center; gap: 4px; background: var(--panel-2); border-radius: 20px; padding: 3px; flex-shrink: 0; align-self: center; }
+  /* Плавный слайдер: кружок-подложка едет между кнопками (transform), а не мгновенно перекрашивается
+     то одна, то другая кнопка — сами кнопки поверх него прозрачные, меняется только цвет иконки. */
+  #profilePanel .theme-switch .ts-thumb { position: absolute; top: 3px; left: 3px; width: 28px; height: 28px; border-radius: 50%; background: var(--accent); transition: transform .22s cubic-bezier(.4,0,.2,1); }
+  #profilePanel .theme-switch.light .ts-thumb { transform: translateX(32px); }
+  #profilePanel .theme-switch button { position: relative; z-index: 1; width: 28px; height: 28px; border-radius: 50%; border: none; background: transparent; color: var(--muted); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: color .22s ease; }
+  #profilePanel .theme-switch button.active { color: #fff; }
+  #profilePanel .option { display: flex; align-items: center; gap: 10px; padding: 10px; border-radius: 9px; background: var(--panel); border: 1px solid var(--border); cursor: pointer; }
+  #profilePanel .option:hover { background: var(--panel-2); }
+  #profilePanel .option .opt-text { flex: 1; min-width: 0; }
+  #profilePanel .option .t { font-weight: 600; font-size: 12px; }
+  #profilePanel .option .d { color: var(--muted); font-size: 11px; margin-top: 2px; line-height: 1.35; }
+  /* Слайдер вкл/выкл справа (вместо чекбокса слева) — сам input остаётся в разметке ради
+     доступности/семантики и обработчиков change, но визуально скрыт: видимый вид рисуют
+     .pp-switch-track и её ::before через соседний селектор input:checked +. */
+  #profilePanel .pp-switch { position: relative; display: inline-block; width: 38px; height: 22px; flex-shrink: 0; }
+  #profilePanel .pp-switch input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
+  #profilePanel .pp-switch-track { position: absolute; inset: 0; background: var(--panel-2); border: 1px solid var(--border); border-radius: 20px; transition: background .15s ease, border-color .15s ease; }
+  #profilePanel .pp-switch-track::before { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--muted); transition: transform .15s ease, background .15s ease; }
+  #profilePanel .pp-switch input:checked + .pp-switch-track { background: var(--accent); border-color: var(--accent); }
+  #profilePanel .pp-switch input:checked + .pp-switch-track::before { transform: translateX(16px); background: #fff; }
+  #profilePanel .pp-switch input:focus-visible + .pp-switch-track { outline: 2px solid var(--accent); outline-offset: 2px; }
+  #profilePanel #ppDownloadPathLabel { flex: 1; min-width: 0; font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 7px 9px; }
+  #profilePanel #ppPickFolderBtn { width: auto; padding: 0 10px; gap: 6px; display: flex; }
+  #profilePanel #ppIdleThresholdMinutes { width: 70px; padding: 7px 9px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-size: 12.5px; }
+  /* Стандартный range-input сбрасываем полностью (-webkit-appearance:none) и рисуем свою дорожку/
+     бегунок — иначе на Windows слайдер выглядел бы стандартным системным виджетом не в цвет темы. */
+  #profilePanel input[type="range"] { flex: 1; -webkit-appearance: none; appearance: none; height: 4px; border-radius: 2px; background: var(--panel-2); outline: none; cursor: pointer; }
+  #profilePanel input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 16px; height: 16px; border-radius: 50%; background: var(--accent); cursor: pointer; border: none; box-shadow: 0 1px 3px rgba(0,0,0,.3); }
+  /* Текстовая кнопка в панели настроек. Класс .icon-btn для такого не годится: он жёстко задан как
+     квадрат 27×27 под иконку, и надпись из двух слов ломается пополам внутри него. */
+  #profilePanel .pp-btn { width: auto; height: auto; padding: 7px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2); color: var(--text); font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+  #profilePanel .pp-btn:hover { background: var(--hover); border-color: var(--accent); }
+  #profilePanel .pp-btn:disabled { opacity: .5; cursor: default; }
+  #profilePanel .pp-btn:disabled:hover { background: var(--panel-2); border-color: var(--border); }
+  #profilePanel #ppLogoutBtn { margin-top: 2px; padding: 9px; border: 1px solid var(--danger); border-radius: 8px; background: transparent; color: var(--danger); font-weight: 600; cursor: pointer; }
+  #profilePanel #ppLogoutBtn:hover { background: var(--danger); color: #fff; }
