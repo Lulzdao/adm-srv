@@ -60,8 +60,9 @@ async function waitForPing(url, proc, output) {
  * Поднять сервер. Возвращает { url, dir, stop }. stop обязательно звать в after().
  * files — что положить рядом с server.js до запуска, например { 'certs/server.pfx': buffer }:
  * с сертификатом в certs/ сервер поднимается по https, и url будет https://localhost:<порт>.
+ * env — дополнительные переменные окружения процесса (например, TZ).
  */
-async function startServer({ files = {} } = {}) {
+async function startServer({ files = {}, env: extraEnv = {} } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'iskra-test-'));
   fs.copyFileSync(path.join(SERVER_DIR, 'server.js'), path.join(dir, 'server.js'));
   fs.cpSync(path.join(SERVER_DIR, 'lib'), path.join(dir, 'lib'), { recursive: true });
@@ -72,7 +73,7 @@ async function startServer({ files = {} } = {}) {
   }
 
   const port = await freePort();
-  const env = { ...process.env, PORT: String(port), NODE_PATH: path.join(SERVER_DIR, 'node_modules') };
+  const env = { ...process.env, PORT: String(port), NODE_PATH: path.join(SERVER_DIR, 'node_modules'), ...extraEnv };
   // Ключ подписи — свой у каждого запуска: сервер сгенерирует его сам и сохранит в свою базу.
   delete env.JWT_SECRET;
   for (const k of ['TLS_PFX', 'TLS_PFX_PASSWORD', 'TLS_CERT', 'TLS_KEY']) delete env[k];

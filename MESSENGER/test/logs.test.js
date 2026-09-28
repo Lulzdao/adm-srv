@@ -30,8 +30,27 @@ test('журнал, записанный до раскладки, переезж
   assert.equal(fs.readFileSync(moved, 'utf8'), OLD_LINE, 'содержимое переносится как есть');
 });
 
+// Местная дата в заданном часовом поясе — ГГГГ-ММ-ДД.
+const localDay = (timeZone) => new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+
+test('день журнала — местный, а не по UTC', async (t) => {
+  // Пояс, в котором дата прямо сейчас отличается от UTC: +14 ч — с 10:00 UTC, −11 ч — до 11:00 UTC.
+  // Так проверка честная в любое время суток, а не только ночью.
+  const tz = new Date().getUTCHours() >= 10 ? 'Pacific/Kiritimati' : 'Pacific/Niue';
+  const day = localDay(tz);
+  assert.notEqual(day, new Date().toISOString().slice(0, 10), 'пояс подобран так, чтобы даты различались');
+  const other = await startServer({ env: { TZ: tz } });
+  t.after(() => other.stop());
+  await login(other.url, ADMIN.username, ADMIN.password);
+  const file = path.join(other.dir, 'logs', day.slice(0, 7), `server-${day}.log`);
+  for (let i = 0; i < 20 && !fs.existsSync(file); i++) await new Promise((r) => setTimeout(r, 50));
+  assert.ok(fs.existsSync(file), `ожидался файл за местный день ${day} (${tz})`);
+  const today = await request(other.url, 'GET', '/api/admin/logs', { token: (await login(other.url, ADMIN.username, ADMIN.password)).token });
+  assert.ok(today.json.entries.some((e) => e.event === 'login'), 'панель без ?day= показывает местный «сегодня»');
+});
+
 test('новые записи ложатся в папку текущего месяца', async () => {
-  const day = new Date().toISOString().slice(0, 10);
+  const day = localDay(Intl.DateTimeFormat().resolvedOptions().timeZone);
   const file = path.join(srv.dir, 'logs', day.slice(0, 7), `server-${day}.log`);
   // Вход выше уже записан; запись асинхронная — даём ей мгновение.
   for (let i = 0; i < 20 && !fs.existsSync(file); i++) await new Promise((r) => setTimeout(r, 50));
