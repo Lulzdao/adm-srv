@@ -106,7 +106,7 @@ function collectTrustAnchors() {
   // это рычаг на случай, когда всё остальное уже не работает.
   for (const pem of machinePolicy.extraCa) anchors.push(pem);
 
-  logLocal('ca_anchors_loaded', { fromWindowsStore: fromStore.length, total: anchors.length });
+  logLocal('ca_anchors_loaded', { fromWindowsStore: fromStore.length, total: anchors.length }, 'INFO');
   return anchors;
 }
 
@@ -133,6 +133,34 @@ const APP_ICON_PATH = path.join(__dirname, 'build', 'icon.ico');
 // 'dev'. Нужна поддержке: обе сборки внешне одинаковы, и без этой строки узнать, какая именно
 // стоит у сотрудника, можно только по версии Electron в диспетчере задач.
 const BUILD_TRACK = require('./package.json').buildTrack || 'dev';
+
+// ---------- Окна показывают только свои страницы ----------
+// В окнах есть мост в главный процесс (preload.js → window.desktop): смена адреса сервера, скачивание,
+// журнал. Любая страница, оказавшаяся в окне, получила бы его целиком. Поэтому окно не может уйти со
+// своих страниц renderer/ (переход по ссылке, location = ...), открыть новое окно (window.open,
+// target=_blank) или встроить <webview>. Сейчас ссылок в переписке нет и текст экранируется — это
+// вторая линия на случай, если однажды где-то ошибутся.
+const RENDERER_URL_PREFIX = require('url').pathToFileURL(path.join(__dirname, 'renderer') + path.sep).href;
+app.on('web-contents-created', (event, contents) => {
+  contents.on('will-navigate', (e, url) => {
+    if (!String(url).startsWith(RENDERER_URL_PREFIX)) {
+      e.preventDefault();
+      logLocal('navigation_blocked', { url: String(url).slice(0, 200) }, 'WARN');
+    }
+  });
+  contents.setWindowOpenHandler(({ url }) => {
+    logLocal('window_open_blocked', { url: String(url).slice(0, 200) }, 'WARN');
+    return { action: 'deny' };
+  });
+  contents.on('will-attach-webview', (e) => e.preventDefault());
+});
+
+// Что окнам нужно знать о себе синхронно, в момент открытия соединения (см. preload.js): имя ПК,
+// версия, трек сборки. Раньше preload читал это сам через require('os') и package.json — из-за
+// этого окна работали без песочницы (sandbox: false). Теперь отвечает главный процесс.
+ipcMain.on('get-static-info', (event) => {
+  event.returnValue = { hostname: require('os').hostname(), appVersion: app.getVersion(), buildTrack: BUILD_TRACK };
+});
 
 // GPU/аппаратное ускорение Chromium на Windows 7 нестабильно (устаревшие/неполные драйверы DirectX,
 // не рассчитанные на современный Chromium) и регулярно приводит к падениям с "unknown software
@@ -263,7 +291,7 @@ const machinePolicy = readMachinePolicy();
 trustOrganizationCa();
 
 if (machinePolicy.serverUrl) {
-  logLocal('machine_policy_server_url', { url: machinePolicy.serverUrl, from: machinePolicy.source });
+  logLocal('machine_policy_server_url', { url: machinePolicy.serverUrl, from: machinePolicy.source }, 'INFO');
 }
 
 const SETTINGS_PATH = path.join(app.getPath('userData'), 'settings.json');
@@ -330,7 +358,7 @@ function effectiveServerUrl() {
   if (local) {
     const downgrade = /^http:\/\//i.test(local) && /^https:\/\//i.test(String(SERVER_URL));
     if (downgrade && !machinePolicy.allowInsecureHttp) {
-      logLocal('insecure_override_rejected', { attempted: local });
+      logLocal('insecure_override_rejected', { attempted: local }, 'WARN');
       return SERVER_URL;
     }
     return local;
@@ -549,7 +577,7 @@ function createWindow(key, file, payload, size) {
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
-      sandbox: false, // preload использует require('os') для hostname — в песочнице это запрещено
+      sandbox: true, // preload получает имя ПК и версию у главного процесса (get-static-info)
     },
   });
   // setZoomFactor ДО навигации не работает — Chromium сбрасывает зум при переходе на новую страницу,
@@ -596,7 +624,7 @@ function createRoster() {
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
-      sandbox: false,
+      sandbox: true,
     },
   });
   // См. комментарий в createWindow() — setZoomFactor до навигации не переживает загрузку страницы.
@@ -791,7 +819,7 @@ let forceInstallAfterDownload = false;
 
 function forceUpdateNow() {
   if (!app.isPackaged) return;
-  logLocal('update_forced_by_admin', {});
+  logLocal('update_forced_by_admin', {}, 'INFO');
   forceInstallAfterDownload = true;
   autoUpdater.autoDownload = true;
   checkForUpdates();
@@ -816,7 +844,7 @@ function setupUpdater() {
   }));
   autoUpdater.on('download-progress', (p) => sendUpdateState({ state: 'downloading', percent: Math.round(p.percent) }));
   autoUpdater.on('update-downloaded', (info) => {
-    logLocal('update_downloaded', { version: info.version });
+    logLocal('update_downloaded', { version: info.version }, 'INFO');
     sendUpdateState({ state: 'downloaded', version: info.version });
     if (forceInstallAfterDownload) {
       // Обновление запустил администратор. Совсем без предупреждения окна закрывать нельзя —

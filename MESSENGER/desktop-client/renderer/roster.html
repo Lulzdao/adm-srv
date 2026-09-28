@@ -2,6 +2,9 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
+<!-- Только свои скрипты, стили, шрифты и картинки; сеть — к серверу «Искры» (адрес задаётся настройкой,
+     поэтому схемы, а не имя). Встроенные <script> и style= остаются разрешены — они в самих страницах. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' data: blob:; connect-src http: https: ws: wss:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'">
 <title>Искра</title>
 <link rel="stylesheet" href="theme.css">
 <style>
