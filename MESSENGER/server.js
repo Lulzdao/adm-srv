@@ -213,6 +213,11 @@ db.exec(`
   // PATCH /api/admin/users/:id): если два администратора одновременно открыли карточку одного и
   // того же человека, второй сохранённый PATCH не должен молча затирать правки первого.
   if (!cols.includes('version')) db.exec('ALTER TABLE users ADD COLUMN version INTEGER NOT NULL DEFAULT 0');
+  // Поколение входа: номер зашит в каждый выданный токен, и токен со старым номером больше не
+  // пускает. Растёт при смене пароля администратором — иначе вход, сделанный до смены (в том числе
+  // тем, кто пароль подсмотрел), оставался рабочим ещё до 30 дней. Уже выданные токены без номера
+  // считаются поколением 0 — обновление никого не разлогинивает.
+  if (!cols.includes('session_gen')) db.exec('ALTER TABLE users ADD COLUMN session_gen INTEGER NOT NULL DEFAULT 0');
 }
 {
   // can_broadcast/can_admin у отделов больше не используются (раньше отдел мог выдавать права всем
@@ -301,7 +306,9 @@ function normalizeRow(row) {
   } else if (file_url) {
     files = [{ url: file_url, name: file_name, size: file_size }];
   }
-  files = files.map((f) => ({ ...f, exists: fileExistsForUrl(f.url) }));
+  // Имя — настоящее, под которым файл загрузили (см. uploadedName): в сообщениях, отправленных до
+  // этой проверки, оно могло быть выбрано отправителем, и карточка показывала бы не то, что скачается.
+  files = files.map((f) => ({ ...f, name: uploadedName(diskNameFromUrl(f.url)) || f.name, exists: fileExistsForUrl(f.url) }));
   // reply_to_id/reply_snapshot есть только у messages (не у broadcasts, для них оба всегда undefined
   // и reply останется null) — снимок текста/автора сделан сервером в момент ответа (см. миграцию
   // выше), поэтому цитата не зависит от того, загружена ли сейчас страница с самим оригиналом.
@@ -394,7 +401,9 @@ function normalizeIncomingFiles(rawFiles, user) {
     .filter((f) => f && typeof f === 'object' && typeof f.url === 'string' && f.url)
     .map((f) => ({
       url: f.url.slice(0, 300),
-      name: (typeof f.name === 'string' && f.name ? f.name : 'файл').slice(0, 200),
+      // Имя — то, под которым файл загрузили (см. uploadedName), а не присланное клиентом.
+      name: uploadedName(diskNameFromUrl(f.url.slice(0, 300)))
+        || (typeof f.name === 'string' && f.name ? f.name : 'файл').slice(0, 200),
       size: Number.isFinite(Number(f.size)) ? Number(f.size) : 0,
     }))
     .filter((f) => {
@@ -689,17 +698,35 @@ app.use((req, res, next) => {
   next();
 });
 
+// ---------- Вход по токену ----------
+// Токен входа живёт 30 дней (клиент на рабочем месте не должен спрашивать пароль каждое утро), но
+// отзывается раньше: при удалении сотрудника (нет строки в базе) и при смене пароля администратором
+// (растёт session_gen, см. миграцию users выше). Токен на скачивание файла (purpose: 'download')
+// входом не является.
+const getSessionGen = db.prepare('SELECT session_gen FROM users WHERE id = ?');
+const bumpSessionGen = db.prepare('UPDATE users SET session_gen = session_gen + 1 WHERE id = ?');
+
+function issueToken(userId) {
+  const { session_gen: sg } = getSessionGen.get(userId);
+  return jwt.sign({ id: userId, sg }, SECRET, { expiresIn: '30d' });
+}
+
+// Пользователь по токену входа или null. Права всегда свежие из базы, а не из токена.
+function userFromToken(token) {
+  let payload;
+  try { payload = jwt.verify(token, SECRET); } catch { return null; }
+  if (payload.purpose !== undefined || !Number.isInteger(payload.id)) return null;
+  const row = getSessionGen.get(payload.id);
+  if (!row || row.session_gen !== (payload.sg || 0)) return null;
+  return getUserById.get(payload.id) || null;
+}
+
 function auth(req, res, next) {
   const token = (req.headers.authorization || '').replace('Bearer ', '');
-  try {
-    const payload = jwt.verify(token, SECRET);
-    const fresh = getUserById.get(payload.id); // роль всегда берём свежую из БД
-    if (!fresh) return res.status(401).json({ error: 'Пользователь не найден' });
-    req.user = fresh;
-    next();
-  } catch {
-    res.status(401).json({ error: 'Не авторизован' });
-  }
+  const user = userFromToken(token);
+  if (!user) return res.status(401).json({ error: 'Не авторизован' });
+  req.user = user;
+  next();
 }
 
 // ---------- Файлы ----------
@@ -731,8 +758,22 @@ function getUploadSettings() {
   const maxMb = Math.min(Number(getSettingRaw('upload_max_mb')) || DEFAULT_MAX_UPLOAD_MB, UPLOAD_HARD_CEILING_MB);
   return { mode, extensions, maxMb };
 }
+// Имя файла, как его сохраняем и показываем: без символов, запрещённых в именах Windows, и без
+// точек и пробелов в конце — Windows их отбрасывает, и «программа.exe.» сохранялась бы как
+// «программа.exe», проскочив проверку расширения.
+function cleanUploadName(raw) {
+  return String(raw || '').replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').replace(/[. ]+$/, '').slice(0, 150) || 'file';
+}
+// Имя, под которым файл загрузили, — из имени на диске (<время>-<8 hex>-<имя>, см. /api/upload).
+// Только его и показываем получателям: имя в сообщении присылает клиент отправителя, и раньше
+// можно было загрузить разрешённый «отчёт.txt», а в сообщении назвать его «отчёт.exe» — получатель
+// сохранял программу, хотя администратор такие файлы запретил.
+function uploadedName(diskName) {
+  const m = /^\d+-[0-9a-f]{8}-(.+)$/.exec(String(diskName || ''));
+  return m ? m[1] : null;
+}
 function isUploadAllowed(name, settings) {
-  const ext = String(name).split('.').pop().toLowerCase();
+  const ext = cleanUploadName(name).split('.').pop().toLowerCase();
   const inList = settings.extensions.includes(ext);
   return settings.mode === 'allow' ? inList : !inList;
 }
@@ -754,7 +795,7 @@ app.post('/api/upload', auth, (req, res, next) => {
   }
   next();
 }, express.raw({ limit: `${UPLOAD_HARD_CEILING_MB}mb`, type: () => true }), (req, res) => {
-  const originalName = String(req.query.name || 'file').replace(/[\\/:*?"<>|]/g, '_').slice(0, 150);
+  const originalName = cleanUploadName(req.query.name);
   if (!req.body || !req.body.length) return res.status(400).json({ error: 'Пустой файл' });
   if (req.body.length > req._uploadMaxBytes) {
     return res.status(413).json({ error: `Файл больше ${Math.round(req._uploadMaxBytes / 1024 / 1024)} МБ` });
@@ -818,8 +859,9 @@ app.get('/api/download-token', auth, (req, res) => {
 
 // На диске файл лежит под "грязным" именем (метка времени + случайный хеш — нужно для исключения
 // коллизий и path traversal), поэтому явно задаём оригинальное имя через Content-Disposition —
-// иначе при сохранении подставлялось бы страшное техническое имя файла. Клиент передаёт оригинальное
-// имя параметром ?name=, зная его из истории переписки.
+// иначе при сохранении подставлялось бы страшное техническое имя файла. Имя берём из имени на диске
+// (uploadedName), а не из ?name=: его клиент подставляет из сообщения, а в сообщениях, отправленных
+// до этой правки, имя выбирал отправитель.
 app.get('/uploads/:diskName', (req, res) => {
   let payload;
   try { payload = jwt.verify(req.query.token, SECRET); } catch { return res.sendStatus(401); }
@@ -828,7 +870,7 @@ app.get('/uploads/:diskName', (req, res) => {
   // Сравниваем именно каталог файла с uploadsDir, а не начало строки пути: startsWith прошёл бы и
   // для соседнего каталога с похожим именем (uploads-old и т.п.). Тот же приём, что в DELETE ниже.
   if (path.dirname(filePath) !== uploadsDir || !fs.existsSync(filePath)) return res.sendStatus(404);
-  const displayName = req.query.name ? String(req.query.name).slice(0, 260) : req.params.diskName;
+  const displayName = uploadedName(req.params.diskName) || req.params.diskName;
   res.download(filePath, displayName);
 });
 
@@ -903,12 +945,25 @@ setInterval(() => {
 // сейчас все так и регистрируются; рекомендация выключить — в README.
 function registrationOpen() { return getSettingRaw('registration_open') !== '0'; }
 
+// Логин — это ФИО (см. PATCH /api/admin/users/:id): любые символы, но строкой, без пробелов по
+// краям и не длиннее 60 — как при переименовании. null — логин не годится.
+function cleanUsername(raw) {
+  if (typeof raw !== 'string') return null;
+  const clean = raw.trim();
+  return clean && clean.length <= 60 ? clean : null;
+}
+
+// Хэш несуществующего пароля: вход под несуществующим логином тратит на bcrypt столько же времени,
+// сколько под настоящим, — иначе по времени ответа было видно, какие логины заведены.
+const DUMMY_PASSWORD_HASH = bcrypt.hashSync(crypto.randomBytes(16).toString('hex'), 10);
+
 app.post('/api/register', ipRateLimit({ windowMs: 60 * 60 * 1000, max: 10 }), (req, res) => {
   if (!registrationOpen()) {
     return res.status(403).json({ error: 'Самостоятельная регистрация отключена. Обратитесь к администратору за учётной записью.' });
   }
-  const { username, password } = req.body || {};
-  if (!username || !password || password.length < 4) {
+  const { password } = req.body || {};
+  const username = cleanUsername((req.body || {}).username);
+  if (!username || typeof password !== 'string' || password.length < 4) {
     return res.status(400).json({ error: 'Логин и пароль (мин. 4 символа) обязательны' });
   }
   try {
@@ -919,8 +974,7 @@ app.post('/api/register', ipRateLimit({ windowMs: 60 * 60 * 1000, max: 10 }), (r
     const info = insertUser.run(username, hash, username, 0, 0, Date.now());
     invalidateUserIdsCache();
     logServer('INFO', 'register', { username, id: info.lastInsertRowid, ip: req.ip });
-    const token = jwt.sign({ id: info.lastInsertRowid }, SECRET, { expiresIn: '30d' });
-    res.json({ token, user: getUserById.get(info.lastInsertRowid) });
+    res.json({ token: issueToken(info.lastInsertRowid), user: getUserById.get(info.lastInsertRowid) });
   } catch {
     res.status(409).json({ error: 'Такой логин уже занят' });
   }
@@ -955,21 +1009,24 @@ app.post('/api/presence/heartbeat', auth, (req, res) => {
 
 app.post('/api/login', ipRateLimit({ windowMs: 10 * 60 * 1000, max: 30 }), (req, res) => {
   const { username, password } = req.body || {};
+  if (typeof username !== 'string' || typeof password !== 'string') {
+    return res.status(400).json({ error: 'Введите логин и пароль' });
+  }
   const lockedSec = checkLoginLock(username);
   if (lockedSec) {
     logServer('WARN', 'login_locked', { username, ip: req.ip, lockedSec });
     return res.status(429).json({ error: `Слишком много неверных попыток входа, повторите через ${lockedSec} сек.` });
   }
   const user = getUserByName.get(username);
-  if (!user || !bcrypt.compareSync(password || '', user.password_hash)) {
+  const passwordOk = bcrypt.compareSync(password, user ? user.password_hash : DUMMY_PASSWORD_HASH);
+  if (!user || !passwordOk) {
     registerLoginFail(username);
     logServer('WARN', 'login_failed', { username, ip: req.ip });
     return res.status(401).json({ error: 'Неверный логин или пароль' });
   }
   clearLoginFails(username);
   logServer('INFO', 'login', { username, id: user.id, ip: req.ip });
-  const token = jwt.sign({ id: user.id }, SECRET, { expiresIn: '30d' });
-  res.json({ token, user: getUserById.get(user.id) });
+  res.json({ token: issueToken(user.id), user: getUserById.get(user.id) });
 });
 
 // Ошибки с рабочих мест сотрудников — рендереры десктоп-клиента сами шлют их сюда при window.onerror/
@@ -1309,8 +1366,9 @@ app.patch('/api/admin/registration', auth, requireCapability('can_admin'), (req,
 });
 
 app.post('/api/admin/users', auth, requireCapability('can_admin'), (req, res) => {
-  const { username, password, department_id, department_ids, can_broadcast, can_admin } = req.body || {};
-  if (!username || !password || password.length < 4) return res.status(400).json({ error: 'Логин и пароль (мин. 4 символа) обязательны' });
+  const { password, department_id, department_ids, can_broadcast, can_admin } = req.body || {};
+  const username = cleanUsername((req.body || {}).username);
+  if (!username || typeof password !== 'string' || password.length < 4) return res.status(400).json({ error: 'Логин и пароль (мин. 4 символа) обязательны' });
   try {
     const hash = bcrypt.hashSync(password, 10);
     const info = insertUser.run(username, hash, username, can_broadcast ? 1 : 0, can_admin ? 1 : 0, Date.now());
@@ -1337,6 +1395,26 @@ app.patch('/api/admin/users/:id', auth, requireCapability('can_admin'), (req, re
   if (version !== undefined && Number(version) !== current.version) {
     return res.status(409).json({ error: 'Пользователя уже изменил другой администратор — обновите страницу и повторите' });
   }
+  // Сначала проверяем всё, потом пишем: раньше права и отделы успевали сохраниться, а потом запрос
+  // отказывал из-за короткого пароля — и в панели было «ошибка», хотя половина правок уже прошла.
+  if (password !== undefined && password !== '' && (typeof password !== 'string' || password.length < 4)) {
+    return res.status(400).json({ error: 'Пароль слишком короткий' });
+  }
+  const cleanDisplay = display_name !== undefined ? String(display_name).trim() : null;
+  if (display_name !== undefined && !cleanDisplay) return res.status(400).json({ error: 'Имя не может быть пустым' });
+  // Снять право администратора с самого себя нельзя: так панель теряет последнего, кто может
+  // вернуть права, а стартовая учётка из bootstrap-admin.js создаётся только при пустом списке
+  // админов и только если файл ещё лежит на сервере. Другой администратор снять его может.
+  if (id === req.user.id && can_admin !== undefined && !can_admin) {
+    return res.status(400).json({ error: 'Нельзя снять право администратора с самого себя' });
+  }
+  // Логин меняется вместе с ФИО (см. ниже, где он записывается).
+  const cleanLogin = username !== undefined ? String(username).trim().slice(0, 60) : null;
+  if (username !== undefined) {
+    if (!cleanLogin) return res.status(400).json({ error: 'Логин не может быть пустым' });
+    const занят = db.prepare('SELECT id FROM users WHERE username = ? AND id != ?').get(cleanLogin, id);
+    if (занят) return res.status(409).json({ error: 'Такой логин уже занят' });
+  }
   if (can_broadcast !== undefined || can_admin !== undefined) {
     updateUserCaps.run(
       can_broadcast !== undefined ? (can_broadcast ? 1 : 0) : current.can_broadcast,
@@ -1347,14 +1425,13 @@ app.patch('/api/admin/users/:id', auth, requireCapability('can_admin'), (req, re
   if (department_ids !== undefined) setUserDepartments(id, department_ids);
   else if (department_id !== undefined) setUserDepartments(id, department_id ? [department_id] : []);
   if (password) {
-    if (password.length < 4) return res.status(400).json({ error: 'Пароль слишком короткий' });
     updateUserPassword.run(bcrypt.hashSync(password, 10), id);
+    // Новый пароль закрывает все прежние входы — ради этого пароль обычно и меняют.
+    bumpSessionGen.run(id);
+    dropConnections(id);
+    logServer('INFO', 'password_reset', { adminId: req.user.id, userId: id });
   }
-  if (display_name !== undefined) {
-    const clean = String(display_name).trim();
-    if (!clean) return res.status(400).json({ error: 'Имя не может быть пустым' });
-    updateDisplayName.run(clean.slice(0, 60), id);
-  }
+  if (cleanDisplay) updateDisplayName.run(cleanDisplay.slice(0, 60), id);
   // Логин меняется вместе с ФИО. Здесь это одно и то же: пользователя заводят с
   // логином вида «Иванов Иван Иванович», и правка только отображаемого имени
   // оставляла опечатку в логине навсегда.
@@ -1366,13 +1443,7 @@ app.patch('/api/admin/users/:id', auth, requireCapability('can_admin'), (req, re
   //
   // Никаких ограничений на состав символов: логин — это ФИО, с пробелами,
   // кириллицей и дефисами. Регистр тоже не трогаем, вход сверяет строку как есть.
-  if (username !== undefined) {
-    const clean = String(username).trim().slice(0, 60);
-    if (!clean) return res.status(400).json({ error: 'Логин не может быть пустым' });
-    const занят = db.prepare('SELECT id FROM users WHERE username = ? AND id != ?').get(clean, id);
-    if (занят) return res.status(409).json({ error: 'Такой логин уже занят' });
-    updateUsername.run(clean, id);
-  }
+  if (cleanLogin) updateUsername.run(cleanLogin, id);
   bumpUserVersion.run(id);
   broadcastUsersChanged();
   res.json({ ok: true, version: current.version + 1 });
@@ -1385,6 +1456,9 @@ app.delete('/api/admin/users/:id', auth, requireCapability('can_admin'), (req, r
   // иначе строки в user_departments пережили бы самого сотрудника и всплыли бы у нового с тем же id.
   clearUserDepartments.run(id);
   deleteUserStmt.run(id);
+  // Открытые окна удалённого сотрудника отключаем сразу: HTTP-запросы с его токеном уже получают
+  // 401, а уже открытый WebSocket иначе продолжал бы принимать от него сообщения.
+  dropConnections(id);
   invalidateUserIdsCache();
   broadcastUsersChanged();
   res.json({ ok: true });
@@ -2196,6 +2270,12 @@ function sendToUser(userId, payload) {
   const conns = online.get(userId);
   if (conns) for (const ws of conns) sendTo(ws, payload);
 }
+// Отключить все окна сотрудника — после смены пароля или удаления учётки. Клиент переподключится
+// со старым токеном, получит отказ и попросит войти заново. Отметка веб-панели тоже гасится.
+function dropConnections(userId) {
+  for (const ws of online.get(userId) || []) ws.terminate();
+  if (webPresence.delete(userId)) broadcastPresence();
+}
 
 // Кэш id всех пользователей — чтобы presenceSnapshot() не делал SELECT по таблице users на каждый
 // вызов (а вызывается он на каждое presence-событие: подключение/отключение/каждый статус-тик от
@@ -2305,10 +2385,8 @@ wss.on('connection', (ws, req) => {
   // кого обновление ещё не доехало. Как и имя ПК, приходят от клиента, поэтому обрезаем по длине.
   const appVersion = (url.searchParams.get('ver') || '').slice(0, 20) || null;
   const buildTrack = (url.searchParams.get('track') || '').slice(0, 20) || null;
-  let payload;
-  try { payload = jwt.verify(token, SECRET); } catch { logServer('WARN', 'ws_auth_failed', { ip: req.socket.remoteAddress }); return ws.close(); }
-  const user = getUserById.get(payload.id);
-  if (!user) return ws.close();
+  const user = userFromToken(token);
+  if (!user) { logServer('WARN', 'ws_auth_failed', { ip: req.socket.remoteAddress }); return ws.close(); }
 
   // Сокет без обработчика 'error' — это падение всего сервера: 'error' на EventEmitter без
   // слушателя превращается в исключение, а неперехваченное исключение у нас завершает процесс
@@ -2335,7 +2413,11 @@ wss.on('connection', (ws, req) => {
     // роняет привязку параметров в драйвере базы, и сервер выключался. То есть любой вошедший
     // сотрудник (или тот, кто добрался до порта) мог погасить мессенджер одной строкой.
     try {
-      handleClientMessage(ws, user, msg);
+      // Права — свежие из базы на каждое сообщение, как у HTTP (auth выше): снятое право
+      // администратора иначе продолжало бы действовать в уже открытом окне до переподключения.
+      const fresh = getUserById.get(user.id);
+      if (!fresh) return ws.terminate();
+      handleClientMessage(ws, fresh, msg);
     } catch (err) {
       logServer('ERROR', 'ws_message_failed', { userId: user.id, type: msg && msg.type, message: err.message });
     }
@@ -2444,7 +2526,11 @@ function handleClientMessage(ws, user, msg) {
       }
       const reactions = [...byEmoji].map(([e, userIds]) => ({ emoji: e, userIds }));
       const out = JSON.stringify({ type: 'reaction', messageId, reactions });
-      if (target.room) {
+      if (isGroupRoom(target.room)) {
+        // Реакция в закрытой группе — только её участникам: раньше она уходила всем подключённым,
+        // и по ней было видно, кто и когда отвечает в группе, где тебя нет.
+        for (const uid of groupMemberIds(groupIdFromRoom(target.room))) sendToUser(uid, out);
+      } else if (target.room) {
         sendToAll(out);
       } else {
         const targets = new Set([...(online.get(target.to_id) || []), ...(online.get(target.from_id) || [])]);
