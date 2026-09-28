@@ -36,8 +36,11 @@ function findOpenssl() {
 }
 
 let PKI = null;
+// Папка с одноразовыми ключами — убирается после всех тестов: раньше она оставалась во временной
+// папке после каждого прогона.
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'iskra-diag-'));
+test.after(() => fs.rmSync(dir, { recursive: true, force: true }));
 try {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'iskra-diag-'));
   const OPENSSL = findOpenssl();
   const ssl = (...args) => execFileSync(OPENSSL, args, { cwd: dir, stdio: 'pipe' });
   const f = (name) => path.join(dir, name);
