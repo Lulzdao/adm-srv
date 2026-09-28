@@ -184,4 +184,4 @@ function skipExpired(doc, startedOn, left) {
   return false;
 }
 
-module.exports = { run, daysLeft, thresholdsOf, skipExpired, EXPIRED_GRACE_DAYS, _normalize: normalize };
+module.exports = { run, daysLeft, thresholdsOf, skipExpired, EXPIRED_GRACE_DAYS };
