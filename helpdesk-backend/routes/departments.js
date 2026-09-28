@@ -7,7 +7,15 @@ module.exports = function departmentRoutes() {
   router.use(requireAuth);
 
   router.get("/", (req, res) => {
-    res.json({ departments: departments.map((d) => ({ name: d.name, role: d.role })) });
+    // hint/icon/color — оформление плитки отдела на экране новой заявки.
+    // Отдаём их вместе с именем: иначе фронтенду пришлось бы держать вторую
+    // копию справочника отделов и та рано или поздно разошлась бы с конфигом.
+    res.json({
+      departments: departments.map((d) => ({
+        name: d.name, role: d.role,
+        hint: d.hint || "", icon: d.icon || "", color: d.color || "",
+      })),
+    });
   });
 
   return router;

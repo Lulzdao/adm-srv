@@ -8,46 +8,89 @@
 
 * { box-sizing: border-box; }
 
+/* Кернинг выключен намеренно, и это не вкусовщина.
+   В PT Root UI есть кернинговая пара «пробел + длинное тире», которая стягивает
+   пробелы вокруг тире в ноль: «Оповещения — Отправка» рисовалось как
+   «Оповещения—Отправка». Проверено в браузере: с font-kerning:none пробелы
+   возвращаются, а liga и calt на это не влияют вовсе. Шрифт так задуман —
+   он рассчитан на набор тире вплотную, — но у нас тире ставят и в темах заявок,
+   и в комментариях, и переучивать сотрудников из-за начертания нельзя.
+   Потеря невелика: кернинг заметен на крупных заголовках, а интерфейс набран
+   13–14 пунктами, где разница неразличима. */
+html { font-kerning: none; }
+
+
+/* Фирменный шрифт. Файлы лежат в public/fonts платформы — модуль всегда
+   открывается через её прокси (см. config/modules.js), поэтому абсолютный
+   путь /fonts/… ведёт именно туда, и второй копии файлов не нужно. При
+   запуске модуля напрямую, в обход платформы, шрифт не найдётся и подхватится
+   Arial — брендбук называет его системной заменой (раздел 2.2).
+   Лицензия SIL OFL 1.1, текст — рядом со шрифтом. */
+@font-face {
+  font-family: "PT Root UI";
+  src: url("/fonts/PTRootUI-Regular.woff2") format("woff2");
+  font-weight: 400; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: "PT Root UI";
+  src: url("/fonts/PTRootUI-Medium.woff2") format("woff2");
+  font-weight: 500; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: "PT Root UI";
+  src: url("/fonts/PTRootUI-Bold.woff2") format("woff2");
+  font-weight: 700; font-style: normal; font-display: swap;
+}
+
 :root {
-  --md-primary: #7D5700;
+  --md-primary: #0A61AE;
   --md-on-primary: #FFFFFF;
-  --md-primary-container: #FFDEA6;
-  --md-on-primary-container: #281900;
-  --md-secondary-container: #F0E0C8;
-  --md-on-secondary-container: #251A04;
+  --md-primary-container: #DCE7F6;
+  --md-on-primary-container: #0A61AE;
+  --md-secondary-container: #E9E2F6;
+  --md-on-secondary-container: #663AB5;
 
-  --md-surface: #FFF8F3;
+  --md-surface: #E8EDF5;
   --md-surface-container-lowest: #FFFFFF;
-  --md-surface-container-low: #FBF1E9;
-  --md-surface-container: #F5ECE3;
-  --md-surface-container-high: #F0E6DE;
-  --md-surface-container-highest: #EAE1D9;
-  --md-on-surface: #1F1B16;
-  --md-on-surface-variant: #4F453A;
-  --md-outline: #817567;
-  --md-outline-variant: #D8CCBE;
+  --md-surface-container-low: #F7F9FC;
+  --md-surface-container: #FFFFFF;
+  --md-surface-container-high: #F7F9FC;
+  --md-surface-container-highest: #EDF1F8;
+  --md-on-surface: #282A2E;
+  --md-on-surface-variant: #838383;
+  --md-outline: #DCE4EF;
+  --md-outline-variant: #E4EAF3;
 
-  --md-error: #8C1D18;
-  --md-error-container: #FFDAD6;
-  --md-on-error-container: #410002;
-  --md-info-container: #DCE3F9;
-  --md-on-info-container: #101C33;
-  --md-success-container: #CDEBD5;
-  --md-on-success-container: #08210F;
+  --md-error: #E7004B;
+  --md-error-container: #FDE3EA;
+  --md-on-error-container: #E7004B;
+  --md-info-container: #DCE7F6;
+  --md-on-info-container: #0A61AE;
+  --md-success-container: #DBF0F2;
+  --md-on-success-container: #008F9F;
+  /* Значения из палитры платформы. Их тут не было, хотя .size.warn на них
+     ссылался: объявление молча оставалось без значения, и предупреждение о
+     тяжёлой выгрузке выходило обычным серым — ровно как было с --md-shape-xl. */
+  --md-warn-container: #FFE7D6;
+  --md-on-warn-container: #C25A18;
   --md-tertiary-container: #EADDFF;
   --md-on-tertiary-container: #21005D;
-  --md-neutral-container: #EFE5DB;
-  --md-on-neutral-container: #302A24;
+  --md-neutral-container: #ECECEC;
+  --md-on-neutral-container: #5A5A5A;
 
-  --md-state-hover: rgba(31, 27, 22, 0.06);
-  --md-shape-xs: 8px;
-  --md-shape-s: 12px;
-  --md-shape-m: 16px;
-  --md-shape-l: 20px;
-  --md-shape-full: 100px;
-  --md-elev-1: 0 1px 2px rgba(31, 27, 22, 0.10);
+  --md-state-hover: #EDF1F8;
+  --md-shape-xs: 4px;
+  --md-shape-s: 6px;
+  --md-shape-m: 8px;
+  --md-shape-l: 10px;
+  /* Была пропущена, хотя в остальных сервисах есть: правило с
+     border-radius: var(--md-shape-xl) молча оставалось без значения, и углы
+     выходили прямыми. */
+  --md-shape-xl: 12px;
+  --md-shape-full: 6px;
+  --md-elev-1: none;
 
-  --sans: Roboto, "Segoe UI", system-ui, -apple-system, Arial, sans-serif;
+  --sans: "PT Root UI", Arial, "Segoe UI", system-ui, -apple-system, sans-serif;
 
   /* Имена, на которые ссылаются шаблоны .ejs */
   --bg: var(--md-surface);
@@ -124,9 +167,8 @@ body.dashboard-page th { position: sticky; top: 0; z-index: 2; }
 
 .refresh-status {
   font-size: 13px; color: var(--md-on-surface-variant);
-  display: flex; align-items: center; gap: 14px; align-self: center;
+  display: flex; align-items: center; gap: 14px;
 }
-.refresh-status label { display: flex; align-items: center; gap: 7px; cursor: pointer; }
 
 h1 { font-size: 24px; font-weight: 600; letter-spacing: 0; }
 
@@ -184,7 +226,11 @@ th {
   letter-spacing: .5px; border-bottom: 1px solid var(--md-outline-variant); font-weight: 600;
 }
 td { padding: 13px 16px; border-bottom: 1px solid var(--md-surface-container-high); }
-tr:hover td { background: var(--md-surface-container); }
+/* Подсветка строки — на тон ТЕМНЕЕ подложки, как во входящих заявках
+   платформы. Раньше здесь стоял --md-surface-container, а он в этой палитре
+   ровно белый, то есть цвет самой панели: наведение попросту не было видно. */
+td { transition: background 0.13s ease; }
+tr:hover td { background: var(--md-surface-container-highest); }
 tbody tr:last-child td { border-bottom: none; }
 
 /* Chip M3 — тональные пары под направление звонка */
@@ -250,9 +296,13 @@ th.sortable.sort-desc::after { content: ' ▼'; font-size: 10px; color: var(--md
   transform: rotate(90deg); transition: transform .18s ease;
 }
 .select-wrap.open .select-btn .select-chevron { transform: rotate(-90deg); }
+/* fixed, а не absolute: внутри обёртки перечень обрезал любой предок с
+   overflow: hidden — раскрывающийся ряд «Ещё фильтры» прячет переполнение
+   ради анимации высоты, и список уходил под таблицу. Координаты ставит
+   select.js при каждом открытии. */
 .select-menu {
-  position: absolute; z-index: 40; top: calc(100% + 6px); left: 0; min-width: 100%;
-  padding: 6px; border-radius: var(--md-shape-m); background: var(--md-surface-container-lowest);
+  position: fixed; z-index: 40; padding: 6px;
+  border-radius: var(--md-shape-m); background: var(--md-surface-container-lowest);
   box-shadow: var(--md-elev-1), 0 6px 18px rgba(31,27,22,.16); max-height: 300px; overflow-y: auto;
 }
 .select-option {
@@ -261,3 +311,218 @@ th.sortable.sort-desc::after { content: ' ▼'; font-size: 10px; color: var(--md
 }
 .select-option:hover { background: var(--md-state-hover); }
 .select-option.selected { background: var(--md-primary-container); color: var(--md-on-primary-container); font-weight: 600; }
+
+/* ===========================================================================
+   Панель фильтров и выгрузка
+   ========================================================================= */
+
+/* Выравнивание по ВЕРХУ, а не по низу.
+   Подсказка под полем есть не у всех: под «Время от» её нет, под «Разговор
+   дольше» есть. При выравнивании по нижнему краю поле с подсказкой
+   поднималось на её высоту, поле без подсказки опускалось — и ряд шёл
+   лесенкой. По верху все подписи начинаются с одной линии, а раз высота
+   подписи одинакова, то и поля встают на одну линию. */
+.filters { align-items: flex-start; }
+.filters .field { display: flex; flex-direction: column; }
+.filters .grow { flex: 1; min-width: 240px; }
+.filters .grow input { width: 100%; box-sizing: border-box; }
+/* Высота подписи задана явно и в одну строку: длинное название иначе
+   переносится и опускает своё поле относительно соседей. */
+.filters label { line-height: 15px; margin-bottom: 8px; white-space: nowrap; }
+/* У кнопок подписи нет, поэтому место под неё отводим вручную:
+   15 px строки плюс 8 px её нижнего поля. */
+.filters-actions { display: flex; gap: 8px; align-items: center; margin-left: auto; padding-top: 23px; }
+.filters .hint { font-size: 11px; color: var(--md-on-surface-variant); margin-top: 5px; min-height: 13px; }
+/* Единая высота всех органов управления. Без неё поля дат и времени на 2 px
+   выше остальных — браузер сам вставляет внутрь кнопку календаря и часов, —
+   а кнопки на 3 px ниже, потому что у них нет рамки. */
+.filters input, .filters .select-btn,
+.filters button, .filters .btn-reset, .filters .btn-export {
+  box-sizing: border-box; height: 40px;
+}
+
+/* Выбор колонки и поле поиска — одна деталь, а не два соседних поля. */
+.search-group { display: flex; gap: 0; }
+/* Правило `.filters button` красит ЛЮБУЮ кнопку внутри панели в фирменный
+   синий с белым текстом, а видимая часть выпадающего списка (select.js) —
+   как раз кнопка. Цвет возвращаем явно, иначе название колонки белое на
+   светлом. По той же причине ниже переопределены чипы и «Ещё фильтры». */
+.filters .select-btn { color: var(--md-on-surface); font-weight: 500; }
+.search-group .select-wrap > .select-btn {
+  border-top-right-radius: 0; border-bottom-right-radius: 0; border-right: none;
+  background: var(--md-surface-container-high); color: var(--md-on-surface); font-weight: 600;
+}
+.search-group input { border-top-left-radius: 0; border-bottom-left-radius: 0; flex: 1; min-width: 0; }
+
+/* Направление — переключатели, а не выпадающий список: их можно включить
+   несколько сразу («исходящие и пропущенные»), чего список не умел вовсе. */
+.dir-row { width: 100%; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.dir-label { font-size: 12.5px; font-weight: 500; color: var(--md-on-surface-variant); margin-right: 6px; }
+.filters .dir-chip {
+  display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-family: inherit;
+  padding: 9px 15px; font-size: 13px; font-weight: 500; height: auto;
+  background: var(--md-surface-container-lowest); color: var(--md-on-surface);
+  border: 1px solid var(--md-outline); border-radius: var(--md-shape-m);
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+.filters .dir-chip:hover { border-color: var(--md-primary); box-shadow: none; filter: none; }
+.filters .dir-chip.on { border-color: var(--md-primary); box-shadow: inset 0 0 0 1px var(--md-primary); font-weight: 700; }
+.filters .dir-chip i { width: 9px; height: 9px; border-radius: 50%; display: block; }
+
+/* Раскрывающийся ряд. Высоту анимируем через max-height: переходами
+   управляется она, а не display, а прыжок на пол-экрана без анимации
+   читается как перезагрузка страницы. */
+.more-line { width: 100%; display: flex; align-items: center; gap: 16px; }
+.more-line .refresh-status { margin-left: auto; }
+.filters .more-toggle {
+  align-self: flex-start; box-shadow: none; height: auto;
+  display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-family: inherit;
+  background: none; border: none; padding: 10px 4px; font-size: 13px; font-weight: 600;
+  color: var(--md-primary);
+}
+.filters .more-toggle:hover { box-shadow: none; filter: none; color: #08528F; }
+.filters .more-toggle .chev { display: inline-flex; transition: transform .18s ease; }
+.filters .more-toggle.open .chev { transform: rotate(90deg); }
+.more-count {
+  font-size: 11.5px; font-weight: 700; padding: 2px 8px; border-radius: var(--md-shape-xs);
+  background: var(--md-primary-container); color: var(--md-on-primary-container);
+}
+.more-count[hidden] { display: none; }
+
+/* --- Переключатель автообновления ---
+   Штатный флажок Chromium рисует ОС, а не палитра: серый квадрат посреди
+   фирменной панели, к тому же неотличимый от поля формы — а это не поле,
+   которое ещё надо «Применить», а тумблер, действующий сразу.
+   Сам input не убираем в display: none — так он выпал бы из последовательности
+   табуляции и перестал нажиматься с клавиатуры; вместо этого прячем его
+   прозрачным в одну точку и рисуем дорожку с бегунком соседним span.
+   --md-shape-full здесь 6px, поэтому скругление дорожки задано явно: тумблер
+   должен быть овалом при любом значении токена. */
+.filters .auto-refresh {
+  display: inline-flex; align-items: center; gap: 10px; cursor: pointer;
+  margin: 0; font-size: 13px; font-weight: 500; line-height: 1;
+  color: var(--md-on-surface-variant); white-space: nowrap;
+  -webkit-user-select: none; user-select: none;
+}
+.filters .auto-refresh input {
+  position: absolute; width: 1px; height: 1px; min-width: 0;
+  margin: 0; padding: 0; border: none; opacity: 0; pointer-events: none;
+}
+.auto-refresh .switch {
+  position: relative; flex: none; box-sizing: border-box;
+  width: 44px; height: 26px; border-radius: 999px;
+  background: var(--md-surface-container-highest);
+  border: 2px solid var(--md-outline);
+  transition: background-color .18s ease, border-color .18s ease;
+}
+.auto-refresh .switch::before {
+  content: ''; position: absolute; top: 3px; left: 3px;
+  width: 16px; height: 16px; border-radius: 50%;
+  background: var(--md-on-surface-variant) no-repeat center; background-size: 0 0;
+  transition: transform .18s cubic-bezier(.2,0,.2,1), background-color .18s ease;
+}
+.auto-refresh:hover .switch { border-color: var(--md-on-surface-variant); }
+.filters .auto-refresh input:checked + .switch {
+  background: var(--md-primary); border-color: var(--md-primary);
+}
+.filters .auto-refresh input:checked + .switch::before {
+  /* 40px внутри рамки минус бегунок 16 и отступ 3 слева = 21; сдвиг 18. */
+  transform: translateX(18px);
+  background-color: var(--md-on-primary);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%230A61AE' stroke-width='3.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E");
+  background-size: 10px 10px;
+}
+.filters .auto-refresh input:checked + .switch,
+.filters .auto-refresh:hover input:checked + .switch { border-color: var(--md-primary); }
+/* Обводка по Tab: у спрятанного input своей рамки фокуса уже не видно. */
+.filters .auto-refresh input:focus-visible + .switch {
+  outline: 2px solid var(--md-primary); outline-offset: 2px;
+}
+.more-row { width: 100%; overflow: hidden; max-height: 0; transition: max-height .22s cubic-bezier(.2,0,.2,1); }
+.more-row.open { max-height: 300px; }
+.more-inner { display: flex; gap: 14px; flex-wrap: wrap; align-items: flex-start; padding: 6px 0 14px; }
+
+/* Выгрузка — второстепенное действие рядом с «Применить», поэтому тональная
+   кнопка, а не залитая: главная на панели одна. */
+.filters .btn-export {
+  display: inline-flex; align-items: center; gap: 9px; padding: 12px 20px; cursor: pointer;
+  font-family: inherit; font-size: 13.5px; font-weight: 600; border: none;
+  background: var(--md-secondary-container); color: var(--md-on-secondary-container);
+  border-radius: var(--md-shape-full); transition: filter .15s;
+}
+.filters .btn-export:hover { filter: brightness(.96); box-shadow: none; }
+.filters .sep { width: 1px; height: 26px; background: var(--md-outline-variant); margin: 0 6px; }
+
+/* --- Окно выгрузки ---
+   Не «продолжить / отмена», а выбор периода. Если в базе пять лет, а нужен
+   последний месяц, вопрос «продолжить?» заставил бы закрыть окно, поправить
+   фильтр и нажать заново. Рядом с каждым вариантом написано, сколько строк
+   уедет и сколько это весит, — окно само и есть подтверждение. */
+.modal-back {
+  position: fixed; inset: 0; background: rgba(40, 42, 46, .35);
+  display: flex; align-items: center; justify-content: center; z-index: 50;
+  animation: modal-fade .13s ease-out;
+}
+.modal-back[hidden] { display: none; }
+@keyframes modal-fade { from { opacity: 0; } to { opacity: 1; } }
+.modal {
+  width: 520px; max-width: calc(100vw - 40px);
+  background: var(--md-surface-container-lowest); border-radius: var(--md-shape-xl);
+  box-shadow: var(--md-elev-3); padding: 24px 26px 20px;
+}
+.modal h2 { margin: 0 0 4px; font-size: 18px; font-weight: 700; color: var(--md-on-surface); }
+.modal .sub { margin: 0 0 16px; font-size: 12.5px; color: var(--md-on-surface-variant); }
+
+/* Выбор формата — сегментами в одну строку, а не третьим списком вариантов:
+   формат и период выбирают независимо, и мешать их в один перечень нельзя. */
+.modal .fmt-row {
+  display: flex; gap: 6px; padding: 4px; margin-bottom: 10px;
+  background: var(--md-surface-container-highest); border-radius: var(--md-shape-m);
+}
+.modal .fmt {
+  flex: 1; padding: 9px 12px; border: none; border-radius: var(--md-shape-s);
+  background: none; color: var(--md-on-surface-variant); cursor: pointer;
+  font-family: inherit; font-size: 13.5px; font-weight: 600;
+  transition: background .14s ease, color .14s ease, box-shadow .14s ease;
+}
+.modal .fmt span { font-weight: 500; opacity: .75; margin-left: 4px; }
+.modal .fmt:hover { color: var(--md-on-surface); }
+.modal .fmt.on {
+  background: var(--md-surface-container-lowest); color: var(--md-primary);
+  box-shadow: 0 1px 2px rgba(31,27,22,.10);
+}
+.modal .fmt-note { margin: 0 2px 16px; min-height: 34px; }
+.modal .opt {
+  display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
+  font-family: inherit; cursor: pointer; margin-bottom: 8px;
+  padding: 12px 14px; border: 1px solid var(--md-outline); border-radius: var(--md-shape-m);
+  background: var(--md-surface-container-lowest); color: var(--md-on-surface);
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+.modal .opt:hover { border-color: var(--md-primary); }
+.modal .opt.on { border-color: var(--md-primary); box-shadow: inset 0 0 0 1px var(--md-primary); }
+/* Кружок, а не квадрат: вариант можно выбрать только один. */
+.modal .opt .radio {
+  width: 18px; height: 18px; border-radius: 50%; flex-shrink: 0;
+  border: 1.5px solid var(--md-outline); display: flex; align-items: center; justify-content: center;
+}
+.modal .opt.on .radio { border-color: var(--md-primary); }
+.modal .opt.on .radio::after { content: ''; width: 9px; height: 9px; border-radius: 50%; background: var(--md-primary); }
+.modal .opt .name { font-size: 13.5px; font-weight: 600; }
+.modal .opt.on .name { font-weight: 700; }
+.modal .opt .size { margin-left: auto; font-size: 12.5px; color: var(--md-on-surface-variant); white-space: nowrap; }
+.modal .opt .size.warn { display: flex; align-items: center; gap: 6px; color: var(--md-on-warn-container); }
+.modal .note { font-size: 12px; line-height: 1.4; color: var(--md-on-surface-variant); margin: 14px 2px 0; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+.modal-actions .btn-cancel {
+  background: none; border: none; font-family: inherit; font-size: 13.5px; font-weight: 600;
+  color: var(--md-on-surface-variant); padding: 12px 18px; border-radius: var(--md-shape-full); cursor: pointer;
+  transition: background .13s ease, color .13s ease;
+}
+.modal-actions .btn-cancel:hover { background: var(--md-state-hover); color: var(--md-on-surface); }
+.modal-actions .btn-go {
+  background: var(--md-primary); color: #fff; border: none; font-family: inherit;
+  font-size: 13.5px; font-weight: 700; padding: 12px 24px;
+  border-radius: var(--md-shape-full); cursor: pointer; transition: background .15s ease;
+}
+.modal-actions .btn-go:hover { background: #08528F; }

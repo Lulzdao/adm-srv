@@ -29,7 +29,25 @@ const ICON_PATHS = {
   // десктоп-клиента (MESSENGER/desktop-client/build/icon.png): длинные лучи по
   // осям, короткие по диагоналям.
   spark: '<line x1="12" y1="1.5" x2="12" y2="22.5"/><line x1="1.5" y1="12" x2="22.5" y2="12"/><line x1="7.6" y1="7.6" x2="9.9" y2="9.9"/><line x1="16.4" y1="7.6" x2="14.1" y2="9.9"/><line x1="7.6" y1="16.4" x2="9.9" y2="14.1"/><line x1="16.4" y1="16.4" x2="14.1" y2="14.1"/>',
+  // Галочка выбранной плитки и стрелки прокрутки ленты отделов.
+  check: '<polyline points="20 6 9 17 4 12"/>',
+  'chevron-left': '<polyline points="15 6 9 12 15 18"/>',
+  // Значки отделов на экране новой заявки. Имя пишется в config/departments.js,
+  // там же перечислен доступный набор. Монитор — техника, лист со строками —
+  // деньги и отчётность, два силуэта — люди, ключ — доступ и режим; перо, лист
+  // с подписью, трубка, печать и ящик уже есть выше.
+  monitor: '<rect x="3" y="4" width="18" height="12" rx="2"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="16" x2="12" y2="20"/>',
+  receipt: '<rect x="4" y="3" width="16" height="18" rx="2"/><line x1="8" y1="8" x2="16" y2="8"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="8" y1="16" x2="13" y2="16"/>',
+  users: '<circle cx="9" cy="8" r="3.2"/><path d="M3.5 20a5.5 5.5 0 0 1 11 0"/><path d="M16 5.5a3.2 3.2 0 0 1 0 6"/><path d="M17.5 14.4A5.5 5.5 0 0 1 20.5 20"/>',
+  key: '<circle cx="8" cy="14" r="4"/><path d="M11 11l8-8"/><path d="M17 5l2 2"/><path d="M14.5 7.5l2 2"/>',
 };
+
+// Оформление плитки отдела, когда в config/departments.js для него ничего не
+// задано. Цвет берётся по порядку отдела в справочнике, а не случайно: иначе
+// он менялся бы при каждой перезагрузке страницы.
+const DEPT_FALLBACK_COLORS = ["#0A61AE", "#663AB5", "#008F9F", "#C25A18", "#E7004B", "#5A5A5A"];
+const deptIcon = (d) => (d.icon && ICON_PATHS[d.icon] ? d.icon : "box");
+const deptColor = (d, i) => d.color || DEPT_FALLBACK_COLORS[i % DEPT_FALLBACK_COLORS.length];
 function icon(name, size) {
   size = size || 16;
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">${ICON_PATHS[name] || ""}</svg>`;
@@ -154,6 +172,13 @@ function enhanceSelect(sel) {
   // Значение могли поменять из кода (например, сбросом фильтров) — подпись
   // должна следовать за ним, иначе покажет уже не то, что выбрано.
   sel.addEventListener("change", syncLabel);
+  // ...а варианты могли приехать позже самой отрисовки. Список исполнителей
+  // заполняется отдельным запросом уже после того, как карточка нарисована, и
+  // подмена вариантов через innerHTML никаких событий не порождает — на кнопке
+  // так и оставалась заглушка «Загрузка…», хотя в самом select уже лежало
+  // «— не назначено —». Наблюдатель чинит это для любого списка, который
+  // наполняется позже, а не только для исполнителя.
+  new MutationObserver(syncLabel).observe(sel, { childList: true });
   document.addEventListener("click", (e) => { if (!wrap.contains(e.target)) close(); });
   syncLabel();
 }
@@ -186,11 +211,14 @@ const DESCRIPTION_MAX = 140;
 // светлый «container» для подложки). Держите их в согласии с палитрой
 // public/styles.css: значения продублированы здесь, потому что подставляются
 // в инлайновые стили при отрисовке.
+// Приоритет виден в списке цветной кромкой слева у строки (см. .ticket-row
+// в styles.css) и подложкой в карточке. Цвета — из дополнительной гаммы
+// брендбука (3.3): её он и предлагает для акцентов и сигналов.
 const PRIORITIES = [
-  { id: "critical", label: "Критичный", color: "#8C1D18", soft: "#FFDAD6" },
-  { id: "high", label: "Высокий", color: "#8A4600", soft: "#FFDCC2" },
-  { id: "medium", label: "Средний", color: "#7D5700", soft: "#FFDEA6" },
-  { id: "low", label: "Низкий", color: "#5A5248", soft: "#EFE5DB" },
+  { id: "critical", label: "Критичный", color: "#E7004B", soft: "#FDE3EA" },
+  { id: "high", label: "Высокий", color: "#C25A18", soft: "#FFE7D6" },
+  { id: "medium", label: "Средний", color: "#0A61AE", soft: "#DCE7F6" },
+  { id: "low", label: "Низкий", color: "#5A5A5A", soft: "#ECECEC" },
 ];
 const STATUSES = [
   { id: "new", label: "Новая" },
@@ -203,9 +231,11 @@ const STATUSES = [
 // истории вместо «Решена» показывалось бы английское resolved.
 const LEGACY_STATUS_LABELS = { waiting: "Ожидает ответа", resolved: "Решена", cancelled: "Отменена" };
 const statusLabel = (id) => (STATUSES.find(s => s.id === id) || {}).label || LEGACY_STATUS_LABELS[id] || id;
-// [цвет текста, цвет подложки] — тональные пары Material 3.
+// [цвет текста, цвет подложки]. Новая — голубая гамма, в работе — сиреневая
+// (два основных цвета брендбука), закрыта — серая. Текст тёмный: правило 3.4
+// требует тёмно-серого на светлых фонах.
 const STATUS_COLORS = {
-  new: ["#101C33", "#DCE3F9"], progress: ["#2E1500", "#FFDCC2"], closed: ["#302A24", "#EFE5DB"],
+  new: ["#0A61AE", "#DCE7F6"], progress: ["#663AB5", "#E9E2F6"], closed: ["#5A5A5A", "#ECECEC"],
 };
 
 // ====== Состояние ======
@@ -288,12 +318,26 @@ function fmtDate(iso) {
   if (isNaN(d)) return iso;
   return DATE_FMT.format(d);
 }
+// Все сообщения складываются в ОДИН контейнер, а не крепятся к body каждое
+// само по себе. Раньше у каждого было position:fixed; bottom:24px — два
+// сообщения подряд ложились ровно друг на друга, и читалось месиво из двух
+// текстов. Заметно это стало на проверке полей новой заявки, где на второй
+// клик по «Отправить» приходит второе сообщение поверх ещё живого первого.
 function toast(msg, isError) {
+  let стопка = document.getElementById("toastStack");
+  if (!стопка) {
+    стопка = document.createElement("div");
+    стопка.id = "toastStack";
+    document.body.appendChild(стопка);
+  }
   const t = document.createElement("div");
   t.className = "toast" + (isError ? " error" : "");
   t.textContent = msg;
-  document.body.appendChild(t);
-  setTimeout(() => t.remove(), 3500);
+  стопка.appendChild(t);
+  setTimeout(() => {
+    t.remove();
+    if (!стопка.childElementCount) стопка.remove();
+  }, 3500);
 }
 
 // ====== Точка входа ======
@@ -324,6 +368,10 @@ function myDepts(u) {
 async function renderLogin(errorMsg) {
   let detectedMode = null;
   let manualMode = null; // если автоопределение не сработало, пользователь может выбрать сам
+  // Имена доменов приезжают с сервера (DOMAIN_A_LABEL / DOMAIN_B_LABEL).
+  // До ответа /auth/detect вкладок на экране всё равно нет, но подстраховка
+  // нужна: иначе при недоступном сервере на кнопках было бы «undefined».
+  let domainLabels = { A: "rosstat.local", B: "in.local" };
 
   root.innerHTML = `
     <div class="login-screen">
@@ -338,7 +386,6 @@ async function renderLogin(errorMsg) {
         <div class="field-label">Пароль</div>
         <input class="field-input hint-long" id="passwordInput" type="password" placeholder="пароль учётной записи компьютера" autocomplete="current-password">
         <button class="btn-primary" id="loginBtn">Войти</button>
-        <div style="margin-top:12px;font-size:11px;color:var(--ink-soft);">Для локального аварийного входа начните логин с «!»</div>
       </div>
     </div>`;
 
@@ -349,8 +396,8 @@ async function renderLogin(errorMsg) {
     manualSwitch.style.display = "block";
     manualSwitch.innerHTML = `
       <div class="tab-group">
-        <button class="tab-btn ${manualMode === "A" ? "active" : ""}" data-mode="A">Домен А</button>
-        <button class="tab-btn ${manualMode === "B" ? "active" : ""}" data-mode="B">Домен Б</button>
+        <button class="tab-btn ${manualMode === "A" ? "active" : ""}" data-mode="A">${esc(domainLabels.A)}</button>
+        <button class="tab-btn ${manualMode === "B" ? "active" : ""}" data-mode="B">${esc(domainLabels.B)}</button>
       </div>`;
     manualSwitch.querySelectorAll(".tab-btn").forEach(btn => {
       btn.onclick = () => { manualMode = btn.dataset.mode; renderManualSwitch(); };
@@ -358,10 +405,11 @@ async function renderLogin(errorMsg) {
   }
 
   try {
-    const { mode } = await api("/auth/detect");
+    const { mode, labels } = await api("/auth/detect");
     detectedMode = mode;
+    if (labels) domainLabels = labels;
     if (mode) {
-      note.textContent = `Определена сеть: Домен ${mode}`;
+      note.textContent = `Определена сеть: ${domainLabels[mode] || mode}`;
     } else {
       note.textContent = "Не удалось определить сеть автоматически — выберите домен вручную.";
       manualMode = "A";
