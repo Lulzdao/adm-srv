@@ -769,6 +769,18 @@ function renderShell() {
   }
 }
 
+// ====== Встроенный модуль (фрейм) ======
+function renderModule(main, mod, view) {
+  clearViewPoll();
+  const src = `${mod.path}/${view.sub || ""}`;
+  const title = (mod.views && mod.views.length > 1) ? `${mod.label} — ${view.label}` : mod.label;
+  main.innerHTML = `
+    <div class="topbar"><div class="topbar-title">${esc(title)}</div></div>
+    <div class="page page-flush">
+      <iframe class="module-frame" src="${esc(src)}" title="${esc(title)}"></iframe>
+    </div>`;
+}
+
 // Запуск — когда выполнены все скрипты страницы: разделы (app-tickets.js, app-admin.js,
 // app-notifications.js) подключаются после этого файла, а boot() сразу же рисует экран.
 document.addEventListener("DOMContentLoaded", boot);

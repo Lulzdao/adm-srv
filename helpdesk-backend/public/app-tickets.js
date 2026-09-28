@@ -2,17 +2,6 @@
 // Обычный скрипт без сборщика — функции общие для всех файлов страницы (см. index.html: app.js
 // подключается первым, запуск — в нём по DOMContentLoaded, когда загружены все).
 // ====== Список заявок ======
-function renderModule(main, mod, view) {
-  clearViewPoll();
-  const src = `${mod.path}/${view.sub || ""}`;
-  const title = (mod.views && mod.views.length > 1) ? `${mod.label} — ${view.label}` : mod.label;
-  main.innerHTML = `
-    <div class="topbar"><div class="topbar-title">${esc(title)}</div></div>
-    <div class="page page-flush">
-      <iframe class="module-frame" src="${esc(src)}" title="${esc(title)}"></iframe>
-    </div>`;
-}
-
 // Где человек был в списке: страница, открытые/закрытые, поиск, отдел — отдельно для
 // «Входящих» и «Моих». Открыл заявку с пятой страницы, вернулся — снова на пятой, а не
 // на первой. Живёт, пока открыта вкладка: после обновления страницы начинать с начала
