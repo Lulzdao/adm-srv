@@ -117,64 +117,76 @@ function openDatabase(file) {
   return conn;
 }
 const db = openDatabase(DB_PATH);
-db.exec(`
-  CREATE TABLE IF NOT EXISTS certificates (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    full_name TEXT,
-    identifier TEXT,
-    valid_from TEXT,
-    valid_to TEXT,
-    issuer TEXT,
-    subject_raw TEXT,
-    file_name TEXT,
-    uploaded_at TEXT DEFAULT (datetime('now', 'localtime'))
-  )
-`);
+// Схема и миграции — одной транзакцией: либо всё, либо ничего (как у платформы и «Искры»). Раньше
+// колонки добавлялись сразу, и если следом не создавался уникальный индекс, база оставалась
+// наполовину обновлённой. Теперь — как до запуска; следующий запуск (NSSM) пробует заново.
+db.exec('BEGIN IMMEDIATE');
+try {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS certificates (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      full_name TEXT,
+      identifier TEXT,
+      valid_from TEXT,
+      valid_to TEXT,
+      issuer TEXT,
+      subject_raw TEXT,
+      file_name TEXT,
+      uploaded_at TEXT DEFAULT (datetime('now', 'localtime'))
+    )
+  `);
 
-// Машиночитаемые доверенности. Отдельная таблица, а не общая с сертификатами:
-// это разные документы с разными полями, и «универсальная» запись пополам из
-// пустых колонок читалась бы хуже обеих.
-//
-// Полей ровно три содержательных — ФИО, реестровый номер, срок действия. В
-// архиве ЕИС есть ещё паспорт, СНИЛС, ИНН, дата рождения и данные организации;
-// они СОЗНАТЕЛЬНО не сохраняются: для слежения за сроками не нужны, а чего нет
-// в базе, то нельзя ни показать лишнему человеку, ни потерять вместе с файлом.
-db.exec(`
-  CREATE TABLE IF NOT EXISTS attorneys (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    uuid TEXT,
-    reg_number TEXT,
-    full_name TEXT,
-    valid_from TEXT,
-    valid_to TEXT,
-    signed INTEGER DEFAULT 0,
-    source_format TEXT,
-    file_name TEXT,
-    uploaded_at TEXT DEFAULT (datetime('now', 'localtime'))
-  )
-`);
+  // Машиночитаемые доверенности. Отдельная таблица, а не общая с сертификатами:
+  // это разные документы с разными полями, и «универсальная» запись пополам из
+  // пустых колонок читалась бы хуже обеих.
+  //
+  // Полей ровно три содержательных — ФИО, реестровый номер, срок действия. В
+  // архиве ЕИС есть ещё паспорт, СНИЛС, ИНН, дата рождения и данные организации;
+  // они СОЗНАТЕЛЬНО не сохраняются: для слежения за сроками не нужны, а чего нет
+  // в базе, то нельзя ни показать лишнему человеку, ни потерять вместе с файлом.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS attorneys (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      uuid TEXT,
+      reg_number TEXT,
+      full_name TEXT,
+      valid_from TEXT,
+      valid_to TEXT,
+      signed INTEGER DEFAULT 0,
+      source_format TEXT,
+      file_name TEXT,
+      uploaded_at TEXT DEFAULT (datetime('now', 'localtime'))
+    )
+  `);
 
-// Уникальность — по uuid доверенности: он глобально уникален, в отличие от
-// номера. Повторная загрузка того же архива обновит запись, а не заведёт вторую.
-db.exec('CREATE UNIQUE INDEX IF NOT EXISTS ux_attorney_uuid ON attorneys(uuid)');
+  // Уникальность — по uuid доверенности: он глобально уникален, в отличие от
+  // номера. Повторная загрузка того же архива обновит запись, а не заведёт вторую.
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS ux_attorney_uuid ON attorneys(uuid)');
 
-// Миграция для баз, созданных предыдущей версией: добавляем колонки для проверки
-// дублей, если их ещё нет (ALTER TABLE ADD COLUMN не трогает существующие данные).
-const existingColumns = db.prepare("PRAGMA table_info(certificates)").all().map((c) => c.name);
-if (!existingColumns.includes('cert_serial')) {
-  db.exec('ALTER TABLE certificates ADD COLUMN cert_serial TEXT');
+  // Миграция для баз, созданных предыдущей версией: добавляем колонки для проверки
+  // дублей, если их ещё нет (ALTER TABLE ADD COLUMN не трогает существующие данные).
+  const existingColumns = db.prepare("PRAGMA table_info(certificates)").all().map((c) => c.name);
+  if (!existingColumns.includes('cert_serial')) {
+    db.exec('ALTER TABLE certificates ADD COLUMN cert_serial TEXT');
+  }
+  if (!existingColumns.includes('issuer_raw')) {
+    db.exec('ALTER TABLE certificates ADD COLUMN issuer_raw TEXT');
+  }
+
+  // Уникальность — по паре "эмитент + серийный номер сертификата". Это настоящий
+  // уникальный идентификатор в X.509 (в отличие от ФИО или СНИЛС, которые могут
+  // повторяться при перевыпуске сертификата на того же сотрудника).
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS ux_certificate_identity
+    ON certificates(issuer_raw, cert_serial)
+  `);
+  db.exec('COMMIT');
+} catch (err) {
+  db.exec('ROLLBACK');
+  db.close();
+  console.error(`[остановка] Обновление структуры базы не удалось и отменено целиком — база осталась как до запуска: ${err.message}`);
+  throw err;
 }
-if (!existingColumns.includes('issuer_raw')) {
-  db.exec('ALTER TABLE certificates ADD COLUMN issuer_raw TEXT');
-}
-
-// Уникальность — по паре "эмитент + серийный номер сертификата". Это настоящий
-// уникальный идентификатор в X.509 (в отличие от ФИО или СНИЛС, которые могут
-// повторяться при перевыпуске сертификата на того же сотрудника).
-db.exec(`
-  CREATE UNIQUE INDEX IF NOT EXISTS ux_certificate_identity
-  ON certificates(issuer_raw, cert_serial)
-`);
 
 const insertStmt = db.prepare(`
   INSERT INTO certificates (full_name, identifier, valid_from, valid_to, issuer, subject_raw, file_name, cert_serial, issuer_raw)

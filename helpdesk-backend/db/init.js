@@ -80,19 +80,37 @@ function initDb() {
   db.exec("PRAGMA foreign_keys = ON");
 
   const schema = fs.readFileSync(path.join(__dirname, "schema.sql"), "utf8");
-  db.exec(schema);
 
-  // Отделы — из единого конфига, не из статичного SQL. Добавили новый
-  // отдел в config/departments.js — при следующем старте сервера здесь
-  // появится соответствующая строка, руками ничего создавать не нужно.
-  for (const dept of departments) {
-    db.prepare("INSERT OR IGNORE INTO categories (name) VALUES (?)").run(dept.name);
+  // Схема и миграции — одной транзакцией: либо всё, либо ничего. Раньше каждый
+  // шаг записывался сразу, и сбой посередине (занятая база, кончилось место,
+  // ошибка в миграции) оставлял базу наполовину обновлённой: колонки уже
+  // добавлены, данные ещё не перенесены, а отметка «перенос сделан» — то ли
+  // есть, то ли нет. Теперь база остаётся как до запуска, и следующий запуск
+  // (NSSM перезапустит службу) проходит все шаги заново. DDL в SQLite тоже
+  // транзакционный, так что ALTER TABLE откатывается вместе с остальным.
+  // IMMEDIATE — сразу берём блокировку на запись, а не на полпути.
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(schema);
+
+    // Отделы — из единого конфига, не из статичного SQL. Добавили новый
+    // отдел в config/departments.js — при следующем старте сервера здесь
+    // появится соответствующая строка, руками ничего создавать не нужно.
+    for (const dept of departments) {
+      db.prepare("INSERT OR IGNORE INTO categories (name) VALUES (?)").run(dept.name);
+    }
+
+    migrateIsAdmin(db);
+    migrateRoles(db);
+    migrateNotifications(db);
+    migrateStatuses(db);
+    db.exec("COMMIT");
+  } catch (err) {
+    db.exec("ROLLBACK");
+    db.close(); // дальше служба остановится; открытый файл базы ей ни к чему
+    console.error(`[остановка] Обновление структуры базы не удалось и отменено целиком — база осталась как до запуска: ${err.message}`);
+    throw err;
   }
-
-  migrateIsAdmin(db);
-  migrateRoles(db);
-  migrateNotifications(db);
-  migrateStatuses(db);
 
   return db;
 }
