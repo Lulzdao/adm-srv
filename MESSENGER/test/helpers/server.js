@@ -5,7 +5,7 @@
 //
 //  server.js держит базу, uploads/, logs/ и certs/ рядом с собой (path.join(__dirname, ...)) и
 //  при загрузке сразу слушает порт — «собрать приложение без запуска» тут нельзя. Поэтому тест
-//  копирует server.js во временную папку и запускает его отдельным процессом: у копии своя пустая
+//  копирует server.js (и lib/) во временную папку и запускает отдельным процессом: у копии своя пустая
 //  база и свои файлы, рабочие данные рядом с настоящим server.js не затрагиваются. Зависимости
 //  берутся из node_modules этой папки через NODE_PATH.
 //
@@ -64,6 +64,7 @@ async function waitForPing(url, proc, output) {
 async function startServer({ files = {} } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'iskra-test-'));
   fs.copyFileSync(path.join(SERVER_DIR, 'server.js'), path.join(dir, 'server.js'));
+  fs.cpSync(path.join(SERVER_DIR, 'lib'), path.join(dir, 'lib'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'bootstrap-admin.js'), `module.exports = ${JSON.stringify(ADMIN)};\n`);
   for (const [rel, content] of Object.entries(files)) {
     fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });

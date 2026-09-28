@@ -374,7 +374,7 @@ CRLF/LF отличием не считается). Если там есть пр
 | Что поменяли | Перезапуск |
 |---|---|
 | `.env` любого компонента | да, того компонента |
-| `server.js`, `db.js`, файлы в `routes\`, `services\`, `config\` | да |
+| `server.js`, `db.js`, файлы в `routes\`, `services\`, `config\`, `lib\` | да |
 | `Collector.Py` | да, `ITS-SmdrCollector` |
 | `public\*` (стили, скрипты, разметка), `.ejs` | нет, достаточно обновить страницу |
 | `node_modules` | да |
