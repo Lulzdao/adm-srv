@@ -104,8 +104,10 @@ $Protected = @(
   '(^|\\)\.env$', '\.db(-shm|-wal)?$', '\.log$', '(^|\\)bootstrap-admin\.js$', '(^|\\)update\.config\.psd1$',
   '(^|\\)(node_modules|uploads|data|logs|certs|updates|backups|dist|\.update|\.claude)(\\|$)'
 )
-# Документация и тесты: их изменение не требует перезапуска службы.
-$NoRestart = @('\.(md|txt|pdf)$', '(^|\\)test(\\|$)', '(^|\\)\.env\.example$', '(^|\\)public\\')
+# Документация и тесты: их изменение не требует перезапуска службы. И клиент «Искры»
+# (MESSENGER\desktop-client) — это программа для компьютеров сотрудников, служба «Искры» его не
+# запускает; раньше правка только клиента перезапускала службу и на секунды рвала связь у всех.
+$NoRestart = @('\.(md|txt|pdf)$', '(^|\\)test(\\|$)', '(^|\\)\.env\.example$', '(^|\\)public\\', '(^|\\)desktop-client\\')
 
 # ---------------------------------------------------------------------------
 #  Вывод
@@ -151,6 +153,27 @@ function Get-NssmServices {
   return ,$result
 }
 
+# Лежит ли каталог внутри другого (или совпадает с ним).
+function Test-Under([string]$dir, [string]$root) {
+  return ($dir.TrimEnd('\') + '\').StartsWith($root.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)
+}
+
+# Каталог компонента по его службам. Служб одного компонента может быть несколько — на машине
+# две установки (например, рабочая копия сервера и тестовый стенд). Раньше бралась первая
+# попавшаяся, и обновление одной установки меняло файлы и перезапускало службы ДРУГОЙ. Теперь:
+# служба внутри каталога установки — она; иначе, если все найденные смотрят в один каталог, —
+# он; если в разные — не угадываем, а просим указать путь в update.config.psd1.
+function Select-ServiceDir([string]$component, $services) {
+  $cands = @($services | Where-Object Component -eq $component)
+  if (-not $cands.Count) { return $null }
+  $inRoot = @($cands | Where-Object { Test-Under $_.Dir $Root })
+  if ($inRoot.Count) { return $inRoot[0].Dir }
+  $distinct = @($cands | ForEach-Object Dir | Sort-Object -Unique)
+  if ($distinct.Count -eq 1) { return $distinct[0] }
+  Fail (("Компонент {0} найден в нескольких местах ({1}), и ни одно не внутри каталога установки {2}. " +
+    "Укажите нужный путь в update.config.psd1: Paths = @{{ {0} = '...' }}") -f $component, ($distinct -join '; '), $Root)
+}
+
 # Каталог каждого компонента: из настроек, по службам, или <корень>\<имя>.
 function Resolve-ComponentDirs($services) {
   $dirs = @{}
@@ -158,13 +181,10 @@ function Resolve-ComponentDirs($services) {
     if ($name -like '*\*') { continue }   # вложенные (SMDR\web-node) едут вместе с родителем
     $dir = $null
     if ($Config.Paths.ContainsKey($name)) { $dir = [IO.Path]::GetFullPath($Config.Paths[$name]) }
-    if (-not $dir) {
-      $svc = $services | Where-Object Component -eq $name | Select-Object -First 1
-      if ($svc) { $dir = $svc.Dir }
-    }
+    if (-not $dir) { $dir = Select-ServiceDir $name $services }
     if (-not $dir -and $name -eq 'SMDR') {
-      $web = $services | Where-Object Component -eq 'SMDR\web-node' | Select-Object -First 1
-      if ($web) { $dir = Split-Path -Parent $web.Dir }
+      $web = Select-ServiceDir 'SMDR\web-node' $services
+      if ($web) { $dir = Split-Path -Parent $web }
     }
     if (-not $dir) {
       $candidate = Join-Path $Root $name
@@ -404,7 +424,14 @@ function Invoke-Update {
     $d = $dirs[$name]
     Say ("   {0,-18} {1}" -f $name, $(if ($d) { $d } else { 'НЕ НАЙДЕН — его файлы будут пропущены' })) $(if ($d) { 'Gray' } else { 'Yellow' })
   }
-  foreach ($s in $services) { Say ("   служба {0,-20} -> {1}" -f $s.Name, $s.Component) }
+  # Останавливать и перезапускать можно только службы ЭТОЙ установки — те, чей рабочий каталог
+  # внутри выбранных каталогов компонентов. Службы другой установки показываем и не трогаем.
+  $all = $services
+  $services = @($all | Where-Object { $s = $_; @($dirs.Values | Where-Object { $_ -and (Test-Under $s.Dir $_) }).Count -gt 0 })
+  foreach ($s in $all) {
+    if ($services -contains $s) { Say ("   служба {0,-20} -> {1}" -f $s.Name, $s.Component) }
+    else { Say ("   служба {0,-20} -> другая установка ({1}), не трогаю" -f $s.Name, $s.Dir) 'Yellow' }
+  }
   if (-not $SkipServices -and -not $services) {
     Fail 'Не найдено ни одной службы NSSM с файлами adm-srv. Проверьте, что скрипт запущен от администратора, или укажите пути в update.config.psd1.'
   }
