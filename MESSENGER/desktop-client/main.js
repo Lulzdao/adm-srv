@@ -897,7 +897,10 @@ function checkForUpdates() {
   try {
     autoUpdater.setFeedURL({ provider: 'generic', url: updateFeedUrl() });
     autoUpdater.autoDownload = !!settings.autoUpdate;
-    autoUpdater.checkForUpdates();
+    // Обещание отвергается при той же ошибке, о которой уже сообщило событие 'error' (с уровнем и
+    // понятным текстом, см. setupUpdater). Без .catch оно всплывало ещё раз — как main_unhandled_rejection
+    // с уровнем ERROR при каждом запуске, пока на сервере нет файлов обновления.
+    autoUpdater.checkForUpdates().catch(() => {});
   } catch (e) {
     logLocal('updater_error', { message: e && e.message, stack: e && e.stack }, updateErrorLevel(e));
     sendUpdateState({ state: 'error', message: shortUpdateError(e) });
@@ -914,7 +917,7 @@ ipcMain.handle('read-local-log', () => {
   try { return fs.readFileSync(LOG_PATH, 'utf8'); }
   catch { return '(локальный журнал пуст или недоступен)'; }
 });
-ipcMain.on('download-update', () => { if (app.isPackaged) autoUpdater.downloadUpdate(); });
+ipcMain.on('download-update', () => { if (app.isPackaged) autoUpdater.downloadUpdate().catch(() => {}); }); // ошибка — через событие 'error'
 ipcMain.on('install-update', () => {
   // isQuitting обязателен ДО quitAndInstall: иначе обработчик close у окна списка контактов
   // отменит закрытие и спрячет окно в трей (см. createRoster), приложение не выйдет,
@@ -1105,7 +1108,7 @@ ipcMain.on('set-settings', (event, partial) => {
   // Включили автообновление — начинаем качать уже найденное, не дожидаясь следующей проверки.
   if ('autoUpdate' in partial && app.isPackaged) {
     autoUpdater.autoDownload = !!settings.autoUpdate;
-    if (settings.autoUpdate && updateState.state === 'available') autoUpdater.downloadUpdate();
+    if (settings.autoUpdate && updateState.state === 'available') autoUpdater.downloadUpdate().catch(() => {}); // ошибка — через 'error'
   }
   // Тема (и в перспективе другие настройки внешнего вида) должны применяться сразу во всех открытых
   // окнах, не только в том, где их поменяли — иначе пришлось бы перезапускать каждое окно вручную.
