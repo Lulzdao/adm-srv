@@ -73,11 +73,11 @@ test("враждебное имя файла не может закрыть ат
     "кавычек должно остаться ровно две — те, что обрамляют значение");
 });
 
-// Номера страниц для переключателя списка заявок — тоже живая функция из app.js.
+// Номера страниц для переключателя списка заявок — тоже живая функция, из app-tickets.js.
 test("переключатель страниц: первая, последняя, соседи текущей и многоточия", () => {
-  const src = fs.readFileSync(path.join(__dirname, "..", "public", "app.js"), "utf8");
+  const src = fs.readFileSync(path.join(__dirname, "..", "public", "app-tickets.js"), "utf8");
   const m = src.match(/function pageNumbers\(current, pages\) \{[\s\S]*?\n\}/);
-  assert.ok(m, "функция pageNumbers() не найдена в public/app.js — тест устарел");
+  assert.ok(m, "функция pageNumbers() не найдена в public/app-tickets.js — тест устарел");
   const pageNumbers = new Function(`${m[0]}; return pageNumbers;`)();
 
   assert.deepStrictEqual(pageNumbers(1, 1), [1]);
