@@ -169,9 +169,15 @@ async function send(db, { to, subject, text }) {
 // поднимут. Отвергнутый адрес и отказ в аутентификации — нет: пока не
 // поправят настройки или список, повтор даст ровно ту же ошибку и только
 // засорит журнал.
+//
+// Ответ сервера с кодом 4xx — по SMTP это «временно, попробуйте позже»:
+// перегружен, серый список, превышен лимит писем в минуту (так Exchange
+// сдерживает поток). Раньше такое письмо помечалось неотправленным навсегда.
 function isRetriable(err) {
   const code = err && err.code;
-  return ["ECONNECTION", "ESOCKET", "ETIMEDOUT", "EDNS", "ECONNRESET"].includes(code);
+  if (["ECONNECTION", "ESOCKET", "ETIMEDOUT", "EDNS", "ECONNRESET"].includes(code)) return true;
+  const smtp = Number(err && err.responseCode);
+  return smtp >= 400 && smtp < 500;
 }
 
 // Ошибки nodemailer наружу выглядят как «connect ETIMEDOUT 10.0.0.1:465» —

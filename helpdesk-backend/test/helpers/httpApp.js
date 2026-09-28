@@ -93,6 +93,7 @@ function client(baseUrl) {
     get: (p, extra) => request("GET", p, undefined, extra),
     post: (p, b, extra) => request("POST", p, b, extra),
     patch: (p, b, extra) => request("PATCH", p, b, extra),
+    put: (p, b, extra) => request("PUT", p, b, extra),
     delete: (p, extra) => request("DELETE", p, undefined, extra),
     /** Войти локальной учёткой. Бросает, если вход не удался. */
     async login(loginName) {

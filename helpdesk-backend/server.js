@@ -28,6 +28,20 @@ const app = createApp(db, { secureCookie: tlsEnabled });
 require("./services/scheduler").start(db);
 
 const { server, secure } = createAppServer(app);
+// Порт занят — чаще всего это вторая копия платформы, запущенная вручную рядом
+// со службой. Без обработчика процесс падал со стеком EADDRINUSE; теперь —
+// одна понятная строка и выход с ошибкой, чтобы NSSM попробовал снова позже.
+server.on("error", (err) => {
+  if (err.code === "EADDRINUSE") {
+    console.error(
+      `[остановка] Порт ${config.port} уже занят — платформа уже запущена (служба ITS-Platform или вручную) ` +
+        "или порт занят другой программой: netstat -ano | findstr :" + config.port
+    );
+  } else {
+    console.error(`[остановка] Не удалось открыть порт ${config.port}: ${err.message}`);
+  }
+  process.exit(1);
+});
 server.listen(config.port, () => {
   console.log(`Сервер запущен: ${secure ? "https" : "http"}://localhost:${config.port}`);
 });

@@ -1,0 +1,292 @@
+/* Окно «chat.html»: стили (вынесены из страницы). */
+  body { display: flex; flex-direction: column; position: relative; }
+  .wintitlebar { height: 40px; }
+  .wintitlebar .who { display: flex; align-items: center; gap: 8px; min-width: 0; -webkit-app-region: drag; }
+  .dot { width: 11px; height: 11px; border-radius: 50%; background: var(--offline); flex-shrink: 0; -webkit-app-region: no-drag; }
+  .dot.active { background: var(--online); box-shadow: 0 0 6px 0 var(--online); }
+  .dot.idle { background: var(--afk); box-shadow: 0 0 6px 0 var(--afk); }
+  .wintitlebar .who .n { font-weight: 600; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* Имя собеседника кликабельно только в личной переписке (см. togglePresencePanel) — курсор и
+     no-drag ставим через JS вместе с обработчиком, чтобы в общем чате имя оставалось обычным
+     текстом без намёка на кликабельность. */
+  .wintitlebar .who .n.clickable { cursor: pointer; -webkit-app-region: no-drag; }
+  .wintitlebar .who .n.clickable:hover { text-decoration: underline; text-decoration-color: var(--muted); text-underline-offset: 2px; }
+
+  /* Всплывающая карточка присутствия — та же визуальная схема, что у панели эмодзи (position:
+     absolute поверх остального, плавные opacity/transform). Показывает то же, что раньше было
+     видно только в title тултипа (наведение на точку статуса), плюс имена ПК, если собеседник
+     сидит с нескольких устройств одновременно под одним аккаунтом. */
+  #presencePanel {
+    position: absolute; top: 44px; left: 12px; min-width: 190px; max-width: 260px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow);
+    padding: 11px 13px; z-index: 40;
+    opacity: 0; transform: translateY(6px) scale(.98); pointer-events: none;
+    transition: opacity .12s ease, transform .12s ease;
+  }
+  #presencePanel.open { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
+  #presencePanel .pp-state { font-weight: 600; font-size: 12.5px; display: flex; align-items: center; gap: 7px; }
+  #presencePanel .pp-state .dot2 { width: 8px; height: 8px; border-radius: 50%; background: var(--offline); flex-shrink: 0; }
+  #presencePanel .pp-state .dot2.active { background: var(--online); }
+  #presencePanel .pp-state .dot2.idle { background: var(--afk); }
+  #presencePanel .pp-since { font-size: 11px; color: var(--muted); margin-top: 3px; }
+  #presencePanel .pp-hosts-title { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .3px; font-weight: 700; margin-top: 9px; margin-bottom: 4px; }
+  #presencePanel .pp-host { display: flex; align-items: center; gap: 6px; font-size: 12px; padding: 2px 0; }
+  #presencePanel .pp-host svg { color: var(--muted); flex-shrink: 0; }
+
+  #messages { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 8px; }
+  /* Раньше здесь стоял justify-content:flex-end на #messages целиком — тот же визуальный эффект
+     (мало сообщений — прижаты к низу, а не висят у верха с пустотой под собой), но у флекс-
+     контейнера со scroll это ломает прокрутку к самым старым сообщениям (пропадает scrollbar/
+     скролл к началу переписки) — известная особенность flexbox + overflow. margin-top:auto у
+     ПЕРВОГО ребёнка — тот же результат без этой проблемы: тянет всё содержимое вниз, только когда
+     оно короче контейнера, а не мешает обычной прокрутке, когда сообщений много. */
+  #messages > *:first-child { margin-top: auto; }
+  .msg { position: relative; max-width: 78%; min-width: 0; padding: 7px 11px 6px; border-radius: 12px; background: var(--bubble); align-self: flex-start; }
+  .msg.own { background: var(--own); align-self: flex-end; }
+  .msg .who { font-size: 10.5px; color: var(--accent); font-weight: 600; margin-bottom: 2px; }
+  .msg.own .who { display: none; }
+  /* Клик по сообщению-цитате (см. scrollToMessage) — короткая вспышка рамки, чтобы глаз нашёл,
+     куда именно долистало, а не мгновенный прыжок без обратной связи. */
+  @keyframes msgFlash { 0%, 100% { box-shadow: none; } 30% { box-shadow: 0 0 0 3px var(--accent); } }
+  .msg.flash { animation: msgFlash .9s ease; }
+
+  /* Всплывающий тулбар (реакция/ответ) — над правым (своим) или левым (чужим) верхним углом
+     пузыря, показывается только при наведении, не занимает место в раскладке.
+     bottom:100% (а не отрицательный top, как было) — тулбар лежит ЦЕЛИКОМ выше пузыря и не
+     накрывает собой первые строки сообщения: раньше он перекрывал имя автора и начало текста,
+     мешая и читать, и выделять их мышью. Ровно 100%, без зазора: между тулбаром и пузырём не
+     должно быть щели, иначе курсор, идущий к кнопкам, теряет :hover и тулбар исчезает. */
+  .msg-toolbar {
+    position: absolute; bottom: 100%; right: 8px; display: none; gap: 2px; z-index: 5;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    padding: 2px; box-shadow: var(--shadow);
+  }
+  .msg.own .msg-toolbar { right: auto; left: 8px; }
+  .msg:hover .msg-toolbar { display: flex; }
+  .mt-btn { width: 24px; height: 24px; border: none; background: transparent; border-radius: 6px; color: var(--muted); cursor: pointer; display: flex; align-items: center; justify-content: center; }
+  .mt-btn:hover { background: var(--hover); color: var(--text); }
+  .mt-btn svg { width: 14px; height: 14px; }
+
+  /* Цитата сообщения, на которое отвечают (см. replyQuoteHtml) — клик прокручивает к оригиналу. */
+  .reply-quote { display: flex; gap: 7px; margin-bottom: 4px; padding: 3px 8px; border-radius: 6px; background: var(--hover); cursor: pointer; }
+  .reply-quote .rq-bar { width: 2px; border-radius: 2px; background: var(--accent); flex-shrink: 0; }
+  .reply-quote .rq-body { min-width: 0; display: flex; flex-direction: column; }
+  .reply-quote .rq-name { font-size: 10.5px; font-weight: 700; color: var(--accent); }
+  .reply-quote .rq-text { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* Реакции — плашки под сообщением (см. reactionsMarkup); своя реакция залита акцентным
+     цветом — тот же приём, что у активной кнопки дня в панели истории (#hpDays .dbtn.active). */
+  .reactions-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 4px; }
+  /* Время переезжает сюда, как только у сообщения появляется хотя бы одна реакция (см.
+     placeTime): в обычном состоянии оно приклеено к концу текста через float, и если оставить
+     его там, пузырь дорастает вниз на высоту плашек с реакциями, а время так и остаётся висеть
+     на уровне текста — в пустоте посреди пузыря, а не по его нижнему краю. margin-left:auto
+     прижимает его к правому краю той строки реакций, на которой оно оказалось.
+     Селектор с .msg — чтобы перебить float у ".msg .time" ниже: там та же специфичность, но
+     правило идёт позже по файлу и иначе выиграло бы. */
+  .msg .reactions-bar .time { float: none; margin: 0 0 0 auto; padding-left: 8px; }
+  .reaction-pill { display: inline-flex; align-items: center; gap: 3px; padding: 1px 7px; border-radius: 10px; border: 1px solid var(--border); background: var(--panel-2); cursor: pointer; font-size: 11px; color: var(--text); }
+  .reaction-pill img.twemoji { width: 13px; height: 13px; vertical-align: -2px; }
+  .reaction-pill.mine { border-color: var(--accent); background: var(--accent); color: #fff; }
+  .reaction-pill .rcount { font-variant-numeric: tabular-nums; color: var(--muted); }
+  .reaction-pill.mine .rcount { color: #fff; }
+
+  /* Быстрый выбор реакции — компактная плашка из нескольких эмодзи, всплывает у кнопки в тулбаре
+     сообщения (см. openQuickReact); position:fixed — считается от экрана, а не от #messages, чтобы
+     не обрезаться его overflow:hidden. */
+  .quick-react-popup { position: fixed; display: flex; gap: 2px; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 6px; box-shadow: var(--shadow); z-index: 200; }
+  .quick-react-popup button { width: 30px; height: 30px; border: none; background: transparent; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+  .quick-react-popup button:hover { background: var(--hover); }
+  .quick-react-popup img.twemoji { width: 20px; height: 20px; }
+
+  /* Плашка "Ответ на..." над строкой ввода (см. paintReplyBanner) — часть обычной раскладки
+     (не absolute): должна раздвигать композер, а не наплывать поверх текста, который набирают. */
+  .reply-banner { display: none; align-items: center; gap: 8px; padding: 6px 10px; border-top: 1px solid var(--border); background: var(--panel); }
+  .reply-banner .rb-bar { width: 2px; align-self: stretch; border-radius: 2px; background: var(--accent); }
+  .reply-banner .rb-content { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .reply-banner .rb-name { font-size: 11px; font-weight: 700; color: var(--accent); }
+  .reply-banner .rb-text { font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .reply-banner .rb-close { width: 24px; height: 24px; border: none; background: transparent; border-radius: 50%; color: var(--muted); cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .reply-banner .rb-close:hover { background: var(--hover); color: var(--text); }
+  /* Настройка "Скрывать имя в сообщениях" (см. applyHideNames ниже) — только для личных чатов:
+     имя и так видно в шапке окна, а в общей комнате оно как раз нужно, чтобы различать реплики. */
+  body.hide-names .msg .who { display: none; }
+  .msg .txt { white-space: pre-wrap; word-break: break-word; line-height: 1.4; }
+  /* Подсветка совпадений при поиске по истории — см. highlightHtml/runSearch. */
+  mark.hl { background: var(--accent); color: #fff; border-radius: 3px; padding: 0 1px; }
+  .msg .time { float: right; margin: 3px 0 -3px 12px; font-size: 9px; color: var(--muted); }
+  /* Галочка прочтения — только у своих сообщений в личной переписке (см. readTickHtml): серая, пока
+     собеседник не увидел сообщение, синяя — после того, как он его прочитал (тот же сигнал, что
+     скрывает разделитель "Новые сообщения" у него — клик или прокрутка, см. clearUnreadDivider). */
+  .read-tick { display: inline-flex; vertical-align: -1px; margin-left: 3px; color: var(--muted); }
+  /* width не задаём — у одинарной и двойной галочки разное соотношение сторон viewBox (24x24
+     против 28x24), фиксированная ширина сплющила бы вторую. Высота одна для обеих — auto-ширина
+     сохраняет пропорции сама. */
+  .read-tick svg { display: block; height: 10px; width: auto; }
+  .read-tick.read { color: var(--accent-2); }
+  .msg .files-block { display: flex; flex-direction: column; gap: 6px; }
+  .msg .file { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--hover); border-radius: 8px; text-decoration: none; color: var(--text); min-width: 0; }
+  .msg .file .fi { color: var(--accent-2); flex-shrink: 0; display: flex; width: 17px; height: 17px; position: relative; }
+  .msg .file .fi .fi-download, .msg .file .fi .fi-progress, .msg .file .fi .fi-check { display: none; }
+  .msg .file:hover .fi .fi-file { display: none; }
+  .msg .file:hover .fi .fi-download { display: flex; }
+  .msg .file.downloading .fi .fi-file, .msg .file.downloading .fi .fi-download { display: none !important; }
+  .msg .file.downloading .fi, .msg .file.done .fi { width: 24px; height: 24px; }
+  .msg .file.downloading .fi .fi-progress { display: flex; align-items: center; justify-content: center; position: relative; width: 24px; height: 24px; }
+  .msg .file.downloading .fi .fi-progress svg { position: absolute; inset: 0; transform: rotate(-90deg); }
+  .msg .file.downloading .fi .fi-progress .ring-bg { fill: none; stroke: var(--border); stroke-width: 3; }
+  .msg .file.downloading .fi .fi-progress .ring-bar { fill: none; stroke: var(--accent-2); stroke-width: 3; stroke-linecap: round; transition: stroke-dashoffset .2s linear; transform-box: fill-box; transform-origin: center; }
+  .msg .file.downloading .fi .fi-progress .ring-bar.indeterminate { animation: fi-spin 1s linear infinite; }
+  .msg .file.downloading .fi .fi-pct { font-size: 7px; font-weight: 700; color: var(--text); position: relative; z-index: 1; }
+  @keyframes fi-spin { from { transform: rotate(-90deg); } to { transform: rotate(270deg); } }
+  .msg .file.done .fi .fi-file, .msg .file.done .fi .fi-download, .msg .file.done .fi .fi-progress { display: none !important; }
+  .msg .file.done .fi .fi-check { display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 50%; background: var(--online); color: #fff; }
+  .msg .file .fmeta { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .msg .file .fn { display: block; font-weight: 600; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .msg .file .fs { color: var(--muted); font-size: 10.5px; }
+  /* Файл удалили с диска сервера (через веб-панель) — карточка та же по форме, но не ссылка, а
+     статус: приглушённая, некликабельная, с предупреждающей иконкой вместо файловой. */
+  .msg .file.file-deleted { cursor: default; }
+  .msg .file.file-deleted .fi { color: var(--muted); }
+  .msg .file.file-deleted .fn { color: var(--muted); }
+  .msg .files-time { text-align: right; font-size: 9px; color: var(--muted); margin-top: 1px; }
+  /* Здесь время — единственное содержимое строки, и выравнивает его сам контейнер (text-align).
+     Оставленный float схлопнул бы высоту этой строки: у float'а её некому держать. */
+  .msg .files-time .time { float: none; margin: 0; }
+  /* С реакциями время уезжает в их строку (см. placeTime) и обёртка остаётся пустой. */
+  .msg .files-time:empty { display: none; }
+  /* "Печатает" — пузырь с тремя бегущими точками в самом конце ленты, ровно там, где вот-вот
+     появится сообщение собеседника (как в Telegram). Раньше это была плавающая плашка с текстом
+     "N печатает...", висевшая над строкой ввода: она ложилась ПОВЕРХ последнего сообщения и
+     закрывала его. Теперь это обычный элемент потока (.msg, как у настоящего сообщения) — лента
+     просто поднимается и освобождает место, ничего не перекрывая. */
+  .typing-bubble .tdots { display: flex; align-items: center; gap: 4px; padding: 3px 1px; }
+  .typing-bubble .tdot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); animation: typingWave 1.25s ease-in-out infinite; }
+  /* Сдвиг фаз по точкам и даёт «волну»: соседняя начинает подниматься, когда предыдущая ещё
+     наверху. Пауза в середине цикла (60%→100% в состоянии покоя) не даёт волне сливаться в
+     сплошное мельтешение. */
+  .typing-bubble .tdot:nth-child(2) { animation-delay: .16s; }
+  .typing-bubble .tdot:nth-child(3) { animation-delay: .32s; }
+  @keyframes typingWave {
+    0%, 60%, 100% { transform: translateY(0); opacity: .45; }
+    30% { transform: translateY(-4px); opacity: 1; }
+  }
+
+  .day-sep { align-self: center; color: var(--muted); font-size: 10.5px; background: var(--panel-2); padding: 3px 10px; border-radius: 20px; margin: 4px 0; }
+  /* Разделитель "Новые сообщения" — как в окне рассылок (см. addLiveBroadcast/loadFeed там же по
+     смыслу), только для входящих сообщений в чате. -webkit-app-region не задаём: разделитель лежит
+     внутри прокручиваемой ленты, а не в области с drag, так что переопределять там нечего. */
+  .unread-divider { display: flex; align-items: center; gap: 10px; margin: 2px 0; align-self: stretch; }
+  .unread-divider::before, .unread-divider::after { content: ''; flex: 1; height: 1px; background: var(--accent); opacity: .35; }
+  .unread-divider span { font-size: 10px; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: .4px; white-space: nowrap; }
+
+  #composer { position: relative; display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--border); background: var(--panel); flex-shrink: 0; align-items: flex-end; }
+  /* #text раньше сам был скруглённым (border-radius:18px) и одновременно overflow-y:auto — кастомный
+     ::-webkit-scrollbar (см. theme.css) в Chromium не обрезается border-radius самого элемента, из-за
+     чего прямоугольная полоса скролла торчала за пределы скруглённых углов. Обёртка берёт на себя
+     скругление и overflow:hidden (обрезает), а сам textarea внутри — прямоугольный, со своим
+     скроллом, который обрезается уже обёрткой. */
+  #textWrap { position: relative; flex: 1; min-width: 0; border: 1px solid var(--border); border-radius: 18px; background: var(--bg); overflow: hidden; }
+  #textWrap:focus-within { border-color: var(--accent); }
+  #text { display: block; width: 100%; padding: 9px 34px 9px 12px; border: none; background: transparent; color: var(--text); font-size: 13px; font-family: inherit; resize: none; max-height: 120px; overflow-y: auto; line-height: 1.35; box-sizing: border-box; }
+  #text:focus { outline: none; }
+  #composer .round { width: 38px; height: 38px; border-radius: 50%; border: none; cursor: pointer; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+  #composer .round svg { width: 19px; height: 19px; }
+  #attach { background: var(--bg); border: 1px solid var(--border); color: var(--muted); }
+  #attach:hover { color: var(--text); }
+  #send { background: var(--accent); color: #fff; }
+  #send svg { width: 18px; height: 18px; }
+
+  /* Кнопка эмодзи — внутри поля ввода справа (как в Telegram), а не отдельной круглой кнопкой в
+     composer'е. Стоит ровно по вертикальному центру #textWrap: при border-radius, близком к
+     половине высоты (почти "таблетка"), именно в центре края скругление касается его по
+     вертикальной касательной — там меньше всего риск обрезаться overflow:hidden обёртки. */
+  #emojiBtn { position: absolute; top: 50%; right: 4px; transform: translateY(-50%); width: 29px; height: 29px; padding: 0; border: none; border-radius: 50%; background: transparent; color: var(--muted); cursor: pointer; display: flex; align-items: center; justify-content: center; }
+  #emojiBtn svg { width: 19px; height: 19px; }
+  #emojiBtn:hover { color: var(--text); }
+  #emojiBtn.active { color: var(--accent); }
+
+  #emojiPanel {
+    position: absolute; bottom: 52px; right: 10px; width: 232px; max-height: 220px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow);
+    padding: 8px; display: grid; grid-template-columns: repeat(6, 1fr); gap: 2px; overflow-y: auto;
+    opacity: 0; transform: translateY(6px) scale(.98); pointer-events: none;
+    transition: opacity .12s ease, transform .12s ease;
+    z-index: 30;
+  }
+  #emojiPanel.open { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
+  #emojiPanel button { width: 32px; height: 32px; border: none; background: transparent; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; line-height: 1; }
+  #emojiPanel button:hover { background: var(--hover); }
+  /* Картинка внутри кнопки (см. emojiHtml) — переопределяем базовый .twemoji (1.2em, для инлайна в
+     тексте сообщений) на фиксированный размер, подходящий под 32px-кнопку сетки выбора. */
+  #emojiPanel button img.twemoji { width: 24px; height: 24px; vertical-align: unset; }
+
+  /* ---- Панель истории ---- */
+  /* Сообщения и строка ввода прячутся плавно (fade + сдвиг вниз), а не мгновенным display:none —
+     см. hideChatBodySmoothly/showChatBodySmoothly. Когда переход заканчивается, элемент по-настоящему
+     убирается из раскладки (display:none), иначе остаётся невидимым, но занимающим место. */
+  #messages, #composer { transition: opacity .15s ease, transform .2s ease; }
+  #messages.chat-hidden, #composer.chat-hidden { opacity: 0; pointer-events: none; transform: translateY(14px); }
+  /* Панель истории — не мгновенный display:none/flex, а плавный fade+сдвиг поверх остального
+     содержимого. Постоянно в DOM (просто прозрачная и некликабельная, пока не открыта), поэтому
+     transition отрабатывает как положено — в отличие от display, opacity/transform анимируются.
+     Открывается сверху вниз (как выпадающее меню из кнопки в шапке), не снизу вверх — и цветная
+     полоска сверху панели визуально продолжает подсветку активной кнопки, которая её открыла. */
+  #historyPanel {
+    position: absolute; top: 40px; left: 0; right: 0; bottom: 0;
+    display: flex; flex-direction: column; background: var(--bg);
+    border-top: 2px solid transparent;
+    opacity: 0; transform: translateY(-8px); pointer-events: none;
+    transition: opacity .2s ease, transform .2s ease, border-color .2s ease;
+    z-index: 50;
+  }
+  #historyPanel.visible { opacity: 1; transform: translateY(0); pointer-events: auto; border-top-color: var(--accent); }
+  #hpSearchRow { display: flex; align-items: center; gap: 8px; padding: 10px; border-bottom: 1px solid var(--border); background: var(--panel); }
+  #hpSearchRow svg { color: var(--muted); flex-shrink: 0; }
+  #hpSearch { flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 20px; padding: 7px 12px; color: var(--text); font-size: 12.5px; }
+  #hpSearch:focus { outline: none; border-color: var(--accent); }
+  #hpBody { flex: 1; display: flex; min-height: 0; }
+  #hpDays { width: 150px; flex-shrink: 0; overflow-y: auto; border-right: 1px solid var(--border); padding: 6px; }
+  #hpDays .mheader { display: flex; align-items: center; gap: 6px; padding: 8px 8px 6px; cursor: pointer; border-radius: 6px; user-select: none; }
+  #hpDays .mheader:hover { background: var(--hover); }
+  #hpDays .mheader .chev { color: var(--muted); display: flex; transition: transform .15s; flex-shrink: 0; }
+  #hpDays .mheader.collapsed .chev { transform: rotate(-90deg); }
+  #hpDays .mheader .mtitle { flex: 1; font-size: 11px; font-weight: 700; color: var(--muted); text-transform: capitalize; }
+  #hpDays .mheader .mcount { font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  #hpDays .mdays.collapsed { display: none; }
+  #hpDays .dbtn { padding: 8px 9px; border-radius: 8px; cursor: pointer; font-size: 12px; margin-bottom: 2px; }
+  #hpDays .dbtn:hover { background: var(--hover); }
+  #hpDays .dbtn.active { background: var(--accent); color: #fff; }
+  #hpDays .dbtn .cnt { display: block; font-size: 10px; color: inherit; opacity: .7; }
+  #hpMessages { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 8px; }
+  #hpEmpty { padding: 30px 14px; text-align: center; color: var(--muted); font-size: 12px; }
+
+  /* ---- Drag-and-drop файлов ---- */
+  #dropOverlay { display: none; position: fixed; inset: 6px; z-index: 500; background: var(--overlay); align-items: center; justify-content: center; flex-direction: column; gap: 10px; border: 3px dashed var(--accent); border-radius: 10px; pointer-events: none; }
+  #dropOverlay.active { display: flex; }
+  #dropOverlay svg { width: 34px; height: 34px; color: var(--accent); }
+  #dropOverlay .dtext { font-size: 14px; font-weight: 700; color: var(--text); }
+
+  /* ---- Модалка выбора способа отправки файлов ---- */
+  .sfp-box { width: min(380px, 90%) !important; }
+  .sfp-list { max-height: 130px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+  .sfp-item { display: flex; justify-content: space-between; gap: 8px; background: var(--panel-2); border-radius: 8px; padding: 7px 10px; font-size: 12px; }
+  .sfp-item .sfp-fn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sfp-item .sfp-fs { color: var(--muted); flex-shrink: 0; }
+  .sfp-split { display: flex; gap: 8px; }
+  .sfp-half { flex: 1; min-width: 0; background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 7px; }
+  .sfp-quick { align-items: center; justify-content: center; cursor: pointer; text-align: center; }
+  .sfp-quick:hover { border-color: var(--accent); background: var(--hover); }
+  .sfp-half-t { font-weight: 700; font-size: 12.5px; display: flex; align-items: center; gap: 6px; }
+  .sfp-quick .sfp-half-t { justify-content: center; }
+  .sfp-half-d { font-size: 10.5px; color: var(--muted); text-align: center; line-height: 1.35; }
+  .sfp-caption input { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 7px 8px; color: var(--text); font-size: 12px; width: 100%; }
+  .sfp-caption input:focus { outline: none; border-color: var(--accent); }
+  .sfp-caption button { background: var(--accent); color: #fff; border: none; border-radius: 6px; padding: 7px; font-size: 11px; font-weight: 600; cursor: pointer; width: 100%; }
+  .sfp-cancel-row { text-align: center; margin-top: 12px; }
+  .sfp-cancel-row button { background: none; border: none; color: var(--muted); font-size: 11.5px; cursor: pointer; padding: 4px; }
+  .sfp-cancel-row button:hover { color: var(--text); }
+  #historyBtn { -webkit-app-region: no-drag; display: flex; align-items: center; gap: 6px; padding: 0 10px; width: auto; height: 28px; border-radius: 8px; font-size: 12px; font-weight: 600; }
+  #historyBtn svg { width: 18px; height: 18px; flex-shrink: 0; }
+  #historyBtn.active { background: var(--accent); color: #fff; }
+  #historyBtn.active:hover { background: var(--accent); }

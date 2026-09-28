@@ -1,22 +1,26 @@
 // Искра — корпоративный мессенджер Липецкстата, сервер на Node.js
-// Стек: Express (HTTP+статика) + ws (реалтайм) + better-sqlite3 (хранилище) + JWT (авторизация)
+// Стек: Express (HTTP+статика) + ws (реалтайм) + node:sqlite (хранилище) + JWT (авторизация)
 //
 // ВАЖНО: это единственный рабочий сервер проекта. Раньше в desktop-client/ лежала ещё одна копия
 // этого файла (более новая, с поддержкой файлов) — именно поэтому загрузка файлов не работала:
 // `npm start` всегда запускал ЭТОТ файл, а фича была только в неиспользуемой копии. Больше так не
 // делайте — правьте только этот файл, копии в desktop-client/ не существует.
+//
+// Здесь — маршруты API и WebSocket. Обособленные части вынесены в lib/: журналы (log.js), база со
+// схемой и миграциями (db.js), сертификат и HTTPS (tls.js), ограничение попыток входа (rateLimit.js).
 
 const express = require('express');
 const { WebSocketServer } = require('ws');
-const Database = require('better-sqlite3');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const http = require('http');
-const https = require('https'); // используется, только если сервер настроен на TLS — см. createAppServer
-const tls = require('tls');     // тем же: проверка того, что сервер реально отдаёт клиенту
+const https = require('https'); // только чтобы сказать при запуске, по https ли работаем (сам TLS — lib/tls.js)
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const { openDatabase } = require('./lib/db');
+const { createTls } = require('./lib/tls');
+const { createRateLimits } = require('./lib/rateLimit');
+const { createLogger, dayStamp, parseLogLine, LOG_VIEW_LIMIT } = require('./lib/log');
 
 // 3103, а не 3000: «Искра» стоит на одной машине с платформой, и 3000 занят
 // платформой. Тот же порт вшит в сборку клиента (desktop-client/config.js) и
@@ -25,31 +29,9 @@ const crypto = require('crypto');
 const PORT = process.env.PORT || 3103;
 const IDLE_AFTER_MS = 30 * 60 * 1000; // 30 минут бездействия = AFK (страховка на стороне сервера)
 
-// ---------- Логирование ----------
-// Простой файловый логгер без внешних зависимостей — для 20-200 человек в локальной сети выделенный
-// пакет (winston/pino) избыточен. Ротация "по дню" через имя файла: logs/server-YYYY-MM-DD.log —
-// входы/выходы, срабатывания rate-limit, ошибки сервера; logs/client-YYYY-MM-DD.log — ошибки с
-// рабочих мест сотрудников (см. POST /api/client-log ниже), чтобы разбирать инциденты по логам на
-// сервере, а не просить каждого прислать скриншот или лезть к нему на ПК за файлом. Обе записи
-// дублируются в консоль, как и раньше (console.log/warn при старте никуда не делись).
-const logsDir = path.join(__dirname, 'logs');
-if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir);
-function dayStamp(d = new Date()) { return d.toISOString().slice(0, 10); }
-function writeLogLine(file, line) {
-  // Запись лога не должна блокировать ответ на реальный запрос и не должна валить процесс, если
-  // диск временно недоступен — поэтому асинхронно и без ожидания/обработки результата.
-  fs.appendFile(path.join(logsDir, file), line + '\n', () => {});
-}
-function logServer(level, event, meta = {}) {
-  const line = `${new Date().toISOString()} [${level}] ${event} ${JSON.stringify(meta)}`;
-  writeLogLine(`server-${dayStamp()}.log`, line);
-  (level === 'ERROR' ? console.error : console.log)(line);
-}
-function logClient(entry) {
-  const line = `${new Date().toISOString()} [CLIENT] ${JSON.stringify(entry)}`;
-  writeLogLine(`client-${dayStamp()}.log`, line);
-  console.error(line); // ошибка на чьём-то рабочем месте — сразу видно и в консоли сервера, не только в файле
-}
+// Журналы — lib/log.js: папки месяцев, дневные файлы server-/client-.
+const { logServer, logClient, logFilePath } = createLogger(path.join(__dirname, 'logs'));
+const tlsModule = createTls({ baseDir: __dirname, logServer });
 // Иначе процесс просто молча падает без единой строки в наших логах — эти два обработчика есть
 // почти в любом node-сервисе, который планируют эксплуатировать всерьёз, а не только на своей машине.
 process.on('uncaughtException', (err) => {
@@ -61,174 +43,8 @@ process.on('unhandledRejection', (reason) => {
 });
 
 // ---------- База данных ----------
-const db = new Database(path.join(__dirname, 'messenger.db'));
-db.pragma('journal_mode = WAL');
-// SQLite lower() по умолчанию не понимает кириллицу (только ASCII) — регистронезависимый поиск
-// по-русски без этой функции не работал бы ("Отчёт" не совпадёт с "отчёт"). JS-овский toLowerCase()
-// работает с юникодом корректно.
-db.function('lower_ru', (s) => String(s).toLowerCase());
-db.exec(`
-  CREATE TABLE IF NOT EXISTS departments (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT UNIQUE NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT UNIQUE NOT NULL,
-    password_hash TEXT NOT NULL,
-    display_name TEXT NOT NULL,
-    role TEXT NOT NULL DEFAULT 'employee',
-    department_id INTEGER REFERENCES departments(id) ON DELETE SET NULL,
-    created_at INTEGER NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS messages (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    from_id INTEGER NOT NULL,
-    room TEXT,          -- заполнено для групповых сообщений (например 'general')
-    to_id INTEGER,       -- заполнено для личных сообщений
-    text TEXT NOT NULL,
-    file_url TEXT,
-    file_name TEXT,
-    file_size INTEGER,
-    files_json TEXT,     -- несколько файлов в одном сообщении: JSON-массив [{url,name,size}, ...]
-    created_at INTEGER NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS broadcasts (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    from_id INTEGER NOT NULL,
-    text TEXT NOT NULL,
-    files_json TEXT,
-    created_at INTEGER NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS app_settings (
-    key TEXT PRIMARY KEY,
-    value TEXT
-  );
-  -- Реакции — по одной эмодзи на пользователя на сообщение (как в Telegram): повторный клик по
-  -- той же эмодзи снимает реакцию, по другой — заменяет (см. ON CONFLICT в upsertReaction ниже).
-  CREATE TABLE IF NOT EXISTS message_reactions (
-    message_id INTEGER NOT NULL,
-    user_id INTEGER NOT NULL,
-    emoji TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
-    PRIMARY KEY (message_id, user_id)
-  );
-  -- Именованные группы поверх личных сообщений и одной общей комнаты — переписка группы хранится
-  -- в messages.room тем же способом, что и общая комната (см. комментарий у колонки room выше),
-  -- просто под значением 'group:<id>' вместо 'general' — это даром переиспользует ВСЮ существующую
-  -- SQL-инфраструктуру комнатной истории (поиск/пагинация/дни), не заводя отдельных таблиц под неё.
-  CREATE TABLE IF NOT EXISTS groups (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    created_by INTEGER NOT NULL,
-    created_at INTEGER NOT NULL
-  );
-  -- Сотрудник может состоять сразу в нескольких отделах (совместители, а чаще — люди, которые
-  -- фактически работают на два подразделения). Раньше отдел был один, колонкой users.department_id;
-  -- она осталась ради совместимости и хранит ПЕРВЫЙ из отделов, но источник истины — эта таблица.
-  CREATE TABLE IF NOT EXISTS user_departments (
-    user_id INTEGER NOT NULL,
-    department_id INTEGER NOT NULL,
-    PRIMARY KEY (user_id, department_id)
-  );
-  CREATE TABLE IF NOT EXISTS group_members (
-    group_id INTEGER NOT NULL,
-    user_id INTEGER NOT NULL,
-    added_at INTEGER NOT NULL,
-    PRIMARY KEY (group_id, user_id)
-  );
-`);
-
-// Миграция на случай, если у кого-то уже есть база без колонок для файлов
-{
-  const cols = db.prepare("PRAGMA table_info(messages)").all().map((c) => c.name);
-  if (!cols.includes('file_url')) db.exec('ALTER TABLE messages ADD COLUMN file_url TEXT');
-  if (!cols.includes('file_name')) db.exec('ALTER TABLE messages ADD COLUMN file_name TEXT');
-  if (!cols.includes('file_size')) db.exec('ALTER TABLE messages ADD COLUMN file_size INTEGER');
-  if (!cols.includes('files_json')) db.exec('ALTER TABLE messages ADD COLUMN files_json TEXT');
-  // Отметка о прочтении — только для личных сообщений (to_id заполнен); для сообщений в общей
-  // комнате остаётся NULL и не используется (галочки прочтения там неоднозначны — читателей много).
-  if (!cols.includes('read_at')) db.exec('ALTER TABLE messages ADD COLUMN read_at INTEGER');
-  // Ответ на сообщение (reply) — reply_snapshot хранит ИМЯ И ТЕКСТ оригинала на момент ответа
-  // отдельно от reply_to_id (сам id, для клика "перейти к сообщению"), а не только id: то, на что
-  // ответили, могло быть очень старым и не попасть в текущую загруженную страницу истории (см.
-  // пагинацию выше) — цитата не должна ломаться из-за этого и требовать отдельного похода за
-  // оригиналом. Снимок делает сервер (не клиент) при отправке — источник истины один.
-  if (!cols.includes('reply_to_id')) db.exec('ALTER TABLE messages ADD COLUMN reply_to_id INTEGER');
-  if (!cols.includes('reply_snapshot')) db.exec('ALTER TABLE messages ADD COLUMN reply_snapshot TEXT');
-}
-{
-  const cols = db.prepare("PRAGMA table_info(broadcasts)").all().map((c) => c.name);
-  if (!cols.includes('files_json')) db.exec('ALTER TABLE broadcasts ADD COLUMN files_json TEXT');
-  // NULL — объявление всей организации (как было всегда), число — сообщение одному отделу.
-  // Отдельной таблицы не заводим: это то же самое объявление, отличается только кругом адресатов,
-  // и вся инфраструктура ленты/истории/поиска работает для него без единой правки.
-  if (!cols.includes('department_id')) db.exec('ALTER TABLE broadcasts ADD COLUMN department_id INTEGER');
-}
-
-// Права — два независимых флага прямо на пользователе: can_broadcast (может рассылать всем) и
-// can_admin (доступ к веб-панели). Раздаются только персонально, не на отдел — так исключений и
-// путаницы "откуда у меня это право" меньше, чем при наследовании от отдела. Раньше тут была
-// отдельная таблица "ролей" с ключами — отказались от неё в пользу более прямой модели.
-{
-  const cols = db.prepare("PRAGMA table_info(users)").all().map((c) => c.name);
-  if (!cols.includes('can_broadcast')) db.exec('ALTER TABLE users ADD COLUMN can_broadcast INTEGER NOT NULL DEFAULT 0');
-  if (!cols.includes('can_admin')) db.exec('ALTER TABLE users ADD COLUMN can_admin INTEGER NOT NULL DEFAULT 0');
-  // Счётчик версии строки — для оптимистичной блокировки при редактировании в админ-панели (см.
-  // PATCH /api/admin/users/:id): если два администратора одновременно открыли карточку одного и
-  // того же человека, второй сохранённый PATCH не должен молча затирать правки первого.
-  if (!cols.includes('version')) db.exec('ALTER TABLE users ADD COLUMN version INTEGER NOT NULL DEFAULT 0');
-}
-{
-  // can_broadcast/can_admin у отделов больше не используются (раньше отдел мог выдавать права всем
-  // своим сотрудникам разом) — колонки оставлены в схеме только чтобы не ломать базы, где они уже
-  // есть с прошлой версии; заполнять их через API больше нельзя.
-  const cols = db.prepare("PRAGMA table_info(departments)").all().map((c) => c.name);
-  if (!cols.includes('can_broadcast')) db.exec('ALTER TABLE departments ADD COLUMN can_broadcast INTEGER NOT NULL DEFAULT 0');
-  if (!cols.includes('can_admin')) db.exec('ALTER TABLE departments ADD COLUMN can_admin INTEGER NOT NULL DEFAULT 0');
-  if (!cols.includes('sort_order')) db.exec('ALTER TABLE departments ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0');
-}
-
-
-// Однократный перенос прав из старой системы "ролей" (если она у кого-то ещё есть в базе с
-// прошлой версии сервера) в новые прямые флаги — чтобы при обновлении никто не потерял доступ
-// к админке или рассылкам. После переноса таблица ролей больше не нужна и удаляется.
-{
-  const migrated = getSettingRaw('migrated_caps_from_roles');
-  if (!migrated) {
-    const rolesTableExists = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='roles'").get();
-    if (rolesTableExists) {
-      const roles = new Map(db.prepare('SELECT * FROM roles').all().map((r) => [r.key, r]));
-      const users = db.prepare('SELECT id, role FROM users').all();
-      const migrateCaps = db.prepare('UPDATE users SET can_broadcast=?, can_admin=? WHERE id=?');
-      for (const u of users) {
-        const r = roles.get(u.role);
-        if (r) migrateCaps.run(r.can_broadcast, r.can_admin, u.id);
-      }
-      db.exec('DROP TABLE IF EXISTS roles');
-    }
-    setSettingRaw('migrated_caps_from_roles', '1');
-  }
-}
-// Однократный перенос единственного отдела из users.department_id в user_departments — чтобы при
-// обновлении сервера никто не остался без отдела в ростере.
-{
-  if (!getSettingRaw('migrated_user_departments')) {
-    const rows = db.prepare('SELECT id, department_id FROM users WHERE department_id IS NOT NULL').all();
-    const link = db.prepare('INSERT OR IGNORE INTO user_departments (user_id, department_id) VALUES (?, ?)');
-    const run = db.transaction(() => { for (const r of rows) link.run(r.id, r.department_id); });
-    run();
-    setSettingRaw('migrated_user_departments', '1');
-  }
-}
-
-function getSettingRaw(key) {
-  const row = db.prepare('SELECT value FROM app_settings WHERE key = ?').get(key);
-  return row ? row.value : null;
-}
-function setSettingRaw(key, value) {
-  db.prepare('INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value);
-}
+// Открытие, схема и миграции — lib/db.js.
+const { db, transaction, getSettingRaw, setSettingRaw } = openDatabase(path.join(__dirname, 'messenger.db'), { logServer });
 
 // ---------- Ключ подписи токенов ----------
 // Раньше здесь стояло `process.env.JWT_SECRET || 'change-me-in-production'`. Строка-заглушка лежала
@@ -266,7 +82,9 @@ function normalizeRow(row) {
   } else if (file_url) {
     files = [{ url: file_url, name: file_name, size: file_size }];
   }
-  files = files.map((f) => ({ ...f, exists: fileExistsForUrl(f.url) }));
+  // Имя — настоящее, под которым файл загрузили (см. uploadedName): в сообщениях, отправленных до
+  // этой проверки, оно могло быть выбрано отправителем, и карточка показывала бы не то, что скачается.
+  files = files.map((f) => ({ ...f, name: uploadedName(diskNameFromUrl(f.url)) || f.name, exists: fileExistsForUrl(f.url) }));
   // reply_to_id/reply_snapshot есть только у messages (не у broadcasts, для них оба всегда undefined
   // и reply останется null) — снимок текста/автора сделан сервером в момент ответа (см. миграцию
   // выше), поэтому цитата не зависит от того, загружена ли сейчас страница с самим оригиналом.
@@ -297,23 +115,82 @@ function fileExistsForUrl(url) {
   return !!diskName && uploadedFileNames().has(diskName);
 }
 
+// ---------- Право на файл ----------
+// Файл доступен тому, кто его загрузил, и тем, кто может прочитать сообщение или объявление, в
+// котором он лежит. Администратор видит всё — он и так читает любую переписку из веб-панели.
+//
+// Проверка нужна в двух местах, и второе важнее, чем кажется: список файлов в сообщении присылает
+// клиент. Если бы при отправке брали любой url, достаточно было бы отправить самому себе сообщение
+// с чужим файлом — и право «файл лежит в моём сообщении» появилось бы из ничего. Поэтому при
+// отправке файлы проходят ту же проверку (normalizeIncomingFiles ниже): переслать можно только то,
+// что уже доступно.
+
+// Имя файла на диске из url вида /uploads/<имя>. Всё прочее — не наш файл.
+function diskNameFromUrl(url) {
+  const m = /^\/uploads\/([^/\\?#]+)$/.exec(String(url || ''));
+  return m ? m[1] : null;
+}
+
+const insertUpload = db.prepare('INSERT OR IGNORE INTO uploads (disk_name, user_id, created_at) VALUES (?, ?, ?)');
+const uploadOwner = db.prepare('SELECT user_id FROM uploads WHERE disk_name = ?');
+// instr, а не LIKE: в имени файла бывают % и _, которые LIKE понял бы как шаблон. Внутри files_json
+// url записан строкой JSON — с кавычками по краям, поэтому ищем его вместе с ними: так имя «a.txt»
+// не совпадёт с «1a.txt». Индекса по файлам нет, запрос перебирает сообщения с вложениями, но зовут
+// его только при скачивании и при отправке файла — не на каждый запрос истории.
+const messagesWithFile = db.prepare(`
+  SELECT from_id, to_id, room FROM messages
+  WHERE (files_json IS NOT NULL AND instr(files_json, @quoted) > 0) OR file_url = @url
+`);
+const broadcastsWithFile = db.prepare(`
+  SELECT from_id, department_id FROM broadcasts
+  WHERE files_json IS NOT NULL AND instr(files_json, @quoted) > 0
+`);
+
+// Может ли человек прочитать это сообщение: комната — по правилам комнаты, личное — только его
+// участники.
+function canReadMessage(user, m) {
+  if (m.room) return canReadRoom(user, m.room);
+  return m.from_id === user.id || m.to_id === user.id;
+}
+
+function canAccessFile(user, diskName) {
+  if (user.can_admin) return true;
+  const owner = uploadOwner.get(diskName);
+  if (owner && owner.user_id === user.id) return true;
+  const url = `/uploads/${diskName}`;
+  const quoted = JSON.stringify(url);
+  if (messagesWithFile.all({ quoted, url }).some((m) => canReadMessage(user, m))) return true;
+  return broadcastsWithFile.all({ quoted }).some((b) =>
+    b.department_id === null || b.from_id === user.id || !!isDepartmentMember.get(user.id, b.department_id));
+}
+
 // Список файлов, пришедший от клиента (в сообщении или в рассылке) — приводим к безопасному виду:
 // только объекты с url, не больше 20 штук, все поля обрезаны по длине и приведены к нужному типу.
 // Раньше это было продублировано в двух местах слово в слово.
-function normalizeIncomingFiles(rawFiles) {
+//
+// Файлы, на которые у отправителя нет права, молча отбрасываются (см. «Право на файл» выше), как и
+// url не вида /uploads/<имя> — клиент других не присылает, а чужая ссылка в карточке файла
+// выглядела бы вложением с нашего сервера.
+function normalizeIncomingFiles(rawFiles, user) {
   if (!Array.isArray(rawFiles)) return [];
   return rawFiles.slice(0, 20)
     .filter((f) => f && typeof f === 'object' && typeof f.url === 'string' && f.url)
     .map((f) => ({
       url: f.url.slice(0, 300),
-      name: (typeof f.name === 'string' && f.name ? f.name : 'файл').slice(0, 200),
+      // Имя — то, под которым файл загрузили (см. uploadedName), а не присланное клиентом.
+      name: uploadedName(diskNameFromUrl(f.url.slice(0, 300)))
+        || (typeof f.name === 'string' && f.name ? f.name : 'файл').slice(0, 200),
       size: Number.isFinite(Number(f.size)) ? Number(f.size) : 0,
-    }));
+    }))
+    .filter((f) => {
+      const diskName = diskNameFromUrl(f.url);
+      return diskName !== null && canAccessFile(user, diskName);
+    });
 }
 
 // Реакции — отдельным батч-запросом по набору id (а не JOIN в каждый history-запрос: их SQL и
 // так довольно длинный, а групповая агрегация через GROUP_CONCAT усложнила бы normalizeRow).
-// json_each — встроенная в SQLite (JSON1, включён в бинарник better-sqlite3) функция "развернуть
+// json_each — встроенная в SQLite (JSON1, есть в SQLite, встроенном в Node) функция "развернуть
 // JSON-массив в строки", позволяет передать произвольный список id одним параметром.
 const reactionsForMessages = db.prepare(`
   SELECT message_id, emoji, user_id FROM message_reactions WHERE message_id IN (SELECT value FROM json_each(?))
@@ -383,7 +260,7 @@ const linkUserDepartment = db.prepare('INSERT OR IGNORE INTO user_departments (u
 const updateUserDept = db.prepare('UPDATE users SET department_id = ? WHERE id = ?');
 // Единственное место, где меняется состав отделов сотрудника. Транзакция — чтобы человек ни на
 // мгновение не оказался вообще без отделов, если запрос оборвётся на середине.
-const setUserDepartments = db.transaction((userId, ids) => {
+const setUserDepartments = transaction((userId, ids) => {
   const valid = [...new Set((Array.isArray(ids) ? ids : []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
   clearUserDepartments.run(userId);
   for (const id of valid) linkUserDepartment.run(userId, id);
@@ -447,7 +324,7 @@ function requireCapability(cap) {
 }
 
 const insertMessage = db.prepare('INSERT INTO messages (from_id, room, to_id, text, files_json, created_at, reply_to_id, reply_snapshot) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
-const getMessageForReply = db.prepare('SELECT id, from_id, text FROM messages WHERE id = ?');
+const getMessageForReply = db.prepare('SELECT id, from_id, to_id, room, text FROM messages WHERE id = ?');
 // Реакции — WS-обработчик 'react' ниже: чей маршрут (комната/личка) у сообщения, узнаём отдельным
 // запросом, чтобы разослать обновление тем же адресатам, что и само сообщение.
 const getMessageRoute = db.prepare('SELECT id, from_id, to_id, room FROM messages WHERE id = ?');
@@ -597,17 +474,35 @@ app.use((req, res, next) => {
   next();
 });
 
+// ---------- Вход по токену ----------
+// Токен входа живёт 30 дней (клиент на рабочем месте не должен спрашивать пароль каждое утро), но
+// отзывается раньше: при удалении сотрудника (нет строки в базе) и при смене пароля администратором
+// (растёт session_gen, см. миграцию users выше). Токен на скачивание файла (purpose: 'download')
+// входом не является.
+const getSessionGen = db.prepare('SELECT session_gen FROM users WHERE id = ?');
+const bumpSessionGen = db.prepare('UPDATE users SET session_gen = session_gen + 1 WHERE id = ?');
+
+function issueToken(userId) {
+  const { session_gen: sg } = getSessionGen.get(userId);
+  return jwt.sign({ id: userId, sg }, SECRET, { expiresIn: '30d' });
+}
+
+// Пользователь по токену входа или null. Права всегда свежие из базы, а не из токена.
+function userFromToken(token) {
+  let payload;
+  try { payload = jwt.verify(token, SECRET); } catch { return null; }
+  if (payload.purpose !== undefined || !Number.isInteger(payload.id)) return null;
+  const row = getSessionGen.get(payload.id);
+  if (!row || row.session_gen !== (payload.sg || 0)) return null;
+  return getUserById.get(payload.id) || null;
+}
+
 function auth(req, res, next) {
   const token = (req.headers.authorization || '').replace('Bearer ', '');
-  try {
-    const payload = jwt.verify(token, SECRET);
-    const fresh = getUserById.get(payload.id); // роль всегда берём свежую из БД
-    if (!fresh) return res.status(401).json({ error: 'Пользователь не найден' });
-    req.user = fresh;
-    next();
-  } catch {
-    res.status(401).json({ error: 'Не авторизован' });
-  }
+  const user = userFromToken(token);
+  if (!user) return res.status(401).json({ error: 'Не авторизован' });
+  req.user = user;
+  next();
 }
 
 // ---------- Файлы ----------
@@ -639,8 +534,22 @@ function getUploadSettings() {
   const maxMb = Math.min(Number(getSettingRaw('upload_max_mb')) || DEFAULT_MAX_UPLOAD_MB, UPLOAD_HARD_CEILING_MB);
   return { mode, extensions, maxMb };
 }
+// Имя файла, как его сохраняем и показываем: без символов, запрещённых в именах Windows, и без
+// точек и пробелов в конце — Windows их отбрасывает, и «программа.exe.» сохранялась бы как
+// «программа.exe», проскочив проверку расширения.
+function cleanUploadName(raw) {
+  return String(raw || '').replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').replace(/[. ]+$/, '').slice(0, 150) || 'file';
+}
+// Имя, под которым файл загрузили, — из имени на диске (<время>-<8 hex>-<имя>, см. /api/upload).
+// Только его и показываем получателям: имя в сообщении присылает клиент отправителя, и раньше
+// можно было загрузить разрешённый «отчёт.txt», а в сообщении назвать его «отчёт.exe» — получатель
+// сохранял программу, хотя администратор такие файлы запретил.
+function uploadedName(diskName) {
+  const m = /^\d+-[0-9a-f]{8}-(.+)$/.exec(String(diskName || ''));
+  return m ? m[1] : null;
+}
 function isUploadAllowed(name, settings) {
-  const ext = String(name).split('.').pop().toLowerCase();
+  const ext = cleanUploadName(name).split('.').pop().toLowerCase();
   const inList = settings.extensions.includes(ext);
   return settings.mode === 'allow' ? inList : !inList;
 }
@@ -662,13 +571,14 @@ app.post('/api/upload', auth, (req, res, next) => {
   }
   next();
 }, express.raw({ limit: `${UPLOAD_HARD_CEILING_MB}mb`, type: () => true }), (req, res) => {
-  const originalName = String(req.query.name || 'file').replace(/[\\/:*?"<>|]/g, '_').slice(0, 150);
+  const originalName = cleanUploadName(req.query.name);
   if (!req.body || !req.body.length) return res.status(400).json({ error: 'Пустой файл' });
   if (req.body.length > req._uploadMaxBytes) {
     return res.status(413).json({ error: `Файл больше ${Math.round(req._uploadMaxBytes / 1024 / 1024)} МБ` });
   }
   const safeName = `${Date.now()}-${crypto.randomBytes(4).toString('hex')}-${originalName}`;
   fs.writeFileSync(path.join(uploadsDir, safeName), req.body);
+  insertUpload.run(safeName, req.user.id, Date.now()); // владелец — для права на скачивание
   invalidateUploadsCache(); // иначе только что загруженный файл до 2 секунд считался бы удалённым
   res.json({ url: `/uploads/${safeName}`, name: originalName, size: req.body.length });
 });
@@ -715,14 +625,19 @@ app.patch('/api/admin/upload-settings', auth, requireCapability('can_admin'), (r
 app.get('/api/download-token', auth, (req, res) => {
   const diskName = String(req.query.path || '').split('/').pop();
   if (!diskName) return res.status(400).json({ error: 'Не указан файл' });
+  if (!canAccessFile(req.user, diskName)) {
+    logServer('WARN', 'download_denied', { userId: req.user.id, diskName, ip: req.ip });
+    return res.status(403).json({ error: 'Нет доступа к этому файлу' });
+  }
   const token = jwt.sign({ purpose: 'download', diskName }, SECRET, { expiresIn: '60s' });
   res.json({ token });
 });
 
 // На диске файл лежит под "грязным" именем (метка времени + случайный хеш — нужно для исключения
 // коллизий и path traversal), поэтому явно задаём оригинальное имя через Content-Disposition —
-// иначе при сохранении подставлялось бы страшное техническое имя файла. Клиент передаёт оригинальное
-// имя параметром ?name=, зная его из истории переписки.
+// иначе при сохранении подставлялось бы страшное техническое имя файла. Имя берём из имени на диске
+// (uploadedName), а не из ?name=: его клиент подставляет из сообщения, а в сообщениях, отправленных
+// до этой правки, имя выбирал отправитель.
 app.get('/uploads/:diskName', (req, res) => {
   let payload;
   try { payload = jwt.verify(req.query.token, SECRET); } catch { return res.sendStatus(401); }
@@ -731,66 +646,14 @@ app.get('/uploads/:diskName', (req, res) => {
   // Сравниваем именно каталог файла с uploadsDir, а не начало строки пути: startsWith прошёл бы и
   // для соседнего каталога с похожим именем (uploads-old и т.п.). Тот же приём, что в DELETE ниже.
   if (path.dirname(filePath) !== uploadsDir || !fs.existsSync(filePath)) return res.sendStatus(404);
-  const displayName = req.query.name ? String(req.query.name).slice(0, 260) : req.params.diskName;
+  const displayName = uploadedName(req.params.diskName) || req.params.diskName;
   res.download(filePath, displayName);
 });
 
 // ---------- Rate-limiting против перебора паролей ----------
-// Два независимых счётчика, оба — простые in-memory Map с ленивым протуханием (для 20-200 человек
-// в локальной сети выделенный npm-пакет вроде express-rate-limit избыточен):
-//  1) ipAttempts — общий поток запросов с одного IP на /api/login и /api/register (защита от
-//     заливки запросами вообще, не только подбора пароля к конкретному логину);
-//  2) loginFails — счётчик подряд неверных паролей для КОНКРЕТНОГО логина: после нескольких
-//     промахов аккаунт временно блокируется, независимо от того, с какого IP или через сколько
-//     разных IP идёт перебор.
-const ipAttempts = new Map(); // ip -> { count, resetAt }
-function ipRateLimit({ windowMs, max }) {
-  return (req, res, next) => {
-    const now = Date.now();
-    let entry = ipAttempts.get(req.ip);
-    if (!entry || entry.resetAt < now) {
-      entry = { count: 0, resetAt: now + windowMs };
-      ipAttempts.set(req.ip, entry);
-    }
-    entry.count += 1;
-    if (entry.count > max) {
-      logServer('WARN', 'rate_limited', { ip: req.ip, path: req.path });
-      return res.status(429).json({ error: 'Слишком много попыток с этого адреса, попробуйте позже' });
-    }
-    next();
-  };
-}
+// Счётчики по IP и по логину — lib/rateLimit.js.
+const { ipRateLimit, checkLoginLock, registerLoginFail, clearLoginFails } = createRateLimits({ logServer });
 
-const LOGIN_FAIL_WINDOW_MS = 15 * 60 * 1000;
-const LOGIN_MAX_FAILS = 5;
-const LOGIN_LOCK_MS = 5 * 60 * 1000;
-const loginFails = new Map(); // username (lower) -> { count, windowStart, lockedUntil }
-function checkLoginLock(username) {
-  const entry = loginFails.get(String(username || '').toLowerCase());
-  if (entry && entry.lockedUntil > Date.now()) return Math.ceil((entry.lockedUntil - Date.now()) / 1000);
-  return 0;
-}
-function registerLoginFail(username) {
-  const key = String(username || '').toLowerCase();
-  const now = Date.now();
-  let entry = loginFails.get(key);
-  if (!entry || now - entry.windowStart > LOGIN_FAIL_WINDOW_MS) entry = { count: 0, windowStart: now, lockedUntil: 0 };
-  entry.count += 1;
-  if (entry.count >= LOGIN_MAX_FAILS) entry.lockedUntil = now + LOGIN_LOCK_MS;
-  loginFails.set(key, entry);
-}
-function clearLoginFails(username) {
-  loginFails.delete(String(username || '').toLowerCase());
-}
-// Периодическая уборка протухших записей, чтобы обе Map не росли бесконечно.
-setInterval(() => {
-  const now = Date.now();
-  for (const [k, v] of ipAttempts) if (v.resetAt < now) ipAttempts.delete(k);
-  for (const [k, v] of loginFails) {
-    const stale = v.lockedUntil ? v.lockedUntil < now : now - v.windowStart > LOGIN_FAIL_WINDOW_MS;
-    if (stale) loginFails.delete(k);
-  }
-}, 10 * 60 * 1000).unref();
 
 // Самостоятельная регистрация: кто угодно, дотянувшийся до порта сервера, заводит себе учётку и
 // попадает в общую комнату и в список сотрудников. Для корпоративного мессенджера это обычно
@@ -799,12 +662,25 @@ setInterval(() => {
 // сейчас все так и регистрируются; рекомендация выключить — в README.
 function registrationOpen() { return getSettingRaw('registration_open') !== '0'; }
 
+// Логин — это ФИО (см. PATCH /api/admin/users/:id): любые символы, но строкой, без пробелов по
+// краям и не длиннее 60 — как при переименовании. null — логин не годится.
+function cleanUsername(raw) {
+  if (typeof raw !== 'string') return null;
+  const clean = raw.trim();
+  return clean && clean.length <= 60 ? clean : null;
+}
+
+// Хэш несуществующего пароля: вход под несуществующим логином тратит на bcrypt столько же времени,
+// сколько под настоящим, — иначе по времени ответа было видно, какие логины заведены.
+const DUMMY_PASSWORD_HASH = bcrypt.hashSync(crypto.randomBytes(16).toString('hex'), 10);
+
 app.post('/api/register', ipRateLimit({ windowMs: 60 * 60 * 1000, max: 10 }), (req, res) => {
   if (!registrationOpen()) {
     return res.status(403).json({ error: 'Самостоятельная регистрация отключена. Обратитесь к администратору за учётной записью.' });
   }
-  const { username, password } = req.body || {};
-  if (!username || !password || password.length < 4) {
+  const { password } = req.body || {};
+  const username = cleanUsername((req.body || {}).username);
+  if (!username || typeof password !== 'string' || password.length < 4) {
     return res.status(400).json({ error: 'Логин и пароль (мин. 4 символа) обязательны' });
   }
   try {
@@ -815,8 +691,7 @@ app.post('/api/register', ipRateLimit({ windowMs: 60 * 60 * 1000, max: 10 }), (r
     const info = insertUser.run(username, hash, username, 0, 0, Date.now());
     invalidateUserIdsCache();
     logServer('INFO', 'register', { username, id: info.lastInsertRowid, ip: req.ip });
-    const token = jwt.sign({ id: info.lastInsertRowid }, SECRET, { expiresIn: '30d' });
-    res.json({ token, user: getUserById.get(info.lastInsertRowid) });
+    res.json({ token: issueToken(info.lastInsertRowid), user: getUserById.get(info.lastInsertRowid) });
   } catch {
     res.status(409).json({ error: 'Такой логин уже занят' });
   }
@@ -851,21 +726,24 @@ app.post('/api/presence/heartbeat', auth, (req, res) => {
 
 app.post('/api/login', ipRateLimit({ windowMs: 10 * 60 * 1000, max: 30 }), (req, res) => {
   const { username, password } = req.body || {};
+  if (typeof username !== 'string' || typeof password !== 'string') {
+    return res.status(400).json({ error: 'Введите логин и пароль' });
+  }
   const lockedSec = checkLoginLock(username);
   if (lockedSec) {
     logServer('WARN', 'login_locked', { username, ip: req.ip, lockedSec });
     return res.status(429).json({ error: `Слишком много неверных попыток входа, повторите через ${lockedSec} сек.` });
   }
   const user = getUserByName.get(username);
-  if (!user || !bcrypt.compareSync(password || '', user.password_hash)) {
+  const passwordOk = bcrypt.compareSync(password, user ? user.password_hash : DUMMY_PASSWORD_HASH);
+  if (!user || !passwordOk) {
     registerLoginFail(username);
     logServer('WARN', 'login_failed', { username, ip: req.ip });
     return res.status(401).json({ error: 'Неверный логин или пароль' });
   }
   clearLoginFails(username);
   logServer('INFO', 'login', { username, id: user.id, ip: req.ip });
-  const token = jwt.sign({ id: user.id }, SECRET, { expiresIn: '30d' });
-  res.json({ token, user: getUserById.get(user.id) });
+  res.json({ token: issueToken(user.id), user: getUserById.get(user.id) });
 });
 
 // Ошибки с рабочих мест сотрудников — рендереры десктоп-клиента сами шлют их сюда при window.onerror/
@@ -1141,7 +1019,7 @@ app.get('/api/broadcasts/days', auth, (req, res) => {
 // список людей открыт), а экономит десяток одинаковых сообщений. Отправитель везде подписан именем.
 app.post('/api/broadcast', auth, (req, res) => {
   const text = String((req.body || {}).text || '').slice(0, 4000).trim();
-  const files = normalizeIncomingFiles((req.body || {}).files);
+  const files = normalizeIncomingFiles((req.body || {}).files, req.user);
   const rawDepartment = (req.body || {}).departmentId;
   if (!text && !files.length) return res.status(400).json({ error: 'Пустая рассылка' });
 
@@ -1205,8 +1083,9 @@ app.patch('/api/admin/registration', auth, requireCapability('can_admin'), (req,
 });
 
 app.post('/api/admin/users', auth, requireCapability('can_admin'), (req, res) => {
-  const { username, password, department_id, department_ids, can_broadcast, can_admin } = req.body || {};
-  if (!username || !password || password.length < 4) return res.status(400).json({ error: 'Логин и пароль (мин. 4 символа) обязательны' });
+  const { password, department_id, department_ids, can_broadcast, can_admin } = req.body || {};
+  const username = cleanUsername((req.body || {}).username);
+  if (!username || typeof password !== 'string' || password.length < 4) return res.status(400).json({ error: 'Логин и пароль (мин. 4 символа) обязательны' });
   try {
     const hash = bcrypt.hashSync(password, 10);
     const info = insertUser.run(username, hash, username, can_broadcast ? 1 : 0, can_admin ? 1 : 0, Date.now());
@@ -1233,6 +1112,26 @@ app.patch('/api/admin/users/:id', auth, requireCapability('can_admin'), (req, re
   if (version !== undefined && Number(version) !== current.version) {
     return res.status(409).json({ error: 'Пользователя уже изменил другой администратор — обновите страницу и повторите' });
   }
+  // Сначала проверяем всё, потом пишем: раньше права и отделы успевали сохраниться, а потом запрос
+  // отказывал из-за короткого пароля — и в панели было «ошибка», хотя половина правок уже прошла.
+  if (password !== undefined && password !== '' && (typeof password !== 'string' || password.length < 4)) {
+    return res.status(400).json({ error: 'Пароль слишком короткий' });
+  }
+  const cleanDisplay = display_name !== undefined ? String(display_name).trim() : null;
+  if (display_name !== undefined && !cleanDisplay) return res.status(400).json({ error: 'Имя не может быть пустым' });
+  // Снять право администратора с самого себя нельзя: так панель теряет последнего, кто может
+  // вернуть права, а стартовая учётка из bootstrap-admin.js создаётся только при пустом списке
+  // админов и только если файл ещё лежит на сервере. Другой администратор снять его может.
+  if (id === req.user.id && can_admin !== undefined && !can_admin) {
+    return res.status(400).json({ error: 'Нельзя снять право администратора с самого себя' });
+  }
+  // Логин меняется вместе с ФИО (см. ниже, где он записывается).
+  const cleanLogin = username !== undefined ? String(username).trim().slice(0, 60) : null;
+  if (username !== undefined) {
+    if (!cleanLogin) return res.status(400).json({ error: 'Логин не может быть пустым' });
+    const занят = db.prepare('SELECT id FROM users WHERE username = ? AND id != ?').get(cleanLogin, id);
+    if (занят) return res.status(409).json({ error: 'Такой логин уже занят' });
+  }
   if (can_broadcast !== undefined || can_admin !== undefined) {
     updateUserCaps.run(
       can_broadcast !== undefined ? (can_broadcast ? 1 : 0) : current.can_broadcast,
@@ -1243,14 +1142,13 @@ app.patch('/api/admin/users/:id', auth, requireCapability('can_admin'), (req, re
   if (department_ids !== undefined) setUserDepartments(id, department_ids);
   else if (department_id !== undefined) setUserDepartments(id, department_id ? [department_id] : []);
   if (password) {
-    if (password.length < 4) return res.status(400).json({ error: 'Пароль слишком короткий' });
     updateUserPassword.run(bcrypt.hashSync(password, 10), id);
+    // Новый пароль закрывает все прежние входы — ради этого пароль обычно и меняют.
+    bumpSessionGen.run(id);
+    dropConnections(id);
+    logServer('INFO', 'password_reset', { adminId: req.user.id, userId: id });
   }
-  if (display_name !== undefined) {
-    const clean = String(display_name).trim();
-    if (!clean) return res.status(400).json({ error: 'Имя не может быть пустым' });
-    updateDisplayName.run(clean.slice(0, 60), id);
-  }
+  if (cleanDisplay) updateDisplayName.run(cleanDisplay.slice(0, 60), id);
   // Логин меняется вместе с ФИО. Здесь это одно и то же: пользователя заводят с
   // логином вида «Иванов Иван Иванович», и правка только отображаемого имени
   // оставляла опечатку в логине навсегда.
@@ -1262,13 +1160,7 @@ app.patch('/api/admin/users/:id', auth, requireCapability('can_admin'), (req, re
   //
   // Никаких ограничений на состав символов: логин — это ФИО, с пробелами,
   // кириллицей и дефисами. Регистр тоже не трогаем, вход сверяет строку как есть.
-  if (username !== undefined) {
-    const clean = String(username).trim().slice(0, 60);
-    if (!clean) return res.status(400).json({ error: 'Логин не может быть пустым' });
-    const занят = db.prepare('SELECT id FROM users WHERE username = ? AND id != ?').get(clean, id);
-    if (занят) return res.status(409).json({ error: 'Такой логин уже занят' });
-    updateUsername.run(clean, id);
-  }
+  if (cleanLogin) updateUsername.run(cleanLogin, id);
   bumpUserVersion.run(id);
   broadcastUsersChanged();
   res.json({ ok: true, version: current.version + 1 });
@@ -1281,6 +1173,9 @@ app.delete('/api/admin/users/:id', auth, requireCapability('can_admin'), (req, r
   // иначе строки в user_departments пережили бы самого сотрудника и всплыли бы у нового с тем же id.
   clearUserDepartments.run(id);
   deleteUserStmt.run(id);
+  // Открытые окна удалённого сотрудника отключаем сразу: HTTP-запросы с его токеном уже получают
+  // 401, а уже открытый WebSocket иначе продолжал бы принимать от него сообщения.
+  dropConnections(id);
   invalidateUserIdsCache();
   broadcastUsersChanged();
   res.json({ ok: true });
@@ -1324,7 +1219,7 @@ app.patch('/api/admin/departments/:id', auth, requireCapability('can_admin'), (r
 app.post('/api/admin/departments/reorder', auth, requireCapability('can_admin'), (req, res) => {
   const order = Array.isArray((req.body || {}).order) ? req.body.order : [];
   if (!order.length) return res.status(400).json({ error: 'Пустой список порядка' });
-  const tx = db.transaction((ids) => { ids.forEach((id, i) => setDepartmentOrder.run(i, Number(id))); });
+  const tx = transaction((ids) => { ids.forEach((id, i) => setDepartmentOrder.run(i, Number(id))); });
   tx(order);
   broadcastUsersChanged();
   res.json({ ok: true });
@@ -1421,7 +1316,7 @@ app.get('/api/admin/history/dm/:u1/:u2', auth, requireCapability('can_admin'), (
 
 // ---------- Обновления клиентов ----------
 // Под этим именем к серверу подключается веб-панель администратора (см. connectPresenceWs в
-// public/index.html) — рабочим местом она не является.
+// public/panel.js) — рабочим местом она не является.
 const ADMIN_WEB_HOSTNAME = 'Веб-панель администратора';
 // Какая версия сейчас выложена на сервере — читаем прямо из latest.yml, который положил
 // electron-builder. Полноценный разбор YAML ради одного поля не нужен и потянул бы зависимость:
@@ -1508,158 +1403,9 @@ app.post('/api/admin/request-log', auth, requireCapability('can_admin'), (req, r
 });
 
 // ---------- Сертификат сервера (раздел "Сертификат" в панели) ----------
-// Сертификат домена выдаётся на два года, корневой — на десять. Раз менять их всё равно придётся,
-// пусть это делается там же, где видно, что сейчас установлено, — а не правкой переменных
-// окружения на сервере по инструкции из README, которую в этот момент никто не найдёт.
-app.get('/api/admin/tls', auth, requireCapability('can_admin'), async (req, res) => {
-  const clientRoot = clientRootFingerprint();
-  const inStore = fs.existsSync(CERT_STORE_PFX);
-  // Что лежит в хранилище — отдельно от того, что действует сейчас. Эти две вещи расходятся ровно
-  // в одном случае: сертификат загрузили на сервер, работающий по http. Файл принят, но включится
-  // он только с перезапуском — и об этом администратору надо сказать прямо, а не показать пустоту.
-  let stored = null;
-  if (inStore) {
-    try {
-      stored = await inspectTlsOptions(resolveTlsOptions().options);
-    } catch (err) {
-      stored = { error: String((err && err.message) || err) };
-    }
-  }
-  const active = currentCertificate;
-  res.json({
-    enabled: server instanceof https.Server,
-    source: tlsSource,                              // store | env-pfx | env-pem | null
-    envAlsoSet: tlsSource === 'store' ? envTlsSource() : null, // "двойная настройка", см. envTlsSource
-    storeHasCertificate: inStore,
-    restartRequired: inStore && tlsSource !== 'store',
-    requestSecure: Boolean(req.secure),             // сама панель сейчас открыта по https или нет
-    certificate: active,
-    stored,
-    clientRootFingerprint: clientRoot,
-    rootMatchesClient: clientRoot && active && active.rootFingerprint
-      ? clientRoot === active.rootFingerprint
-      : null,
-  });
-});
+// Маршруты /api/admin/tls — lib/tls.js.
+tlsModule.registerRoutes(app, { auth, requireCapability });
 
-// Замена сертификата. Файл сначала разбирается (в том числе проверяется пароль и срок), и только
-// потом попадает на диск: испортить работающий сервер загрузкой не того файла нельзя.
-app.post('/api/admin/tls', auth, requireCapability('can_admin'), async (req, res) => {
-  const { pfx, password } = req.body || {};
-  if (!pfx || typeof pfx !== 'string') return res.status(400).json({ error: 'Файл не передан' });
-
-  let buffer;
-  try {
-    buffer = Buffer.from(pfx, 'base64');
-  } catch {
-    return res.status(400).json({ error: 'Файл повреждён при передаче' });
-  }
-  if (!buffer.length) return res.status(400).json({ error: 'Файл пустой' });
-
-  const options = { pfx: buffer };
-  if (password) options.passphrase = String(password);
-
-  let info;
-  try {
-    info = await inspectTlsOptions(options);
-  } catch (err) {
-    const raw = String((err && err.message) || err);
-    logServer('WARN', 'tls_upload_rejected', { adminId: req.user.id, error: raw });
-    // "mac verify failure" означает ровно одно — пароль не тот (или файл не PFX). Показывать
-    // администратору эту фразу бессмысленно, он не обязан знать, что такое MAC.
-    if (/mac verify failure/i.test(raw)) {
-      return res.status(400).json({ error: password ? 'Неверный пароль к файлу' : 'Файл защищён паролем — укажите его' });
-    }
-    return res.status(400).json({ error: 'Это не похоже на PFX-файл с сертификатом и ключом' });
-  }
-
-  if (info.daysLeft !== null && info.daysLeft < 0) {
-    return res.status(400).json({ error: `Срок действия этого сертификата истёк ${info.validTo}` });
-  }
-
-  // Загрузка закрытого ключа по незашифрованному каналу — ровно тот случай, когда его может
-  // перехватить кто угодно в сети. Запретить нельзя (первую установку иначе и не сделать), но
-  // и промолчать нельзя: пусть останется в журнале.
-  if (!req.secure) {
-    logServer('WARN', 'tls_upload_over_http', {
-      adminId: req.user.id,
-      ip: req.ip,
-      hint: 'Закрытый ключ передан по незашифрованному каналу. Если сеть недоверенная — перевыпустите сертификат',
-    });
-  }
-
-  try {
-    ensureCertsDir();
-    // Один шаг назад на случай, если новый файл окажется не тем: старый не затирается насовсем.
-    if (fs.existsSync(CERT_STORE_PFX)) fs.copyFileSync(CERT_STORE_PFX, CERT_STORE_PFX + '.bak');
-    if (fs.existsSync(CERT_STORE_PASS)) fs.copyFileSync(CERT_STORE_PASS, CERT_STORE_PASS + '.bak');
-    fs.writeFileSync(CERT_STORE_PFX, buffer, { mode: 0o600 });
-    if (password) fs.writeFileSync(CERT_STORE_PASS, String(password), { mode: 0o600 });
-    else if (fs.existsSync(CERT_STORE_PASS)) fs.unlinkSync(CERT_STORE_PASS);
-  } catch (err) {
-    logServer('ERROR', 'tls_store_write_failed', { error: String((err && err.message) || err) });
-    return res.status(500).json({ error: 'Не удалось сохранить файл на диск сервера' });
-  }
-
-  // Уже работающему https-серверу сертификат можно заменить на ходу: новые соединения пойдут с
-  // новым, уже открытые доживут со старым. Перезапуск нужен только при первой установке —
-  // http-сервер превратить в https без него нельзя.
-  let applied = false;
-  if (server instanceof https.Server && typeof server.setSecureContext === 'function') {
-    try {
-      server.setSecureContext(options);
-      applied = true;
-      tlsSource = 'store';
-      currentCertificate = info;
-    } catch (err) {
-      logServer('ERROR', 'tls_apply_failed', { error: String((err && err.message) || err) });
-    }
-  }
-
-  logServer('INFO', 'tls_certificate_replaced', {
-    adminId: req.user.id,
-    subject: info.subject,
-    san: info.san,
-    issuer: info.issuer,
-    valid_to: info.validTo,
-    days_left: info.daysLeft,
-    certificates: info.certificates,
-    applied,
-  });
-
-  const clientRoot = clientRootFingerprint();
-  res.json({
-    ok: true,
-    applied,                       // false — файл сохранён, но нужен перезапуск сервера
-    certificate: info,
-    rootMatchesClient: clientRoot && info.rootFingerprint ? clientRoot === info.rootFingerprint : null,
-  });
-});
-
-// Убрать сертификат из хранилища. Работающий сервер при этом остаётся на https до перезапуска —
-// выключить шифрование на ходу нельзя, да и не нужно.
-app.delete('/api/admin/tls', auth, requireCapability('can_admin'), (req, res) => {
-  try {
-    for (const file of [CERT_STORE_PFX, CERT_STORE_PASS]) {
-      if (fs.existsSync(file)) fs.unlinkSync(file);
-    }
-  } catch (err) {
-    return res.status(500).json({ error: 'Не удалось удалить файл: ' + String((err && err.message) || err) });
-  }
-  // Удаление из хранилища НЕ означает "теперь без шифрования": если сертификат задан ещё и
-  // переменной окружения, после перезапуска сервер возьмёт его оттуда — и со стороны это выглядит
-  // так, будто удаление не сработало. Поэтому сразу считаем и возвращаем, что реально будет дальше.
-  const next = resolveTlsOptions();
-  logServer('WARN', 'tls_certificate_removed', { adminId: req.user.id, next_source: next ? next.source : null });
-  res.json({ ok: true, nextSource: next ? next.source : null, nextWhere: next ? next.where : null });
-});
-
-// PFX больше стандартного лимита express.json() — ответ должен остаться JSON, иначе панель
-// покажет кусок HTML вместо понятной ошибки.
-app.use('/api/admin/tls', (err, req, res, next) => {
-  if (err) return res.status(413).json({ error: 'Файл слишком большой для загрузки через панель' });
-  next();
-});
 
 app.get('/api/admin/stats', auth, requireCapability('can_admin'), (req, res) => {
   const onlineUserIds = new Set();
@@ -1673,32 +1419,7 @@ app.get('/api/admin/stats', auth, requireCapability('can_admin'), (req, res) => 
   });
 });
 
-const LOG_VIEW_LIMIT = 2000;
-// Разбирает одну строку лог-файла обратно в структуру — формат задан в logServer/logClient выше:
-// "<ISO-время> [LEVEL] событие {...meta}" для серверных записей, "<ISO-время> [CLIENT] {...}" для
-// присланных клиентом. Строки, не подошедшие под формат (например, обрезанные при аварийном
-// завершении записи), тихо пропускаются, а не ломают всю выдачу.
-function parseLogLine(line, source) {
-  const spaceIdx = line.indexOf(' ');
-  if (spaceIdx < 0) return null;
-  const ts = line.slice(0, spaceIdx);
-  const rest = line.slice(spaceIdx + 1);
-  if (source === 'server') {
-    const m = rest.match(/^\[(\w+)\] (\S+) (\{[\s\S]*\})$/);
-    if (!m) return null;
-    let meta = {};
-    try { meta = JSON.parse(m[3]); } catch { /* строка повреждена — оставляем meta пустым */ }
-    return { ts, level: m[1], source: 'server', event: m[2], meta };
-  }
-  const m = rest.match(/^\[CLIENT\] (\{[\s\S]*\})$/);
-  if (!m) return null;
-  let meta = {};
-  try { meta = JSON.parse(m[1]); } catch { /* строка повреждена — оставляем meta пустым */ }
-  // Уровень присылает сам клиент (см. logLocal в main.js). У записей, сделанных прежними сборками,
-  // его нет — там по-прежнему ERROR, как и раньше.
-  return { ts, level: meta.level || 'ERROR', source: 'client', event: meta.kind || 'client_error', meta };
-}
-// Логи читаются прямо из дневных файлов (см. logsDir выше), без отдельной БД-таблицы под них —
+// Логи читаются прямо из дневных файлов (см. logFilePath в lib/log.js), без отдельной БД-таблицы под них —
 // для 20-200 человек файл за день весит от силы сотни КБ, гонять его целиком в память при каждом
 // открытии панели не проблема, а второе хранилище логов ради этого не оправдано.
 app.get('/api/admin/logs', auth, requireCapability('can_admin'), (req, res) => {
@@ -1708,7 +1429,7 @@ app.get('/api/admin/logs', auth, requireCapability('can_admin'), (req, res) => {
   let entries = [];
   for (const source of ['server', 'client']) {
     if (typeFilter !== 'all' && typeFilter !== source) continue;
-    const filePath = path.join(logsDir, `${source}-${day}.log`);
+    const filePath = logFilePath(source, day);
     if (!fs.existsSync(filePath)) continue;
     const lines = fs.readFileSync(filePath, 'utf8').split('\n').filter(Boolean);
     for (const line of lines) {
@@ -1725,254 +1446,9 @@ app.get('/api/admin/logs', auth, requireCapability('can_admin'), (req, res) => {
 });
 
 // ---------- HTTPS ----------
-// TLS разворачивает сам сервер — обратного прокси перед ним нет намеренно. Так не остаётся
-// параллельного незашифрованного порта, про который легко забыть (а он обнулил бы весь смысл),
-// не нужно отдельно пробрасывать WebSocket, и req.ip остаётся настоящим адресом сотрудника,
-// от которого зависит защита от подбора пароля.
-//
-// Шифрование включается САМО, как только задан сертификат, — отдельного переключателя нет,
-// чтобы не было состояния "сертификат положили, а включить забыли". Ничего не задано — сервер
-// работает по http, как раньше (нужно для локальной разработки и до момента установки сертификата).
-//
-// Три способа задать сертификат, работает любой (проверяются в этом же порядке):
-//
-//   1. Хранилище certs/ — сюда кладёт файл веб-панель, раздел "Сертификат". Основной способ:
-//      сертификат домена живёт два года, корневой — десять, менять их придётся, и лезть за этим
-//      на сервер в консоль не нужно.
-//
-//   2. PFX (.pfx / .p12) из переменных окружения — то, что выдаёт удостоверяющий центр
-//      Windows-домена как есть. Конвертировать ничего не нужно, Node читает этот формат сам:
-//
-//        set TLS_PFX=C:\iskra\server.pfx
-//        set TLS_PFX_PASSWORD=пароль-которым-защищён-файл
-//        npm start
-//
-//   3. PEM — отдельно сертификат и ключ (обычный вариант для Linux):
-//
-//        TLS_CERT=/etc/iskra/fullchain.crt TLS_KEY=/etc/iskra/server.key npm start
-//
-//      Здесь TLS_CERT — обязательно ПОЛНАЯ цепочка (сертификат сервера + промежуточные УЦ), а не
-//      только сертификат сервера, и ключ должен быть без пароля, иначе сервер не поднимется без
-//      ручного ввода при каждом запуске.
-//
-// Пароль от PFX — в переменной окружения, в скрипте запуска или в хранилище certs/ рядом с самим
-// файлом; в репозитории ему не место (certs/ и *.pfx внесены в .gitignore).
-const TLS_PFX = process.env.TLS_PFX;
-const TLS_PFX_PASSWORD = process.env.TLS_PFX_PASSWORD;
-const TLS_CERT = process.env.TLS_CERT;
-const TLS_KEY = process.env.TLS_KEY;
+// Сертификат: откуда берётся, проверка при запуске, замена на ходу — lib/tls.js.
 
-// Хранилище сертификата, которым управляет веб-панель (раздел "Сертификат"). Сертификат домена
-// выдаётся на два года, а корневой — на десять: рано или поздно и тот и другой придётся менять, и
-// делать это через правку переменных окружения на сервере неудобно ровно тогда, когда это нужно.
-// Приоритет у хранилища, а не у переменных окружения: администратор, заменивший сертификат из
-// панели, вправе рассчитывать, что заменился именно он. Чтобы это не превратилось в "поменял
-// переменную, а ничего не изменилось", источник пишется в журнал при каждом запуске и виден в
-// панели.
-const certsDir = path.join(__dirname, 'certs');
-const CERT_STORE_PFX = path.join(certsDir, 'server.pfx');
-const CERT_STORE_PASS = path.join(certsDir, 'server.pass');
-
-// Внутри .pfx лежит закрытый ключ. Права на папку — только владельцу процесса; на Windows chmod
-// почти ничего не значит (там ACL), поэтому это подстраховка для Linux, а не полная защита.
-function ensureCertsDir() {
-  if (!fs.existsSync(certsDir)) fs.mkdirSync(certsDir, { recursive: true, mode: 0o700 });
-  try { fs.chmodSync(certsDir, 0o700); } catch { /* Windows — здесь правами управляют ACL */ }
-}
-
-// Откуда брать сертификат. Возвращает null, если его нет нигде — тогда сервер работает по http.
-function resolveTlsOptions() {
-  if (fs.existsSync(CERT_STORE_PFX)) {
-    const options = { pfx: fs.readFileSync(CERT_STORE_PFX) };
-    if (fs.existsSync(CERT_STORE_PASS)) options.passphrase = fs.readFileSync(CERT_STORE_PASS, 'utf8');
-    return { options, source: 'store', where: CERT_STORE_PFX };
-  }
-  if (TLS_PFX) {
-    const options = { pfx: fs.readFileSync(TLS_PFX) };
-    if (TLS_PFX_PASSWORD) options.passphrase = TLS_PFX_PASSWORD;
-    return { options, source: 'env-pfx', where: TLS_PFX };
-  }
-  if (TLS_CERT && TLS_KEY) {
-    return {
-      options: { cert: fs.readFileSync(TLS_CERT), key: fs.readFileSync(TLS_KEY) },
-      source: 'env-pem',
-      where: TLS_CERT,
-    };
-  }
-  return null;
-}
-
-let tlsSource = null; // что реально сейчас используется — показывается в панели
-
-// Задан ли сертификат ещё и переменными окружения. Нужно, чтобы предупредить о "двойной настройке":
-// пока файл лежит в хранилище, действует он, а переменная стоит в тени и ничем себя не проявляет —
-// ровно до того дня, когда файл из хранилища удалят и обнаружат, что сервер всё так же на https.
-function envTlsSource() {
-  if (TLS_PFX) return 'env-pfx';
-  if (TLS_CERT && TLS_KEY) return 'env-pem';
-  return null;
-}
-
-function createAppServer() {
-  let resolved;
-  try {
-    resolved = resolveTlsOptions();
-  } catch (err) {
-    logServer('ERROR', 'tls_unreadable', { error: String((err && err.message) || err) });
-    throw err;
-  }
-  if (!resolved) {
-    logServer('WARN', 'tls_disabled', { reason: 'сертификат не задан — трафик идёт открытым текстом' });
-    return http.createServer(app);
-  }
-  // Пароль не подошёл или файл битый — это выясняется здесь, при запуске, а не при первом
-  // подключении сотрудника.
-  try {
-    tls.createSecureContext(resolved.options);
-  } catch (err) {
-    logServer('ERROR', 'tls_pfx_unreadable', {
-      source: resolved.source,
-      where: resolved.where,
-      reason: resolved.options.passphrase
-        ? 'файл не читается — вероятно, неверный пароль'
-        : 'файл не читается — вероятно, он защищён паролем, а пароль не задан',
-      error: String((err && err.message) || err),
-    });
-    throw err;
-  }
-  tlsSource = resolved.source;
-  logServer('INFO', 'tls_enabled', { source: resolved.source, where: resolved.where });
-  if (resolved.source === 'store' && envTlsSource()) {
-    logServer('WARN', 'tls_shadow_config', {
-      shadowed: envTlsSource(),
-      hint: 'Сертификат задан и в хранилище certs/, и переменными окружения. Действует хранилище; переменная вступит в силу, только если файл из хранилища удалить. Уберите её из скрипта запуска, чтобы управление было в одном месте',
-    });
-  }
-  return https.createServer(resolved.options, app);
-}
-
-// ---------- Что сервер РЕАЛЬНО отдаёт клиенту ----------
-// Из PFX содержимое цепочки снаружи не видно, а в PEM легко положить лишнее — поэтому смотрим не в
-// файл, а на результат: поднимаем сертификат в настоящем TLS-сервере, подключаемся к нему и
-// разбираем то, что он предъявил. Так же проверяется и файл, который администратор только что
-// загрузил в панель, — ещё до того, как он станет действующим.
-function describeChain(peer) {
-  const chain = [];
-  let cert = peer;
-  while (cert && cert.fingerprint256 && !chain.some((c) => c.fingerprint256 === cert.fingerprint256)) {
-    chain.push(cert);
-    cert = cert.issuerCertificate;
-  }
-  const leaf = chain[0] || {};
-  const last = chain[chain.length - 1] || {};
-  const selfSignedRoot = Boolean(last.subject && last.issuer && JSON.stringify(last.subject) === JSON.stringify(last.issuer));
-  const validTo = leaf.valid_to ? new Date(leaf.valid_to) : null;
-  return {
-    subject: (leaf.subject && leaf.subject.CN) || null,
-    san: leaf.subjectaltname || null,
-    issuer: (leaf.issuer && leaf.issuer.CN) || null,
-    validFrom: leaf.valid_from || null,
-    validTo: leaf.valid_to || null,
-    daysLeft: validTo ? Math.round((validTo - Date.now()) / 86400000) : null,
-    fingerprint: leaf.fingerprint256 || null,
-    rootSubject: (last.subject && last.subject.CN) || null,
-    rootFingerprint: last.fingerprint256 || null,
-    certificates: chain.length,
-    chainComplete: selfSignedRoot,
-  };
-}
-
-// Разбор произвольного сертификата (например, только что загруженного) без его установки.
-function inspectTlsOptions(options) {
-  return new Promise((resolve, reject) => {
-    let probe;
-    try {
-      probe = tls.createServer(options, (socket) => socket.end());
-    } catch (err) { return reject(err); }
-    const fail = (err) => { try { probe.close(); } catch { /* уже закрыт */ } reject(err); };
-    probe.on('error', fail);
-    probe.listen(0, '127.0.0.1', () => {
-      const socket = tls.connect({ host: '127.0.0.1', port: probe.address().port, rejectUnauthorized: false }, () => {
-        let info;
-        try { info = describeChain(socket.getPeerCertificate(true)); } catch (err) { socket.destroy(); return fail(err); }
-        socket.destroy();
-        probe.close(() => resolve(info));
-      });
-      socket.on('error', fail);
-    });
-  });
-}
-
-// Последнее, что удалось узнать о действующем сертификате: панель показывает это, не трогая сеть.
-let currentCertificate = null;
-
-// Корневой сертификат, вшитый в сборку клиента. Если сервер подписан уже другим корнем, клиенты
-// перестанут ему доверять — а выяснится это только тогда, когда у людей перестанет открываться
-// приложение. Поэтому сравниваем сами и показываем в панели.
-function clientRootFingerprint() {
-  const file = path.join(__dirname, '..', 'desktop-client', 'rosstat-root-ca.crt');
-  try {
-    return new crypto.X509Certificate(fs.readFileSync(file)).fingerprint256;
-  } catch {
-    return null; // на боевом сервере папки клиента может не быть — это не ошибка
-  }
-}
-
-// Смысл проверки при старте — в двух вещах, каждая из которых иначе всплывает сильно позже и не
-// там, где причина:
-//   * имя в SAN должно дословно совпадать с адресом в desktop-client/config.js, иначе клиент
-//     отвергнет соединение по несовпадению имени;
-//   * если цепочка обрывается на сертификате, который сам себя не подписывал, значит промежуточных
-//     УЦ в ней не хватает. Браузеры на доменных машинах иногда дотягивают недостающее сами, а Node
-//     (то есть автообновление клиента) — никогда: в браузере всё выглядит исправно, а обновления
-//     молча не идут.
-async function reportTlsCertificate() {
-  try {
-    const resolved = resolveTlsOptions();
-    if (!resolved) return;
-    currentCertificate = await inspectTlsOptions(resolved.options);
-    logServer('INFO', 'tls_certificate', {
-      subject: currentCertificate.subject,
-      san: currentCertificate.san,
-      issuer: currentCertificate.issuer,
-      valid_to: currentCertificate.validTo,
-      days_left: currentCertificate.daysLeft,
-      certificates: currentCertificate.certificates,
-    });
-    if (!currentCertificate.chainComplete) {
-      logServer('WARN', 'tls_chain_incomplete', {
-        certificates: currentCertificate.certificates,
-        hint: 'Сервер не отдаёт полную цепочку до корневого УЦ. Для PFX — экспортируйте его вместе со всеми сертификатами пути; для PEM — cat server.crt chain.crt > fullchain.crt',
-      });
-    }
-    const clientRoot = clientRootFingerprint();
-    if (clientRoot && currentCertificate.rootFingerprint && clientRoot !== currentCertificate.rootFingerprint) {
-      logServer('WARN', 'tls_root_differs_from_client', {
-        server_root: currentCertificate.rootSubject,
-        hint: 'Сервер подписан не тем корневым УЦ, который вшит в сборку клиента. Замените desktop-client/rosstat-root-ca.crt и пересоберите установщики, иначе клиенты перестанут доверять серверу',
-      });
-    }
-    warnIfExpiring();
-  } catch (err) {
-    logServer('WARN', 'tls_check_failed', { error: String((err && err.message) || err) });
-  }
-}
-
-// Автопродления нет: сертификат перевыпускают руками, и единственный способ не проспать это —
-// напоминать заранее. Раз в сутки, начиная за 30 дней.
-function warnIfExpiring() {
-  if (!currentCertificate || currentCertificate.daysLeft === null) return;
-  if (currentCertificate.daysLeft > 30) return;
-  logServer(currentCertificate.daysLeft <= 0 ? 'ERROR' : 'WARN', 'tls_certificate_expiring', {
-    subject: currentCertificate.subject,
-    valid_to: currentCertificate.validTo,
-    days_left: currentCertificate.daysLeft,
-    hint: 'Выпустите новый сертификат в удостоверяющем центре домена и загрузите его в панели, раздел "Сертификат"',
-  });
-}
-setInterval(warnIfExpiring, 24 * 60 * 60 * 1000).unref();
-
-const server = createAppServer();
+const server = tlsModule.createServer(app);
 const wss = new WebSocketServer({ server });
 
 const online = new Map();   // userId -> Set(ws)              — для маршрутизации сообщений
@@ -2010,6 +1486,12 @@ function sendToAll(payload) {
 function sendToUser(userId, payload) {
   const conns = online.get(userId);
   if (conns) for (const ws of conns) sendTo(ws, payload);
+}
+// Отключить все окна сотрудника — после смены пароля или удаления учётки. Клиент переподключится
+// со старым токеном, получит отказ и попросит войти заново. Отметка веб-панели тоже гасится.
+function dropConnections(userId) {
+  for (const ws of online.get(userId) || []) ws.terminate();
+  if (webPresence.delete(userId)) broadcastPresence();
 }
 
 // Кэш id всех пользователей — чтобы presenceSnapshot() не делал SELECT по таблице users на каждый
@@ -2120,10 +1602,8 @@ wss.on('connection', (ws, req) => {
   // кого обновление ещё не доехало. Как и имя ПК, приходят от клиента, поэтому обрезаем по длине.
   const appVersion = (url.searchParams.get('ver') || '').slice(0, 20) || null;
   const buildTrack = (url.searchParams.get('track') || '').slice(0, 20) || null;
-  let payload;
-  try { payload = jwt.verify(token, SECRET); } catch { logServer('WARN', 'ws_auth_failed', { ip: req.socket.remoteAddress }); return ws.close(); }
-  const user = getUserById.get(payload.id);
-  if (!user) return ws.close();
+  const user = userFromToken(token);
+  if (!user) { logServer('WARN', 'ws_auth_failed', { ip: req.socket.remoteAddress }); return ws.close(); }
 
   // Сокет без обработчика 'error' — это падение всего сервера: 'error' на EventEmitter без
   // слушателя превращается в исключение, а неперехваченное исключение у нас завершает процесс
@@ -2147,10 +1627,14 @@ wss.on('connection', (ws, req) => {
     try { msg = JSON.parse(raw); } catch { return; }
     // Всё тело обработчика — под try: исключение здесь ничем не перехватывается и убивает процесс.
     // Достаточно было прислать, например, {"type":"send","to":{},"text":"x"} — объект вместо числа
-    // роняет привязку параметров в better-sqlite3, и сервер выключался. То есть любой вошедший
+    // роняет привязку параметров в драйвере базы, и сервер выключался. То есть любой вошедший
     // сотрудник (или тот, кто добрался до порта) мог погасить мессенджер одной строкой.
     try {
-      handleClientMessage(ws, user, msg);
+      // Права — свежие из базы на каждое сообщение, как у HTTP (auth выше): снятое право
+      // администратора иначе продолжало бы действовать в уже открытом окне до переподключения.
+      const fresh = getUserById.get(user.id);
+      if (!fresh) return ws.terminate();
+      handleClientMessage(ws, fresh, msg);
     } catch (err) {
       logServer('ERROR', 'ws_message_failed', { userId: user.id, type: msg && msg.type, message: err.message });
     }
@@ -2259,7 +1743,11 @@ function handleClientMessage(ws, user, msg) {
       }
       const reactions = [...byEmoji].map(([e, userIds]) => ({ emoji: e, userIds }));
       const out = JSON.stringify({ type: 'reaction', messageId, reactions });
-      if (target.room) {
+      if (isGroupRoom(target.room)) {
+        // Реакция в закрытой группе — только её участникам: раньше она уходила всем подключённым,
+        // и по ней было видно, кто и когда отвечает в группе, где тебя нет.
+        for (const uid of groupMemberIds(groupIdFromRoom(target.room))) sendToUser(uid, out);
+      } else if (target.room) {
         sendToAll(out);
       } else {
         const targets = new Set([...(online.get(target.to_id) || []), ...(online.get(target.from_id) || [])]);
@@ -2280,7 +1768,7 @@ function handleClientMessage(ws, user, msg) {
     // Несколько файлов в одном сообщении: msg.files — массив; msg.file (в ед. числе) — старый формат,
     // поддерживаем на случай, если где-то остался не обновлённый клиент.
     const rawFiles = Array.isArray(msg.files) ? msg.files : (msg.file ? [msg.file] : []);
-    const files = normalizeIncomingFiles(rawFiles);
+    const files = normalizeIncomingFiles(rawFiles, user);
     if (!text && !files.length) return;
     const filesJson = files.length ? JSON.stringify(files) : null;
 
@@ -2292,7 +1780,9 @@ function handleClientMessage(ws, user, msg) {
     const replyToRaw = toUserId(msg.replyTo); // тот же критерий: целое положительное
     if (replyToRaw) {
       const target = getMessageForReply.get(replyToRaw);
-      if (target) {
+      // Только то, что отправитель и так может прочитать: снимок текста уходит в ответ всем
+      // адресатам, и по чужому id иначе вытаскивалось начало сообщения из чужой личной переписки.
+      if (target && canReadMessage(user, target)) {
         const targetUser = getUserById.get(target.from_id);
         replyToId = target.id;
         replyOut = { id: target.id, from_user: targetUser ? targetUser.display_name : '?', text: (target.text || '').slice(0, 300) };
@@ -2374,9 +1864,20 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Внутренняя ошибка сервера' });
 });
 
+// Порт не открылся — выходим. Раньше ошибку перехватывал обработчик 'error' у WebSocketServer (он
+// пересылает ошибки HTTP-сервера себе) и только писал в журнал: процесс оставался жить, не слушая
+// ничего, — служба «работает», а подключиться нельзя (проверено на стенде со второй копией).
+server.on('error', (err) => {
+  logServer('ERROR', 'listen_failed', {
+    port: PORT, code: err.code, message: err.message,
+    hint: err.code === 'EADDRINUSE' ? 'порт занят — «Искра» уже запущена (служба ITS-Iskra или вручную) или порт занят другой программой' : undefined,
+  });
+  process.exit(1);
+});
 server.listen(PORT, () => {
   ensureBootstrapAdmin();
   const scheme = server instanceof https.Server ? 'https' : 'http';
   console.log(`Искра запущена: ${scheme}://localhost:${PORT}`);
-  if (scheme === 'https') reportTlsCertificate();
+  if (scheme === 'https') tlsModule.reportTlsCertificate();
+  tlsModule.watchCertStore();
 });

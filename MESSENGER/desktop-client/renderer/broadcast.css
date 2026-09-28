@@ -1,0 +1,145 @@
+/* Окно «broadcast.html»: стили (вынесены из страницы). */
+  body { display: flex; flex-direction: column; position: relative; }
+  #composeBtn { -webkit-app-region: no-drag; display: flex; align-items: center; gap: 6px; padding: 0 10px; width: auto; height: 28px; border-radius: 8px; font-size: 12px; font-weight: 600; }
+  #composeBtn svg { width: 16px; height: 16px; flex-shrink: 0; }
+  #composeBtn.active { background: var(--accent); color: #fff; }
+  #composeBtn.active:hover { background: var(--accent); }
+
+  /* Абсолютно спозиционированный оверлей поверх ленты (тот же приём, что у #historyPanel ниже) —
+     только opacity/transform, без max-height/flex-grow. Раньше форма росла через max-height+flex-
+     grow, деля место с лентой, которая пряталась через display:none с задержкой — эти два
+     независимых процесса недосчитывались друг о друга, и разворачивание временами заметно
+     "спотыкалось" рывком (особенно ближе к концу, когда лента наконец схлопывалась). У оверлея с
+     самого начала фиксированная полная высота (top:38px = высота титульной панели, bottom:0) —
+     доращивать нечего, дёргаться нечему. */
+  #composer {
+    position: absolute; top: 38px; left: 0; right: 0; bottom: 0; z-index: 20;
+    display: flex; flex-direction: column; padding: 14px;
+    border-top: 2px solid transparent; border-bottom: 1px solid var(--border); background: var(--panel);
+    opacity: 0; transform: translateY(-8px); pointer-events: none;
+    transition: opacity .2s ease, transform .2s ease, border-color .2s ease;
+  }
+  #composer.open { opacity: 1; transform: translateY(0); pointer-events: auto; border-top-color: var(--accent); }
+  #composer p { margin: 0 0 8px; color: var(--muted); font-size: 12px; flex-shrink: 0; }
+  textarea { flex: 1; min-height: 70px; width: 100%; resize: none; background: var(--panel-2); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 10px; font-size: 13px; font-family: inherit; }
+  textarea:focus { outline: none; border-color: var(--accent); }
+  #composerRow2 { display: flex; gap: 8px; margin-top: 8px; flex-shrink: 0; }
+  #attachBtn { width: 40px; height: 40px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel-2); color: var(--muted); cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  #attachBtn:hover { color: var(--text); }
+  #sendBtn { flex: 1; padding: 10px; border: none; border-radius: 8px; background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff; font-weight: 700; cursor: pointer; }
+  #composerFiles { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; flex-shrink: 0; }
+  #composerFiles .chip { display: flex; align-items: center; gap: 6px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 20px; padding: 4px 6px 4px 6px; font-size: 11.5px; }
+  #composerFiles .chip button { width: 16px; height: 16px; border: none; background: var(--hover); border-radius: 50%; color: var(--muted); cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  /* Кольцо загрузки файла на сервер — тот же приём, что и у кольца скачивания в ленте (пусто -> % -> галочка/крестик),
+     только меньше и запускается сразу при выборе файла, а не при клике "Отправить всем". */
+  #composerFiles .chip .chip-fi { position: relative; display: flex; align-items: center; justify-content: center; width: 20px; height: 20px; flex-shrink: 0; color: var(--accent-2); }
+  #composerFiles .chip .chip-fi .fi-check, #composerFiles .chip .chip-fi .fi-error { display: none; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 50%; }
+  #composerFiles .chip.done .chip-fi .fi-progress, #composerFiles .chip.error .chip-fi .fi-progress { display: none; }
+  #composerFiles .chip.done .chip-fi .fi-check { display: flex; background: var(--online); color: #fff; }
+  #composerFiles .chip.error .chip-fi .fi-error { display: flex; color: var(--danger); }
+  #composerFiles .chip .fi-progress { display: flex; align-items: center; justify-content: center; position: relative; width: 20px; height: 20px; }
+  #composerFiles .chip .fi-progress svg { position: absolute; inset: 0; width: 20px; height: 20px; transform: rotate(-90deg); }
+  #composerFiles .chip .ring-bg { fill: none; stroke: var(--border); stroke-width: 3; }
+  #composerFiles .chip .ring-bar { fill: none; stroke: var(--accent-2); stroke-width: 3; stroke-linecap: round; transition: stroke-dashoffset .2s linear; transform-box: fill-box; transform-origin: center; }
+  #composerFiles .chip .ring-bar.indeterminate { animation: fi-spin 1s linear infinite; }
+  #composerFiles .chip .fi-pct { font-size: 6.5px; font-weight: 700; color: var(--text); position: relative; z-index: 1; }
+  #composerFiles .chip .chip-fn { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* Пока открыт композер ИЛИ панель истории — лента снизу скрывается плавно (opacity), а затем,
+     когда переход завершится, по-настоящему убирается из раскладки (display:none) — иначе она
+     просто становится прозрачной, но продолжает занимать место, и под композером остаётся пустая
+     область (именно так и было раньше). */
+  #feed { flex: 1; overflow-y: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 16px; transition: opacity .15s ease, transform .2s ease; }
+  #feed.hidden { opacity: 0; pointer-events: none; transform: translateY(14px); }
+  /* "Сегодня рассылок пока не было" — по умолчанию flex-column прижимает единственного ребёнка
+     к верху (flex-start), из-за чего текст был по центру только горизонтально (text-align), а по
+     вертикали торчал вверху. .empty-state добавляется, только когда лента реально пуста — иначе
+     центрирование сплющило бы обычный многоэлементный список к середине вместо чтения сверху вниз. */
+  #feed.empty-state { justify-content: center; align-items: center; }
+
+  /* -webkit-app-region: no-drag убран по той же причине, что и у .selectable в theme.css — разделитель
+     лежит внутри прокручиваемой ленты, а не в области с drag, так что нечего было и переопределять,
+     а при прокрутке это могло путать расчёт drag-региона у Chromium/Electron. */
+  .unread-divider { display: flex; align-items: center; gap: 10px; margin: 2px 0; }
+  .unread-divider::before, .unread-divider::after { content: ''; flex: 1; height: 1px; background: var(--accent); opacity: .35; }
+  .unread-divider span { font-size: 10px; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: .4px; white-space: nowrap; }
+  .item { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; min-width: 0; }
+  .item .who { color: var(--accent-2); font-weight: 700; font-size: 12px; }
+  .item .time { color: var(--muted); font-size: 10.5px; margin-left: 6px; }
+  /* Метка отдела в общей ленте: сообщение видит не вся организация, и это должно быть видно сразу. */
+  .item .dept-chip { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 20px; font-size: 10px; font-weight: 700; color: var(--accent-2); border: 1px solid var(--accent-2); vertical-align: 1px; }
+  .item .txt { margin-top: 4px; white-space: pre-wrap; word-break: break-word; line-height: 1.4; }
+  /* Подсветка совпадений при поиске по истории — см. highlightHtml/runSearch. */
+  mark.hl { background: var(--accent); color: #fff; border-radius: 3px; padding: 0 1px; }
+  .item .file-row { margin-top: 6px; }
+  .item .file { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--hover); border-radius: 8px; text-decoration: none; color: var(--text); min-width: 0; }
+  .item .file .fi { color: var(--accent-2); flex-shrink: 0; display: flex; width: 17px; height: 17px; position: relative; }
+  .item .file .fi .fi-download, .item .file .fi .fi-progress, .item .file .fi .fi-check { display: none; }
+  .item .file:hover .fi .fi-file { display: none; }
+  .item .file:hover .fi .fi-download { display: flex; }
+  .item .file.downloading .fi .fi-file, .item .file.downloading .fi .fi-download { display: none !important; }
+  .item .file.downloading .fi, .item .file.done .fi { width: 24px; height: 24px; }
+  .item .file.downloading .fi .fi-progress { display: flex; align-items: center; justify-content: center; position: relative; width: 24px; height: 24px; }
+  .item .file.downloading .fi .fi-progress svg { position: absolute; inset: 0; transform: rotate(-90deg); }
+  .item .file.downloading .fi .fi-progress .ring-bg { fill: none; stroke: var(--border); stroke-width: 3; }
+  .item .file.downloading .fi .fi-progress .ring-bar { fill: none; stroke: var(--accent-2); stroke-width: 3; stroke-linecap: round; transition: stroke-dashoffset .2s linear; transform-box: fill-box; transform-origin: center; }
+  .item .file.downloading .fi .fi-progress .ring-bar.indeterminate { animation: fi-spin 1s linear infinite; }
+  .item .file.downloading .fi .fi-pct { font-size: 7px; font-weight: 700; color: var(--text); position: relative; z-index: 1; }
+  @keyframes fi-spin { from { transform: rotate(-90deg); } to { transform: rotate(270deg); } }
+  .item .file.done .fi .fi-file, .item .file.done .fi .fi-download, .item .file.done .fi .fi-progress { display: none !important; }
+  .item .file.done .fi .fi-check { display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 50%; background: var(--online); color: #fff; }
+  .item .file .fmeta { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .item .file .fn { display: block; font-weight: 600; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .item .file .fs { color: var(--muted); font-size: 10.5px; }
+  /* Файл удалили с диска сервера (через веб-панель) — карточка та же по форме, но не ссылка, а
+     статус: приглушённая, некликабельная, с предупреждающей иконкой вместо файловой. */
+  .item .file.file-deleted { cursor: default; }
+  .item .file.file-deleted .fi { color: var(--muted); }
+  .item .file.file-deleted .fn { color: var(--muted); }
+  .empty { color: var(--muted); padding: 20px; text-align: center; font-size: 12.5px; }
+
+  #historyBtn { -webkit-app-region: no-drag; display: flex; align-items: center; gap: 6px; padding: 0 10px; width: auto; height: 28px; border-radius: 8px; font-size: 12px; font-weight: 600; }
+  #historyBtn svg { width: 18px; height: 18px; flex-shrink: 0; }
+  #historyBtn.active { background: var(--accent); color: #fff; }
+  #historyBtn.active:hover { background: var(--accent); }
+
+  /* ---- Панель истории по дням/месяцам (как в чате) ---- */
+  /* Композер прячется сам, через свой обычный open/close переход (max-height/opacity) — отдельного
+     аварийного display:none поверх него больше нет, чтобы не обрывать эту анимацию на середине,
+     когда историю открывают при открытой форме рассылки (см. openHistoryPanel/setComposerOpen). */
+  /* Открывается сверху вниз (не снизу вверх) — и цветная полоска сверху продолжает подсветку
+     активной кнопки, которая открыла панель (см. такой же приём в окне чата). */
+  #historyPanel {
+    position: absolute; top: 38px; left: 0; right: 0; bottom: 0;
+    display: flex; flex-direction: column; background: var(--bg);
+    border-top: 2px solid transparent;
+    opacity: 0; transform: translateY(-8px); pointer-events: none;
+    transition: opacity .2s ease, transform .2s ease, border-color .2s ease;
+    z-index: 50;
+  }
+  #historyPanel.visible { opacity: 1; transform: translateY(0); pointer-events: auto; border-top-color: var(--accent); }
+  #hpSearchRow { display: flex; align-items: center; gap: 8px; padding: 10px; border-bottom: 1px solid var(--border); background: var(--panel); }
+  #hpSearchRow svg { color: var(--muted); flex-shrink: 0; }
+  #hpSearch { flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 20px; padding: 7px 12px; color: var(--text); font-size: 12.5px; }
+  #hpSearch:focus { outline: none; border-color: var(--accent); }
+  #hpBody { flex: 1; display: flex; min-height: 0; }
+  #hpDays { width: 150px; flex-shrink: 0; overflow-y: auto; border-right: 1px solid var(--border); padding: 6px; }
+  #hpDays .mheader { display: flex; align-items: center; gap: 6px; padding: 8px 8px 6px; cursor: pointer; border-radius: 6px; user-select: none; }
+  #hpDays .mheader:hover { background: var(--hover); }
+  #hpDays .mheader .chev { color: var(--muted); display: flex; transition: transform .15s; flex-shrink: 0; }
+  #hpDays .mheader.collapsed .chev { transform: rotate(-90deg); }
+  #hpDays .mheader .mtitle { flex: 1; font-size: 11px; font-weight: 700; color: var(--muted); text-transform: capitalize; }
+  #hpDays .mheader .mcount { font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  #hpDays .mdays.collapsed { display: none; }
+  #hpDays .dbtn { padding: 8px 9px; border-radius: 8px; cursor: pointer; font-size: 12px; margin-bottom: 2px; }
+  #hpDays .dbtn:hover { background: var(--hover); }
+  #hpDays .dbtn.active { background: var(--accent); color: #fff; }
+  #hpDays .dbtn .cnt { display: block; font-size: 10px; color: inherit; opacity: .7; }
+  #hpMessages { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+  #hpEmpty { padding: 30px 14px; text-align: center; color: var(--muted); font-size: 12px; }
+
+  /* ---- Drag-and-drop файлов (как в окне чата) ---- */
+  #dropOverlay { display: none; position: fixed; inset: 6px; z-index: 500; background: var(--overlay); align-items: center; justify-content: center; flex-direction: column; gap: 10px; border: 3px dashed var(--accent); border-radius: 10px; pointer-events: none; }
+  #dropOverlay.active { display: flex; }
+  #dropOverlay svg { width: 34px; height: 34px; color: var(--accent); }
+  #dropOverlay .dtext { font-size: 14px; font-weight: 700; color: var(--text); }

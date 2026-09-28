@@ -1,0 +1,443 @@
+/* Веб-панель «Искры»: стили. Подключается из index.html относительным адресом — так панель
+ * работает и напрямую, и через платформу (/modules/messenger/). */
+  /* Фирменный стиль Росстата — тема веб-панели «Искры».
+
+     Панель открывается в iframe внутри платформы, поэтому палитра, скругления
+     и типографика те же, что в helpdesk-backend/public/styles.css. Значения из
+     «Руководства по использованию фирменного стиля», версия 1.0, апрель 2026:
+       2.2 Системный шрифт  — PT Root UI, а где он недоступен, Arial
+       3.1 Основные цвета   — голубая и сиреневая гаммы, обязательны
+       3.2 Текст            — серая гамма: тёмно-серый основной, серый вторичный
+       3.3 Дополнительные   — точечно, под сигналы
+       5.1 Стилеобразующие  — полностью круглые плашки только для малого объёма
+                              информации, остальное со скруглёнными углами
+
+     Цвета в hex, а не в oklch: панель открывают с рабочих машин, где браузер
+     может быть старше Chrome 111.
+
+     Имена --muted, --warn, --danger, --online сохранены: скрипт ниже
+     подставляет их в инлайновые стили при отрисовке таблиц и статусов.
+     Переименовывать их без правки скрипта нельзя. */
+
+  /* Фирменный шрифт лежит рядом, в public/fonts, — сеть изолирована, снаружи
+     ничего не подключить. Путь ОТНОСИТЕЛЬНЫЙ, и это важно: панель открывают
+     двумя способами — через платформу (адрес /modules/messenger/, прокси
+     срезает префикс) и напрямую по адресу самой «Искры». Относительный путь
+     верен в обоих случаях, абсолютный «/fonts/…» — только во втором.
+     Формат woff2 понимают все Chromium начиная с 36-го, на рабочих местах 109-й.
+     Лицензия SIL OFL 1.1, её текст — в public/fonts/OFL.txt рядом со шрифтом. */
+  @font-face {
+    font-family: "PT Root UI";
+    src: url("fonts/PTRootUI-Regular.woff2") format("woff2");
+    font-weight: 400; font-style: normal; font-display: swap;
+  }
+  @font-face {
+    font-family: "PT Root UI";
+    src: url("fonts/PTRootUI-Medium.woff2") format("woff2");
+    font-weight: 500; font-style: normal; font-display: swap;
+  }
+  @font-face {
+    font-family: "PT Root UI";
+    src: url("fonts/PTRootUI-Bold.woff2") format("woff2");
+    font-weight: 700; font-style: normal; font-display: swap;
+  }
+
+  :root {
+    /* --- Основные цвета (3.1) --- */
+    --md-primary: #0A61AE;              /* тёмно-голубой */
+    --md-on-primary: #FFFFFF;
+    --md-primary-container: #DCE7F6;
+    --md-on-primary-container: #0A61AE;
+
+    /* --- Второй основной: сиреневая гамма --- */
+    --md-secondary-container: #E9E2F6;
+    --md-on-secondary-container: #663AB5;
+
+    /* --- Поверхности: белый и производные серой гаммы --- */
+    --md-surface: #E8EDF5;
+    --md-surface-container-lowest: #FFFFFF;
+    --md-surface-container-low: #F7F9FC;
+    --md-surface-container: #F7F9FC;
+    --md-surface-container-high: #EDF1F8;
+    --md-surface-container-highest: #E8EDF5;
+    --md-on-surface: #282A2E;           /* тёмно-серый — основной текст (3.2) */
+    --md-on-surface-variant: #838383;   /* серый — второстепенное и сноски */
+    --md-outline: #DCE4EF;
+    --md-outline-variant: #E4EAF3;
+
+    /* --- Сигналы: из дополнительных цветов (3.3), в малом количестве --- */
+    --md-error: #E7004B;                /* тёмно-розовый */
+    --md-error-container: #FDE3EA;
+    --md-on-error-container: #E7004B;
+    --md-success-container: #DBF0F2;    /* изумрудная гамма — внутренние коммуникации */
+    --md-on-success-container: #008F9F;
+    --md-warn-container: #FFE7D6;
+    --md-on-warn-container: #C25A18;
+
+    --md-state-hover: #EDF1F8;
+    /* --- Форма (5.1): фиксированная лесенка скруглений --- */
+    --md-shape-xs: 4px;
+    --md-shape-s: 6px;
+    --md-shape-m: 8px;
+    --md-shape-l: 10px;
+    --md-shape-xl: 12px;
+    --md-shape-full: 6px;
+    /* Глубина делается тоном и линией, а не тенью. */
+    --md-elev-1: none;
+    --md-elev-3: 0 2px 10px rgba(40, 42, 46, 0.10);
+
+    /* PT Root UI — фирменный шрифт, подключён выше. Arial следующим: брендбук
+       называет его системной заменой там, где основной недоступен. */
+    --sans: "PT Root UI", Arial, "Segoe UI", system-ui, -apple-system, sans-serif;
+    --mono: "Cascadia Mono", Consolas, "Roboto Mono", Menlo, monospace;
+
+    /* Имена, на которые ссылается script ниже */
+    --bg: var(--md-surface);
+    --panel: var(--md-surface-container-lowest);
+    --panel-2: var(--md-surface-container-high);
+    --border: var(--md-outline-variant);
+    --accent: var(--md-primary);
+    --accent-2: var(--md-on-primary-container);
+    --text: var(--md-on-surface);
+    --muted: var(--md-on-surface-variant);
+    --online: #008F9F;                  /* изумрудный — «в сети» */
+    --danger: var(--md-error);
+    --warn: #C25A18;
+  }
+
+  /* Кернинг выключен намеренно, и это не вкусовщина. В PT Root UI есть
+     кернинговая пара «пробел + длинное тире», которая стягивает пробелы вокруг
+     тире в ноль: «Иванов — в сети» рисовалось как «Иванов—в сети». Проверено в
+     браузере: помогает только font-kerning:none, liga и calt на это не влияют.
+     Потеря невелика — кернинг заметен на крупных заголовках, а панель набрана
+     13–14 пунктами. */
+  html { font-kerning: none; }
+  * { box-sizing: border-box; }
+  html, body { height:100%; }
+  body {
+    margin:0; background:var(--md-surface-container-lowest); color:var(--md-on-surface);
+    font-family: var(--sans); font-size:14px; overflow:hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+  /* --- Полоса прокрутки ---
+     Штатная светло-серая полоса Chromium выбивалась из тёплой палитры. Стилизуем
+     через ::-webkit-scrollbar: эти псевдоэлементы понимают все Chromium, включая
+     109-й на рабочих машинах. Стандартные scrollbar-width/scrollbar-color
+     появились только в Chrome 121 — они ниже и лишь повторяют тот же вид в новых
+     браузерах и в Firefox. Прозрачная рамка с background-clip даёт отступ от
+     края, чтобы полоса не липла к содержимому. */
+  ::-webkit-scrollbar { width: 12px; height: 12px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: var(--md-outline-variant);
+    border: 3px solid transparent;
+    background-clip: padding-box;
+    border-radius: var(--md-shape-full);
+  }
+  ::-webkit-scrollbar-thumb:hover { background: var(--md-outline); background-clip: padding-box; }
+  ::-webkit-scrollbar-corner { background: transparent; }
+  /* scrollbar-width/-color наследуются, поэтому достаточно корня. */
+  html { scrollbar-width: thin; scrollbar-color: var(--md-outline-variant) transparent; }
+
+
+  /* ---- Логин ---- */
+  #authScreen {
+    height:100%; display:flex; align-items:center; justify-content:center;
+    background: var(--md-surface);
+  }
+  #authBox {
+    width:380px; background:var(--md-surface-container-lowest);
+    border:1px solid var(--md-outline-variant);
+    border-radius:var(--md-shape-xl); padding:40px 36px; box-shadow:var(--md-elev-3);
+  }
+  /* Герб идёт без подложки: он сам по себе фирменный знак, а плашка под ним
+     превращала его в иконку приложения. */
+  #authBox .seal {
+    display:flex; align-items:center; justify-content:center; margin:0 auto 16px;
+    color:var(--md-primary);
+  }
+  #authBox h1 { margin:0 0 6px; font-size:22px; font-weight:700; text-align:center; }
+  #authBox p.sub { margin:0 0 26px; color:var(--md-on-surface-variant); font-size:13.5px; text-align:center; }
+  #authBox label { display:block; font-size:12.5px; font-weight:500; color:var(--md-on-surface-variant); margin:0 0 7px; }
+  #authBox input {
+    width:100%; padding:14px 16px; margin-bottom:16px; background:transparent;
+    border:1px solid var(--md-outline); border-radius:var(--md-shape-xs);
+    color:var(--md-on-surface); font-size:14px; font-family:inherit; outline:none;
+    transition:border-color .12s ease, box-shadow .12s ease;
+  }
+  #authBox input:focus { border-color:var(--md-primary); box-shadow:inset 0 0 0 1px var(--md-primary); }
+  #authBox button {
+    width:100%; padding:14px; border:none; border-radius:var(--md-shape-full);
+    background:var(--md-primary); color:var(--md-on-primary);
+    font-weight:700; font-size:14px; letter-spacing:.1px; cursor:pointer;
+    transition:box-shadow .15s, filter .15s;
+  }
+  #authBox button:hover { box-shadow:var(--md-elev-1); filter:brightness(1.06); }
+  #authErr { color:var(--md-error); font-size:12.5px; min-height:18px; margin-bottom:4px; text-align:center; }
+
+  /* ---- Оболочка: одна строка вкладок сверху ----
+     Отдельной шапки с названием нет намеренно: панель открывают из платформы,
+     где название модуля уже написано в её меню и в заголовке страницы, а сама
+     шапка была того же тона, что и фон, — то есть занимала место, ничего не
+     разделяя. Кто вошёл и кнопка выхода переехали к вкладкам. */
+  #dash { display:none; height:100%; flex-direction:column; }
+  #dash.active { display:flex; }
+
+  .mm-user { display:flex; align-items:center; gap:14px; margin-left:auto; padding-left:20px; flex-shrink:0; }
+  .mm-user-text { text-align:right; line-height:1.3; }
+  #whoName { font-size:13px; font-weight:500; color:var(--md-on-surface); }
+  #whoRole { font-size:11.5px; color:var(--md-on-surface-variant); }
+  .mm-logout {
+    display:flex; align-items:center; gap:8px; padding:8px 18px; border:none;
+    background:var(--md-surface-container-high); color:var(--md-on-surface-variant);
+    border-radius:var(--md-shape-full); cursor:pointer; font-size:12.5px; font-weight:600;
+    font-family:inherit; transition:background .13s ease, color .13s ease;
+  }
+  .mm-logout:hover { background:var(--md-error-container); color:var(--md-on-error-container); }
+
+  /* Разделы — сегментированный переключатель в лотке, как фильтры заявок на
+     платформе: активный сегмент залит фирменным голубым. Прежнее подчёркивание
+     активной вкладки было приёмом Material, а не брендбука, и рядом с
+     платформой читалось как чужая деталь. */
+  #tabs {
+    flex-shrink:0; display:flex; align-items:center; gap:4px; padding:14px 20px;
+    border-bottom:1px solid var(--md-outline-variant);
+    background:var(--md-surface-container-lowest); overflow-x:auto;
+  }
+  #tabGroup {
+    display:flex; gap:3px; padding:3px; border-radius:var(--md-shape-m);
+    background:var(--md-surface-container-highest);
+  }
+  .nav-item {
+    padding:8px 16px; cursor:pointer; color:var(--md-on-surface-variant);
+    font-weight:700; font-size:13px; border-radius:var(--md-shape-s);
+    white-space:nowrap; transition:color .15s ease, background .15s ease;
+  }
+  /* Голубой с прозрачностью, а не переменная: нужен именно полупрозрачный
+     налёт поверх лотка, у --md-primary-container он был бы плотным. */
+  .nav-item:hover { color:var(--md-primary); background:rgba(10, 97, 174, 0.08); }
+  .nav-item.active, .nav-item.active:hover { color:var(--md-on-primary); background:var(--md-primary); }
+
+  /* Белый — как контентная область платформы: панель встроена в неё через
+     iframe. Тон из палитры остаётся на карточках и панелях внутри. */
+  #main { flex:1; padding:26px 28px 30px; overflow-y:auto; min-height:0; background:var(--md-surface-container-lowest); }
+  .view { display:none; }
+  .view.active { display:block; }
+  h2 { margin:0 0 20px; font-size:24px; font-weight:700; letter-spacing:0; }
+
+  .cards { display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-bottom:22px; }
+  .card { background:var(--md-surface-container); border:none; border-radius:var(--md-shape-l); padding:20px 24px; }
+  .card .v { font-size:32px; font-weight:600; letter-spacing:-.5px; color:var(--md-on-surface); }
+  .card .l { color:var(--md-on-surface-variant); font-size:12.5px; margin-top:5px; }
+
+  .panel { background:var(--md-surface-container); border:none; border-radius:var(--md-shape-l); padding:24px; margin-bottom:18px; }
+  .panel h3 { margin:0 0 14px; font-size:11.5px; color:var(--md-on-surface-variant); text-transform:uppercase; letter-spacing:.5px; font-weight:600; }
+  .row-flex { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+
+  table { width:100%; border-collapse:collapse; }
+  th {
+    text-align:left; color:var(--md-on-surface-variant); font-size:11.5px; text-transform:uppercase;
+    letter-spacing:.5px; padding:12px 10px; border-bottom:1px solid var(--md-outline-variant); font-weight:600;
+    background:var(--md-surface-container);
+  }
+  td { padding:12px 10px; border-bottom:1px solid var(--md-surface-container-high); vertical-align:middle; }
+  tbody tr:hover td { background:var(--md-state-hover); }
+
+  select, input, textarea {
+    background:var(--md-surface-container-lowest); border:1px solid var(--md-outline); color:var(--md-on-surface);
+    border-radius:var(--md-shape-xs); padding:11px 14px; font-size:13.5px; font-family:inherit; outline:none;
+    transition:border-color .12s ease, box-shadow .12s ease;
+  }
+  select:focus, input:focus, textarea:focus { border-color:var(--md-primary); box-shadow:inset 0 0 0 1px var(--md-primary); }
+  input[type="checkbox"] { width:auto; padding:0; accent-color:var(--md-primary); }
+  input[type="date"] { color-scheme:light; }
+  input[type="file"] { border:none; padding:0; background:transparent; }
+
+  /* ---- Список пользователей ----
+     Раньше это была таблица, где каждое действие занимало свою колонку: поле
+     переименования, две галочки прав, поле пароля, кнопка удаления. Строка из
+     семи элементов управления читалась плохо и не помещалась, а искать
+     человека приходилось глазами по первой колонке. Теперь строка отвечает на
+     вопрос «кто это и что с ним сейчас», а всё, что с ним можно сделать,
+     убрано в меню справа. */
+  .user-row {
+    /* Колонки заданы долями и фиксированными величинами, БЕЗ auto и min-content.
+       Каждая строка — отдельная сетка, поэтому колонка шириной «по содержимому»
+       считалась бы в каждой строке своя: у кого есть значки прав, у того
+       колонка шире, и весь ряд уезжал относительно соседних. С долями ширина
+       зависит только от ширины панели, то есть у всех строк одинаковая.
+
+       align-items:start, а не center: значки прав добавляют строке вторую
+       строчку текста, и при центрировании содержимое остальных колонок
+       съезжало вниз ровно на половину этой добавки. Теперь первые строчки всех
+       колонок стоят на одной высоте независимо от значков. */
+    display:grid; align-items:start; gap:14px;
+    /* 155px под статус — «не в сети · только что» самая длинная из подписей и в
+       120px переносилась на две строки, из-за чего строка становилась выше
+       соседних. Величина фиксированная, а не по содержимому: колонка «по
+       содержимому» снова считалась бы в каждой строке своя. */
+    grid-template-columns: minmax(170px,1.5fr) 155px minmax(110px,1.1fr) minmax(130px,1.2fr) 36px;
+    padding:12px 14px; border-radius:var(--md-shape-m); background:var(--md-surface-container-lowest);
+    margin-bottom:8px;
+  }
+  .user-row:hover { background:var(--md-state-hover); }
+  .user-id { display:flex; align-items:flex-start; gap:10px; min-width:0; }
+  /* Точку сдвигаем на середину первой строки логина: при выравнивании по верху
+     она иначе прилипает к самому краю строки. */
+  .user-dot { width:9px; height:9px; border-radius:50%; flex-shrink:0; margin-top:5px; }
+  .user-dot.active { background:var(--online); }
+  .user-dot.idle { background:var(--warn); }
+  .user-dot.offline { background:#BFBFBF; }   /* светло-серый из палитры (3.2) */
+  .user-login { font-weight:600; font-size:13.5px; }
+  .user-sub { font-size:11.5px; color:var(--md-on-surface-variant); margin-top:2px; }
+  .user-cell { min-width:0; font-size:12.5px; color:var(--md-on-surface-variant); }
+  .user-hosts { font-family:var(--mono); font-size:11.5px; }
+  .user-caps { display:flex; gap:6px; flex-wrap:wrap; }
+  .cap-chip {
+    font-size:11px; font-weight:700; padding:4px 10px; border-radius:var(--md-shape-xs);
+    background:var(--md-secondary-container); color:var(--md-on-secondary-container); white-space:nowrap;
+  }
+  .user-menu-btn {
+    width:32px; height:32px; margin-top:-4px; border:none; border-radius:50%; background:transparent; cursor:pointer;
+    color:var(--md-on-surface-variant); font-size:17px; line-height:1; letter-spacing:1px;
+    transition:background .13s ease;
+  }
+  .user-menu-btn:hover { background:var(--md-state-hover); color:var(--md-on-surface); }
+  #userMenu {
+    position:fixed; z-index:60; min-width:210px; padding:6px;
+    background:var(--md-surface-container-lowest); border:1px solid var(--md-outline-variant);
+    border-radius:var(--md-shape-m); box-shadow:var(--md-elev-3);
+  }
+  #userMenu button {
+    display:flex; align-items:center; justify-content:space-between; gap:12px; width:100%;
+    padding:9px 12px; border:none; background:transparent; border-radius:var(--md-shape-xs);
+    font:inherit; font-size:13px; color:var(--md-on-surface); text-align:left; cursor:pointer;
+  }
+  #userMenu button:hover { background:var(--md-state-hover); }
+  #userMenu button.danger { color:var(--md-error); }
+  #userMenu button.danger:hover { background:var(--md-error-container); }
+  #userMenu .menu-sep { height:1px; background:var(--md-outline-variant); margin:5px 8px; }
+  #userMenu .menu-state { font-size:11.5px; color:var(--md-on-surface-variant); }
+
+  /* ---- Блоки отделов в списке пользователей ----
+     Плоский список из сорока человек читается плохо: чтобы понять, кто в каком
+     отделе, приходится сличать четвёртую колонку глазами. Разложенный по
+     отделам — отвечает на этот вопрос сразу, а внутри блока порядок
+     алфавитный, чтобы искать человека можно было как в справочнике. */
+  .dept-block { margin-bottom:26px; }
+  .dept-block:last-child { margin-bottom:0; }
+  .dept-head {
+    display:flex; align-items:baseline; gap:10px;
+    /* Отступ под чертой заметно больше, чем над ней: строка пользователя
+       начиналась почти вплотную к разделителю, и заголовок отдела читался
+       как часть первой строки, а не как шапка блока. */
+    padding:0 14px 8px; margin-bottom:12px;
+    border-bottom:1px solid var(--md-outline-variant);
+  }
+  .dept-head .name { font-size:13px; font-weight:700; letter-spacing:.02em; }
+  .dept-head .count { font-size:11.5px; color:var(--md-on-surface-variant); }
+  .dept-head.empty .name { color:var(--md-on-surface-variant); font-weight:600; }
+  .dept-empty { padding:2px 14px 2px; font-size:12.5px; color:var(--md-on-surface-variant); }
+
+  /* ---- Перетаскивание отделов ---- */
+  /* Действия отдела — в одну строку. Общий .row-flex переносит содержимое, и в
+     колонке фиксированной ширины две кнопки вставали друг под друга, раздувая
+     строку вдвое; перетаскивать такую строку неудобно, да и читается хуже. */
+  .dept-actions { display:flex; gap:8px; align-items:center; flex-wrap:nowrap; justify-content:flex-end; }
+  .dept-actions .action { white-space:nowrap; }
+  .dept-row td { vertical-align:middle; }
+  .dept-row.dragging { opacity:.45; }
+  .dept-row.drop-before td { box-shadow: inset 0 2px 0 var(--md-primary); }
+  .dept-row.drop-after td { box-shadow: inset 0 -2px 0 var(--md-primary); }
+  .drag-handle {
+    width:30px; height:30px; padding:0; border:none; border-radius:var(--md-shape-xs);
+    background:transparent; color:var(--md-on-surface-variant); cursor:grab;
+    font-size:17px; line-height:1; letter-spacing:1px;
+  }
+  .drag-handle:hover { background:var(--md-state-hover); color:var(--md-on-surface); }
+  .drag-handle:focus-visible { outline:2px solid var(--md-primary); outline-offset:1px; }
+  .dept-row.dragging .drag-handle { cursor:grabbing; }
+
+  /* --- Выпадающий список (см. одноимённый скрипт) --- */
+  .select-wrap { position: relative; display: inline-block; vertical-align: middle; }
+  .select-wrap > select { position: absolute; opacity: 0; pointer-events: none; width: 0; height: 0; padding: 0; border: 0; }
+  .select-btn {
+    display: inline-flex; align-items: center; gap: 10px; width: 100%;
+    padding: 11px 14px 11px 16px; font-size: 13.5px; font-family: inherit; text-align: left;
+    border: 1px solid var(--md-outline); border-radius: var(--md-shape-xs);
+    background: var(--md-surface-container-lowest); color: var(--md-on-surface); cursor: pointer;
+    transition: border-color .12s ease, background .13s ease;
+  }
+  .select-btn:hover { background: var(--md-surface-container-low); }
+  .select-wrap.open .select-btn { border-color: var(--md-primary); }
+  .select-btn .select-value { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .select-btn .select-chevron {
+    display: inline-flex; flex-shrink: 0; color: var(--md-on-surface-variant);
+    transform: rotate(90deg); transition: transform .18s ease;
+  }
+  .select-wrap.open .select-btn .select-chevron { transform: rotate(-90deg); }
+  .select-menu {
+    position: absolute; z-index: 40; top: calc(100% + 6px); left: 0; min-width: 100%;
+    padding: 6px; border-radius: var(--md-shape-m); background: var(--md-surface-container-lowest);
+    box-shadow: var(--md-elev-3); max-height: 300px; overflow-y: auto;
+  }
+  .select-option {
+    padding: 10px 14px; border-radius: var(--md-shape-xs); font-size: 13.5px; cursor: pointer;
+    white-space: nowrap; transition: background .1s ease;
+  }
+  .select-option:hover { background: var(--md-state-hover); }
+  .select-option.selected { background: var(--md-primary-container); color: var(--md-on-primary-container); font-weight: 600; }
+
+  /* Filled / tonal / text buttons M3 */
+  button.action {
+    background:var(--md-primary); border:none; color:var(--md-on-primary); border-radius:var(--md-shape-full);
+    padding:11px 20px; cursor:pointer; font-size:13px; font-weight:600; letter-spacing:.1px;
+    font-family:inherit; transition:box-shadow .15s, filter .15s, background .15s;
+  }
+  button.action:hover { box-shadow:var(--md-elev-1); filter:brightness(1.06); }
+  /* Удаление — тональной кнопкой, а не залитой розовым. Брендбук (3.3) даёт
+     дополнительные цвета «в малом количестве», а в списке отделов таких кнопок
+     сразу столько же, сколько строк: залитые, они перетягивали на себя весь
+     экран. Цвет остаётся тем же и читается однозначно, а вес — по делу.
+     Под курсором кнопка заливается: подтверждение, что действие опасное. */
+  button.action.danger { background:var(--md-error-container); color:var(--md-error); }
+  button.action.danger:hover { background:var(--md-error); color:var(--md-on-primary); filter:none; }
+  button.action.ghost { background:var(--md-secondary-container); color:var(--md-on-secondary-container); }
+  button.action.ghost:hover { filter:brightness(0.96); box-shadow:none; }
+  button.action:disabled { background:var(--md-surface-container-high); color:rgba(40,42,46,0.38); cursor:not-allowed; box-shadow:none; filter:none; }
+
+  #histMessages {
+    display:flex; flex-direction:column; gap:8px; max-height:440px; overflow-y:auto;
+    margin-top:14px; padding:16px; background:var(--md-surface-container); border-radius:var(--md-shape-m);
+  }
+  #histMessages .m { font-size:13.5px; line-height:1.5; }
+  #histMessages .m b { color:var(--md-primary); }
+  #histMessages .m .t { color:var(--md-on-surface-variant); font-size:11px; margin-left:8px; }
+
+  #bcFeed { display:flex; flex-direction:column; gap:12px; }
+  .bc-item { background:var(--md-surface-container); border:none; border-radius:var(--md-shape-m); padding:14px 16px; }
+  .bc-item .who { color:var(--md-primary); font-weight:600; font-size:13px; }
+  .bc-item .time { color:var(--md-on-surface-variant); font-size:11px; margin-left:8px; }
+  .bc-item .txt { margin-top:6px; white-space:pre-wrap; line-height:1.5; }
+  textarea#bcText { width:100%; height:96px; resize:vertical; }
+
+  /* Выбор отделов сотрудника: сотрудник может состоять сразу в нескольких, а
+     <select multiple> с ctrl-кликом в таблице — ровно тот элемент, который
+     администратор без подсказки не осилит. Поэтому кнопка со списком отделов
+     и всплывающий список галочек. */
+  .dept-btn {
+    background:var(--md-surface-container-lowest); border:1px solid var(--md-outline); color:var(--md-on-surface);
+    border-radius:var(--md-shape-xs); padding:10px 13px; font-size:12.5px; font-family:inherit; cursor:pointer;
+    text-align:left; min-width:150px; max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    transition:border-color .12s ease;
+  }
+  .dept-btn:hover { border-color:var(--md-primary); }
+  .dept-btn.empty { color:var(--md-on-surface-variant); }
+  #deptPicker {
+    position:fixed; z-index:50; background:var(--md-surface-container-lowest); border:1px solid var(--md-outline-variant);
+    border-radius:var(--md-shape-m); padding:10px; min-width:210px; max-height:300px; overflow-y:auto;
+    box-shadow:var(--md-elev-3);
+  }
+  #deptPicker label { display:flex; align-items:center; gap:10px; padding:9px 10px; border-radius:var(--md-shape-xs); cursor:pointer; font-size:13px; }
+  #deptPicker label:hover { background:var(--md-state-hover); }
+  #deptPicker .empty { color:var(--md-on-surface-variant); font-size:12.5px; padding:8px 10px; }

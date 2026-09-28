@@ -10,28 +10,107 @@ const departments = require("../config/departments");
 // требует либо готовый бинарник под конкретную версию Node/ОС, либо компиляцию
 // на месте (node-gyp + инструменты сборки), что на закрытой сети без интернета
 // не соберётся. node:sqlite — часть самого Node.js, дополнительно собирать нечего.
+// Коды SQLite, по которым сбой при запуске объясняется словами, а не стеком.
+const SQLITE_BUSY = 5, SQLITE_LOCKED = 6, SQLITE_CORRUPT = 11, SQLITE_NOTADB = 26;
+
+/**
+ * Открыть базу так, чтобы сбои запуска объясняли себя.
+ *
+ * busy_timeout — первым делом, до любого обращения к файлу: иначе база, которую
+ * кто-то держит открытой на запись (DB Browser, копирование), роняла службу при
+ * запуске сразу, без ожидания. Проверка на стенде: занятая на 3 секунды база
+ * раньше давала «database is locked» и выход, теперь служба дожидается.
+ *
+ * Испорченный файл по-прежнему останавливает службу (работать не на чем), но с
+ * указанием файла и что делать. Повреждение внутри живой базы запуск не
+ * останавливает — заявки, до которых оно не дотянулось, работают, — а громко
+ * пишется в журнал; то же покажет задание «Резервная копия баз».
+ */
+function openDatabase(file) {
+  let db;
+  try {
+    db = new DatabaseSync(file);
+    db.exec("PRAGMA busy_timeout = 5000");
+    db.exec("PRAGMA journal_mode = WAL");
+  } catch (err) {
+    stopOnDatabaseError(err, file);
+  }
+  let problems;
+  try {
+    const rows = db.prepare("PRAGMA quick_check").all().map((r) => Object.values(r)[0]);
+    problems = rows.length === 1 && rows[0] === "ok" ? null : rows.slice(0, 5).join("; ");
+  } catch (err) {
+    problems = err.message;
+  }
+  if (problems) {
+    console.error(
+      `[внимание] База ${file} повреждена: ${problems}\n` +
+        "           Служба работает, но часть данных может не читаться, а запись — усугубить повреждение.\n" +
+        "           Остановите службу и восстановите базу из резервной копии (DEPLOY.md, «Резервные копии баз»)."
+    );
+  }
+  return db;
+}
+
+function stopOnDatabaseError(err, file) {
+  const code = err && err.errcode;
+  if (code === SQLITE_NOTADB || code === SQLITE_CORRUPT) {
+    console.error(
+      `[остановка] Файл базы ${file} повреждён или это не база SQLite (${err.message}).\n` +
+        "            Остановите службу, переименуйте этот файл (и -wal, -shm рядом) и положите на его место последнюю копию\n" +
+        "            <база>-ГГГГ-ММ.db из папки резервных копий (DEPLOY.md, «Резервные копии баз»)."
+    );
+    process.exit(1);
+  }
+  if (code === SQLITE_BUSY || code === SQLITE_LOCKED) {
+    console.error(
+      `[остановка] База ${file} занята другой программой дольше 5 секунд (${err.message}).\n` +
+        "            Закройте программу, в которой она открыта (DB Browser и т.п.), — служба перезапустится сама."
+    );
+    process.exit(1);
+  }
+  throw err;
+}
+
 function initDb() {
   const dir = path.dirname(config.dbPath);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
-  const db = new DatabaseSync(config.dbPath);
-  db.exec("PRAGMA journal_mode = WAL");
+  const db = openDatabase(config.dbPath);
   db.exec("PRAGMA foreign_keys = ON");
 
   const schema = fs.readFileSync(path.join(__dirname, "schema.sql"), "utf8");
-  db.exec(schema);
 
-  // Отделы — из единого конфига, не из статичного SQL. Добавили новый
-  // отдел в config/departments.js — при следующем старте сервера здесь
-  // появится соответствующая строка, руками ничего создавать не нужно.
-  for (const dept of departments) {
-    db.prepare("INSERT OR IGNORE INTO categories (name) VALUES (?)").run(dept.name);
+  // Схема и миграции — одной транзакцией: либо всё, либо ничего. Раньше каждый
+  // шаг записывался сразу, и сбой посередине (занятая база, кончилось место,
+  // ошибка в миграции) оставлял базу наполовину обновлённой: колонки уже
+  // добавлены, данные ещё не перенесены, а отметка «перенос сделан» — то ли
+  // есть, то ли нет. Теперь база остаётся как до запуска, и следующий запуск
+  // (NSSM перезапустит службу) проходит все шаги заново. DDL в SQLite тоже
+  // транзакционный, так что ALTER TABLE откатывается вместе с остальным.
+  // IMMEDIATE — сразу берём блокировку на запись, а не на полпути.
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(schema);
+
+    // Отделы — из единого конфига, не из статичного SQL. Добавили новый
+    // отдел в config/departments.js — при следующем старте сервера здесь
+    // появится соответствующая строка, руками ничего создавать не нужно.
+    for (const dept of departments) {
+      db.prepare("INSERT OR IGNORE INTO categories (name) VALUES (?)").run(dept.name);
+    }
+
+    migrateIsAdmin(db);
+    migrateRoles(db);
+    migrateNotifications(db);
+    migrateStatuses(db);
+    db.exec("COMMIT");
+  } catch (err) {
+    db.exec("ROLLBACK");
+    db.close(); // дальше служба остановится; открытый файл базы ей ни к чему
+    console.error(`[остановка] Обновление структуры базы не удалось и отменено целиком — база осталась как до запуска: ${err.message}`);
+    throw err;
   }
-
-  migrateIsAdmin(db);
-  migrateRoles(db);
-  migrateNotifications(db);
-  migrateStatuses(db);
 
   return db;
 }
@@ -147,10 +226,29 @@ function migrateNotifications(db) {
 // Посев локальных аварийных аккаунтов ("break glass"), на случай если оба
 // домена недоступны. Пароли задаются заранее через
 // scripts/set-local-admin-password.js и хранятся только как bcrypt-хэш.
+//
+// Пароль аварийной учётки живёт ТОЛЬКО в .env, база — лишь его копия, и сверяется
+// она на каждом старте. Раньше хэш попадал в базу один раз, при создании учётки,
+// и дальше не трогался: убрали LOCAL_ADMIN_PASSWORD_HASH из .env — а вход по
+// старому паролю работал (строка с хэшем осталась); сменили пароль — действовал
+// и старый; переименовали логин — прежний оставался рабочей учёткой с паролем.
+// Теперь локальная учётка без хэша в .env войти не может: вход проверяет
+// local_password_hash, и здесь он обнуляется.
 function ensureLocalAccounts(db) {
+  const enabled = new Set(config.localAccounts.filter((a) => a.passwordHash).map((a) => a.login));
+  const stale = db.prepare(
+    "SELECT id, ad_login FROM users WHERE auth_type = 'local' AND local_password_hash IS NOT NULL"
+  ).all().filter((u) => !enabled.has(u.ad_login));
+  for (const u of stale) {
+    db.prepare("UPDATE users SET local_password_hash = NULL WHERE id = ?").run(u.id);
+    console.log(`Аварийный вход ${u.ad_login} закрыт: в .env для него не задан хэш пароля`);
+  }
+
   for (const acc of config.localAccounts) {
     if (!acc.passwordHash) continue;
-    const existing = db.prepare("SELECT id, email, is_admin, roles FROM users WHERE ad_login = ?").get(acc.login);
+    const existing = db.prepare(
+      "SELECT id, email, is_admin, roles, local_password_hash FROM users WHERE ad_login = ?"
+    ).get(acc.login);
     const wantAdmin = acc.isAdmin ? 1 : 0;
     // Список отделов у локальной учётки выводится из её роли: домена у неё нет,
     // а очередь своего отдела она видеть должна.
@@ -175,6 +273,10 @@ function ensureLocalAccounts(db) {
       if (Number(existing.is_admin || 0) !== wantAdmin) {
         db.prepare("UPDATE users SET is_admin = ? WHERE id = ?").run(wantAdmin, existing.id);
         console.log(`Локальному аккаунту ${acc.login} ${wantAdmin ? "выданы" : "сняты"} права администратора`);
+      }
+      if (existing.local_password_hash !== acc.passwordHash) {
+        db.prepare("UPDATE users SET local_password_hash = ? WHERE id = ?").run(acc.passwordHash, existing.id);
+        console.log(`Пароль локального аккаунта ${acc.login} взят из .env`);
       }
       continue;
     }

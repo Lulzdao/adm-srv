@@ -72,3 +72,19 @@ test("враждебное имя файла не может закрыть ат
   assert.strictEqual((разметка.match(/"/g) || []).length, 2,
     "кавычек должно остаться ровно две — те, что обрамляют значение");
 });
+
+// Номера страниц для переключателя списка заявок — тоже живая функция, из app-tickets.js.
+test("переключатель страниц: первая, последняя, соседи текущей и многоточия", () => {
+  const src = fs.readFileSync(path.join(__dirname, "..", "public", "app-tickets.js"), "utf8");
+  const m = src.match(/function pageNumbers\(current, pages\) \{[\s\S]*?\n\}/);
+  assert.ok(m, "функция pageNumbers() не найдена в public/app-tickets.js — тест устарел");
+  const pageNumbers = new Function(`${m[0]}; return pageNumbers;`)();
+
+  assert.deepStrictEqual(pageNumbers(1, 1), [1]);
+  assert.deepStrictEqual(pageNumbers(1, 3), [1, 2, 3]);
+  assert.deepStrictEqual(pageNumbers(1, 20), [1, 2, 3, "…", 20]);
+  assert.deepStrictEqual(pageNumbers(6, 20), [1, "…", 4, 5, 6, 7, 8, "…", 20]);
+  assert.deepStrictEqual(pageNumbers(20, 20), [1, "…", 18, 19, 20]);
+  // Пропуск ровно в одну страницу многоточием не заменяется — это была бы лишняя кнопка «…».
+  assert.deepStrictEqual(pageNumbers(4, 7), [1, 2, 3, 4, 5, 6, 7]);
+});

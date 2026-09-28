@@ -4,6 +4,7 @@ const { getSetting, setSetting } = require("../services/settings");
 const { unpackRoles } = require("../services/userStore");
 const config = require("../config/config");
 const departments = require("../config/departments");
+const backup = require("../services/backup");
 
 module.exports = function adminRoutes(db) {
   const router = express.Router();
@@ -129,6 +130,42 @@ module.exports = function adminRoutes(db) {
       closedTotal: totals.closedTotal,
       byCategory,
     });
+  });
+
+  // ---- Резервные копии баз: куда класть -----------------------------------
+  //
+  // Папку задаёт администратор из панели — обычно сетевая, чтобы копии не лежали на
+  // том же диске, что и базы. Сохраняется только проверенная: пробный файл пишется от
+  // имени службы, то есть ровно с теми правами, с какими потом пойдёт копия.
+
+  const backupInfo = () => {
+    const { dir, source } = backup.backupDir(db);
+    return {
+      dir, source,
+      panelDir: getSetting(db, "backup_dir") || "",
+      envDir: process.env.BACKUP_DIR || "",
+      defaultDir: backup.DEFAULT_DIR,
+      copies: backup.listCopies(dir),
+    };
+  };
+
+  router.get("/backup", (req, res) => res.json(backupInfo()));
+
+  router.post("/backup/check", (req, res) => {
+    const dir = (req.body || {}).dir;
+    if (typeof dir !== "string" || dir.length > 400) return res.status(400).json({ error: "Путь — строка до 400 символов" });
+    res.json(backup.checkDir(dir));
+  });
+
+  router.put("/backup", (req, res) => {
+    const dir = (req.body || {}).dir;
+    if (typeof dir !== "string" || dir.length > 400) return res.status(400).json({ error: "Путь — строка до 400 символов" });
+    if (dir.trim()) {
+      const check = backup.checkDir(dir);
+      if (!check.ok) return res.status(400).json({ error: `Папка недоступна: ${check.error}`, hint: check.hint });
+    }
+    backup.setBackupDir(db, dir);
+    res.json({ ok: true, ...backupInfo() });
   });
 
   return router;

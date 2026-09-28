@@ -43,7 +43,7 @@ function decodeBody(lines, encoding) {
  * Возвращает { port, messages, reset, close }.
  * messages — массив { to: [], subject, body }.
  */
-async function startFakeSmtp({ rejectRecipient = null } = {}) {
+async function startFakeSmtp({ rejectRecipient = null, deferRecipient = null } = {}) {
   const messages = [];
 
   const server = net.createServer((sock) => {
@@ -105,6 +105,9 @@ async function startFakeSmtp({ rejectRecipient = null } = {}) {
           // получателя», который в коде помечается как неповторяемый.
           if (rejectRecipient && addr === rejectRecipient) {
             sock.write("550 5.1.1 mailbox unavailable\r\n");
+          } else if (deferRecipient && addr === deferRecipient) {
+            // Временный отказ (серый список, лимит писем) — «попробуйте позже».
+            sock.write("451 4.7.1 try again later\r\n");
           } else {
             current.to.push(addr);
             sock.write("250 OK\r\n");

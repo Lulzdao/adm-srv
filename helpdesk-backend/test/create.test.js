@@ -98,7 +98,9 @@ test("заполненная заявка сохраняет все поля ф�
 });
 
 test("во фронтенде обязательными помечены все поля, кроме вложений", () => {
-  const src = fs.readFileSync(path.join(__dirname, "..", "public", "app.js"), "utf8");
+  // Форма новой заявки живёт в app-tickets.js — фронтенд разбит по разделам.
+  const src = fs.readFileSync(path.join(__dirname, "..", "public", "app-tickets.js"), "utf8");
+  assert.ok(src.includes("const ОБЯЗАТЕЛЬНЫЕ"), "список обязательных полей не найден в app-tickets.js — тест устарел");
   const блок = src.slice(src.indexOf("const ОБЯЗАТЕЛЬНЫЕ"), src.indexOf("ОБЯЗАТЕЛЬНЫЕ.forEach"));
   for (const поле of ["titleEl", "descEl", "roomEl", "extEl"]) {
     assert.ok(блок.includes(поле), `поле ${поле} выпало из списка обязательных`);

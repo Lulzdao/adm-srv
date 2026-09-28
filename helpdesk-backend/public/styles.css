@@ -373,6 +373,14 @@ a { color: var(--md-primary); }
 .btn-wire:hover { background: #08528F; }
 .btn-ghost { background: var(--md-surface-container-high); color: var(--md-on-surface); }
 .btn-ghost:hover { background: var(--md-surface-container-highest); }
+
+/* Переключатель страниц списка заявок: 1 … 4 5 [6] 7 8 … 20 */
+.pager { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 6px; margin: 18px 0 6px; }
+.pager-btn { padding: 7px 0; min-width: 38px; justify-content: center; font-variant-numeric: tabular-nums; }
+.pager-step { padding: 7px 14px; }
+.pager-current { background: var(--md-primary); color: var(--md-on-primary); cursor: default; }
+.pager-current:hover { background: var(--md-primary); }
+.pager-gap { color: var(--md-on-surface-variant); padding: 0 4px; }
 select, .input {
   padding: 11px 14px; font-size: 13.5px; border-radius: var(--md-shape-xs); border: 1px solid var(--md-outline);
   background: var(--md-surface-container-lowest); color: var(--md-on-surface); outline: none;
