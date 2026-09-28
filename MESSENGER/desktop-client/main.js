@@ -1313,3 +1313,10 @@ app.on('before-quit', () => {
   if (idleTimer) { clearInterval(idleTimer); idleTimer = null; }
   stopRendererReconnects();
 });
+// Значок в трее снимаем сами, а не надеемся, что это сделает выход процесса: иначе в области
+// уведомлений остаётся «призрак», который пропадает, только когда по нему проведут мышью. Тот же
+// приём, что в beginShutdown() для завершения сеанса. Если процесс снят принудительно (диспетчер
+// задач, TerminateProcess) — тут уже ничего не сделать, это ограничение Windows.
+app.on('will-quit', () => {
+  if (tray) { try { tray.destroy(); } catch { /* уже снят */ } tray = null; }
+});

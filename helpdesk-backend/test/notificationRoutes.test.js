@@ -220,7 +220,7 @@ test("расписание: час от 0 до 23, неизвестное зад
   assert.strictEqual((await админ.post("/api/notifications/schedule/нет/run", {})).status, 404);
 });
 
-test("папка резервных копий из панели: сохраняется только проверенная, копии видны списком", async (t) => {
+test("папка резервных копий (раздел «Администрирование»): сохраняется только проверенная, копии видны списком", async (t) => {
   const { db, админ, исполнитель } = await stand(t);
   const fs = require("node:fs");
   const path = require("node:path");
@@ -228,29 +228,31 @@ test("папка резервных копий из панели: сохраня
   const dir = tempDir("adm-srv-backup-panel-");
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
 
-  assert.strictEqual((await исполнитель.get("/api/notifications/backup")).status, 403);
-  assert.strictEqual((await исполнитель.put("/api/notifications/backup", { dir })).status, 403);
+  assert.strictEqual((await исполнитель.get("/api/admin/backup")).status, 403);
+  assert.strictEqual((await исполнитель.put("/api/admin/backup", { dir })).status, 403);
+  // Раньше папка задавалась в «Оповещения → Отправка»; раздел переехал в «Администрирование».
+  assert.strictEqual((await админ.get("/api/notifications/backup")).status, 404);
 
-  const проверка = await админ.post("/api/notifications/backup/check", { dir });
+  const проверка = await админ.post("/api/admin/backup/check", { dir });
   assert.deepStrictEqual(проверка.json, { ok: true });
 
   const free = "QRSTUVWXYZ".split("").find((l) => !fs.existsSync(`${l}:/`));
   if (free) {
-    const плохая = await админ.put("/api/notifications/backup", { dir: `${free}:/backups` });
+    const плохая = await админ.put("/api/admin/backup", { dir: `${free}:/backups` });
     assert.strictEqual(плохая.status, 400, "недоступную папку не сохраняем");
     assert.match(плохая.json.hint, /\\сервер/);
   }
 
   fs.writeFileSync(path.join(dir, "smdr-2026-09.db"), "копия");
-  const сохранить = await админ.put("/api/notifications/backup", { dir });
+  const сохранить = await админ.put("/api/admin/backup", { dir });
   assert.strictEqual(сохранить.status, 200, сохранить.text);
-  const info = await админ.get("/api/notifications/backup");
+  const info = await админ.get("/api/admin/backup");
   assert.strictEqual(info.json.dir, dir);
   assert.strictEqual(info.json.source, "panel");
   assert.deepStrictEqual(info.json.copies.map((c) => c.name), ["smdr-2026-09.db"]);
 
-  const сброс = await админ.put("/api/notifications/backup", { dir: "" });
+  const сброс = await админ.put("/api/admin/backup", { dir: "" });
   assert.strictEqual(сброс.status, 200);
-  assert.notStrictEqual((await админ.get("/api/notifications/backup")).json.source, "panel");
+  assert.notStrictEqual((await админ.get("/api/admin/backup")).json.source, "panel");
   assert.ok(db);
 });
