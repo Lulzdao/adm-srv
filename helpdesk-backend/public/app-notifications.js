@@ -272,9 +272,8 @@ function templateCardHtml(k) {
 // ---- Вкладка «Отправка» ----------------------------------------------------
 
 async function renderNotifSmtp(page, kinds) {
-  const [{ smtp }, { deliveries }, schedule, backupInfo] = await Promise.all([
+  const [{ smtp }, { deliveries }, schedule] = await Promise.all([
     api("/notifications/smtp"), api("/notifications/deliveries"), api("/notifications/schedule"),
-    api("/notifications/backup"),
   ]);
 
   const withList = kinds.filter(k => k.recipients === "list");
@@ -340,38 +339,6 @@ async function renderNotifSmtp(page, kinds) {
           Документы, просроченные более чем за месяц до этой даты, писем не порождают —
           иначе в первый же день уехала бы пачка «срочно выпустить новый» про архив.
         </div>` : ""}
-      </div>
-
-      <div class="card" style="margin-bottom:20px;">
-        <div class="section-label">Резервные копии баз</div>
-        <div style="font-size:12px;color:var(--ink-soft);margin-bottom:14px;">
-          Раз в месяц каждая база копируется в отдельный файл (<span class="mono">smdr-2026-10.db</span> и т.п.),
-          старые копии не удаляются. Лучше класть их в сетевую папку, а не на тот же диск, что и базы.
-          Путь — сетевой: <span class="mono">\\\\сервер\\папка\\backups</span>. Диск, подключённый буквой
-          (<span class="mono">Z:\\</span>), служба не видит — он есть только в сеансе пользователя.
-          Права на запись нужны учётной записи компьютера, под ней служба ходит в сеть.
-        </div>
-        <div style="font-size:12.5px;margin-bottom:12px;">Сейчас копии кладутся в
-          <span class="mono">${esc(backupInfo.dir)}</span>
-          <span style="color:var(--ink-soft);">(${{ panel: "задано здесь", env: "задано в .env на сервере (BACKUP_DIR)", default: "папка по умолчанию" }[backupInfo.source] || ""})</span>
-        </div>
-        <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px;">
-          <div style="flex:1;min-width:260px;">
-            <div class="field-label">Папка для копий (пусто — ${backupInfo.envDir ? "из .env" : "папка по умолчанию"})</div>
-            <input class="input mono" id="bkDir" value="${esc(backupInfo.panelDir)}" placeholder="${esc(backupInfo.envDir || backupInfo.defaultDir)}" style="width:100%;" />
-          </div>
-          <button class="btn btn-ghost" id="bkCheck">Проверить</button>
-          <button class="btn btn-wire" id="bkSave">Сохранить</button>
-        </div>
-        <div id="bkMsg" style="font-size:12px;margin-bottom:10px;"></div>
-        <div class="field-label">Последние копии в этой папке</div>
-        ${Array.isArray(backupInfo.copies) && backupInfo.copies.length
-          ? `<div style="font-size:12.5px;display:grid;grid-template-columns:auto auto auto;gap:4px 18px;justify-content:start;">
-              ${backupInfo.copies.map(c => `<span class="mono">${esc(c.name)}</span>
-                <span style="color:var(--ink-soft);">${(c.size / 1048576).toFixed(1)} МБ</span>
-                <span style="color:var(--ink-soft);">${fmtDate(c.modified)}</span>`).join("")}
-            </div>`
-          : `<div style="font-size:12px;color:var(--ink-soft);">${esc((backupInfo.copies && backupInfo.copies.error) || "Копий пока нет — первая появится при ближайшем обходе или по кнопке «Проверить сейчас» у задания выше.")}</div>`}
       </div>
 
       <div class="card" style="margin-bottom:20px;">
@@ -456,29 +423,6 @@ async function renderNotifSmtp(page, kinds) {
 
   // Папка резервных копий: «Проверить» пишет пробный файл от имени службы, «Сохранить»
   // принимает только доступную папку (пусто — вернуться к .env / папке по умолчанию).
-  const bkMsg = page.querySelector("#bkMsg");
-  const bkShow = (ok, text, hint) => {
-    bkMsg.style.color = ok ? "var(--green)" : "var(--red)";
-    bkMsg.innerHTML = esc(text) + (hint ? `<div style="color:var(--ink-soft);margin-top:4px;">${esc(hint)}</div>` : "");
-  };
-  page.querySelector("#bkCheck").onclick = async () => {
-    const dir = page.querySelector("#bkDir").value.trim() || backupInfo.envDir || backupInfo.defaultDir;
-    bkMsg.style.color = "var(--ink-soft)"; bkMsg.textContent = "Проверяю запись…";
-    try {
-      const r = await api("/notifications/backup/check", { method: "POST", body: { dir } });
-      if (r.ok) bkShow(true, `Запись в ${dir} работает — копии туда лягут.`);
-      else bkShow(false, `Не получилось: ${r.error}`, r.hint);
-    } catch (e) { bkShow(false, e.message); }
-  };
-  page.querySelector("#bkSave").onclick = async () => {
-    bkMsg.style.color = "var(--ink-soft)"; bkMsg.textContent = "Проверяю и сохраняю…";
-    try {
-      const r = await api("/notifications/backup", { method: "PUT", body: { dir: page.querySelector("#bkDir").value } });
-      bkShow(true, `Сохранено: копии будут класться в ${r.dir}`);
-      setTimeout(() => renderNotifications(page.closest("main") || page.parentElement, "smtp"), 1800);
-    } catch (e) { bkShow(false, e.message, e.hint); }
-  };
-
   page.querySelectorAll(".job-run").forEach(btn => {
     btn.onclick = async () => {
       const note = btn.parentElement.querySelector(".job-msg");

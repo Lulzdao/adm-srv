@@ -65,8 +65,8 @@ async function renderDashboard(main) {
 async function renderAdmin(main) {
   main.innerHTML = `<div class="topbar"><div class="topbar-title">Администрирование</div></div><div class="page"><div class="spinner">Загрузка…</div></div>`;
   try {
-    const [{ departments: deptSettings, adminGroups }, { admins, executors }] = await Promise.all([
-      api("/admin/settings"), api("/admin/admins"),
+    const [{ departments: deptSettings, adminGroups }, { admins, executors }, backupInfo] = await Promise.all([
+      api("/admin/settings"), api("/admin/admins"), api("/admin/backup"),
     ]);
 
     const ROLE_LABEL = Object.fromEntries(deptSettings.map(d => [d.role, d.name]));
@@ -117,6 +117,39 @@ async function renderAdmin(main) {
         ${executors.length ? executors.map(a => человек(a, true)).join("") : пусто("Пока никто не входил под ролью исполнителя.")}
       </div>
 
+      <div class="card" style="margin-bottom:20px;">
+        <div class="section-label">Резервные копии баз</div>
+        <div style="font-size:12px;color:var(--ink-soft);margin-bottom:14px;">
+          Раз в месяц каждая база копируется в отдельный файл (<span class="mono">smdr-2026-10.db</span> и т.п.),
+          старые копии не удаляются. Лучше класть их в сетевую папку, а не на тот же диск, что и базы.
+          Путь — сетевой: <span class="mono">\\\\сервер\\папка\\backups</span>. Диск, подключённый буквой
+          (<span class="mono">Z:\\</span>), служба не видит — он есть только в сеансе пользователя.
+          Права на запись нужны учётной записи компьютера, под ней служба ходит в сеть.
+        </div>
+        <div style="font-size:12.5px;margin-bottom:12px;">Сейчас копии кладутся в
+          <span class="mono">${esc(backupInfo.dir)}</span>
+          <span style="color:var(--ink-soft);">(${{ panel: "задано здесь", env: "задано в .env на сервере (BACKUP_DIR)", default: "папка по умолчанию" }[backupInfo.source] || ""})</span>
+        </div>
+        <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px;">
+          <div style="flex:1;min-width:260px;">
+            <div class="field-label">Папка для копий (пусто — ${backupInfo.envDir ? "из .env" : "папка по умолчанию"})</div>
+            <input class="input mono" id="bkDir" value="${esc(backupInfo.panelDir)}" placeholder="${esc(backupInfo.envDir || backupInfo.defaultDir)}" style="width:100%;" />
+          </div>
+          <button class="btn btn-ghost" id="bkCheck">Проверить</button>
+          <button class="btn btn-wire" id="bkSave">Сохранить</button>
+          <button class="btn btn-ghost" id="bkRun">Сделать копию сейчас</button>
+        </div>
+        <div id="bkMsg" style="font-size:12px;margin-bottom:10px;"></div>
+        <div class="field-label">Последние копии в этой папке</div>
+        ${Array.isArray(backupInfo.copies) && backupInfo.copies.length
+          ? `<div style="font-size:12.5px;display:grid;grid-template-columns:auto auto auto;gap:4px 18px;justify-content:start;">
+              ${backupInfo.copies.map(c => `<span class="mono">${esc(c.name)}</span>
+                <span style="color:var(--ink-soft);">${(c.size / 1048576).toFixed(1)} МБ</span>
+                <span style="color:var(--ink-soft);">${fmtDate(c.modified)}</span>`).join("")}
+            </div>`
+          : `<div style="font-size:12px;color:var(--ink-soft);">${esc((backupInfo.copies && backupInfo.copies.error) || "Копий пока нет — первая появится при ближайшем ежемесячном обходе или по кнопке «Сделать копию сейчас».")}</div>`}
+      </div>
+
       <div style="display:flex;gap:20px;align-items:flex-start;">
         <div style="flex:1;min-width:0;">
           <div class="card">
@@ -136,6 +169,39 @@ async function renderAdmin(main) {
           <div id="saveMsg" style="margin-top:8px;font-size:12px;color:var(--green);display:none;text-align:center;">Сохранено</div>
         </div>
       </div>`;
+
+    // ---- Резервные копии баз (раньше — «Оповещения → Отправка») ----
+    const bkMsg = main.querySelector("#bkMsg");
+    const bkShow = (ok, text, hint) => {
+      bkMsg.style.color = ok ? "var(--green)" : "var(--red)";
+      bkMsg.innerHTML = esc(text) + (hint ? `<div style="color:var(--ink-soft);margin-top:4px;">${esc(hint)}</div>` : "");
+    };
+    main.querySelector("#bkCheck").onclick = async () => {
+      const dir = main.querySelector("#bkDir").value.trim() || backupInfo.envDir || backupInfo.defaultDir;
+      bkMsg.style.color = "var(--ink-soft)"; bkMsg.textContent = "Проверяю запись…";
+      try {
+        const r = await api("/admin/backup/check", { method: "POST", body: { dir } });
+        if (r.ok) bkShow(true, `Запись в ${dir} работает — копии туда лягут.`);
+        else bkShow(false, `Не получилось: ${r.error}`, r.hint);
+      } catch (e) { bkShow(false, e.message); }
+    };
+    main.querySelector("#bkSave").onclick = async () => {
+      bkMsg.style.color = "var(--ink-soft)"; bkMsg.textContent = "Проверяю и сохраняю…";
+      try {
+        const r = await api("/admin/backup", { method: "PUT", body: { dir: main.querySelector("#bkDir").value } });
+        bkShow(true, `Сохранено: копии будут класться в ${r.dir}`);
+        setTimeout(() => renderAdmin(main), 1800);
+      } catch (e) { bkShow(false, e.message, e.hint); }
+    };
+    // То же задание планировщика, что и ежемесячный обход: результат виден и в «Оповещения → Отправка».
+    main.querySelector("#bkRun").onclick = async () => {
+      bkMsg.style.color = "var(--ink-soft)"; bkMsg.textContent = "Копирую базы…";
+      try {
+        const r = await api("/notifications/schedule/backup/run", { method: "POST", body: {} });
+        if (r.ok) { bkShow(true, jobDetailText(r.detail)); setTimeout(() => renderAdmin(main), 2600); }
+        else bkShow(false, r.error || r.skipped || "не выполнено");
+      } catch (e) { bkShow(false, e.message, e.hint); }
+    };
 
     document.getElementById("saveGroups").onclick = async () => {
       try {
