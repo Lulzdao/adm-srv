@@ -287,9 +287,14 @@ app.get('/export.csv', (req, res) => {
 // последняя строка. Зато и ошибку здесь ещё можно показать по-человечески —
 // заголовки ответа не ушли. В памяти лежит только сжатое, но на выгрузку за
 // пять лет разумнее CSV: в окне такие варианты помечены значком.
-app.get('/export.xlsx', async (req, res) => {
-  const { stmt, params } = exportStatement(req.query);
+//
+// Весь обработчик — внутри try: он асинхронный, и Express 4 не ловит ошибки таких обработчиков сам.
+// Раньше подготовка запроса стояла до try, и без таблицы calls (сборщик ещё не запускался) ошибка
+// уходила мимо всех обработчиков — процесс веб-части завершался. «Нет таблицы» отдаём общему
+// обработчику ошибок ниже (503 «звонков ещё нет»), как у CSV.
+app.get('/export.xlsx', async (req, res, next) => {
   try {
+    const { stmt, params } = exportStatement(req.query);
     const { file, rows, truncated } = await xlsx.build(stmt.iterate(...params), exportValues);
     if (truncated) {
       console.warn(`[выгрузка xlsx] строк больше ${xlsx.MAX_ROWS}, лист обрезан`);
@@ -304,6 +309,7 @@ app.get('/export.xlsx', async (req, res) => {
     if (truncated) res.setHeader('X-Rows-Truncated', String(xlsx.MAX_ROWS));
     res.end(file);
   } catch (e) {
+    if (/no such table: calls/.test(e.message)) return next(e);
     console.error('[выгрузка xlsx] не собралась:', e.message);
     res.status(500).type('text/plain; charset=utf-8')
       .send('Не удалось собрать файл. Попробуйте выгрузку в CSV или период поменьше.');
