@@ -67,10 +67,43 @@ process.on('unhandledRejection', (reason) => {
 // версия 11 падала сама через секунды после старта («Assertion failed: (env) != nullptr» в
 // деструкторе Statement при сборке мусора). Встроенному модулю собирать нечего. Файл базы тот же —
 // формат SQLite один, переносить или конвертировать ничего не нужно. Нужен Node 22.13+.
-const db = new DatabaseSync(path.join(__dirname, 'messenger.db'));
-db.exec('PRAGMA journal_mode = WAL');
+const DB_FILE = path.join(__dirname, 'messenger.db');
+const db = new DatabaseSync(DB_FILE);
 // better-sqlite3 по умолчанию ждал занятую базу 5 секунд, node:sqlite не ждёт вовсе — держим прежнее.
+// Первым делом, до любого обращения к файлу: раньше ожидание включалось после переключения в WAL, и
+// база, которую при запуске держала другая программа (DB Browser, копирование), роняла «Искру» сразу.
 db.exec('PRAGMA busy_timeout = 5000');
+// Испорченный или занятый файл — понятная строка в журнал вместо стека (как у платформы и модулей).
+try {
+  db.exec('PRAGMA journal_mode = WAL');
+} catch (err) {
+  const code = err && err.errcode;
+  if (code === 26 || code === 11) {
+    logServer('ERROR', 'db_corrupt', { file: DB_FILE, message: err.message,
+      hint: 'остановите службу, переименуйте файл (и -wal, -shm рядом) и положите на его место последнюю копию messenger-ГГГГ-ММ.db из папки резервных копий платформы (DEPLOY.md, «Резервные копии баз»)' });
+    process.exit(1);
+  }
+  if (code === 5 || code === 6) {
+    logServer('ERROR', 'db_locked', { file: DB_FILE, message: err.message,
+      hint: 'база занята другой программой дольше 5 секунд — закройте её (DB Browser и т.п.), служба перезапустится сама' });
+    process.exit(1);
+  }
+  throw err;
+}
+// Повреждение внутри базы запуск не останавливает, но громко пишется в журнал.
+{
+  let problems;
+  try {
+    const rows = db.prepare('PRAGMA quick_check').all().map((r) => Object.values(r)[0]);
+    problems = rows.length === 1 && rows[0] === 'ok' ? null : rows.slice(0, 5).join('; ');
+  } catch (err) {
+    problems = err.message;
+  }
+  if (problems) {
+    logServer('ERROR', 'db_damaged', { file: DB_FILE, problems,
+      hint: 'часть данных может не читаться — восстановите базу из резервной копии' });
+  }
+}
 
 // Транзакция «всё или ничего» — замена db.transaction из better-sqlite3, которого в node:sqlite нет.
 // Возвращает функцию: ошибка внутри откатывает всё, что она успела записать.
@@ -2647,6 +2680,16 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Внутренняя ошибка сервера' });
 });
 
+// Порт не открылся — выходим. Раньше ошибку перехватывал обработчик 'error' у WebSocketServer (он
+// пересылает ошибки HTTP-сервера себе) и только писал в журнал: процесс оставался жить, не слушая
+// ничего, — служба «работает», а подключиться нельзя (проверено на стенде со второй копией).
+server.on('error', (err) => {
+  logServer('ERROR', 'listen_failed', {
+    port: PORT, code: err.code, message: err.message,
+    hint: err.code === 'EADDRINUSE' ? 'порт занят — «Искра» уже запущена (служба ITS-Iskra или вручную) или порт занят другой программой' : undefined,
+  });
+  process.exit(1);
+});
 server.listen(PORT, () => {
   ensureBootstrapAdmin();
   const scheme = server instanceof https.Server ? 'https' : 'http';

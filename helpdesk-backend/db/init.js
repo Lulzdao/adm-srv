@@ -10,12 +10,73 @@ const departments = require("../config/departments");
 // требует либо готовый бинарник под конкретную версию Node/ОС, либо компиляцию
 // на месте (node-gyp + инструменты сборки), что на закрытой сети без интернета
 // не соберётся. node:sqlite — часть самого Node.js, дополнительно собирать нечего.
+// Коды SQLite, по которым сбой при запуске объясняется словами, а не стеком.
+const SQLITE_BUSY = 5, SQLITE_LOCKED = 6, SQLITE_CORRUPT = 11, SQLITE_NOTADB = 26;
+
+/**
+ * Открыть базу так, чтобы сбои запуска объясняли себя.
+ *
+ * busy_timeout — первым делом, до любого обращения к файлу: иначе база, которую
+ * кто-то держит открытой на запись (DB Browser, копирование), роняла службу при
+ * запуске сразу, без ожидания. Проверка на стенде: занятая на 3 секунды база
+ * раньше давала «database is locked» и выход, теперь служба дожидается.
+ *
+ * Испорченный файл по-прежнему останавливает службу (работать не на чем), но с
+ * указанием файла и что делать. Повреждение внутри живой базы запуск не
+ * останавливает — заявки, до которых оно не дотянулось, работают, — а громко
+ * пишется в журнал; то же покажет задание «Резервная копия баз».
+ */
+function openDatabase(file) {
+  let db;
+  try {
+    db = new DatabaseSync(file);
+    db.exec("PRAGMA busy_timeout = 5000");
+    db.exec("PRAGMA journal_mode = WAL");
+  } catch (err) {
+    stopOnDatabaseError(err, file);
+  }
+  let problems;
+  try {
+    const rows = db.prepare("PRAGMA quick_check").all().map((r) => Object.values(r)[0]);
+    problems = rows.length === 1 && rows[0] === "ok" ? null : rows.slice(0, 5).join("; ");
+  } catch (err) {
+    problems = err.message;
+  }
+  if (problems) {
+    console.error(
+      `[внимание] База ${file} повреждена: ${problems}\n` +
+        "           Служба работает, но часть данных может не читаться, а запись — усугубить повреждение.\n" +
+        "           Остановите службу и восстановите базу из резервной копии (DEPLOY.md, «Резервные копии баз»)."
+    );
+  }
+  return db;
+}
+
+function stopOnDatabaseError(err, file) {
+  const code = err && err.errcode;
+  if (code === SQLITE_NOTADB || code === SQLITE_CORRUPT) {
+    console.error(
+      `[остановка] Файл базы ${file} повреждён или это не база SQLite (${err.message}).\n` +
+        "            Остановите службу, переименуйте этот файл (и -wal, -shm рядом) и положите на его место последнюю копию\n" +
+        "            <база>-ГГГГ-ММ.db из папки резервных копий (DEPLOY.md, «Резервные копии баз»)."
+    );
+    process.exit(1);
+  }
+  if (code === SQLITE_BUSY || code === SQLITE_LOCKED) {
+    console.error(
+      `[остановка] База ${file} занята другой программой дольше 5 секунд (${err.message}).\n` +
+        "            Закройте программу, в которой она открыта (DB Browser и т.п.), — служба перезапустится сама."
+    );
+    process.exit(1);
+  }
+  throw err;
+}
+
 function initDb() {
   const dir = path.dirname(config.dbPath);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
-  const db = new DatabaseSync(config.dbPath);
-  db.exec("PRAGMA journal_mode = WAL");
+  const db = openDatabase(config.dbPath);
   db.exec("PRAGMA foreign_keys = ON");
 
   const schema = fs.readFileSync(path.join(__dirname, "schema.sql"), "utf8");

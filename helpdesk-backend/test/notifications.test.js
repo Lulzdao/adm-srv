@@ -220,6 +220,25 @@ test("сервер отверг адрес: помечается неудаче�
   assert.ok(d.error && d.error.length > 0);
 });
 
+test("временный отказ сервера (4xx): письмо остаётся в очереди на повтор", async (t) => {
+  const { db, cleanup } = freshDb();
+  t.after(cleanup);
+  const { notifications, mailer } = load();
+  const smtp = await startFakeSmtp({ deferRecipient: "pozzhe@example.test" });
+  t.after(() => smtp.close());
+
+  mailer.writeSettings(db, { host: "127.0.0.1", port: smtp.port, secure: false, from: "it@example.test" });
+  db.prepare("INSERT INTO notification_settings (kind, enabled, emails) VALUES ('expiry', 1, ?)")
+    .run("pozzhe@example.test");
+
+  notifications.emit(db, { kind: "expiry", dedupKey: "k", payload: {} });
+  await new Promise((r) => setTimeout(r, 400));
+
+  const d = db.prepare("SELECT * FROM notification_deliveries WHERE channel='email'").get();
+  assert.equal(d.status, "pending", "451 значит «попробуйте позже» — раньше письмо терялось навсегда");
+  assert.match(d.error, /451/);
+});
+
 test("retryPending: досылает то, что легло в очередь до настройки почты", async (t) => {
   const { db, cleanup } = freshDb();
   t.after(cleanup);
