@@ -32,22 +32,44 @@ const IDLE_AFTER_MS = 30 * 60 * 1000; // 30 минут бездействия = 
 // рабочих мест сотрудников (см. POST /api/client-log ниже), чтобы разбирать инциденты по логам на
 // сервере, а не просить каждого прислать скриншот или лезть к нему на ПК за файлом. Обе записи
 // дублируются в консоль, как и раньше (console.log/warn при старте никуда не делись).
+//
+// Файлы по дням разложены по папкам месяцев: logs/2026-09/server-2026-09-28.log. Журналы не
+// удаляются — старое администратор чистит сам, целыми месяцами (так решил пользователь). Панель
+// по-прежнему читает ровно один день, а не перебирает месячный файл.
 const logsDir = path.join(__dirname, 'logs');
 if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir);
 function dayStamp(d = new Date()) { return d.toISOString().slice(0, 10); }
-function writeLogLine(file, line) {
+function logFilePath(source, day) { return path.join(logsDir, day.slice(0, 7), `${source}-${day}.log`); }
+let readyMonthDir = null; // папка месяца, которая точно есть, — чтобы не проверять диск на каждую строку
+function writeLogLine(source, line) {
+  const file = logFilePath(source, dayStamp());
+  const dir = path.dirname(file);
+  if (dir !== readyMonthDir) {
+    try { fs.mkdirSync(dir, { recursive: true }); readyMonthDir = dir; } catch { /* запись ниже просто не удастся */ }
+  }
   // Запись лога не должна блокировать ответ на реальный запрос и не должна валить процесс, если
   // диск временно недоступен — поэтому асинхронно и без ожидания/обработки результата.
-  fs.appendFile(path.join(logsDir, file), line + '\n', () => {});
+  fs.appendFile(file, line + '\n', () => {});
+}
+// Журналы, написанные до раскладки по месяцам (logs/server-2026-09-28.log), — в папки месяцев.
+// Файл, для которого в папке уже есть одноимённый, не трогаем: ничего не теряем и не склеиваем.
+for (const name of fs.readdirSync(logsDir)) {
+  const m = /^(?:server|client)-(\d{4}-\d{2})-\d{2}\.log$/.exec(name);
+  if (!m) continue;
+  const target = path.join(logsDir, m[1], name);
+  try {
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    if (!fs.existsSync(target)) fs.renameSync(path.join(logsDir, name), target);
+  } catch { /* файл занят — останется на месте до следующего запуска */ }
 }
 function logServer(level, event, meta = {}) {
   const line = `${new Date().toISOString()} [${level}] ${event} ${JSON.stringify(meta)}`;
-  writeLogLine(`server-${dayStamp()}.log`, line);
+  writeLogLine('server', line);
   (level === 'ERROR' ? console.error : console.log)(line);
 }
 function logClient(entry) {
   const line = `${new Date().toISOString()} [CLIENT] ${JSON.stringify(entry)}`;
-  writeLogLine(`client-${dayStamp()}.log`, line);
+  writeLogLine('client', line);
   console.error(line); // ошибка на чьём-то рабочем месте — сразу видно и в консоли сервера, не только в файле
 }
 // Иначе процесс просто молча падает без единой строки в наших логах — эти два обработчика есть
@@ -1920,7 +1942,7 @@ app.get('/api/admin/logs', auth, requireCapability('can_admin'), (req, res) => {
   let entries = [];
   for (const source of ['server', 'client']) {
     if (typeFilter !== 'all' && typeFilter !== source) continue;
-    const filePath = path.join(logsDir, `${source}-${day}.log`);
+    const filePath = logFilePath(source, day);
     if (!fs.existsSync(filePath)) continue;
     const lines = fs.readFileSync(filePath, 'utf8').split('\n').filter(Boolean);
     for (const line of lines) {
