@@ -15,13 +15,19 @@
 const fs = require('fs');
 const path = require('path');
 
-function dayStamp(d = new Date()) { return d.toISOString().slice(0, 10); }
+// День — по местному времени сервера, как его видит администратор и как его спрашивает панель
+// (todayStr в panel.js). Раньше брался день по UTC: у нас это +3 часа, и записи с полуночи до трёх
+// ночи попадали во «вчерашний» файл, а панель в это время открывала пустой «сегодняшний».
+// Время в самих строках по-прежнему ISO в UTC — панель переводит его в местное при показе.
+function dayStamp(d = new Date()) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 
 function createLogger(logsDir) {
   if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir);
   function logFilePath(source, day) { return path.join(logsDir, day.slice(0, 7), `${source}-${day}.log`); }
   let readyMonthDir = null; // папка месяца, которая точно есть, — чтобы не проверять диск на каждую строку
-  function writeLogLine(source, line) {
+  function writeLogLine(source, line, sync = false) {
     const file = logFilePath(source, dayStamp());
     const dir = path.dirname(file);
     if (dir !== readyMonthDir) {
@@ -29,6 +35,13 @@ function createLogger(logsDir) {
     }
     // Запись лога не должна блокировать ответ на реальный запрос и не должна валить процесс, если
     // диск временно недоступен — поэтому асинхронно и без ожидания/обработки результата.
+    // Кроме ошибок сервера (sync): за ними часто сразу идёт process.exit (сбой запуска, неперехваченное
+    // исключение), и асинхронная запись не успевала дойти до файла — строка оставалась только в
+    // выводе службы. Ошибки редки, подождать их записи не жалко.
+    if (sync) {
+      try { fs.appendFileSync(file, line + '\n'); } catch { /* диск недоступен — остаётся консоль */ }
+      return;
+    }
     fs.appendFile(file, line + '\n', () => {});
   }
   // Журналы, написанные до раскладки по месяцам (logs/server-2026-09-28.log), — в папки месяцев.
@@ -44,7 +57,7 @@ function createLogger(logsDir) {
   }
   function logServer(level, event, meta = {}) {
     const line = `${new Date().toISOString()} [${level}] ${event} ${JSON.stringify(meta)}`;
-    writeLogLine('server', line);
+    writeLogLine('server', line, level === 'ERROR');
     (level === 'ERROR' ? console.error : console.log)(line);
   }
   function logClient(entry) {
