@@ -703,6 +703,83 @@ app.post('/api/register', ipRateLimit({ windowMs: 60 * 60 * 1000, max: 10 }), (r
 // по этому же адресу и так отдаётся страница входа в панель.
 app.get('/api/ping', (req, res) => res.json({ ok: true, app: 'iskra', secure: Boolean(req.secure) }));
 
+// ---------- Сообщения от платформы «Центр» ----------
+// Платформа присылает сюда напоминания по задачам администраторов, а «Искра» доставляет их
+// личным сообщением от служебного пользователя «Центр» — так напоминание всплывает прямо на
+// рабочем месте, как любое сообщение. Точка закрыта общим секретом PLATFORM_NOTIFY_TOKEN (тот же
+// стоит в ISKRA_NOTIFY_TOKEN у платформы); не задан — точка выключена целиком. Проверять адрес
+// отправителя бессмысленно: платформа обращается по имени сервера, а не по 127.0.0.1, и приходит
+// с сетевого адреса машины.
+//
+// Получатель ищется по ФИО: в «Искре» логин и есть ФИО, у администратора платформы оно из домена.
+// Регистр, «ё» и лишние пробелы не мешают. Не нашёлся или нашлось двое — так и отвечаем, и
+// платформа кладёт причину в журнал доставок, а не теряет сообщение молча.
+const PLATFORM_NOTIFY_TOKEN = process.env.PLATFORM_NOTIFY_TOKEN || '';
+const SYSTEM_USER_NAME = 'Центр';
+const SYSTEM_USER_SETTING = 'system_user_id';
+let systemUserIdCache;
+function systemUserId() {
+  if (systemUserIdCache !== undefined) return systemUserIdCache;
+  const stored = Number(getSettingRaw(SYSTEM_USER_SETTING));
+  systemUserIdCache = stored && getUserById.get(stored) ? stored : null;
+  return systemUserIdCache;
+}
+// Служебная учётка заводится при первом сообщении. Пароля у неё нет: '!' — не bcrypt-хэш, по нему
+// не сойдётся ни один пароль, а вход под ней к тому же отвергается явно (см. /api/login).
+function ensureSystemUser() {
+  const existing = systemUserId();
+  if (existing) return existing;
+  const name = getUserByName.get(SYSTEM_USER_NAME) ? `${SYSTEM_USER_NAME} (платформа)` : SYSTEM_USER_NAME;
+  const info = insertUser.run(name, '!', name, 0, 0, Date.now());
+  systemUserIdCache = Number(info.lastInsertRowid);
+  setSettingRaw(SYSTEM_USER_SETTING, String(systemUserIdCache));
+  invalidateUserIdsCache();
+  broadcastUsersChanged();
+  logServer('INFO', 'system_user_created', { id: systemUserIdCache, name });
+  return systemUserIdCache;
+}
+const normName = (v) => String(v || '').toLowerCase().replace(/ё/g, 'е').replace(/\s+/g, ' ').trim();
+function platformTokenOk(req) {
+  const m = /^Bearer (.+)$/.exec(req.get('authorization') || '');
+  const got = Buffer.from(m ? m[1] : '');
+  const want = Buffer.from(PLATFORM_NOTIFY_TOKEN);
+  return got.length === want.length && crypto.timingSafeEqual(got, want);
+}
+app.post('/api/system/notify', ipRateLimit({ windowMs: 60 * 1000, max: 600 }), (req, res) => {
+  // Только латиница, цифры и знаки: секрет едет в заголовке HTTP, а там кириллица недопустима —
+  // с ней платформа не смогла бы его даже отправить.
+  if (PLATFORM_NOTIFY_TOKEN.length < 24 || !/^[\x21-\x7e]+$/.test(PLATFORM_NOTIFY_TOKEN)) {
+    return res.status(404).json({ error: 'приём сообщений от платформы выключен: PLATFORM_NOTIFY_TOKEN не задан или не годится (нужно не короче 24 символов латиницей и цифрами)' });
+  }
+  if (!platformTokenOk(req)) {
+    logServer('WARN', 'system_notify_denied', { ip: req.ip });
+    return res.status(401).json({ error: 'секрет платформы не совпадает с PLATFORM_NOTIFY_TOKEN' });
+  }
+  const { to, text } = req.body || {};
+  if (typeof to !== 'string' || !to.trim() || typeof text !== 'string' || !text.trim()) {
+    return res.status(400).json({ error: 'нужны поля to (ФИО) и text' });
+  }
+  const want = normName(to);
+  const sysId = systemUserId();
+  const matches = db.prepare('SELECT id, username, display_name FROM users').all()
+    .filter((u) => u.id !== sysId && (normName(u.username) === want || normName(u.display_name) === want));
+  if (!matches.length) return res.status(404).json({ error: `нет пользователя «${to.trim()}»` });
+  if (matches.length > 1) return res.status(409).json({ error: `пользователей «${to.trim()}» несколько — различите их ФИО` });
+
+  const fromId = ensureSystemUser();
+  const from = getUserById.get(fromId);
+  const target = matches[0];
+  const body = text.slice(0, 4000).trim();
+  const now = Date.now();
+  const info = insertMessage.run(fromId, null, target.id, body, null, now, null, null);
+  sendToUser(target.id, JSON.stringify({
+    type: 'message', id: info.lastInsertRowid, to_id: target.id, from_id: fromId, from_user: from.display_name,
+    text: body, files: [], created_at: now, reply: null,
+  }));
+  logServer('INFO', 'system_notify', { to: target.id, online: online.has(target.id) });
+  res.json({ ok: true, online: online.has(target.id) });
+});
+
 // Присутствие для тех, кто пришёл не по WebSocket.
 //
 // Веб-панель администратора открывают через прокси платформы, а он не пробрасывает
@@ -736,7 +813,7 @@ app.post('/api/login', ipRateLimit({ windowMs: 10 * 60 * 1000, max: 30 }), (req,
   }
   const user = getUserByName.get(username);
   const passwordOk = bcrypt.compareSync(password, user ? user.password_hash : DUMMY_PASSWORD_HASH);
-  if (!user || !passwordOk) {
+  if (!user || !passwordOk || user.id === systemUserId()) {
     registerLoginFail(username);
     logServer('WARN', 'login_failed', { username, ip: req.ip });
     return res.status(401).json({ error: 'Неверный логин или пароль' });
@@ -1103,6 +1180,7 @@ app.post('/api/admin/users', auth, requireCapability('can_admin'), (req, res) =>
 
 app.patch('/api/admin/users/:id', auth, requireCapability('can_admin'), (req, res) => {
   const id = Number(req.params.id);
+  if (id === systemUserId()) return res.status(400).json({ error: '«Центр» — служебная учётка платформы, её не меняют' });
   const { department_id, department_ids, password, display_name, username, can_broadcast, can_admin, version } = req.body || {};
   const current = db.prepare('SELECT can_broadcast, can_admin, version FROM users WHERE id = ?').get(id);
   if (!current) return res.status(404).json({ error: 'Пользователь не найден' });
@@ -1168,6 +1246,7 @@ app.patch('/api/admin/users/:id', auth, requireCapability('can_admin'), (req, re
 
 app.delete('/api/admin/users/:id', auth, requireCapability('can_admin'), (req, res) => {
   const id = Number(req.params.id);
+  if (id === systemUserId()) return res.status(400).json({ error: '«Центр» — служебная учётка платформы, её не удаляют' });
   if (id === req.user.id) return res.status(400).json({ error: 'Нельзя удалить свою же учётку' });
   // Внешние ключи в SQLite здесь не включены (PRAGMA foreign_keys), поэтому связи чистим руками —
   // иначе строки в user_departments пережили бы самого сотрудника и всплыли бы у нового с тем же id.
@@ -1760,6 +1839,8 @@ function handleClientMessage(ws, user, msg) {
     const room = toRoom(msg.room);
     const to = toUserId(msg.to);
     if (!room && !to) return;
+    // «Центр» — служебный отправитель напоминаний, читать ему некому.
+    if (to && to === systemUserId()) return;
     // Писать в группу может только её участник — молча игнорируем чужую попытку (не подсказываем
     // подбором id группы, что именно там за люди/переписка).
     if (isGroupRoom(room) && !isGroupMemberStmt.get(groupIdFromRoom(room), user.id)) return;

@@ -104,6 +104,8 @@ function initDb() {
     migrateRoles(db);
     migrateNotifications(db);
     migrateStatuses(db);
+    migrateDeliveryChannels(db, schema);
+    migrateNotificationChannels(db);
     db.exec("COMMIT");
   } catch (err) {
     db.exec("ROLLBACK");
@@ -223,6 +225,53 @@ function migrateNotifications(db) {
   setSetting(db, FLAG, new Date().toISOString());
 }
 
+// Канал доставки «iskra» — сообщение в мессенджере от имени «Центра».
+//
+// Список допустимых каналов записан в CHECK таблицы notification_deliveries, а
+// CHECK в SQLite у существующей таблицы не меняется — только пересборкой:
+// новая таблица, копия строк, замена. Идёт внутри общей транзакции запуска,
+// поэтому сбой на любом шаге откатывает всё, и прежняя таблица остаётся как
+// была. Индексы при замене таблицы пропадают вместе с ней — их заново создаёт
+// повторный прогон schema.sql (там всё IF NOT EXISTS).
+//
+// Узнаём, нужна ли пересборка, по тексту самой таблицы в sqlite_master: так
+// миграция идемпотентна и не требует отдельной отметки.
+function migrateDeliveryChannels(db, schema) {
+  const row = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='notification_deliveries'").get();
+  if (!row || row.sql.includes("'iskra'")) return;
+  db.exec(`
+    CREATE TABLE notification_deliveries_new (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_id INTEGER NOT NULL REFERENCES notification_events(id) ON DELETE CASCADE,
+      channel TEXT NOT NULL CHECK (channel IN ('inapp', 'email', 'iskra')),
+      user_id INTEGER REFERENCES users(id),
+      address TEXT,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'sent', 'failed')),
+      error TEXT,
+      is_read INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+      sent_at TEXT
+    );
+    INSERT INTO notification_deliveries_new
+      (id, event_id, channel, user_id, address, status, error, is_read, created_at, sent_at)
+      SELECT id, event_id, channel, user_id, address, status, error, is_read, created_at, sent_at
+      FROM notification_deliveries;
+    DROP TABLE notification_deliveries;
+    ALTER TABLE notification_deliveries_new RENAME TO notification_deliveries;
+  `);
+  db.exec(schema);
+  const n = db.prepare("SELECT COUNT(*) AS n FROM notification_deliveries").get().n;
+  console.log(`Таблица доставок оповещений пересобрана под канал «Искра» (строк перенесено: ${n})`);
+}
+
+// Колонка channels у настроек категорий оповещений — тот же приём, что у
+// is_admin: schema.sql существующую таблицу не трогает.
+function migrateNotificationChannels(db) {
+  const columns = db.prepare("PRAGMA table_info(notification_settings)").all().map((c) => c.name);
+  if (columns.includes("channels")) return;
+  db.exec("ALTER TABLE notification_settings ADD COLUMN channels TEXT");
+}
+
 // Посев локальных аварийных аккаунтов ("break glass"), на случай если оба
 // домена недоступны. Пароли задаются заранее через
 // scripts/set-local-admin-password.js и хранятся только как bcrypt-хэш.
@@ -297,4 +346,4 @@ if (require.main === module) {
   db.close();
 }
 
-module.exports = { initDb, ensureLocalAccounts, migrateStatuses };
+module.exports = { initDb, ensureLocalAccounts, migrateStatuses, migrateDeliveryChannels };

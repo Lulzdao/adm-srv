@@ -13,6 +13,13 @@
 //   author   автор заявки. Адрес берётся из users.email, а он перезаписывается
 //            из домена при КАЖДОМ входе (services/userStore.js), поэтому всегда
 //            свежий. Никаких списков здесь не участвует.
+//   users    конкретные люди, которых называет само событие: ответственные за
+//            задачу, её автор. Адреса — из users.email, как у author.
+//
+// channels — куда доставлять: email (письмо), inapp (отметка в интерфейсе
+// платформы), iskra (сообщение в «Искре» от «Центра»). Задан только у
+// категорий задач: там каналы выбираются в панели, а значение здесь — то, что
+// стоит, пока их не трогали. У остальных категорий каналы зашиты в код.
 //
 // В borrowFrom подстановка @department заменяется на роль отдела, к которому
 // относится заявка: комментарий заявителя уходит ровно тем людям, которые
@@ -29,7 +36,7 @@
 
 const departments = require("./departments");
 
-const RECIPIENTS = { LIST: "list", BORROW: "borrow", AUTHOR: "author" };
+const RECIPIENTS = { LIST: "list", BORROW: "borrow", AUTHOR: "author", USERS: "users" };
 
 // Поля заявки, доступные в шаблоне любого «заявочного» письма.
 const TICKET_VARS = ["номер", "тема", "автор", "кабинет", "важность", "отдел"];
@@ -161,7 +168,91 @@ const rest = [
   },
 ];
 
-const KINDS = [...ticketNew, ...rest];
+// Поля задачи, доступные в шаблоне любого письма о задаче.
+const TASK_VARS = ["задача", "срок", "важность", "ответственные", "ссылка"];
+const TASK_CHANNELS = ["email", "inapp", "iskra"];
+
+const tasks = [
+  {
+    kind: "task_assigned",
+    label: "Вам назначена задача",
+    hint: "Сразу, когда человека делают ответственным. Себе самому не приходит.",
+    source: "tasks",
+    severity: "info",
+    recipients: RECIPIENTS.USERS,
+    trigger: "event",
+    channels: "email,inapp,iskra",
+    vars: [...TASK_VARS, "кто_назначил", "описание"],
+    defaultSubject: "Вам назначена задача: {{задача}}",
+    defaultBody:
+      "{{кто_назначил}} назначил вам задачу «{{задача}}».\n" +
+      "Срок: {{срок}}\n" +
+      "Важность: {{важность}}\n\n" +
+      "{{описание}}\n\n" +
+      "{{ссылка}}",
+  },
+  {
+    kind: "task_due",
+    label: "Приближается срок задачи",
+    hint: "Ежедневная проверка. Пороги — за сколько дней до срока; 0 — в сам день срока.",
+    source: "tasks",
+    severity: "warn",
+    recipients: RECIPIENTS.USERS,
+    trigger: "daily",
+    thresholds: "3,1,0",
+    channels: "email,inapp,iskra",
+    vars: [...TASK_VARS, "осталось"],
+    defaultSubject: "Срок задачи {{осталось}}: {{задача}}",
+    defaultBody:
+      "Срок задачи «{{задача}}» — {{срок}} ({{осталось}}).\n" +
+      "Ответственные: {{ответственные}}\n\n" +
+      "{{ссылка}}",
+  },
+  {
+    kind: "task_overdue",
+    label: "Срок задачи прошёл",
+    hint: "Каждый день, пока задача не закрыта: ответственным и автору.",
+    source: "tasks",
+    severity: "crit",
+    recipients: RECIPIENTS.USERS,
+    trigger: "daily",
+    channels: "email,inapp,iskra",
+    vars: [...TASK_VARS, "просрочено"],
+    defaultSubject: "Просрочена задача: {{задача}}",
+    defaultBody:
+      "Срок задачи «{{задача}}» прошёл {{срок}} — просрочено {{просрочено}}.\n" +
+      "Ответственные: {{ответственные}}\n\n" +
+      "{{ссылка}}",
+  },
+  {
+    kind: "task_digest",
+    label: "Утренняя сводка задач",
+    hint: "По будням, каждому свой список: просроченные, на сегодня и на ближайшие дни. Если задач нет — не приходит.",
+    source: "tasks",
+    severity: "info",
+    recipients: RECIPIENTS.USERS,
+    trigger: "daily",
+    channels: "email",
+    vars: ["кому", "дата", "сводка", "просрочено_шт", "сегодня_шт"],
+    defaultSubject: "Задачи на {{дата}}: просрочено {{просрочено_шт}}, на сегодня {{сегодня_шт}}",
+    defaultBody: "Доброе утро, {{кому}}!\n\n{{сводка}}",
+  },
+  {
+    kind: "task_comment",
+    label: "Новый комментарий в задаче",
+    hint: "Сразу: ответственным, кроме того, кто написал.",
+    source: "tasks",
+    severity: "info",
+    recipients: RECIPIENTS.USERS,
+    trigger: "event",
+    channels: "inapp",
+    vars: [...TASK_VARS, "автор_комментария", "текст"],
+    defaultSubject: "Комментарий к задаче: {{задача}}",
+    defaultBody: "{{автор_комментария}} пишет в задаче «{{задача}}»:\n\n{{текст}}\n\n{{ссылка}}",
+  },
+];
+
+const KINDS = [...ticketNew, ...rest, ...tasks];
 const BY_KIND = new Map(KINDS.map((k) => [k.kind, k]));
 
 function byKind(kind) {
@@ -176,4 +267,4 @@ function ticketNewKind(role) {
   return `ticket_new:${role}`;
 }
 
-module.exports = { KINDS, RECIPIENTS, byKind, ticketNewKind };
+module.exports = { KINDS, RECIPIENTS, TASK_CHANNELS, byKind, ticketNewKind };

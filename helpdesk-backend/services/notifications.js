@@ -1,5 +1,6 @@
 const mailer = require("./mailer");
-const { byKind, RECIPIENTS } = require("../config/notifications");
+const iskra = require("./iskra");
+const { byKind, RECIPIENTS, TASK_CHANNELS } = require("../config/notifications");
 
 // ============================================================================
 //  Оповещения: одно событие — сколько угодно доставок
@@ -48,7 +49,15 @@ function settingsFor(db, kind) {
     thresholds: row.thresholds || def.thresholds || "",
     subjectTpl: row.subject_tpl || def.defaultSubject,
     bodyTpl: row.body_tpl || def.defaultBody,
+    // Каналы — только у категорий, где их выбирают (задачи). null у остальных:
+    // там каналы зашиты в код и этим полем не управляются.
+    channels: def.channels ? parseChannels(row.channels === null || row.channels === undefined ? def.channels : row.channels) : null,
   };
+}
+
+/** «email, iskra» -> Set(["email","iskra"]); неизвестные каналы отбрасываются. */
+function parseChannels(value) {
+  return new Set(String(value || "").split(/[\s,]+/).filter((c) => TASK_CHANNELS.includes(c)));
 }
 
 /**
@@ -66,6 +75,15 @@ function resolveEmails(db, kind, ctx) {
     if (!ctx.authorUserId) return [];
     const user = db.prepare("SELECT email FROM users WHERE id = ?").get(ctx.authorUserId);
     return user && user.email ? [user.email] : [];
+  }
+
+  if (s.def.recipients === RECIPIENTS.USERS) {
+    const ids = [...new Set(ctx.userIds || [])];
+    if (!ids.length) return [];
+    const rows = db.prepare(
+      `SELECT email FROM users WHERE id IN (${ids.map(() => "?").join(",")}) AND email IS NOT NULL AND email != ''`
+    ).all(...ids);
+    return rows.map((r) => r.email);
   }
 
   if (s.def.recipients === RECIPIENTS.BORROW) {
@@ -105,6 +123,7 @@ function emit(db, {
   department = null,
   authorUserId = null,
   inappUserIds = [],
+  userIds = [],
 }) {
   const s = settingsFor(db, kind);
   if (!s) {
@@ -139,12 +158,32 @@ function emit(db, {
     addDelivery.run(eventId, "inapp", userId, null, "sent");
   }
 
-  const addresses = [...new Set(resolveEmails(db, kind, { department, authorUserId }))];
+  // Категории с выбором каналов (задачи): получатели — конкретные люди из
+  // userIds, а куда им доставлять, решает настройка категории.
+  const ch = s.channels;
+  const people = [...new Set(userIds)];
+  if (ch && ch.has("inapp")) {
+    for (const userId of people) addDelivery.run(eventId, "inapp", userId, null, "sent");
+  }
+  let iskraCount = 0;
+  if (ch && ch.has("iskra") && iskra.configured()) {
+    // Адресом пишем ФИО: по нему «Искра» ищет человека, и в журнале сразу
+    // видно, кого не нашли.
+    const byId = db.prepare("SELECT full_name FROM users WHERE id = ?");
+    for (const userId of people) {
+      const u = byId.get(userId);
+      addDelivery.run(eventId, "iskra", userId, u ? u.full_name : null, "pending");
+      iskraCount++;
+    }
+  }
+
+  const wantEmail = !ch || ch.has("email");
+  const addresses = wantEmail ? [...new Set(resolveEmails(db, kind, { department, authorUserId, userIds: people }))] : [];
   for (const address of addresses) {
     addDelivery.run(eventId, "email", null, address, "pending");
   }
 
-  if (addresses.length) {
+  if (addresses.length || iskraCount) {
     const text = render(s.bodyTpl, payload);
     const subj = render(s.subjectTpl, payload);
     // Намеренно без await: вызов идёт из обработчика запроса.
@@ -179,23 +218,35 @@ function enqueueMail(job) {
   return started;
 }
 
-/** Отправить все ожидающие письма события и записать исход каждого. */
+/**
+ * Отправить всё ожидающее по событию — письма и сообщения в «Искру» — и
+ * записать исход каждой отправки.
+ */
 async function deliverPending(db, eventId, subject, text) {
   return enqueueMail(async () => {
     // Выборку делаем ВНУТРИ очереди, а не до неё: иначе список ожидающих строк
     // был бы снят до того, как предыдущая рассылка их разберёт.
     const rows = db.prepare(
-      "SELECT id, address FROM notification_deliveries WHERE event_id = ? AND channel = 'email' AND status = 'pending'"
+      "SELECT id, channel, address FROM notification_deliveries WHERE event_id = ? AND channel IN ('email','iskra') AND status = 'pending'"
     ).all(eventId);
 
     for (const row of rows) {
-      const result = await mailer.send(db, { to: row.address, subject, text });
+      const result = await sendOne(db, row.channel, row.address, subject, text);
       writeOutcome(db, row.id, result);
       if (!result.ok) {
-        console.error(`[оповещения] письмо на ${row.address} не ушло: ${result.error}`);
+        console.error(`[оповещения] ${row.channel === "iskra" ? "сообщение в «Искру» для" : "письмо на"} ${row.address} не ушло: ${result.error}`);
       }
     }
   });
+}
+
+/**
+ * Одна отправка по каналу. В «Искру» уходит тема и текст одним сообщением:
+ * отдельной «темы» у сообщения там нет, а без неё непонятно, о чём речь.
+ */
+function sendOne(db, channel, address, subject, text) {
+  if (channel === "iskra") return iskra.send({ to: address, text: subject ? `${subject}\n\n${text}` : text });
+  return mailer.send(db, { to: address, subject, text });
 }
 
 // Исход одной отправки. Причина записывается ВСЕГДА, в том числе когда письмо
@@ -261,10 +312,10 @@ async function retryPending(db, { includeFailed = false, limit = 100 } = {}) {
   // те же строки, и адресат получает письмо дважды.
   return enqueueMail(async () => {
     const rows = db.prepare(`
-      SELECT d.id, d.address, e.kind, e.payload
+      SELECT d.id, d.channel, d.address, e.kind, e.payload
       FROM notification_deliveries d
       JOIN notification_events e ON e.id = d.event_id
-      WHERE d.channel = 'email' AND (d.status = 'pending' ${includeFailed ? "OR d.status = 'failed'" : ""})
+      WHERE d.channel IN ('email', 'iskra') AND (d.status = 'pending' ${includeFailed ? "OR d.status = 'failed'" : ""})
       ORDER BY d.id LIMIT ?
     `).all(limit);
 
@@ -273,15 +324,11 @@ async function retryPending(db, { includeFailed = false, limit = 100 } = {}) {
       if (!s) continue;
       let payload = {};
       try { payload = JSON.parse(row.payload || "{}"); } catch { /* повреждённый payload не повод падать */ }
-      const result = await mailer.send(db, {
-        to: row.address,
-        subject: render(s.subjectTpl, payload),
-        text: render(s.bodyTpl, payload),
-      });
+      const result = await sendOne(db, row.channel, row.address, render(s.subjectTpl, payload), render(s.bodyTpl, payload));
       writeOutcome(db, row.id, result);
     }
     return rows.length;
   });
 }
 
-module.exports = { emit, settingsFor, resolveEmails, render, retryPending, backfillDeliveries };
+module.exports = { emit, settingsFor, parseChannels, resolveEmails, render, retryPending, backfillDeliveries };

@@ -150,9 +150,9 @@ CREATE TABLE IF NOT EXISTS notification_events (
 CREATE TABLE IF NOT EXISTS notification_deliveries (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   event_id INTEGER NOT NULL REFERENCES notification_events(id) ON DELETE CASCADE,
-  channel TEXT NOT NULL CHECK (channel IN ('inapp', 'email')),
-  user_id INTEGER REFERENCES users(id),  -- канал inapp: чей бейдж
-  address TEXT,                          -- канал email: куда слали
+  channel TEXT NOT NULL CHECK (channel IN ('inapp', 'email', 'iskra')),
+  user_id INTEGER REFERENCES users(id),  -- канал inapp: чей бейдж; iskra: кому
+  address TEXT,                          -- канал email: куда слали; iskra: ФИО получателя
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'sent', 'failed')),
   error TEXT,                            -- ответ SMTP, если не ушло
   is_read INTEGER NOT NULL DEFAULT 0,    -- только для inapp
@@ -169,6 +169,10 @@ CREATE TABLE IF NOT EXISTS notification_settings (
   thresholds TEXT,    -- «30,20,10,5» — только у категорий со сроками
   subject_tpl TEXT,
   body_tpl TEXT,
+  -- Каналы через запятую: «email,inapp,iskra». NULL — как задано по умолчанию
+  -- в config/notifications.js. Есть не у всех категорий: у заявок и сроков
+  -- сертификатов каналы фиксированы, выбор появился вместе с задачами.
+  channels TEXT,
   updated_at TEXT,
   updated_by TEXT
 );
@@ -186,3 +190,72 @@ CREATE INDEX IF NOT EXISTS idx_notif_deliv_pending ON notification_deliveries(st
 -- отбор, и порядок сразу — но работает только в паре с ORDER BY d.id DESC
 -- (см. routes/notifications.js). Замер при 20 000 отметок: 8,16 -> 0,11 мс.
 CREATE INDEX IF NOT EXISTS idx_notif_deliv_inapp_id ON notification_deliveries(user_id, id DESC) WHERE channel = 'inapp';
+
+-- ============================================================================
+--  Задачи администраторов (раздел «Задачи»)
+--
+--  Отдельно от заявок: заявка — просьба сотрудника к отделу, у неё есть
+--  заявитель и очередь; задача — внутренняя работа администраторов, у неё есть
+--  срок и ответственные. Смешивать их в одной таблице значило бы ослабить
+--  проверки обеих: у заявки обязательны кабинет и телефон, у задачи — нет.
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS tasks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL,
+  description TEXT,
+  priority TEXT NOT NULL DEFAULT 'medium' CHECK (priority IN ('low', 'medium', 'high', 'critical')),
+  status TEXT NOT NULL DEFAULT 'todo' CHECK (status IN ('todo', 'progress', 'done')),
+  -- Срок — день и, по желанию, время. Раздельно, а не одной отметкой: у
+  -- большинства задач времени нет вовсе («до пятницы»), и хранить для них
+  -- выдуманные 00:00 значило бы показывать их просроченными с самого утра.
+  due_date TEXT,        -- YYYY-MM-DD
+  due_time TEXT,        -- HH:MM или NULL
+  tags TEXT NOT NULL DEFAULT '',   -- метки через запятую: «Лицензии,Оборудование»
+  ticket_id INTEGER REFERENCES tickets(id) ON DELETE SET NULL,
+  created_by INTEGER NOT NULL REFERENCES users(id),
+  -- Отметки времени — в UTC, как у заявок: фронтенд (fmtDate) так их и читает.
+  -- Сроки выше — наоборот, местные: их вводит человек как «2 октября, 18:00».
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  done_at TEXT,
+  done_by INTEGER REFERENCES users(id)
+);
+
+-- Ответственные. seen_event_id — последнее событие истории, которое человек
+-- видел, открыв задачу: всё, что другие сделали позже (назначили, написали),
+-- для него «новое» и считается в счётчике у пункта меню. Номер события, а не
+-- время: у отметок времени точность в секунду, и назначение с открытием в одну
+-- секунду выглядели бы как «уже видел».
+CREATE TABLE IF NOT EXISTS task_assignees (
+  task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  seen_event_id INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (task_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS task_checklist (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  text TEXT NOT NULL,
+  done INTEGER NOT NULL DEFAULT 0,
+  position INTEGER NOT NULL DEFAULT 0,
+  done_by INTEGER REFERENCES users(id),
+  done_at TEXT
+);
+
+-- История задачи: кто, что и когда поменял, плюс комментарии. Одна лента, а не
+-- две таблицы: в карточке их всё равно показывают вперемешку по времени, а
+-- «срок сдвинули, потом написали почему» читается только вместе.
+CREATE TABLE IF NOT EXISTS task_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  user_id INTEGER REFERENCES users(id),   -- NULL — действие платформы (напоминание)
+  kind TEXT NOT NULL,                     -- created | comment | status | due | ... (см. routes/tasks.js)
+  text TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_tasks_status_due ON tasks(status, due_date);
+CREATE INDEX IF NOT EXISTS idx_task_assignees_user ON task_assignees(user_id);
+CREATE INDEX IF NOT EXISTS idx_task_checklist_task ON task_checklist(task_id, position);
+CREATE INDEX IF NOT EXISTS idx_task_events_task ON task_events(task_id, id);

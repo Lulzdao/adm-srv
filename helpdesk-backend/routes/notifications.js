@@ -1,10 +1,11 @@
 const express = require("express");
 const { requireAuth, requireAdmin } = require("../middleware/auth");
-const { KINDS, byKind, RECIPIENTS } = require("../config/notifications");
+const { KINDS, byKind, RECIPIENTS, TASK_CHANNELS } = require("../config/notifications");
 const { settingsFor, resolveEmails, render, retryPending, backfillDeliveries } = require("../services/notifications");
 const { setSetting } = require("../services/settings");
 const mailer = require("../services/mailer");
 const scheduler = require("../services/scheduler");
+const iskra = require("../services/iskra");
 
 module.exports = function notificationRoutes(db) {
   const router = express.Router();
@@ -147,9 +148,13 @@ module.exports = function notificationRoutes(db) {
         // Планировщика пока нет: категории со сроками и минутами заведены,
         // список получателей заполнить можно, но рассылка по ним ещё не идёт.
         scheduled: def.trigger !== "event",
+        // Выбор каналов — только у категорий задач; у остальных null.
+        channels: s.channels ? [...s.channels] : null,
       };
     });
-    res.json({ kinds: items });
+    // Доступен ли канал «Искра» и если нет — почему: панель показывает
+    // переключатель недоступным с объяснением, а не молча не шлёт.
+    res.json({ kinds: items, iskra: { available: iskra.configured(), why: iskra.whyDisabled() } });
   });
 
   const KNOWN_KINDS = new Set(KINDS.map((k) => k.kind));
@@ -200,13 +205,28 @@ module.exports = function notificationRoutes(db) {
       thresholds = [...new Set(nums)].sort((a, b) => b - a).join(",");
     }
 
+    // Каналы: массив или строка «email,iskra». Только у категорий, где их
+    // выбирают; пустой набор допустим — это то же, что выключить категорию,
+    // но с сохранением выбора шаблона.
+    let channels;
+    if (body.channels !== undefined) {
+      if (!def.channels) return res.status(400).json({ error: "У этой категории каналы не выбираются" });
+      const list = Array.isArray(body.channels) ? body.channels : String(body.channels).split(",");
+      const clean = [...new Set(list.map((c) => String(c).trim()).filter(Boolean))];
+      if (clean.some((c) => !TASK_CHANNELS.includes(c))) {
+        return res.status(400).json({ error: `Каналы — из списка: ${TASK_CHANNELS.join(", ")}` });
+      }
+      channels = clean.join(",");
+    }
+
     const cur = settingsFor(db, kind);
+    const curRow = db.prepare("SELECT channels FROM notification_settings WHERE kind = ?").get(kind);
     db.prepare(`
-      INSERT INTO notification_settings (kind, enabled, emails, thresholds, subject_tpl, body_tpl, updated_at, updated_by)
-      VALUES (?, ?, ?, ?, ?, ?, datetime('now','localtime'), ?)
+      INSERT INTO notification_settings (kind, enabled, emails, thresholds, subject_tpl, body_tpl, channels, updated_at, updated_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now','localtime'), ?)
       ON CONFLICT(kind) DO UPDATE SET
         enabled = excluded.enabled, emails = excluded.emails, thresholds = excluded.thresholds,
-        subject_tpl = excluded.subject_tpl, body_tpl = excluded.body_tpl,
+        subject_tpl = excluded.subject_tpl, body_tpl = excluded.body_tpl, channels = excluded.channels,
         updated_at = excluded.updated_at, updated_by = excluded.updated_by
     `).run(
       kind,
@@ -215,6 +235,7 @@ module.exports = function notificationRoutes(db) {
       thresholds === undefined ? cur.thresholds : thresholds,
       body.subjectTpl === undefined ? cur.subjectTpl : body.subjectTpl,
       body.bodyTpl === undefined ? cur.bodyTpl : body.bodyTpl,
+      channels === undefined ? (curRow ? curRow.channels : null) : channels,
       req.session.user.ad_login
     );
 
@@ -237,6 +258,7 @@ module.exports = function notificationRoutes(db) {
       settings: {
         enabled: saved.enabled, emails: saved.emails, thresholds: saved.thresholds,
         subjectTpl: saved.subjectTpl, bodyTpl: saved.bodyTpl,
+        channels: saved.channels ? [...saved.channels] : null,
       },
     });
   });
@@ -343,11 +365,11 @@ module.exports = function notificationRoutes(db) {
   // Журнал отправок: последние попытки со статусом и текстом ошибки.
   router.get("/deliveries", it, (req, res) => {
     const rows = db.prepare(`
-      SELECT d.id, d.address, d.status, d.error, d.created_at, d.sent_at,
+      SELECT d.id, d.channel, d.address, d.status, d.error, d.created_at, d.sent_at,
              e.kind, e.subject
       FROM notification_deliveries d
       JOIN notification_events e ON e.id = d.event_id
-      WHERE d.channel = 'email'
+      WHERE d.channel IN ('email', 'iskra')
       ORDER BY d.id DESC LIMIT 50
     `).all();
     const labels = Object.fromEntries(KINDS.map((k) => [k.kind, k.label]));
@@ -411,7 +433,26 @@ function sampleFor(def) {
     "номер_документа": "000000000000000001",
   };
   const smdr = { "период": "июль 2026", "минуты": "4210", "звонков": "1867" };
+  const tasks = {
+    "задача": "Заменить ИБП в серверной",
+    "срок": "2 окт, пт, 18:00",
+    "важность": "высокая",
+    "ответственные": "Тестова Проба Тестовна, Пробников Пробник Пробникович",
+    "ссылка": "Открыть: Центр → Задачи",
+    "описание": "Старый пищит, модель согласована с ХОЗ.",
+    "кто_назначил": "Образцов Образец Образцович",
+    "осталось": "завтра",
+    "просрочено": "2 дня",
+    "автор_комментария": "Тестова Проба Тестовна",
+    "текст": "ИБП привезут в среду утром.",
+    "кому": "Проба Тестовна",
+    "дата": "29 сен",
+    "сводка": "Срок прошёл:\n  • Заменить ИБП в серверной — 28 сен, пн\n\nСегодня:\n  • Инвентаризация картриджей — 29 сен, вт",
+    "просрочено_шт": "1",
+    "сегодня_шт": "1",
+  };
   if (def.source === "certs") return certs;
   if (def.source === "smdr") return smdr;
+  if (def.source === "tasks") return tasks;
   return base;
 }
