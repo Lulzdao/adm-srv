@@ -28,12 +28,16 @@ const { envSource } = require("../config/config");
  * меняется, поэтому загрузить новый можно из любой панели — платформы или
  * «Искры», разницы нет.
  *
- * Порядок поиска:
- *   1. TLS_PFX (+ TLS_PFX_PASSWORD) — если путь задан явно;
- *   2. TLS_CERT + TLS_KEY — PEM, где TLS_CERT это ПОЛНАЯ цепочка;
- *   3. общее хранилище (по умолчанию MESSENGER/certs/server.pfx).
- * Явно заданный в .env сертификат отключает слежение за файлом: если
- * администратор прописал путь руками, мы не подменяем его решение.
+ * Порядок поиска — ТОТ ЖЕ, что у «Искры» (MESSENGER/lib/tls.js):
+ *   1. общее хранилище (по умолчанию MESSENGER/certs/server.pfx) — его
+ *      загружают из панели, и загруженное должно действовать;
+ *   2. TLS_PFX (+ TLS_PFX_PASSWORD) — запасной путь, когда хранилища нет;
+ *   3. TLS_CERT + TLS_KEY — PEM, где TLS_CERT это ПОЛНАЯ цепочка.
+ * Раньше платформа ставила переменные ВЫШЕ хранилища, а «Искра» — ниже:
+ * забытая в .env TLS_PFX тихо перекрывала сертификат, загруженный из панели,
+ * и платформа продолжала отдавать старый, пока «Искра» уже отдавала новый.
+ * Если заданы и хранилище, и переменная — действует хранилище, а про лишнюю
+ * переменную громко говорим при запуске и в панели (shadowedEnv).
  */
 
 // Где лежит общее хранилище — каталог certs РАБОТАЮЩЕЙ «Искры».
@@ -54,18 +58,6 @@ function readIfExists(file, encoding) {
 }
 
 function resolveTlsOptions(env = process.env) {
-  if (env.TLS_PFX) {
-    const options = { pfx: fs.readFileSync(env.TLS_PFX) };
-    if (env.TLS_PFX_PASSWORD) options.passphrase = env.TLS_PFX_PASSWORD;
-    return { options, source: "env-pfx", where: env.TLS_PFX };
-  }
-  if (env.TLS_CERT && env.TLS_KEY) {
-    return {
-      options: { cert: fs.readFileSync(env.TLS_CERT), key: fs.readFileSync(env.TLS_KEY) },
-      source: "env-pem",
-      where: env.TLS_CERT,
-    };
-  }
   const dir = env.SHARED_CERT_DIR || SHARED_CERT_DIR;
   const file = path.join(dir, "server.pfx");
   const pfx = readIfExists(file);
@@ -78,6 +70,26 @@ function resolveTlsOptions(env = process.env) {
     if (pass) options.passphrase = pass;
     return { options, source: "shared-store", where: file };
   }
+  if (env.TLS_PFX) {
+    const options = { pfx: fs.readFileSync(env.TLS_PFX) };
+    if (env.TLS_PFX_PASSWORD) options.passphrase = env.TLS_PFX_PASSWORD;
+    return { options, source: "env-pfx", where: env.TLS_PFX };
+  }
+  if (env.TLS_CERT && env.TLS_KEY) {
+    return {
+      options: { cert: fs.readFileSync(env.TLS_CERT), key: fs.readFileSync(env.TLS_KEY) },
+      source: "env-pem",
+      where: env.TLS_CERT,
+    };
+  }
+  return null;
+}
+
+// Переменная сертификата, которая задана, но не действует, потому что есть
+// хранилище. null — лишней нет.
+function shadowedEnvVar(env = process.env) {
+  if (env.TLS_PFX) return "TLS_PFX";
+  if (env.TLS_CERT && env.TLS_KEY) return "TLS_CERT";
   return null;
 }
 
@@ -99,6 +111,12 @@ function inspectTlsOptions(options) {
     let probe;
     try { probe = tls.createServer(options, (socket) => socket.end()); }
     catch (err) { return reject(err); }
+    // Серверная сторона пробного соединения. probe.close() ждёт, пока она
+    // закроется сама, а после socket.end() она могла висеть открытой: при
+    // каждом разборе сертификата (запуск, загрузка, панель) оставались сокеты,
+    // а процесс тестов из-за них не завершался. Закрываем их явно.
+    const conns = new Set();
+    probe.on("connection", (s) => { conns.add(s); s.on("close", () => conns.delete(s)); });
 
     // Прибираем ровно один раз: до правки повторный вызов fail() из второго
     // источника ошибки закрывал уже закрытый сервер.
@@ -109,6 +127,7 @@ function inspectTlsOptions(options) {
       done = true;
       if (timer) clearTimeout(timer);
       try { probe.close(); } catch { /* уже закрыт */ }
+      for (const s of conns) s.destroy();
       if (err) reject(err); else resolve(info);
     };
 
@@ -241,18 +260,30 @@ function createAppServer(app, env = process.env) {
   }
 
   const server = https.createServer(resolved.options, app);
-  current = { secure: true, source: resolved.source, where: resolved.where, certificate: null };
+  const shadowed = resolved.source === "shared-store" ? shadowedEnvVar(env) : null;
+  current = { secure: true, source: resolved.source, where: resolved.where, certificate: null, shadowedEnv: shadowed };
   console.log(`TLS включён: сертификат из ${resolved.where} (${resolved.source})`);
+  if (shadowed) {
+    // Действует хранилище — так и задумано. Но переменная, про которую забыли,
+    // вступит в силу, если файл из хранилища однажды удалят, и сертификат
+    // «неожиданно» окажется старым. Пусть лишнее будет видно сразу.
+    const from = envSource(shadowed);
+    console.warn(
+      `[внимание] Сертификат есть в общем хранилище (${resolved.where}) — действует он. ` +
+        `Переменная ${shadowed} тоже задана, но не используется.\n` +
+        `           Переменная пришла: ${from === ".env" ? "из файла .env" : "НЕ из .env — из окружения процесса"}\n` +
+        `           Уберите её, чтобы сертификатом управляла только панель: строка «${shadowed}=» в .env.`
+    );
+  }
   if (resolved.source !== "shared-store") {
-    // Отдельный файл в .env — рабочий вариант, но у него две платы: «Искра»
-    // читает своё хранилище и может предъявлять другой сертификат, а загрузка
-    // из панели отключена. Пусть это будет видно в журнале, а не выясняется
-    // при первой замене сертификата.
+    // Хранилища нет — работает запасной путь через .env. Рабочий вариант, но
+    // сертификат тогда не общий с «Искрой». Как только файл загрузят из панели
+    // (он ляжет в хранилище), действовать будет он — и без перезапуска.
     const name = resolved.source === "env-pfx" ? "TLS_PFX" : "TLS_CERT";
     const from = envSource(name);
     console.warn(
-      `[внимание] Сертификат задан переменной ${name}, а не общим хранилищем. Тогда он не общий ` +
-        "с «Искрой» (она читает своё хранилище) и заменить его из панели нельзя.\n" +
+      `[внимание] Сертификат задан переменной ${name}: в общем хранилище файла нет. Он не общий ` +
+        "с «Искрой» (она читает хранилище); загрузите сертификат из панели — действовать будет он.\n" +
         `           Переменная пришла: ${from === ".env" ? "из файла .env" : "НЕ из .env — она уже была в окружении процесса"}\n` +
         (from === ".env"
           ? `           Уберите ${name} из .env и укажите SHARED_CERT_DIR — тогда сертификат станет общим.`
@@ -292,9 +323,9 @@ function createAppServer(app, env = process.env) {
  * сертификатом, новые идут с новым.
  */
 async function reloadCertStore() {
-  if (!activeServer || current.source !== "shared-store") {
-    // Сертификат задан явно в .env — менять его на ходу не наше дело.
-    return { applied: false, reason: "not-shared-store" };
+  if (!activeServer) {
+    // Платформа запущена по http — перейти на https на ходу нельзя.
+    return { applied: false, reason: "not-https" };
   }
   const resolved = resolveTlsOptions();
   if (!resolved || resolved.source !== "shared-store") {
@@ -303,7 +334,12 @@ async function reloadCertStore() {
   try {
     tls.createSecureContext(resolved.options); // сначала убеждаемся, что файл рабочий
     activeServer.setSecureContext(resolved.options);
+    // Хранилище важнее переменных: если стартовали с сертификатом из .env, а
+    // потом загрузили файл из панели — переходим на него. Переменная остаётся
+    // лишней, и панель об этом скажет.
+    current.source = "shared-store";
     current.where = resolved.where;
+    current.shadowedEnv = shadowedEnvVar();
   } catch (err) {
     // Важно НЕ применять битый файл: старый контекст остаётся рабочим,
     // сервис продолжает отвечать.
@@ -315,8 +351,10 @@ async function reloadCertStore() {
   return { applied: true };
 }
 
+// Следим всегда, когда включён https, — и когда сертификат пришёл из .env:
+// загрузка файла в хранилище (из панели платформы или «Искры») должна его
+// заменить, потому что хранилище важнее переменных.
 function watchSharedStore(server, source, dir = SHARED_CERT_DIR) {
-  if (source !== "shared-store") return; // явный путь в .env менять на ходу не наше дело
   activeServer = server;
   activeDir = dir;
   if (!fs.existsSync(dir)) return;
@@ -324,11 +362,26 @@ function watchSharedStore(server, source, dir = SHARED_CERT_DIR) {
   let timer = null;
   try {
     const watcher = fs.watch(dir, (event, filename) => {
+      // Каталог удалили или перенесли (переустановка «Искры», уборка). На Windows слежение за
+      // исчезнувшим каталогом не падает, а шлёт события без конца — десятки тысяч в секунду:
+      // процессор на 100%, и так до перезапуска службы. Замечено тестами 2026-09-29.
+      if (!fs.existsSync(dir)) {
+        try { watcher.close(); } catch { /* уже закрыт */ }
+        clearTimeout(timer);
+        console.warn(
+          `Каталог хранилища сертификатов ${dir} исчез — слежение за ним остановлено. ` +
+          "Действующий сертификат продолжает работать; новый подхватится при перезапуске службы."
+        );
+        return;
+      }
       if (filename && !/^server\.(pfx|pass)$/.test(String(filename))) return;
       // Панель пишет .pfx и .pass по очереди, да и запись не атомарна — ждём,
       // пока файлы улягутся, иначе прочитаем половину.
       clearTimeout(timer);
       timer = setTimeout(() => { reloadCertStore().catch(() => { /* уже залогировано */ }); }, 1500);
+      // Как и само слежение (watcher.unref ниже), таймер не должен держать процесс: службу держит
+      // сервер, а в тестах процесс иначе не завершался, пока каталог менялся/удалялся.
+      if (timer.unref) timer.unref();
     });
     // Обработчик 'error' обязателен. try/catch выше ловит только неудачу
     // САМОГО вызова fs.watch; ошибка, пришедшая позже (каталог удалили,

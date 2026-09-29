@@ -316,9 +316,21 @@ function createTls({ baseDir, logServer }) {
     let timer = null;
     try {
       const watcher = fs.watch(certsDir, () => {
+        // Каталог удалили или перенесли. На Windows слежение за исчезнувшим каталогом не падает, а
+        // шлёт события без конца — десятки тысяч в секунду: процессор на 100% до перезапуска.
+        if (!fs.existsSync(certsDir)) {
+          try { watcher.close(); } catch { /* уже закрыт */ }
+          clearTimeout(timer);
+          logServer('WARN', 'tls_watch_stopped', {
+            dir: certsDir,
+            hint: 'Каталог certs/ исчез — слежение остановлено. Действующий сертификат работает; новый подхватится после перезапуска',
+          });
+          return;
+        }
         // .pfx и .pass пишутся по очереди, и запись не атомарна — ждём, пока файлы улягутся.
         clearTimeout(timer);
         timer = setTimeout(() => { reloadCertFromStore(); }, 1000);
+        if (timer.unref) timer.unref();
       });
       // Без обработчика 'error' сбой слежения (каталог удалили, диск отвалился) пришёл бы событием
       // и уронил весь сервер — а это мессенджер всей организации.
@@ -328,15 +340,23 @@ function createTls({ baseDir, logServer }) {
     }
   }
 
+  // Сколько дней осталось — от даты окончания, заново при каждом вызове. daysLeft из разбора
+  // сертификата считается один раз (при запуске или замене), и у службы, работающей без
+  // перезапуска дольше месяца, он застывал: напоминание «за 30 дней» тогда не наступало вовсе.
+  function daysLeftNow(cert) {
+    const t = cert && cert.validTo ? Date.parse(cert.validTo) : NaN;
+    return Number.isFinite(t) ? Math.floor((t - Date.now()) / 86400000) : null;
+  }
+
   // Автопродления нет: сертификат перевыпускают руками, и единственный способ не проспать это —
   // напоминать заранее. Раз в сутки, начиная за 30 дней.
   function warnIfExpiring() {
-    if (!currentCertificate || currentCertificate.daysLeft === null) return;
-    if (currentCertificate.daysLeft > 30) return;
-    logServer(currentCertificate.daysLeft <= 0 ? 'ERROR' : 'WARN', 'tls_certificate_expiring', {
+    const left = daysLeftNow(currentCertificate);
+    if (left === null || left > 30) return;
+    logServer(left <= 0 ? 'ERROR' : 'WARN', 'tls_certificate_expiring', {
       subject: currentCertificate.subject,
       valid_to: currentCertificate.validTo,
-      days_left: currentCertificate.daysLeft,
+      days_left: left,
       hint: 'Выпустите новый сертификат в удостоверяющем центре домена и загрузите его в панели, раздел "Сертификат"',
     });
   }
@@ -368,7 +388,8 @@ function createTls({ baseDir, logServer }) {
           stored = { error: String((err && err.message) || err) };
         }
       }
-      const active = currentCertificate;
+      // daysLeft — на сегодня, а не на момент разбора (см. daysLeftNow).
+      const active = currentCertificate ? { ...currentCertificate, daysLeft: daysLeftNow(currentCertificate) } : null;
       res.json({
         enabled: server instanceof https.Server,
         source: tlsSource,                              // store | env-pfx | env-pem | null

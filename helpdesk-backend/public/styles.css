@@ -280,6 +280,9 @@ a { color: var(--md-primary); }
   cursor: pointer; transition: background 0.15s ease, color 0.15s ease;
 }
 .head-action:hover, .head-action.active { background: #FFFFFF; color: var(--md-primary); }
+/* Сертификат сервера истекает (≤ 30 дней) или истёк — щит красный, пока его не
+   заменят (см. paintCertBadge в app.js). Красный остаётся и при наведении. */
+.head-action.alert, .head-action.alert:hover, .head-action.alert.active { background: var(--red); color: #FFFFFF; }
 .sidebar-nav { padding: 4px 12px 12px; flex: 1; min-height: 0; overflow-y: auto; }
 /* Пункт меню — плашка на всю ширину. Верхний уровень белый и полужирный,
    вложенные пункты бледнее и со сдвигом. Модуль из одной страницы («Искра»)

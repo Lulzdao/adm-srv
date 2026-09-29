@@ -780,6 +780,51 @@ function restoreNavScroll() {
   requestAnimationFrame(() => { nav.scrollTop = navScroll; });
 }
 
+// ====== Напоминание о сроке сертификата сервера ======
+//
+// Сертификат домена живёт два года, автопродления нет — единственный способ не
+// проспать замену — напоминать. Щит в шапке (вход в «Сертификаты») краснеет за
+// CERT_WARN_DAYS дней до конца срока и остаётся красным, если срок вышел;
+// подсказка говорит, сколько осталось. Порог — тот же, что у «Искры»
+// (tls_certificate_expiring в её журнале).
+const CERT_WARN_DAYS = 30;
+const CERT_CHECK_MS = 30 * 60 * 1000; // сертификат меняется редко — чаще спрашивать незачем
+let certBadge = { at: 0, cert: null, secure: true };
+
+// Сколько дней осталось — от даты окончания, а не из daysLeft сервера: его
+// считают при запуске службы, и через месяц работы без перезапуска он врёт.
+function certDaysLeft(c) {
+  const t = c && c.validTo ? Date.parse(c.validTo) : NaN;
+  return Number.isFinite(t) ? Math.floor((t - Date.now()) / 86400000) : null;
+}
+
+function applyCertBadge(btn) {
+  const left = certDaysLeft(certBadge.cert);
+  const alert = left !== null && left <= CERT_WARN_DAYS;
+  btn.classList.toggle("alert", alert);
+  btn.title = !certBadge.secure ? "Сертификаты — платформа работает без сертификата (http)"
+    : left === null ? "Сертификаты"
+    : left < 0 ? `Сертификат сервера ИСТЁК ${-left} дн. назад — замените его`
+    : alert ? `Сертификат сервера истекает через ${left} дн. — пора заменить`
+    : `Сертификаты — сертификат сервера действует ещё ${left} дн.`;
+}
+
+// Оболочка перерисовывается при каждом переходе — поэтому красим сразу по
+// запомненному, а спрашиваем сервер не чаще раза в CERT_CHECK_MS.
+async function paintCertBadge(btn) {
+  applyCertBadge(btn);
+  if (Date.now() - certBadge.at < CERT_CHECK_MS) return;
+  certBadge.at = Date.now();
+  try {
+    const s = await api("/certificates/server");
+    certBadge = { at: certBadge.at, cert: s.certificate, secure: s.secure };
+    // Сертификат ещё разбирается (сразу после запуска службы) — спросим снова при следующем переходе.
+    if (s.secure && !s.certificate) certBadge.at = 0;
+  } catch { return; }
+  const current = document.getElementById("certsBtn");
+  if (current) applyCertBadge(current);
+}
+
 function renderShell() {
   const u = state.user;
   const totalUnread = state.notifications.filter(n => !n.is_read).length;
@@ -882,7 +927,7 @@ function renderShell() {
   restoreNavScroll();
 
   const certsBtn = document.getElementById("certsBtn");
-  if (certsBtn) certsBtn.onclick = () => setView("certs");
+  if (certsBtn) { certsBtn.onclick = () => setView("certs"); paintCertBadge(certsBtn); }
 
   root.querySelectorAll(".nav-btn").forEach(btn => btn.onclick = () => setView(btn.dataset.view));
   root.querySelectorAll(".nav-group-header").forEach(btn => btn.onclick = () => toggleNavGroup(btn.closest(".nav-group")));
