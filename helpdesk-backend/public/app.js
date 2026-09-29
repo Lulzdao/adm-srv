@@ -475,11 +475,30 @@ function clearViewPoll() {
   if (viewPollHandle) { clearInterval(viewPollHandle); viewPollHandle = null; }
 }
 
+// Какой пункт меню подсвечивать. У карточки заявки своего пункта нет, и раньше
+// при переходе в неё выделение пропадало совсем — человек терял, в каком он
+// разделе. Теперь подсвечивается список, из которого карточку открыли. Если
+// открыли не из списка (по ссылке #detail/148), — входящие: у сотрудника так
+// называется его единственный список, у исполнителя — очередь.
+//
+// Откуда пришли, помнит и sessionStorage вкладки: после F5 на карточке state
+// создаётся заново, и без этого «Мои заявки» сменялись бы на «Входящие».
+const NAV_FROM_KEY = "navFrom";
+function navView() {
+  if (state.view !== "detail") return state.view;
+  let from = state.previousView;
+  if (!from) { try { from = sessionStorage.getItem(NAV_FROM_KEY); } catch { /* хранилище недоступно */ } }
+  return from && from !== "detail" ? from : "inbox";
+}
+
 function setView(view, arg, { replace = false } = {}) {
   clearViewPoll();
   if (view === "detail") {
     state.currentTicket = arg;
-    if (state.view !== "detail") state.previousView = state.view; // не затираем при обновлении самой карточки
+    if (state.view !== "detail") {
+      state.previousView = state.view; // не затираем при обновлении самой карточки
+      try { sessionStorage.setItem(NAV_FROM_KEY, state.view); } catch { /* хранилище недоступно — переживём */ }
+    }
   }
   state.view = view;
   writeHash(replace);
@@ -540,6 +559,12 @@ async function restoreViewFromHash() {
     // никакой памяти нет, да и содержимое могло измениться.
     try {
       const { ticket } = await api("/tickets/" + detail[1]);
+      // После F5 state.view — начальное «inbox», и setView записал бы его как
+      // список, из которого пришли. Берём сохранённый во вкладке (см. navView).
+      if (state.view !== "detail") {
+        try { state.previousView = sessionStorage.getItem(NAV_FROM_KEY) || state.previousView; } catch { /* нет хранилища */ }
+        state.view = "detail";
+      }
       setView("detail", ticket, { replace: true });
       return;
     } catch {
@@ -611,7 +636,7 @@ function navGroupHtml(groupId, label, iconName, badge, items) {
         ${badge ? `<span class="nav-badge">${badge}</span>` : ""}
         <span class="nav-chevron">${icon("chevron", 13)}</span>
       </button>
-      <div class="nav-subgroup" style="max-height:${open ? "none" : "0"}">${items.map(it => navBtnHtml(it, state.view === it.id, true)).join("")}</div>
+      <div class="nav-subgroup" style="max-height:${open ? "none" : "0"}">${items.map(it => navBtnHtml(it, navView() === it.id, true)).join("")}</div>
     </div>`;
 }
 
@@ -734,13 +759,13 @@ function renderShell() {
       { id: "mine", label: "Мои заявки", icon: "folder" },
       { id: "create", label: "Новая заявка", icon: "plus" },
     ];
-    navHtml = items.map(it => navBtnHtml(it, state.view === it.id, false)).join("");
+    navHtml = items.map(it => navBtnHtml(it, navView() === it.id, false)).join("");
   } else {
     const items = [
       { id: "inbox", label: "Заявки", icon: "folder", badge: totalUnread },
       { id: "create", label: "Новая заявка", icon: "plus" },
     ];
-    navHtml = items.map(it => navBtnHtml(it, state.view === it.id, false)).join("");
+    navHtml = items.map(it => navBtnHtml(it, navView() === it.id, false)).join("");
   }
 
   if (state.modules.length) {
@@ -748,7 +773,7 @@ function renderShell() {
       const views = (m.views && m.views.length) ? m.views : [{ id: "root", label: m.label, sub: "" }];
       if (views.length === 1) {
         const it = { id: `module:${m.id}:${views[0].id}`, label: m.label, icon: moduleIcon(m.id) };
-        return navBtnHtml(it, state.view === it.id, false);
+        return navBtnHtml(it, navView() === it.id, false);
       }
       const items = views.map(v => ({ id: `module:${m.id}:${v.id}`, label: v.label, icon: MODULE_VIEW_ICONS[v.id] }));
       return navGroupHtml(`mod-${m.id}`, m.label, moduleIcon(m.id), 0, items);
