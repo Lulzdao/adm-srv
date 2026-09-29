@@ -80,6 +80,7 @@ test("раздел «Сертификаты» — только админист�
     ["get", "/api/certificates/server"], ["post", "/api/certificates/server", { pfx: "AA==" }],
     ["get", "/api/certificates/trusted"], ["post", "/api/certificates/trusted", {}],
     ["delete", "/api/certificates/trusted/x.crt"], ["get", "/api/certificates/modules"],
+    ["post", "/api/certificates/restart", {}],
   ]) {
     assert.strictEqual((await итшник[метод](адрес, тело)).status, 403, `${метод} ${адрес}`);
   }
@@ -169,4 +170,31 @@ test("показ сертификатов модулей: HTTP-модули — 
   assert.strictEqual(byId.messenger.authorized, false, "самоподписанный — показать можно, доверять нельзя");
   assert.ok(byId.messenger.authorizationError);
   assert.ok(byId.messenger.certificate, "цепочку видно даже у недоверенного сертификата — ради этого экран и нужен");
+});
+
+// Перезапуск из панели после первой загрузки сертификата (http -> https). Процесс завершает себя, а
+// поднимает его служба NSSM — поэтому разрешено только под службой. Настоящий выход в тесте подменён.
+test("перезапуск из панели: не служба — отказ; служба — перезапуск запланирован", { skip }, async (t) => {
+  const { админ } = await stand(t);
+  // Только после stand(): он сбрасывает кэш модулей, и маршруты грузят свою копию selfRestart.
+  const selfRestart = require("../services/selfRestart");
+  const orig = { runs: selfRestart.runsUnderService, sched: selfRestart.scheduleRestart };
+  t.after(() => { selfRestart.runsUnderService = orig.runs; selfRestart.scheduleRestart = orig.sched; });
+  const calls = [];
+  selfRestart.scheduleRestart = (who) => calls.push(who);
+  selfRestart.runsUnderService = () => false;
+  let r = await загрузить(админ, certs().pfxOpen, "");
+  assert.strictEqual(r.status, 201, r.text);
+  assert.strictEqual(r.json.restartRequired, true);
+  assert.strictEqual(r.json.canRestart, false, "запущена не службой — кнопки «перезапустить сейчас» нет");
+  r = await админ.post("/api/certificates/restart", {});
+  assert.strictEqual(r.status, 409, "не служба: выход её бы просто выключил");
+  assert.strictEqual(calls.length, 0);
+
+  selfRestart.runsUnderService = () => true;
+  r = await загрузить(админ, certs().pfxOpen, "");
+  assert.strictEqual(r.json.canRestart, true);
+  r = await админ.post("/api/certificates/restart", {});
+  assert.strictEqual(r.status, 202, r.text);
+  assert.deepStrictEqual(calls, ["!админ"], "перезапуск запланирован, в журнале — кто");
 });

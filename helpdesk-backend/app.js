@@ -1,6 +1,7 @@
 const express = require("express");
 const path = require("path");
 const session = require("express-session");
+const { SqliteSessionStore } = require("./services/sessionStore");
 const config = require("./config/config");
 
 // ============================================================================
@@ -30,6 +31,8 @@ function createApp(db, { secureCookie = false } = {}) {
   app.disable("x-powered-by");
 
   app.use(session({
+    // Сеансы — в базе (services/sessionStore.js): переживают перезапуск и обновление платформы.
+    store: new SqliteSessionStore(db),
     secret: config.sessionSecret,
     resave: false,
     saveUninitialized: false,
