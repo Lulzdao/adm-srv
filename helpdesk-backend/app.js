@@ -60,6 +60,7 @@ function createApp(db, { secureCookie = false } = {}) {
   app.use("/api/auth", require("./routes/auth")(db));
   app.use("/api/tickets", require("./routes/tickets")(db));
   app.use("/api/notifications", require("./routes/notifications")(db));
+  app.use("/api/tasks", require("./routes/tasks")(db));
   app.use("/api/admin", require("./routes/admin")(db));
   app.use("/api/departments", require("./routes/departments")());
   app.use(require("./routes/modules")());

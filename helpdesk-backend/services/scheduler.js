@@ -3,6 +3,7 @@ const { retryPending } = require("./notifications");
 const certs = require("./sources/certs");
 const smdr = require("./sources/smdr");
 const backup = require("./backup");
+const tasks = require("./sources/tasks");
 
 // ============================================================================
 //  Планировщик
@@ -40,6 +41,12 @@ const JOBS = [
     label: "Резервная копия баз",
     period: "monthly",
     run: (db) => backup.run(db),
+  },
+  {
+    id: "tasks",
+    label: "Сроки задач и утренняя сводка",
+    period: "daily",
+    run: (db) => tasks.run(db),
   },
 ];
 

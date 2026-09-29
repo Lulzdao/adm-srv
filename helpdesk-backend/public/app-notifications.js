@@ -24,6 +24,9 @@ function deliveryBadge(e) {
   return `<span class="badge" style="color:var(--green);background:var(--green-soft);">отправлено: ${e.sent}</span>`;
 }
 
+// Подписи каналов доставки — в ленте, журнале отправок и настройке задач.
+const NOTIF_CHANNEL_LABEL = { email: "почта", inapp: "лента", iskra: "Искра" };
+
 async function renderNotifications(main, tab) {
   clearViewPoll();
   if (!NOTIF_TABS[tab]) tab = "feed";
@@ -34,9 +37,9 @@ async function renderNotifications(main, tab) {
   try {
     if (tab === "feed") await renderNotifFeed(page);
     else {
-      const { kinds } = await api("/notifications/kinds");
+      const { kinds, iskra } = await api("/notifications/kinds");
       if (tab === "templates") renderNotifTemplates(page, kinds);
-      else await renderNotifSmtp(page, kinds);
+      else await renderNotifSmtp(page, kinds, iskra);
     }
   } catch (e) {
     page.innerHTML = `<div class="empty-state">Не удалось загрузить: ${esc(e.message)}</div>`;
@@ -115,7 +118,7 @@ async function renderNotifFeed(page, filters = {}) {
         const { deliveries } = await api(`/notifications/feed/${row.dataset.id}/deliveries`);
         box.innerHTML = deliveries.length ? deliveries.map(d => `
           <div style="display:flex;gap:10px;align-items:baseline;font-size:12px;padding:3px 0;">
-            <span class="mono" style="color:var(--ink-soft);width:52px;flex-shrink:0;">${d.channel === "email" ? "почта" : "лента"}</span>
+            <span class="mono" style="color:var(--ink-soft);width:52px;flex-shrink:0;">${NOTIF_CHANNEL_LABEL[d.channel] || d.channel}</span>
             <span style="flex:1;min-width:0;word-break:break-all;">${esc(d.address || d.full_name || "—")}</span>
             <span style="flex-shrink:0;">${notifStatusText(d)}</span>
           </div>
@@ -271,13 +274,15 @@ function templateCardHtml(k) {
 
 // ---- Вкладка «Отправка» ----------------------------------------------------
 
-async function renderNotifSmtp(page, kinds) {
+async function renderNotifSmtp(page, kinds, iskra = { available: false, why: "" }) {
   const [{ smtp }, { deliveries }, schedule] = await Promise.all([
     api("/notifications/smtp"), api("/notifications/deliveries"), api("/notifications/schedule"),
   ]);
 
   const withList = kinds.filter(k => k.recipients === "list");
-  const derived = kinds.filter(k => k.recipients !== "list");
+  // У задач получатель — сами ответственные, зато каналы выбираются: им своя карточка ниже.
+  const taskKinds = kinds.filter(k => k.channels);
+  const derived = kinds.filter(k => k.recipients !== "list" && !k.channels);
 
   page.innerHTML = `
     <div>
@@ -362,6 +367,18 @@ async function renderNotifSmtp(page, kinds) {
         ${derived.map(derivedRowHtml).join("")}
       </div>
 
+      ${taskKinds.length ? `
+      <div class="card" style="margin-bottom:20px;" id="taskChannels">
+        <div class="section-label">Задачи: куда доставлять</div>
+        <div style="font-size:12px;color:var(--ink-soft);margin-bottom:6px;">
+          Получатели — сами ответственные за задачу: адрес почты берётся из домена, в «Искре» человек
+          ищется по ФИО. Изменения сохраняются сразу.
+          ${iskra.available ? "" : `<br><span style="color:var(--amber);">Канал «Искра» выключен: ${esc(iskra.why || "не настроен")}.
+            Секрет задаётся в двух местах — ISKRA_NOTIFY_TOKEN у платформы и PLATFORM_NOTIFY_TOKEN у «Искры», одинаковый.</span>`}
+        </div>
+        ${taskKinds.map(k => taskChannelRowHtml(k, iskra)).join("")}
+      </div>` : ""}
+
       <div class="card">
         <div class="section-label">Последние отправки</div>
         <div style="display:flex;gap:10px;align-items:center;margin-bottom:6px;">
@@ -372,6 +389,7 @@ async function renderNotifSmtp(page, kinds) {
           <div style="padding:9px 0;border-top:1px solid var(--line-soft);font-size:12.5px;">
             <div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;">
               <span style="flex-shrink:0;">${notifStatusText(d)}</span>
+              <span class="mono" style="color:var(--ink-soft);flex-shrink:0;">${NOTIF_CHANNEL_LABEL[d.channel] || ""}</span>
               <span style="flex:1;min-width:140px;word-break:break-all;">${esc(d.address)}</span>
               <span style="color:var(--ink-soft);flex-shrink:0;">${esc(d.label)}</span>
               <span class="mono" style="font-size:11.5px;color:var(--ink-soft);flex-shrink:0;">${esc(d.sent_at || d.created_at || "")}</span>
@@ -381,6 +399,7 @@ async function renderNotifSmtp(page, kinds) {
       </div>
     </div>`;
 
+  wireTaskChannels(page.querySelector("#taskChannels"));
   const msg = page.querySelector("#smMsg");
   const val = (id) => page.querySelector(id).value.trim();
 
@@ -589,6 +608,64 @@ function recipientCardHtml(k) {
         <span class="rcp-msg" style="font-size:12px;"></span>
       </div>
     </div>`;
+}
+
+function taskChannelRowHtml(k, iskra) {
+  const on = new Set(k.channels || []);
+  const box = (ch, label, disabled) => `
+    <label class="tch${disabled ? " off" : ""}" title="${disabled ? esc("Недоступно: " + (iskra.why || "")) : ""}">
+      <input type="checkbox" data-kind="${esc(k.kind)}" data-ch="${ch}" ${on.has(ch) ? "checked" : ""} ${disabled ? "disabled" : ""}/>
+      ${label}
+    </label>`;
+  return `
+    <div class="tch-row" data-kind="${esc(k.kind)}">
+      <div style="min-width:0;flex:1;">
+        <div style="font-size:13px;font-weight:600;">${esc(k.label)}</div>
+        <div style="font-size:12px;color:var(--ink-soft);">${esc(k.hint || "")}</div>
+        ${k.kind === "task_due" ? `
+          <div style="display:flex;gap:8px;align-items:center;margin-top:8px;font-size:12px;">
+            <span style="color:var(--ink-soft);">Напоминать за, дней:</span>
+            <input class="input tch-thr" value="${esc(k.thresholds || "")}" style="width:110px;padding:6px 9px;font-size:12.5px;" />
+            <span style="color:var(--ink-soft);">0 — в сам день срока</span>
+          </div>` : ""}
+      </div>
+      <div class="tch-boxes">
+        ${box("email", "Почта", false)}
+        ${box("inapp", "В платформе", false)}
+        ${box("iskra", "Искра", !iskra.available)}
+      </div>
+      <span class="tch-msg"></span>
+    </div>`;
+}
+
+function wireTaskChannels(host) {
+  if (!host) return;
+  host.querySelectorAll(".tch-row").forEach(row => {
+    const kind = row.dataset.kind;
+    const msg = row.querySelector(".tch-msg");
+    const say = (text, color) => { msg.textContent = text; msg.style.color = color; };
+    row.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+      cb.onchange = async () => {
+        // Отключённый «Искра» тоже шлём как есть: выбор сохраняется и заработает,
+        // как только канал настроят, — перевыбирать его не придётся.
+        const channels = [...row.querySelectorAll('input[type="checkbox"]')].filter(x => x.checked).map(x => x.dataset.ch);
+        say("Сохраняю…", "var(--ink-soft)");
+        try {
+          await api(`/notifications/kinds/${encodeURIComponent(kind)}`, { method: "PUT", body: { channels } });
+          say(channels.length ? "Сохранено" : "Сохранено — никуда не доставляется", channels.length ? "var(--green)" : "var(--amber)");
+        } catch (e) { cb.checked = !cb.checked; say(e.message, "var(--red)"); }
+      };
+    });
+    const thr = row.querySelector(".tch-thr");
+    if (thr) thr.onchange = async () => {
+      say("Сохраняю…", "var(--ink-soft)");
+      try {
+        const r = await api(`/notifications/kinds/${encodeURIComponent(kind)}`, { method: "PUT", body: { thresholds: thr.value } });
+        thr.value = r.settings.thresholds;
+        say("Сохранено", "var(--green)");
+      } catch (e) { say(e.message, "var(--red)"); }
+    };
+  });
 }
 
 function derivedRowHtml(k) {
