@@ -72,7 +72,7 @@ const DICTS = {
       title: { field: "Название", max: 80, required: true },
       url: { field: "Адрес", max: 500, required: true, url: true },
       hint: { field: "Подпись", max: 160 },
-      departments: { field: "Отделы", max: 4000 },
+      departments: { field: "Отделы", max: 4000, empty: "" },
       sort: { field: "Порядок", int: true },
     },
   },
@@ -105,7 +105,7 @@ const DICTS = {
     table: "asst_repair_rules", order: "sort, title",
     fields: {
       title: { field: "Вид техники", max: 100, required: true },
-      keywords: { field: "Слова в названии", max: 300 },
+      keywords: { field: "Слова в названии", max: 300, empty: "" },
       defect: { field: "Неисправность", max: 500 },
       repair_works: { field: "Работы", max: 500 },
       remains: { field: "Что остаётся после ремонта", max: 300 },
@@ -136,7 +136,8 @@ function dictValues(dict, body, partial) {
     // Ссылка — только http(s): в плитку попадает href, и «javascript:» в нём
     // выполнился бы у каждого, кто на плитку нажмёт.
     if (spec.url && v && !/^https?:\/\/[^\s]+$/i.test(v)) fail("Адрес — ссылка, начинающаяся с http:// или https://");
-    out[key] = v;
+    // У части колонок NOT NULL DEFAULT '' — пустое поле там пустая строка.
+    out[key] = v === null && spec.empty !== undefined ? spec.empty : v;
   }
   return out;
 }

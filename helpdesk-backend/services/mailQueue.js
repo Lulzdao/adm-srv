@@ -116,36 +116,34 @@ function createQueue(db) {
     return t;
   }
 
+  // Отчёт уходит ДО отметки «завершена»: иначе тот, кто увидел на странице
+  // «завершена», мог ещё не получить письма с отчётом.
   async function finish(c) {
-    db.prepare("UPDATE mail_campaigns SET status = 'done', finished_at = datetime('now') WHERE id = ? AND status = 'sending'").run(c.id);
     const t = transports.get(c.id);
-    transports.delete(c.id);
-    secrets.delete(c.id);
     // Отчёт — автору на почту, как было в «Почтальоне». Не дошёл отчёт — не
     // беда: всё то же видно на странице рассылки.
     const author = db.prepare("SELECT email FROM users WHERE id = ?").get(c.created_by);
     const to = (author && author.email) || c.sender_address;
-    if (!t || !to) return;
-    const rows = db.prepare("SELECT * FROM mail_recipients WHERE campaign_id = ? ORDER BY row_no").all(c.id);
-    const sent = rows.filter((r) => r.status === "sent");
-    const failed = rows.filter((r) => r.status === "failed");
-    const lines = [
-      `Рассылка «${c.subject}» завершена.`,
-      "",
-      `Отправлено: ${sent.length} из ${rows.length}.`,
-    ];
-    if (failed.length) {
-      lines.push("", "Не отправлено:");
-      for (const r of failed) lines.push(`  • ${[r.okpo, r.name].filter(Boolean).join(" — ")} <${r.emails}>: ${r.error || "ошибка"}`);
+    if (t && to) {
+      const rows = db.prepare("SELECT * FROM mail_recipients WHERE campaign_id = ? ORDER BY row_no").all(c.id);
+      const failed = rows.filter((r) => r.status === "failed");
+      const lines = [
+        `Рассылка «${c.subject}» завершена.`,
+        "",
+        `Отправлено: ${rows.length - failed.length} из ${rows.length}.`,
+      ];
+      if (failed.length) {
+        lines.push("", "Не отправлено:");
+        for (const r of failed) lines.push(`  • ${[r.okpo, r.name].filter(Boolean).join(" — ")} <${r.emails}>: ${r.error || "ошибка"}`);
+      }
+      lines.push("", "Текст рассылки:", "", c.body);
+      try {
+        await t.sendMail({ from: c.sender_address, to, subject: `Отчёт о рассылке: ${c.subject}`.slice(0, 200), text: lines.join("\n") });
+      } catch { /* отчёт необязателен */ }
     }
-    lines.push("", "Текст рассылки:", "", c.body);
-    try {
-      await t.sendMail({
-        from: c.sender_address, to,
-        subject: `Отчёт о рассылке: ${c.subject}`.slice(0, 200),
-        text: lines.join("\n"),
-      });
-    } catch { /* отчёт необязателен */ }
+    db.prepare("UPDATE mail_campaigns SET status = 'done', finished_at = datetime('now') WHERE id = ? AND status = 'sending'").run(c.id);
+    transports.delete(c.id);
+    secrets.delete(c.id);
   }
 
   async function sendOne(c, s) {
