@@ -361,35 +361,10 @@ module.exports = function ticketRoutes(db) {
       return res.status(400).json({ error: `Кабинет и добавочный не могут быть длиннее ${SHORT_FIELD_MAX} символов` });
     }
     const user = req.session.user;
-
-    // Отдел обязателен для маршрутизации и нумерации — если не пришёл
-    // или не найден в справочнике, безопасный дефолт — первый отдел в конфиге.
-    let cat = typeof category === "string" && category
-      ? db.prepare("SELECT id, name FROM categories WHERE name = ?").get(category)
-      : null;
-    if (!cat) cat = db.prepare("SELECT id, name FROM categories WHERE name = ?").get(DEFAULT_DEPARTMENT);
-
-    const displayId = nextDisplayId(db, cat.name);
-
-    const info = db.prepare(`
-      INSERT INTO tickets (display_id, title, description, category_id, priority, room, extension, created_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(displayId, title.trim(), description || null, cat.id, priority || "medium", roomValue, extensionValue, user.id);
-
-    const ticketId = info.lastInsertRowid;
-
-    const deptRole = DEPT_ROLE[cat.name] || "it";
-    const newPayload = ticketPayload(db, ticketId);
-    emit(db, {
-      kind: ticketNewKind(deptRole),
-      subject: ticketSubject(newPayload),
-      ticketId,
-      dedupKey: `ticket_new:${ticketId}`,
-      payload: newPayload,
-      department: deptRole,
-      inappUserIds: deptUserIds(db, deptRole, user.id),
+    const ticketId = createTicket(db, user, {
+      title: title.trim(), description: description || null, category, priority,
+      room: roomValue, extension: extensionValue,
     });
-
     res.status(201).json(getTicketDetail(db, ticketId, user));
   });
 
@@ -624,6 +599,41 @@ module.exports = function ticketRoutes(db) {
   return router;
 };
 
+/**
+ * Завести заявку и разослать оповещение отделу. Поля уже проверены
+ * вызывающим. Вынесено из маршрута, потому что заявки заводит не только форма
+ * «Новая заявка», но и Ассистент (заявка на доступ сотрудника), — нумерация и
+ * оповещение отдела у них должны быть ровно те же.
+ */
+function createTicket(db, user, { title, description = null, category, priority, room = null, extension = null }) {
+  // Отдел обязателен для маршрутизации и нумерации — если не пришёл
+  // или не найден в справочнике, безопасный дефолт — первый отдел в конфиге.
+  let cat = typeof category === "string" && category
+    ? db.prepare("SELECT id, name FROM categories WHERE name = ?").get(category)
+    : null;
+  if (!cat) cat = db.prepare("SELECT id, name FROM categories WHERE name = ?").get(DEFAULT_DEPARTMENT);
+
+  const displayId = nextDisplayId(db, cat.name);
+  const info = db.prepare(`
+    INSERT INTO tickets (display_id, title, description, category_id, priority, room, extension, created_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(displayId, title, description, cat.id, priority || "medium", room, extension, user.id);
+  const ticketId = Number(info.lastInsertRowid);
+
+  const deptRole = DEPT_ROLE[cat.name] || "it";
+  const newPayload = ticketPayload(db, ticketId);
+  emit(db, {
+    kind: ticketNewKind(deptRole),
+    subject: ticketSubject(newPayload),
+    ticketId,
+    dedupKey: `ticket_new:${ticketId}`,
+    payload: newPayload,
+    department: deptRole,
+    inappUserIds: deptUserIds(db, deptRole, user.id),
+  });
+  return ticketId;
+}
+
 // Внутренние заметки — переписка исполнителей между собой. Видит их тот, кто
 // заявкой УПРАВЛЯЕТ (ИТ и исполнители того отдела), а не всякий, кто вправе её
 // открыть: у заявителя есть право читать свою заявку, но не служебные пометки о
@@ -656,6 +666,10 @@ function getTicketDetail(db, id, viewer) {
     SELECT id, filename, filesize, mime_type, uploaded_at FROM attachments WHERE ticket_id = ?
   `).all(id);
 
+  // Анкета, из которой заявка создана (заявка на доступ из Ассистента).
+  const form = db.prepare("SELECT kind, data FROM ticket_forms WHERE ticket_id = ?").get(id);
+  ticket.form = form ? { kind: form.kind, data: JSON.parse(form.data) } : null;
+
   ticket.history = db.prepare(`
     SELECT sh.old_status, sh.new_status, sh.changed_at, u.full_name AS changed_by
     FROM status_history sh JOIN users u ON u.id = sh.changed_by
@@ -686,3 +700,10 @@ function nextDisplayId(db, deptName) {
   `).get(prefix.length + 2, `${prefix}-%`);
   return `${prefix}-${String((row.n || 0) + 1).padStart(4, "0")}`;
 }
+
+// Для Ассистента: заявка на доступ заводится как обычная заявка отдела ИТ, и
+// права на её анкету — те же, что на саму заявку.
+module.exports.createTicket = createTicket;
+module.exports.canAccessTicket = canAccessTicket;
+module.exports.TITLE_MAX = TITLE_MAX;
+module.exports.DESCRIPTION_MAX = DESCRIPTION_MAX;

@@ -217,4 +217,4 @@ function parseEmails(text) {
     .filter(Boolean);
 }
 
-module.exports = { readSettings, writeSettings, verify, send, reset, isEmail, parseEmails };
+module.exports = { readSettings, writeSettings, verify, send, reset, isEmail, parseEmails, describeError: describe };

@@ -61,6 +61,10 @@ function createApp(db, { secureCookie = false } = {}) {
   app.use("/api/tickets", require("./routes/tickets")(db));
   app.use("/api/notifications", require("./routes/notifications")(db));
   app.use("/api/tasks", require("./routes/tasks")(db));
+  // Ассистент: журнал и акты — отдельным файлом, но под тем же префиксом.
+  app.use("/api/assistant", require("./routes/assistant")(db));
+  app.use("/api/assistant", require("./routes/assistantJournal")(db));
+  app.use("/api/mailings", require("./routes/mailings")(db));
   app.use("/api/admin", require("./routes/admin")(db));
   app.use("/api/departments", require("./routes/departments")());
   app.use(require("./routes/modules")());

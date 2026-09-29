@@ -517,6 +517,7 @@ function renderDetail(main, ticket) {
             <div style="font-size:13.5px;line-height:1.55;margin-bottom:16px;word-break:break-word;overflow-wrap:break-word;">${esc(ticket.description || "Без описания")}</div>
             <div id="attachList" style="display:flex;flex-wrap:wrap;gap:8px;"></div>
           </div>
+          ${ticket.form ? ticketFormCard(ticket) : ""}
           <div class="card">
             <div class="section-label">Комментарии</div>
             <div id="commentsList" style="margin-bottom:18px;"></div>
