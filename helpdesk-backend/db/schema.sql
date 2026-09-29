@@ -451,3 +451,13 @@ CREATE TABLE IF NOT EXISTS mail_attachments (
   path TEXT NOT NULL,
   size INTEGER NOT NULL
 );
+
+-- Сеансы входа (services/sessionStore.js). Раньше express-session держал их в памяти процесса,
+-- и любой перезапуск платформы — обновление, перезапуск службы, переход на https из панели —
+-- выкидывал из системы всех сразу, хотя вход обещан на 30 дней.
+CREATE TABLE IF NOT EXISTS sessions (
+  sid TEXT PRIMARY KEY,
+  sess TEXT NOT NULL,
+  expires INTEGER NOT NULL  -- мс от эпохи; просроченные удаляются раз в час
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires);

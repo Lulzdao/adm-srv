@@ -4,6 +4,7 @@ const path = require("path");
 const crypto = require("crypto");
 const { requireAdmin } = require("../middleware/auth");
 const modules = require("../config/modules");
+const selfRestart = require("../services/selfRestart");
 const {
   currentTlsState,
   describeChain,
@@ -134,7 +135,22 @@ module.exports = function certificateRoutes() {
       // в https на ходу нельзя, и это единственный такой случай.
       applied: applied.applied,
       restartRequired: !applied.applied,
+      // Можно ли перезапустить прямо из панели (только когда платформа — служба NSSM).
+      canRestart: !applied.applied && selfRestart.runsUnderService(),
     });
+  });
+
+  // Перезапуск платформы из панели — после первой загрузки сертификата, чтобы
+  // перейти с http на https (см. services/selfRestart.js). Процесс завершается,
+  // служба NSSM поднимает его снова через несколько секунд.
+  router.post("/restart", (req, res) => {
+    if (!selfRestart.runsUnderService()) {
+      return res.status(409).json({
+        error: "Платформа запущена не службой — перезапуск отсюда её бы просто выключил. Перезапустите вручную.",
+      });
+    }
+    res.status(202).json({ ok: true, restartDelaySec: 5 });
+    selfRestart.scheduleRestart(req.session.user && req.session.user.ad_login);
   });
 
   // Кому мы доверяем. Доменов два, поэтому корней может быть несколько; плюс

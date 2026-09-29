@@ -235,6 +235,68 @@ async function renderAdmin(main) {
 //     совсем: они берут корни из хранилища Windows, куда те приезжают
 //     групповыми политиками. На доменной машине раздел не нужен вообще,
 //     поэтому он свёрнут и лежит внизу.
+
+// Сертификат загрузили, а платформа работает по http — на https она перейдёт только после
+// перезапуска. Спрашиваем: сейчас или позже. «Сейчас» — процесс завершается, служба NSSM поднимает
+// его снова (routes/certificates.js, POST /restart); ждём, пока платформа ответит по https, и
+// открываем её уже по https. Если платформа запущена не службой, кнопки «сейчас» нет — объясняем.
+function askRestart(canRestart) {
+  const httpsUrl = `https://${location.host}/#certs`;
+  const m = asstModal("Сертификат сохранён", `
+    <div style="font-size:13px;line-height:1.55;margin-bottom:14px;">
+      Сейчас платформа работает по <b>http</b>. На https она перейдёт после перезапуска — на ходу
+      включить шифрование нельзя.
+      ${canRestart
+        ? "Перезапустить сейчас? Пользователи на несколько секунд потеряют связь, открытые страницы переподключатся сами."
+        : "Перезапустить отсюда нельзя: платформа запущена не службой. Перезапустите её вручную."}
+      <div style="color:var(--ink-soft);margin-top:8px;">После перехода на https браузер попросит войти ещё раз — один
+      раз: вход, сделанный по http, браузер на https не переносит. «Искра» читает тот же сертификат; на https она перейдёт
+      после перезапуска своей службы.</div>
+    </div>
+    <div id="rsMsg" style="font-size:12.5px;margin-bottom:12px;"></div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;">
+      <button class="btn btn-ghost" id="rsLater">${canRestart ? "Позже" : "Понятно"}</button>
+      ${canRestart ? `<button class="btn btn-wire" id="rsNow">Перезапустить сейчас</button>` : ""}
+    </div>`);
+  const msg = m.el.querySelector("#rsMsg");
+  m.el.querySelector("#rsLater").onclick = () => {
+    m.close();
+    toast("Сертификат начнёт действовать после перезапуска службы платформы.");
+  };
+  const now = m.el.querySelector("#rsNow");
+  if (!now) return;
+  now.onclick = async () => {
+    now.disabled = true; m.el.querySelector("#rsLater").disabled = true;
+    msg.style.color = "var(--ink-soft)"; msg.textContent = "Перезапускаю платформу…";
+    try {
+      await api("/certificates/restart", { method: "POST", body: {} });
+    } catch (e) {
+      msg.style.color = "var(--red)"; msg.textContent = e.message;
+      now.disabled = false; m.el.querySelector("#rsLater").disabled = false;
+      return;
+    }
+    // Ответ по https — значит, поднялась уже с сертификатом. Страница открыта по http, поэтому
+    // спрашиваем «вслепую» (no-cors): нам важен сам факт ответа, а не его содержимое.
+    const started = Date.now();
+    const poll = async () => {
+      try {
+        await fetch(`https://${location.host}/api/health?ts=${Date.now()}`, { mode: "no-cors", cache: "no-store" });
+        msg.style.color = "var(--green)"; msg.textContent = "Готово — открываю платформу по https…";
+        setTimeout(() => { location.href = httpsUrl; }, 600);
+        return;
+      } catch { /* ещё не поднялась или сертификат браузеру не доверен */ }
+      const sec = Math.round((Date.now() - started) / 1000);
+      if (sec < 12) { msg.textContent = `Ждём, пока служба поднимется… ${sec} с`; setTimeout(poll, 1500); return; }
+      // Служба поднимается за 5–10 с. Если проверка всё не проходит — скорее всего, браузер не доверяет
+      // сертификату (самоподписанный, корня нет в Windows): тогда он сам покажет предупреждение на https-адресе.
+      msg.innerHTML = `Открываю <a href="${esc(httpsUrl)}">${esc(httpsUrl)}</a>… Если браузер предупредит о
+        сертификате — значит, он ему не доверяет (корня удостоверяющего центра нет в Windows).`;
+      setTimeout(() => { location.href = httpsUrl; }, 1500);
+    };
+    setTimeout(poll, 3000);
+  };
+}
+
 async function renderCertificates(main) {
   main.innerHTML = `<div class="topbar"><div class="topbar-title">Сертификаты</div></div><div class="page"><div class="spinner">Загрузка…</div></div>`;
 
@@ -252,6 +314,13 @@ async function renderCertificates(main) {
     const [server, trusted, mods] = await Promise.all([
       api("/certificates/server"), api("/certificates/trusted"), api("/certificates/modules"),
     ]);
+
+    // Щит в шапке — по тем же свежим данным: раздел открывают и сразу после загрузки нового
+    // сертификата (renderCertificates ниже), и ждать до получаса, пока щит спросит сервер сам, незачем.
+    // Сертификат ещё разбирается (только что применён) — щит спросит сам при следующем переходе.
+    certBadge = { at: server.secure && !server.certificate ? 0 : Date.now(), cert: server.certificate, secure: server.secure };
+    const badgeBtn = document.getElementById("certsBtn");
+    if (badgeBtn) applyCertBadge(badgeBtn);
 
     const c = server.certificate;
     const serverCard = !server.secure
@@ -422,9 +491,8 @@ async function renderCertificates(main) {
           body: { pfx: b64, password: document.getElementById("certPass").value },
         });
         renderCertificates(main);
-        toast(res.restartRequired
-          ? "Файл сохранён. Нужен перезапуск: включить шифрование на работающем HTTP-сервере нельзя."
-          : "Сертификат применён — платформе перезапуск не нужен. «Искру» перезапустите: она читает то же хранилище, но следить за ним не умеет и до перезапуска будет предъявлять прежний сертификат.");
+        if (res.restartRequired) askRestart(res.canRestart);
+        else toast("Сертификат применён — перезапуск не нужен ни платформе, ни «Искре»: обе перечитывают общее хранилище сами.");
       } catch (e) { msg.style.color = "var(--red)"; msg.textContent = e.message; }
     };
 
