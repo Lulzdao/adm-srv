@@ -43,7 +43,7 @@ function decodeBody(lines, encoding) {
  * Возвращает { port, messages, reset, close }.
  * messages — массив { to: [], subject, body }.
  */
-async function startFakeSmtp({ rejectRecipient = null, deferRecipient = null } = {}) {
+async function startFakeSmtp({ rejectRecipient = null, deferRecipient = null, auth = null } = {}) {
   const messages = [];
 
   const server = net.createServer((sock) => {
@@ -68,6 +68,11 @@ async function startFakeSmtp({ rejectRecipient = null, deferRecipient = null } =
               to: current.to,
               subject: decodeHeader(current.subject),
               body: decodeBody(current.bodyLines, current.headers["content-transfer-encoding"]),
+              // Письмо целиком — для вложений (multipart разбирать тут незачем:
+              // тесту хватает найти имя файла и его содержимое в base64).
+              raw: current.bodyLines.join("\n"),
+              headers: current.headers,
+              login: current.login || null,
             });
             current = { to: [], subject: "", headers: {}, bodyLines: [], lastHeader: "" };
             sock.write("250 OK\r\n");
@@ -97,8 +102,17 @@ async function startFakeSmtp({ rejectRecipient = null, deferRecipient = null } =
         }
 
         const cmd = line.toUpperCase();
-        if (cmd.startsWith("EHLO") || cmd.startsWith("HELO")) sock.write("250-fake.test\r\n250 8BITMIME\r\n");
-        else if (cmd.startsWith("MAIL FROM")) sock.write("250 OK\r\n");
+        if (cmd.startsWith("EHLO") || cmd.startsWith("HELO")) {
+          sock.write(auth ? "250-fake.test\r\n250-AUTH PLAIN\r\n250 8BITMIME\r\n" : "250-fake.test\r\n250 8BITMIME\r\n");
+        } else if (auth && cmd.startsWith("AUTH PLAIN")) {
+          // Вход по логину и паролю — для рассылок со своего ящика.
+          const [, user, pass] = Buffer.from(line.split(" ")[2] || "", "base64").toString("utf8").split("\0");
+          if (user === auth.user && pass === auth.pass) { sock.login = user; sock.write("235 2.7.0 Accepted\r\n"); }
+          else sock.write("535 5.7.8 Authentication failed\r\n");
+        } else if (auth && cmd.startsWith("MAIL FROM") && !sock.login) {
+          sock.write("530 5.7.0 Authentication required\r\n");
+        }
+        else if (cmd.startsWith("MAIL FROM")) { current.login = sock.login || null; sock.write("250 OK\r\n"); }
         else if (cmd.startsWith("RCPT TO")) {
           const addr = line.replace(/.*<|>.*/g, "");
           // Отказ по конкретному адресу — так проверяется путь «сервер отверг

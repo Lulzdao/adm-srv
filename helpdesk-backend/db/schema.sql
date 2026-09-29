@@ -259,3 +259,195 @@ CREATE INDEX IF NOT EXISTS idx_tasks_status_due ON tasks(status, due_date);
 CREATE INDEX IF NOT EXISTS idx_task_assignees_user ON task_assignees(user_id);
 CREATE INDEX IF NOT EXISTS idx_task_checklist_task ON task_checklist(task_id, position);
 CREATE INDEX IF NOT EXISTS idx_task_events_task ON task_events(task_id, id);
+
+-- ============================================================================
+--  Ассистент: документы отдела ИТ, заявки на доступ, журнал техники, рассылки
+--
+--  Замена прежнему отдельному «Ассистенту» и «Почтальону». Всё с префиксом
+--  asst_ / mail_, чтобы в базе было видно, чьи это таблицы.
+-- ============================================================================
+
+-- Плитки «Системы отдела»: ссылки на АРМ ГС, ЦСОД, ВЕБСБОР и т.п.
+-- departments — названия отделов из AD по одному на строку; пусто — всем.
+CREATE TABLE IF NOT EXISTS asst_links (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL,
+  url TEXT NOT NULL,
+  hint TEXT,
+  departments TEXT NOT NULL DEFAULT '',
+  sort INTEGER NOT NULL DEFAULT 0
+);
+
+-- Отделы и их начальники — с падежами: в документах пишется «прошу передать
+-- начальнику отдела … Иванову И.И. от начальника отдела … Петрова П.П.».
+CREATE TABLE IF NOT EXISTS asst_depts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,       -- «Отдел статистики цен»
+  name_gen TEXT,                   -- «отдела статистики цен»
+  chief_post TEXT,                 -- «Начальник»
+  chief_post_gen TEXT,             -- «начальника»
+  chief_post_dat TEXT,             -- «начальнику»
+  chief_name TEXT,                 -- «Иванов И.И.»
+  chief_name_gen TEXT,             -- «Иванова И.И.»
+  chief_name_dat TEXT,             -- «Иванову И.И.»
+  sort INTEGER NOT NULL DEFAULT 0
+);
+
+-- Люди, которые появляются в документах: руководитель, заместитель,
+-- начальник ОИРиТ (утверждает акты), составители актов, комиссия по списанию.
+CREATE TABLE IF NOT EXISTS asst_people (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  role TEXT NOT NULL CHECK (role IN ('boss', 'deputy', 'it_chief', 'responsible', 'chair', 'member')),
+  name TEXT NOT NULL,              -- «Иванов И.И.»
+  name_dat TEXT,                   -- «Иванову И.И.» — нужен руководителю в шапке «кому»
+  post TEXT,
+  post_dat TEXT,
+  sort INTEGER NOT NULL DEFAULT 0
+);
+
+-- Загруженные администратором шаблоны. Нет строки — действует встроенный.
+CREATE TABLE IF NOT EXISTS asst_templates (
+  kind TEXT PRIMARY KEY,
+  filename TEXT NOT NULL,
+  data BLOB NOT NULL,
+  uploaded_by TEXT,
+  uploaded_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- База техники и база запчастей — выгрузки из 1С (tec.txt, rep.txt).
+-- Каждая загрузка заменяет базу целиком: источник правды — 1С.
+CREATE TABLE IF NOT EXISTS asst_equipment (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  inv TEXT,
+  commissioned TEXT,               -- дата ввода в эксплуатацию, как в выгрузке
+  count INTEGER,
+  -- Строчными: LIKE в SQLite не приводит кириллицу к одному регистру, и поиск
+  -- «принтер» не находил бы «Принтер».
+  search TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_asst_equipment_inv ON asst_equipment(inv);
+
+CREATE TABLE IF NOT EXISTS asst_parts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  location TEXT,
+  nomenclature TEXT,
+  count INTEGER,                   -- остаток по выгрузке
+  cartridge INTEGER NOT NULL DEFAULT 0,
+  search TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_asst_parts_nomenclature ON asst_parts(nomenclature);
+
+-- Типовые неисправности: по словам в названии техники подсказывают, что
+-- написать в акте («принтер» -> износ узла закрепления, замена фьюзера).
+CREATE TABLE IF NOT EXISTS asst_repair_rules (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL,
+  keywords TEXT NOT NULL DEFAULT '',   -- через запятую
+  defect TEXT,
+  repair_works TEXT,
+  remains TEXT,
+  sort INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS asst_writeoff_reasons (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL,
+  reason TEXT NOT NULL
+);
+
+-- Заявки на передачу оборудования между отделами.
+CREATE TABLE IF NOT EXISTS asst_transfers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  year INTEGER NOT NULL,
+  num INTEGER NOT NULL,
+  from_dept TEXT NOT NULL,
+  to_dept TEXT NOT NULL,
+  items TEXT NOT NULL,             -- JSON: [{name, inv, count}]
+  created_by INTEGER NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (year, num)
+);
+
+-- Анкета, из которой создана заявка (сейчас — заявка на доступ сотрудника).
+-- Отдельно от tickets: у обычной заявки анкеты нет, и сорок пустых колонок
+-- ради одного вида заявок в основной таблице ни к чему.
+CREATE TABLE IF NOT EXISTS ticket_forms (
+  ticket_id INTEGER PRIMARY KEY REFERENCES tickets(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,
+  data TEXT NOT NULL
+);
+
+-- Реестр актов: номер в пределах года, вид и данные, по которым акт собран, —
+-- чтобы его можно было скачать ещё раз ровно таким же.
+CREATE TABLE IF NOT EXISTS asst_acts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  year INTEGER NOT NULL,
+  num INTEGER NOT NULL,
+  type TEXT NOT NULL,              -- repair | writeoff | cartridges | parts_memo
+  date TEXT NOT NULL,              -- YYYY-MM-DD
+  title TEXT NOT NULL,
+  data TEXT NOT NULL,              -- JSON
+  created_by INTEGER NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_asst_acts_year ON asst_acts(year, num);
+
+-- Журнал техники: что из расходников и запчастей куда поставлено.
+CREATE TABLE IF NOT EXISTS asst_journal (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  date TEXT NOT NULL,              -- YYYY-MM-DD
+  kind TEXT NOT NULL CHECK (kind IN ('cartridge', 'part')),
+  part_name TEXT NOT NULL,
+  nomenclature TEXT,
+  count INTEGER NOT NULL DEFAULT 1,
+  equipment TEXT,
+  inv TEXT,
+  location TEXT,
+  note TEXT,
+  act_id INTEGER REFERENCES asst_acts(id) ON DELETE SET NULL,
+  created_by INTEGER NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_asst_journal_date ON asst_journal(date DESC);
+
+-- Рассылки респондентам (бывший «Почтальон»).
+CREATE TABLE IF NOT EXISTS mail_campaigns (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  created_by INTEGER NOT NULL REFERENCES users(id),
+  subject TEXT NOT NULL,
+  body TEXT NOT NULL,
+  use_template INTEGER NOT NULL DEFAULT 1,
+  sender_mode TEXT NOT NULL CHECK (sender_mode IN ('shared', 'own')),
+  sender_address TEXT,             -- с какого адреса ушло: общий ящик или свой
+  sender_login TEXT,               -- логин своего ящика; пароль не хранится нигде
+  status TEXT NOT NULL DEFAULT 'sending' CHECK (status IN ('sending', 'paused', 'done', 'cancelled')),
+  paused_reason TEXT,
+  total INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  finished_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS mail_recipients (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  campaign_id INTEGER NOT NULL REFERENCES mail_campaigns(id) ON DELETE CASCADE,
+  row_no INTEGER NOT NULL,
+  okpo TEXT,
+  name TEXT,
+  emails TEXT NOT NULL,            -- через запятую
+  fields TEXT,                     -- JSON: все колонки строки — для подстановок {Колонка}
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'sent', 'failed')),
+  attempts INTEGER NOT NULL DEFAULT 0,
+  error TEXT,
+  sent_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_mail_recipients_campaign ON mail_recipients(campaign_id, status);
+
+CREATE TABLE IF NOT EXISTS mail_attachments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  campaign_id INTEGER NOT NULL REFERENCES mail_campaigns(id) ON DELETE CASCADE,
+  filename TEXT NOT NULL,
+  path TEXT NOT NULL,
+  size INTEGER NOT NULL
+);
