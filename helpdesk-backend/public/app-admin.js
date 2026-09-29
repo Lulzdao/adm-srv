@@ -253,6 +253,13 @@ async function renderCertificates(main) {
       api("/certificates/server"), api("/certificates/trusted"), api("/certificates/modules"),
     ]);
 
+    // Щит в шапке — по тем же свежим данным: раздел открывают и сразу после загрузки нового
+    // сертификата (renderCertificates ниже), и ждать до получаса, пока щит спросит сервер сам, незачем.
+    // Сертификат ещё разбирается (только что применён) — щит спросит сам при следующем переходе.
+    certBadge = { at: server.secure && !server.certificate ? 0 : Date.now(), cert: server.certificate, secure: server.secure };
+    const badgeBtn = document.getElementById("certsBtn");
+    if (badgeBtn) applyCertBadge(badgeBtn);
+
     const c = server.certificate;
     const serverCard = !server.secure
       ? `<div class="warn-box">Платформа работает по HTTP — сертификат не задан. Пароли и переписка идут открытым текстом.</div>`
@@ -424,7 +431,7 @@ async function renderCertificates(main) {
         renderCertificates(main);
         toast(res.restartRequired
           ? "Файл сохранён. Нужен перезапуск: включить шифрование на работающем HTTP-сервере нельзя."
-          : "Сертификат применён — платформе перезапуск не нужен. «Искру» перезапустите: она читает то же хранилище, но следить за ним не умеет и до перезапуска будет предъявлять прежний сертификат.");
+          : "Сертификат применён — перезапуск не нужен ни платформе, ни «Искре»: обе перечитывают общее хранилище сами.");
       } catch (e) { msg.style.color = "var(--red)"; msg.textContent = e.message; }
     };
 
