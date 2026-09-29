@@ -157,16 +157,24 @@ module.exports = function tasksRouter(db) {
   //  Список
   //
   //  scope: all | mine (я ответственный) | created (я автор)
-  //  status: open | done. Готовые — последние 200: история бесконечна, а
+  //  status: open | done | all. Готовые — последние 200: история бесконечна, а
   //  листать её в списке никто не станет, для этого есть поиск.
+  //  from, to: YYYY-MM-DD — только задачи со сроком в этих днях (календарь).
+  //  Календарю нужны и выполненные — он показывает их зачёркнутыми, — поэтому
+  //  с диапазоном обычно идёт status=all.
   // --------------------------------------------------------------------------
-  router.get("/", (req, res) => {
+  router.get("/", handle((req, res) => {
     const me = req.session.user.id;
     const scope = ["all", "mine", "created"].includes(req.query.scope) ? req.query.scope : "all";
     const done = req.query.status === "done";
+    const all = req.query.status === "all";
+    const from = req.query.from ? dueDate(req.query.from) : null;
+    const to = req.query.to ? dueDate(req.query.to) : null;
+    const ranged = Boolean(from && to);
 
-    const where = [done ? "t.status = 'done'" : "t.status != 'done'"];
+    const where = [all ? "1 = 1" : done ? "t.status = 'done'" : "t.status != 'done'"];
     const params = [];
+    if (ranged) { where.push("t.due_date BETWEEN ? AND ?"); params.push(from, to); }
     if (scope === "mine") { where.push("EXISTS (SELECT 1 FROM task_assignees x WHERE x.task_id = t.id AND x.user_id = ?)"); params.push(me); }
     if (scope === "created") { where.push("t.created_by = ?"); params.push(me); }
 
@@ -183,8 +191,8 @@ module.exports = function tasksRouter(db) {
       JOIN users cu ON cu.id = t.created_by
       LEFT JOIN tickets k ON k.id = t.ticket_id
       WHERE ${where.join(" AND ")}
-      ORDER BY ${done ? "t.done_at DESC" : "t.due_date IS NULL, t.due_date, t.due_time IS NULL, t.due_time, t.id"}
-      LIMIT ${done ? 200 : 1000}
+      ORDER BY ${done && !ranged ? "t.done_at DESC" : "t.due_date IS NULL, t.due_date, t.due_time IS NULL, t.due_time, t.id"}
+      LIMIT ${done && !ranged ? 200 : 1000}
     `).all(me, ...params);
 
     const people = db.prepare(`
@@ -220,7 +228,7 @@ module.exports = function tasksRouter(db) {
     const s = settingsFor(db, "task_due");
     const thresholds = String((s && s.thresholds) || "").split(",").filter(Boolean).map(Number);
     res.json({ tasks, today: T.localDay(now), thresholds, remindersOn: Boolean(s && s.enabled) });
-  });
+  }));
 
   // --------------------------------------------------------------------------
   //  Карточка

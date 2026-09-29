@@ -206,24 +206,39 @@ function taskRowHtml(t) {
 
 function markOpenRow(main) {
   main.querySelectorAll(".td-row").forEach((r) => r.classList.toggle("sel", Number(r.dataset.id) === state.taskOpenId));
+  main.querySelectorAll(".cal-ev, .ag-item").forEach((el) => el.classList.toggle("open", Number(el.dataset.id) === state.taskOpenId));
 }
 
 async function refreshTaskBadge() {
   try { state.taskAttention = (await api("/tasks/summary")).attention; updateBadgeDom(); } catch { /* подождёт опроса */ }
 }
 
+/** Обновить тот вид, в котором открыта карточка: список или календарь. */
+function reloadTasksView(main) {
+  if (main.querySelector("#tdList")) return loadTaskList(main);
+  if (main.querySelector("#tdCal")) return loadCalendar(main);
+  return Promise.resolve();
+}
+
+// В календаре справа всегда колонка: без карточки там сводка дня. Карточка
+// встаёт на её место, закрыли — сводка возвращается.
 function closeTaskDrawer(main) {
   const drawer = main.querySelector("#tdDrawer");
   if (drawer) { drawer.hidden = true; drawer.innerHTML = ""; }
-  main.querySelector("#tdGrid")?.classList.remove("with-drawer");
+  const agenda = main.querySelector("#tdAgenda");
+  if (agenda) agenda.hidden = false;
+  else main.querySelector("#tdGrid")?.classList.remove("with-drawer");
   state.taskOpenId = null;
   writeHash(true);
   markOpenRow(main);
+  if (agenda) renderCalAgenda(main);
 }
 
 function showDrawer(main) {
   const drawer = main.querySelector("#tdDrawer");
   drawer.hidden = false;
+  const agenda = main.querySelector("#tdAgenda");
+  if (agenda) agenda.hidden = true;
   main.querySelector("#tdGrid").classList.add("with-drawer");
   return drawer;
 }
@@ -326,7 +341,7 @@ async function openTask(main, id) {
     try {
       const r = await api(`/tasks/${id}`, { method: "PATCH", body });
       if (r.changed && okText) toast(okText);
-      await loadTaskList(main);
+      await reloadTasksView(main);
       openTask(main, id);
     } catch (e) {
       toast(e.message, true);
@@ -364,7 +379,7 @@ async function openTask(main, id) {
     b.onclick = () => save({ assignees: task.assignees.map((a) => a.id).filter((x) => x !== Number(b.dataset.remove)) }, "Ответственный снят");
   });
 
-  const reload = async () => { await loadTaskList(main); openTask(main, id); };
+  const reload = async () => { await reloadTasksView(main); openTask(main, id); };
   drawer.querySelectorAll(".td-ck").forEach((row) => {
     const itemId = row.dataset.item;
     row.querySelector(".td-cb").onclick = async () => {
@@ -391,14 +406,14 @@ async function openTask(main, id) {
   const del = drawer.querySelector("#tdDelete");
   if (del) del.onclick = async () => {
     if (!confirm(`Удалить задачу «${task.title}» вместе с историей? Это не отменить.`)) return;
-    try { await api(`/tasks/${id}`, { method: "DELETE" }); toast("Задача удалена"); closeTaskDrawer(main); loadTaskList(main); refreshTaskBadge(); }
+    try { await api(`/tasks/${id}`, { method: "DELETE" }); toast("Задача удалена"); closeTaskDrawer(main); reloadTasksView(main); refreshTaskBadge(); }
     catch (e) { toast(e.message, true); }
   };
 }
 
 // ---- Новая задача -------------------------------------------------------------
 
-function openTaskForm(main) {
+function openTaskForm(main, presetDate = "") {
   state.taskOpenId = null;
   writeHash(true);
   markOpenRow(main);
@@ -414,7 +429,7 @@ function openTaskForm(main) {
       ${people.map((x) => `<button type="button" class="td-person${x.id === me ? " on" : ""}" data-id="${x.id}">${taskAvatar(x, 20)} ${esc(x.full_name)}</button>`).join("")}
     </div>
     <div class="td-row2">
-      <div><div class="field-label">Срок</div><input class="input" type="date" id="tfDate" /></div>
+      <div><div class="field-label">Срок</div><input class="input" type="date" id="tfDate" value="${esc(presetDate)}" /></div>
       <div><div class="field-label">Время</div><input class="input" type="time" id="tfTime" /></div>
     </div>
     <div class="field-label" style="margin-top:12px;">Важность</div>
@@ -462,11 +477,283 @@ function openTaskForm(main) {
       const { id } = await api("/tasks", { method: "POST", body });
       toast("Задача создана");
       tasksUi.done = false; tasksUi.quick = null;
-      await loadTaskList(main);
+      await reloadTasksView(main);
       openTask(main, id);
       refreshTaskBadge();
     } catch (e) {
       err.textContent = e.message;
     }
   };
+}
+
+// ====== Календарь задач ======
+//
+// Месяц или неделя. Задачу перетаскивают на другой день — срок сдвигается и
+// пишется в историю, как любая правка. Задачи без срока лежат справа, и их
+// тоже можно бросить на день. Двойной щелчок по дню — новая задача на него.
+// Выполненные видны зачёркнутыми и не перетаскиваются: переносить сделанное
+// незачем, а случайно сдвинутый срок выполненной задачи только путает историю.
+
+const CAL_MONTHS = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
+const CAL_MONTHS_GEN = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"];
+const CAL_WEEKDAYS_FULL = ["Воскресенье", "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"];
+const CAL_DOW = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
+const CAL_MONTH_LIMIT = 3; // сколько задач показывать в клетке месяца, остальное — «+ ещё»
+
+const calUi = { mode: "month", anchor: null, scope: "all", selected: null };
+let calData = { byDay: new Map(), undated: [], open: [], today: "" };
+
+const calIso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const calAddDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+const calMonday = (d) => { const x = new Date(d.getFullYear(), d.getMonth(), d.getDate()); return calAddDays(x, -((x.getDay() + 6) % 7)); };
+
+/** Первый и последний день сетки: 5–6 недель месяца или одна неделя. */
+function calRange() {
+  const a = calUi.anchor;
+  if (calUi.mode === "week") { const s = calMonday(a); return [s, calAddDays(s, 6)]; }
+  const first = new Date(a.getFullYear(), a.getMonth(), 1);
+  const last = new Date(a.getFullYear(), a.getMonth() + 1, 0);
+  const start = calMonday(first);
+  const end = calAddDays(calMonday(last), 6);
+  return [start, end];
+}
+
+function calTitle() {
+  const a = calUi.anchor;
+  if (calUi.mode === "month") return `${CAL_MONTHS[a.getMonth()]} ${a.getFullYear()}`;
+  const [s, e] = calRange();
+  return s.getMonth() === e.getMonth()
+    ? `${s.getDate()}–${e.getDate()} ${CAL_MONTHS_GEN[e.getMonth()]} ${e.getFullYear()}`
+    : `${s.getDate()} ${CAL_MONTHS_GEN[s.getMonth()]} – ${e.getDate()} ${CAL_MONTHS_GEN[e.getMonth()]} ${e.getFullYear()}`;
+}
+
+async function renderTaskCalendar(main) {
+  clearViewPoll();
+  const now = new Date();
+  if (!calUi.anchor) calUi.anchor = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (!calUi.selected) calUi.selected = calIso(now);
+  main.innerHTML = `
+    <div class="topbar">
+      <div class="topbar-title-row"><div class="topbar-title">Календарь задач</div></div>
+      <div class="td-top-actions">
+        <div class="toggle-group" id="calMode">
+          <button class="toggle-btn${calUi.mode === "week" ? " active" : ""}" data-mode="week">Неделя</button>
+          <button class="toggle-btn${calUi.mode === "month" ? " active" : ""}" data-mode="month">Месяц</button>
+        </div>
+        <button class="btn btn-primary td-new" id="tdNew">${icon("plus", 15)} Новая задача</button>
+      </div>
+    </div>
+    <div class="page">
+      <div class="cal-head">
+        <button class="cal-nav" id="calPrev" title="Назад">${icon("chevron", 16)}</button>
+        <button class="cal-nav next" id="calNext" title="Вперёд">${icon("chevron", 16)}</button>
+        <h2 id="calTitle">${esc(calTitle())}</h2>
+        <button class="td-chip" id="calToday">Сегодня</button>
+        <div class="toggle-group" id="calScope">
+          <button class="toggle-btn${calUi.scope === "all" ? " active" : ""}" data-scope="all">Все</button>
+          <button class="toggle-btn${calUi.scope === "mine" ? " active" : ""}" data-scope="mine">Мои</button>
+        </div>
+        <span class="td-remind">${icon("grip", 14)} перетащите задачу на другой день — срок сдвинется</span>
+      </div>
+      <div class="td-grid with-drawer cal-layout" id="tdGrid">
+        <div id="tdCal"><div class="spinner">Загрузка…</div></div>
+        <div class="td-side">
+          <aside class="cal-side" id="tdAgenda"></aside>
+          <aside class="td-drawer" id="tdDrawer" hidden></aside>
+        </div>
+      </div>
+    </div>`;
+
+  const step = (dir) => {
+    const a = calUi.anchor;
+    calUi.anchor = calUi.mode === "week" ? calAddDays(a, 7 * dir) : new Date(a.getFullYear(), a.getMonth() + dir, 1);
+    main.querySelector("#calTitle").textContent = calTitle();
+    loadCalendar(main);
+  };
+  main.querySelector("#calPrev").onclick = () => step(-1);
+  main.querySelector("#calNext").onclick = () => step(1);
+  main.querySelector("#calToday").onclick = () => {
+    const n = new Date(); calUi.anchor = new Date(n.getFullYear(), n.getMonth(), n.getDate()); calUi.selected = calIso(n);
+    main.querySelector("#calTitle").textContent = calTitle(); loadCalendar(main);
+  };
+  main.querySelectorAll("#calMode .toggle-btn").forEach((b) => { b.onclick = () => { calUi.mode = b.dataset.mode; calUi.anchor = taskDay(calUi.selected) || calUi.anchor; renderTaskCalendar(main); }; });
+  main.querySelectorAll("#calScope .toggle-btn").forEach((b) => { b.onclick = () => { calUi.scope = b.dataset.scope; renderTaskCalendar(main); }; });
+  main.querySelector("#tdNew").onclick = () => openTaskForm(main, calUi.selected || "");
+
+  if (!tasksPeople) {
+    try { tasksPeople = (await api("/tasks/people")).people; } catch { tasksPeople = []; }
+  }
+  await loadCalendar(main);
+  if (state.taskOpenId) openTask(main, state.taskOpenId);
+}
+
+async function loadCalendar(main) {
+  const host = main.querySelector("#tdCal");
+  if (!host) return;
+  const [start, end] = calRange();
+  const scope = calUi.scope;
+  let ranged, open;
+  try {
+    [ranged, open] = await Promise.all([
+      api(`/tasks?${new URLSearchParams({ scope, status: "all", from: calIso(start), to: calIso(end) })}`),
+      api(`/tasks?${new URLSearchParams({ scope, status: "open" })}`),
+    ]);
+  } catch (e) {
+    host.innerHTML = `<div class="empty-state">Не удалось загрузить задачи: ${esc(e.message)}</div>`;
+    return;
+  }
+  if (!main.querySelector("#tdCal")) return;
+  const byDay = new Map();
+  for (const t of ranged.tasks) {
+    if (!byDay.has(t.due_date)) byDay.set(t.due_date, []);
+    byDay.get(t.due_date).push(t);
+  }
+  calData = { byDay, undated: open.tasks.filter((t) => !t.due_date), open: open.tasks, today: ranged.today };
+
+  const month = calUi.anchor.getMonth();
+  const cells = [];
+  for (let d = new Date(start); d <= end; d = calAddDays(d, 1)) cells.push(new Date(d));
+  const week = calUi.mode === "week";
+  host.innerHTML = `
+    <div class="cal${week ? " week" : ""}">
+      ${CAL_DOW.map((d) => `<div class="dow">${d}</div>`).join("")}
+      ${cells.map((d, i) => {
+        const iso = calIso(d);
+        const list = byDay.get(iso) || [];
+        const shown = week ? list : list.slice(0, CAL_MONTH_LIMIT);
+        const cls = [
+          "d",
+          !week && d.getMonth() !== month ? "out" : "",
+          i % 7 >= 5 ? "we" : "",
+          iso === calData.today ? "today" : "",
+          iso === calUi.selected ? "sel" : "",
+        ].filter(Boolean).join(" ");
+        return `<div class="${cls}" data-date="${iso}">
+          <div class="d-top"><span class="num">${d.getDate()}</span>${week ? `<span class="wd">${d.getDate() === 1 || i === 0 ? CAL_MONTHS_GEN[d.getMonth()] : ""}</span>` : ""}
+            <button class="d-add" data-add="${iso}" title="Новая задача на этот день">${icon("plus", 12)}</button></div>
+          ${shown.map(calEventHtml).join("")}
+          ${list.length > shown.length ? `<button class="more" data-more="${iso}">+ ещё ${list.length - shown.length}</button>` : ""}
+        </div>`;
+      }).join("")}
+    </div>`;
+
+  host.querySelectorAll(".cal-ev").forEach((el) => {
+    el.onclick = (e) => { e.stopPropagation(); openTask(main, Number(el.dataset.id)); };
+  });
+  host.querySelectorAll(".d").forEach((cell) => {
+    cell.onclick = () => { calUi.selected = cell.dataset.date; host.querySelectorAll(".d.sel").forEach((c) => c.classList.remove("sel")); cell.classList.add("sel"); closeTaskDrawer(main); renderCalAgenda(main); };
+    cell.ondblclick = (e) => { if (!e.target.closest(".cal-ev")) openTaskForm(main, cell.dataset.date); };
+  });
+  host.querySelectorAll(".d-add").forEach((b) => { b.onclick = (e) => { e.stopPropagation(); openTaskForm(main, b.dataset.add); }; });
+  host.querySelectorAll(".more").forEach((b) => {
+    b.onclick = (e) => { e.stopPropagation(); calUi.selected = b.dataset.more; closeTaskDrawer(main); loadCalendar(main); };
+  });
+  wireCalDrop(main, host);
+  if (main.querySelector("#tdAgenda") && !main.querySelector("#tdAgenda").hidden) renderCalAgenda(main);
+  markCalOpen(main);
+}
+
+function calEventHtml(t) {
+  const p = taskPriority(t.priority);
+  const cls = ["cal-ev", t.status === "done" ? "done" : "", t.overdue ? "over" : "", t.unread ? "unread" : ""].filter(Boolean).join(" ");
+  return `<div class="${cls}" data-id="${t.id}" ${t.status === "done" ? "" : 'draggable="true"'} style="border-left-color:${p.color}"
+    title="${esc(t.title)}${t.assignees.length ? " — " + esc(t.assignees.map((a) => a.full_name).join(", ")) : ""}">
+    ${t.overdue ? '<span class="bang">!</span>' : ""}${t.due_time ? `<span class="tm">${esc(t.due_time)}</span>` : ""}<span class="tt">${esc(t.title)}</span>
+  </div>`;
+}
+
+const markCalOpen = markOpenRow;
+
+// Перетаскивание: задачу — на день. Своё поле dataTransfer, а не text/plain:
+// иначе брошенный на клетку посторонний текст (выделенный кусок страницы)
+// превращался бы в попытку сдвинуть «задачу» с таким номером.
+const CAL_DND_TYPE = "application/x-center-task";
+
+function wireCalDrop(main, root) {
+  main.querySelectorAll("[draggable=true][data-id]").forEach((el) => {
+    el.ondragstart = (e) => {
+      e.dataTransfer.setData(CAL_DND_TYPE, el.dataset.id);
+      e.dataTransfer.effectAllowed = "move";
+      el.classList.add("dragging");
+    };
+    el.ondragend = () => el.classList.remove("dragging");
+  });
+  root.querySelectorAll(".d").forEach((cell) => {
+    cell.ondragover = (e) => {
+      if (!e.dataTransfer.types.includes(CAL_DND_TYPE)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      cell.classList.add("drop");
+    };
+    cell.ondragleave = (e) => { if (!cell.contains(e.relatedTarget)) cell.classList.remove("drop"); };
+    cell.ondrop = async (e) => {
+      cell.classList.remove("drop");
+      const id = Number(e.dataTransfer.getData(CAL_DND_TYPE));
+      if (!id) return;
+      e.preventDefault();
+      const date = cell.dataset.date;
+      const all = [...calData.byDay.values()].flat().concat(calData.undated);
+      const t = all.find((x) => x.id === id);
+      if (t && t.due_date === date) return;
+      try {
+        await api(`/tasks/${id}`, { method: "PATCH", body: { due_date: date } });
+        const d = taskDay(date);
+        toast(`Срок перенесён на ${d.getDate()} ${CAL_MONTHS_GEN[d.getMonth()]}`);
+        calUi.selected = date;
+        await loadCalendar(main);
+        if (state.taskOpenId === id) openTask(main, id);
+        refreshTaskBadge();
+      } catch (err) { toast(err.message, true); }
+    };
+  });
+}
+
+function renderCalAgenda(main) {
+  const box = main.querySelector("#tdAgenda");
+  if (!box) return;
+  const iso = calUi.selected;
+  const d = taskDay(iso);
+  const list = (calData.byDay.get(iso) || []).slice().sort((a, b) => (a.due_time || "99").localeCompare(b.due_time || "99"));
+  const isToday = iso === calData.today;
+  const late = isToday ? calData.open.filter((t) => t.overdue && t.due_date !== iso) : [];
+  const openCount = list.filter((t) => t.status !== "done").length;
+
+  // Нагрузка — открытые задачи со сроком на ТЕКУЩЕЙ неделе, по людям.
+  const mon = calMonday(taskDay(calData.today) || new Date());
+  const [ws, we] = [calIso(mon), calIso(calAddDays(mon, 6))];
+  const load = new Map();
+  for (const t of calData.open) {
+    if (!t.due_date || t.due_date < ws || t.due_date > we) continue;
+    for (const a of t.assignees) load.set(a.id, { p: a, n: ((load.get(a.id) || {}).n || 0) + 1 });
+  }
+  const loadRows = [...load.values()].sort((a, b) => b.n - a.n);
+  const max = Math.max(1, ...loadRows.map((r) => r.n));
+
+  const item = (t, time) => `
+    <div class="ag-item${t.status === "done" ? " done" : ""}" data-id="${t.id}">
+      <span class="tm${t.overdue ? " red" : ""}">${time}</span>
+      <div style="min-width:0"><div class="tt">${esc(t.title)}</div>
+        <div class="mm">${t.assignees.map((a) => taskAvatar(a, 18)).join("")} ${t.assignees.length === 1 ? esc(t.assignees[0].full_name) : ""}</div></div>
+    </div>`;
+
+  box.innerHTML = `
+    <h4>${d ? `${CAL_WEEKDAYS_FULL[d.getDay()]}, ${d.getDate()} ${CAL_MONTHS_GEN[d.getMonth()]}` : ""}</h4>
+    <div class="sub">${list.length ? `${openCount} ${openCount === 1 ? "задача" : openCount >= 2 && openCount <= 4 ? "задачи" : "задач"}${list.length > openCount ? `, выполнено ${list.length - openCount}` : ""}` : "задач на этот день нет"}${late.length ? ` · просрочено ${late.length}` : ""}</div>
+    ${list.map((t) => item(t, t.due_time || "весь день")).join("")}
+    ${late.length ? `<div class="td-sec">Срок прошёл</div>${late.map((t) => item(t, esc(taskDueLabel(t)))).join("")}` : ""}
+    <button class="btn btn-ghost ag-add" data-add="${esc(iso)}">${icon("plus", 14)} Задача на этот день</button>
+    ${calData.undated.length ? `
+      <div class="td-sec">Без срока — перетащите на день</div>
+      ${calData.undated.slice(0, 10).map((t) => `<div class="ag-undated" draggable="true" data-id="${t.id}" style="border-left-color:${taskPriority(t.priority).color}">${icon("grip", 12)} <span>${esc(t.title)}</span></div>`).join("")}
+      ${calData.undated.length > 10 ? `<div class="td-muted" style="font-size:12px;">и ещё ${calData.undated.length - 10} — в списке задач</div>` : ""}` : ""}
+    ${loadRows.length ? `
+      <div class="td-sec">Нагрузка на эту неделю</div>
+      <div class="ag-load">${loadRows.map((r) => `
+        <div class="r">${taskAvatar(r.p, 22)}<span class="b" title="${esc(r.p.full_name)}"><i style="width:${Math.round((r.n / max) * 100)}%;background:${taskAvatarColor(r.p.id)}"></i></span><b>${r.n}</b></div>`).join("")}
+      </div>` : ""}`;
+
+  box.querySelectorAll(".ag-item, .ag-undated").forEach((el) => { el.onclick = () => openTask(main, Number(el.dataset.id)); });
+  box.querySelector(".ag-add").onclick = () => openTaskForm(main, iso);
+  wireCalDrop(main, main.querySelector("#tdCal"));
+  markCalOpen(main);
 }
