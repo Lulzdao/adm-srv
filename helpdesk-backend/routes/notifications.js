@@ -333,8 +333,8 @@ module.exports = function notificationRoutes(db) {
 
     const sent = await mailer.send(db, {
       to,
-      subject: "Проверка почты — ИТ-сервисы",
-      text: "Это пробное письмо из раздела «Оповещения» платформы «ИТ-сервисы».\n" +
+      subject: "Проверка почты — Центр",
+      text: "Это пробное письмо из раздела «Оповещения» платформы «Центр».\n" +
             "Если оно дошло — отправка настроена верно.",
     });
     res.json(sent.ok ? { ok: true, detail: `${check.detail}; пробное письмо отправлено на ${to}` } : sent);

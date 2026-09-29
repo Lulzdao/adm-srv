@@ -157,7 +157,7 @@ NSSM каталог сам не создаёт: без него служба н�
 ```
 nssm install ITS-Platform "C:\Program Files\nodejs\node.exe" "--use-system-ca server.js"
 nssm set ITS-Platform AppDirectory "C:\IT-services\helpdesk-backend"
-nssm set ITS-Platform DisplayName "ИТ-сервисы: платформа"
+nssm set ITS-Platform DisplayName "Центр: платформа"
 nssm set ITS-Platform Description "Заявки, вход через домен, прокси модулей, оповещения"
 nssm set ITS-Platform Start SERVICE_AUTO_START
 nssm set ITS-Platform AppStdout "C:\IT-services\logs\platform.out.log"
@@ -174,7 +174,7 @@ nssm set ITS-Platform AppRestartDelay 5000
 ```
 nssm install ITS-CertViewer "C:\Program Files\nodejs\node.exe" "server.js"
 nssm set ITS-CertViewer AppDirectory "C:\IT-services\CERTVIEWER"
-nssm set ITS-CertViewer DisplayName "ИТ-сервисы: реестр сертификатов и МЧД"
+nssm set ITS-CertViewer DisplayName "Центр: реестр сертификатов и МЧД"
 nssm set ITS-CertViewer Description "Сроки сертификатов и машиночитаемых доверенностей"
 nssm set ITS-CertViewer Start SERVICE_AUTO_START
 nssm set ITS-CertViewer AppStdout "C:\IT-services\logs\certviewer.out.log"
@@ -195,7 +195,7 @@ nssm set ITS-CertViewer AppRestartDelay 5000
 ```
 nssm install ITS-SmdrCollector "C:\Python311\python.exe" "Collector.Py"
 nssm set ITS-SmdrCollector AppDirectory "C:\IT-services\SMDR"
-nssm set ITS-SmdrCollector DisplayName "ИТ-сервисы: сборщик звонков с АТС"
+nssm set ITS-SmdrCollector DisplayName "Центр: сборщик звонков с АТС"
 nssm set ITS-SmdrCollector Description "Принимает записи SMDR с АТС и складывает в smdr.db"
 nssm set ITS-SmdrCollector Start SERVICE_AUTO_START
 nssm set ITS-SmdrCollector AppStdout "C:\IT-services\logs\collector.out.log"
@@ -213,7 +213,7 @@ nssm set ITS-SmdrCollector AppStopMethodConsole 5000
 ```
 nssm install ITS-SmdrWeb "C:\Program Files\nodejs\node.exe" "server.js"
 nssm set ITS-SmdrWeb AppDirectory "C:\IT-services\SMDR\web-node"
-nssm set ITS-SmdrWeb DisplayName "ИТ-сервисы: журнал звонков"
+nssm set ITS-SmdrWeb DisplayName "Центр: журнал звонков"
 nssm set ITS-SmdrWeb Description "Журнал, статистика и справочник добавочных"
 nssm set ITS-SmdrWeb Start SERVICE_AUTO_START
 nssm set ITS-SmdrWeb AppStdout "C:\IT-services\logs\smdrweb.out.log"
@@ -230,7 +230,7 @@ nssm set ITS-SmdrWeb AppRestartDelay 5000
 ```
 nssm install ITS-Iskra "C:\Program Files\nodejs\node.exe" "server.js"
 nssm set ITS-Iskra AppDirectory "C:\IT-services\MESSENGER"
-nssm set ITS-Iskra DisplayName "ИТ-сервисы: мессенджер Искра"
+nssm set ITS-Iskra DisplayName "Центр: мессенджер Искра"
 nssm set ITS-Iskra Description "Сервер обмена сообщениями и раздача обновлений клиента"
 nssm set ITS-Iskra Start SERVICE_AUTO_START
 nssm set ITS-Iskra AppStdout "C:\IT-services\logs\iskra.out.log"

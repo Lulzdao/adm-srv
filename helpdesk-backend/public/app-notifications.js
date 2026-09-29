@@ -301,7 +301,7 @@ async function renderNotifSmtp(page, kinds) {
           <div><div class="field-label">Пароль</div>
             <input class="input" id="smPass" type="password" placeholder="${smtp.hasPassword ? "задан — оставьте пустым, чтобы не менять" : "не задан"}" style="width:100%;" /></div>
           <div style="grid-column:1/-1;"><div class="field-label">Адрес отправителя</div>
-            <input class="input" id="smFrom" value="${esc(smtp.from || "")}" placeholder="ИТ-сервисы &lt;it@lipetskstat.ru&gt;" style="width:100%;" /></div>
+            <input class="input" id="smFrom" value="${esc(smtp.from || "")}" placeholder="Центр &lt;it@lipetskstat.ru&gt;" style="width:100%;" /></div>
         </div>
 
         <label style="display:flex;align-items:center;gap:8px;margin-top:12px;font-size:13px;cursor:pointer;">
