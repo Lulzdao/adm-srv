@@ -39,6 +39,15 @@ const ICON_PATHS = {
   link: '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>',
   trash: '<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>',
   'chevron-left': '<polyline points="15 6 9 12 15 18"/>',
+  // Ассистент: портфель — сам раздел, скачивание — кнопки документов,
+  // загрузка — файлы и выгрузки, пауза и продолжение — рассылки.
+  briefcase: '<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/><path d="M3 13h18"/>',
+  download: '<path d="M12 3v12"/><polyline points="7 10 12 15 17 10"/><path d="M5 21h14"/>',
+  upload: '<path d="M12 21V9"/><polyline points="7 14 12 9 17 14"/><path d="M5 3h14"/>',
+  pause: '<line x1="9" y1="5" x2="9" y2="19"/><line x1="15" y1="5" x2="15" y2="19"/>',
+  play: '<polygon points="7 4 20 12 7 20 7 4"/>',
+  refresh: '<path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><polyline points="21 3 21 8 16 8"/>',
+  edit: '<path d="M4 20h4l10-10a2.8 2.8 0 0 0-4-4L4 16v4z"/>',
   // Значки отделов на экране новой заявки. Имя пишется в config/departments.js,
   // там же перечислен доступный набор. Монитор — техника, лист со строками —
   // деньги и отчётность, два силуэта — люди, ключ — доступ и режим; перо, лист
@@ -263,7 +272,9 @@ function saveNavGroups() {
 const state = { user: null, view: "inbox", currentTicket: null, notifications: [], departments: [], modules: [], navGroupOpen: loadNavGroups(),
   // Задачи администраторов: какая открыта в карточке справа и сколько «моих»
   // требуют внимания (просрочены или там новое от других) — для счётчика в меню.
-  taskOpenId: null, taskAttention: 0 };
+  taskOpenId: null, taskAttention: 0,
+  // Ассистент: открытая рассылка (#asst:mail/12).
+  mailOpenId: null };
 let viewPollHandle = null;   // интервал автообновления текущего экрана (список/карточка)
 let notifPollHandle = null;  // интервал обновления счётчика уведомлений (работает всегда)
 
@@ -513,6 +524,7 @@ function setView(view, arg, { replace = false } = {}) {
   // У раздела задач второй аргумент — номер задачи, открытой в карточке
   // справа. Переход из меню его не передаёт, и карточка закрывается.
   if (view === "tasks" || view === "taskcal") state.taskOpenId = arg || null;
+  if (view === "asst:mail") state.mailOpenId = arg || null;
   state.view = view;
   writeHash(replace);
   renderShell();
@@ -535,7 +547,9 @@ function writeHash(replace) {
     ? `#detail/${state.currentTicket.id}`
     : state.view === "tasks" && state.taskOpenId
       ? `#task/${state.taskOpenId}`
-      : `#${state.view}`;
+      : state.view === "asst:mail" && state.mailOpenId
+        ? `#asst:mail/${state.mailOpenId}`
+        : `#${state.view}`;
   if (location.hash === hash) return;
   applyingHash = true;
   // Переход, который сделал человек, — новая запись в истории: тогда «назад»
@@ -552,6 +566,8 @@ function viewExists(view) {
   if (!view) return false;
   const u = state.user;
   if (["inbox", "mine", "create"].includes(view)) return true;
+  // Ассистент — всем; его настройки — только администраторам.
+  if (view.startsWith("asst:")) return ASSISTANT_VIEWS.some((v) => v.id === view) && (view !== "asst:settings" || Boolean(u.is_admin));
   // Разделы администратора — по признаку is_admin, а не по роли: роль "it"
   // теперь значит «исполнитель отдела ИТ», и прав администратора не даёт.
   if (["dashboard", "admin", "certs", "tasks", "taskcal"].includes(view) || view.startsWith("notif:")) return Boolean(u.is_admin);
@@ -592,6 +608,12 @@ async function restoreViewFromHash() {
   const task = raw.match(/^task\/(\d+)$/);
   if (task && viewExists("tasks")) {
     setView("tasks", Number(task[1]), { replace: true });
+    return;
+  }
+
+  const mail = raw.match(/^asst:mail\/(\d+)$/);
+  if (mail) {
+    setView("asst:mail", Number(mail[1]), { replace: true });
     return;
   }
 
@@ -662,7 +684,7 @@ function navBtnHtml(it, active, indented) {
 // Группы, раскрытые по умолчанию, пока человек сам их не свернёт. «Задачи» —
 // потому что внутри всего два вида одного раздела, и прятать их за лишний
 // щелчок незачем.
-const NAV_GROUPS_OPEN_BY_DEFAULT = new Set(["tasks"]);
+const NAV_GROUPS_OPEN_BY_DEFAULT = new Set(["tasks", "assistant"]);
 
 function navGroupHtml(groupId, label, iconName, badge, items) {
   const saved = state.navGroupOpen[groupId];
@@ -812,6 +834,11 @@ function renderShell() {
     navHtml = items.map(it => navBtnHtml(it, navView() === it.id, false)).join("");
   }
 
+  // Ассистент — всем сотрудникам, после заявок и задач: это тоже ежедневная
+  // работа. Настройки в нём — только администраторам.
+  navHtml += navGroupHtml("assistant", "Ассистент", "briefcase", 0,
+    ASSISTANT_VIEWS.filter((v) => v.id !== "asst:settings" || isAdmin));
+
   if (state.modules.length) {
     navHtml += state.modules.map(m => {
       const views = (m.views && m.views.length) ? m.views : [{ id: "root", label: m.label, sub: "" }];
@@ -879,6 +906,7 @@ function renderShell() {
   else if (state.view === "tasks") renderTasks(main);
   else if (state.view === "taskcal") renderTaskCalendar(main);
   else if (state.view.startsWith("notif:")) renderNotifications(main, state.view.slice(6));
+  else if (state.view.startsWith("asst:")) renderAssistant(main, state.view.slice(5));
   else if (state.view.startsWith("module:")) {
     const [, modId, viewId] = state.view.split(":");
     const mod = state.modules.find(m => m.id === modId);

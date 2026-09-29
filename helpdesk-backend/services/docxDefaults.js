@@ -44,7 +44,10 @@ function table({ widths, header, rows, borders = true, size }) {
     + String(text).split("\n").map((line) => p(line, { bold: head, size, align: head ? "center" : undefined })).join("")
     + "</w:tc>";
   const tr = (cells, head) => `<w:tr>${head ? "<w:trPr><w:tblHeader/></w:trPr>" : ""}${cells.map((c, i) => cell(c, i, head)).join("")}</w:tr>`;
-  return `<w:tbl><w:tblPr><w:tblW w:w="${tw(widths.reduce((a, b) => a + b, 0))}" w:type="dxa"/>${border}`
+  // Таблица без рамок — это разметка подписей; сдвигаем её на поле ячейки,
+  // чтобы текст стоял ровно по краю абзацев, а не на 1,5 мм правее.
+  const indent = borders ? "" : '<w:tblInd w:w="-80" w:type="dxa"/>';
+  return `<w:tbl><w:tblPr><w:tblW w:w="${tw(widths.reduce((a, b) => a + b, 0))}" w:type="dxa"/>${indent}${border}`
     + '<w:tblLayout w:type="fixed"/><w:tblCellMar><w:left w:w="80" w:type="dxa"/><w:right w:w="80" w:type="dxa"/></w:tblCellMar></w:tblPr>'
     + `<w:tblGrid>${widths.map((w) => `<w:gridCol w:w="${tw(w)}"/>`).join("")}</w:tblGrid>`
     + (header ? tr(header, true) : "") + rows.map((r) => tr(r, false)).join("") + "</w:tbl>";
