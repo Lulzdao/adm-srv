@@ -260,7 +260,7 @@ async function renderCertificates(main) {
         ? `${row("Кому выдан", esc(c.subject || "—"))}
            ${row("Имена в сертификате (SAN)", `<span class="mono" style="font-size:12px;">${esc(c.san || "—")}</span>`)}
            ${row("Кем выдан", esc(c.issuer || "—"))}
-           ${row("Действителен до", `${esc(c.validTo || "—")} ${days(c.daysLeft)}`)}
+           ${row("Действителен до", `${esc(c.validTo || "—")} ${days(certDaysLeft(c))}`)}
            ${row("Корень цепочки", esc(c.rootSubject || "—"))}
            ${row("Цепочка", c.chainComplete
               ? `<span class="badge" style="color:var(--green);background:var(--green-soft);">полная (${c.certificates} серт.)</span>`
@@ -311,22 +311,30 @@ async function renderCertificates(main) {
             <div style="font-size:12px;color:var(--ink-soft);margin-bottom:14px;">
               Сертификат один на обе службы: платформа и «Искра» стоят на одной машине и отвечают
               на одно имя. ${server.managedBy === "store"
-                ? `Файл лежит в <span class="mono">${esc(server.sharedStore)}</span>; загрузить новый можно здесь же (форма ниже) или в панели «Искры» — разницы нет, файл тот же. Платформа перечитывает его сама; «Искре» нужен перезапуск службы — своего слежения за хранилищем у неё нет.`
-                : `Сейчас путь задан переменными окружения: <span class="mono">${esc(server.where || "")}</span>. Тогда сертификат <b>не общий</b> с «Искрой» — она читает своё хранилище и может предъявлять другой файл, — а загрузка из панели отключена.`}
+                ? `Файл лежит в <span class="mono">${esc(server.sharedStore)}</span>; загрузить новый можно здесь же (форма ниже) или в панели «Искры» — разницы нет, файл тот же. Обе службы перечитывают его сами, без перезапуска.`
+                : server.managedBy === "env"
+                ? `Сейчас общее хранилище пустое, и работает запасной путь — переменная в <span class="mono">.env</span>: <span class="mono">${esc(server.where || "")}</span>. Такой сертификат <b>не общий</b> с «Искрой». Загрузите файл формой ниже — он ляжет в общее хранилище и сразу заменит сертификат из переменной: хранилище важнее.`
+                : `Сертификата нет. Загрузите PFX формой ниже — он ляжет в общее хранилище; платформа перейдёт на https после перезапуска службы (с http на https на ходу не переключиться).`}
             </div>
-            ${server.managedBy === "env" ? `<div class="warn-box" style="margin-bottom:14px;">
+            ${server.managedBy !== "store" ? `<div class="warn-box" style="margin-bottom:14px;">
               <div>
-              Чтобы вернуть общий сертификат и загрузку отсюда: уберите <span class="mono">TLS_PFX</span>
-              (или <span class="mono">TLS_CERT</span>/<span class="mono">TLS_KEY</span>) из
-              <span class="mono">.env</span> и укажите путь к каталогу <span class="mono">certs</span>
-              работающей «Искры»: <span class="mono">SHARED_CERT_DIR=&lt;папка Искры&gt;\\certs</span>.
-              Сейчас платформа ищет хранилище в <span class="mono">${esc(server.storeDir || "")}</span> —
-              если «Искра» стоит не там, сертификат она не найдёт. После правки нужен перезапуск.
+              Хранилище платформа ищет в <span class="mono">${esc(server.storeDir || "")}</span> — это должен быть
+              каталог <span class="mono">certs</span> работающей «Искры». Если «Искра» стоит не там, укажите
+              <span class="mono">SHARED_CERT_DIR=&lt;папка Искры&gt;\\certs</span> в <span class="mono">.env</span> и
+              перезапустите платформу — иначе загруженный здесь файл «Искра» не увидит.
+              </div>
+            </div>` : ""}
+            ${server.shadowedEnv ? `<div class="warn-box" style="margin-bottom:14px;">
+              <div>
+              В <span class="mono">.env</span> (или в окружении службы) задана переменная
+              <span class="mono">${esc(server.shadowedEnv)}</span>, но она не используется: действует сертификат
+              из общего хранилища. Уберите её — иначе, если файл из хранилища однажды удалят, платформа молча
+              вернётся к старому сертификату из переменной.
               </div>
             </div>` : ""}
             ${serverCard}
 
-            ${server.managedBy === "store" ? `
+            ${server.managedBy ? `
             <div style="margin-top:18px;padding-top:16px;border-top:1px solid var(--line-soft);">
               <div class="section-label" style="margin-bottom:8px;">Заменить сертификат</div>
               <div style="font-size:12px;color:var(--ink-soft);margin-bottom:12px;">

@@ -72,6 +72,27 @@ test('сертификат, заменённый в certs/ со стороны, 
   assert.equal(await getStatus(`${srv.url}/api/ping`), 200, 'сервер при этом работает');
 });
 
+// На Windows слежение за удалённым каталогом шлёт события без конца — процессор на 100%, сервер
+// тормозит. Каталог исчез — слежение останавливается, «Искра» работает на прежнем сертификате.
+test('каталог certs/ удалили — слежение останавливается, сервер отвечает без задержек', { skip }, async (t) => {
+  const srv = await startServer({ files: { 'certs/server.pfx': A.pfx, 'certs/server.pass': A.password } });
+  t.after(() => srv.stop());
+
+  fs.rmSync(path.join(srv.dir, 'certs'), { recursive: true, force: true });
+  await new Promise((r) => setTimeout(r, 1000));
+  for (let i = 0; i < 5; i++) {
+    const started = Date.now();
+    assert.equal(await getStatus(`${srv.url}/api/ping`), 200);
+    assert.ok(Date.now() - started < 1000, `ответ занял ${Date.now() - started} мс — сервер занят`);
+  }
+  assert.equal(await servedFingerprint(srv.url), A.fingerprint, 'работает прежний сертификат');
+  const logDir = path.join(srv.dir, 'logs');
+  const logged = await waitFor(() => fs.readdirSync(logDir, { recursive: true })
+    .filter((f) => f.endsWith('.log'))
+    .some((f) => fs.readFileSync(path.join(logDir, f), 'utf8').includes('tls_watch_stopped')), 3000);
+  assert.ok(logged, 'в журнале — tls_watch_stopped');
+});
+
 test('битый файл в certs/ не применяется — работает прежний сертификат', { skip }, async (t) => {
   const srv = await startServer({ files: { 'certs/server.pfx': A.pfx, 'certs/server.pass': A.password } });
   t.after(() => srv.stop());
