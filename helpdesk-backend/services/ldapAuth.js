@@ -133,6 +133,45 @@ async function authenticate(domainKey, login, password, db) {
   };
 }
 
+/**
+ * Группы сотрудника в домене прямо сейчас — без его пароля, сервисной учёткой.
+ *
+ * При входе группы запоминаются (users.ad_groups), но вход живёт до 30 дней и
+ * переживает перезапуски: исключённый из группы общего ящика рассылок слал бы
+ * с него, пока не перезайдёт. Поэтому перед рассылкой с ящика группа
+ * уточняется здесь. Учётка удалена или отключена — групп нет.
+ * Контроллер недоступен — ошибка; что делать тогда, решает вызывающий.
+ */
+async function lookupGroups(domainKey, login) {
+  const cfg = config.domains[domainKey];
+  if (!cfg || !cfg.url) throw new LdapAuthError("CONFIG_MISSING", `Домен "${domainKey}" не настроен`);
+  const client = new Client(clientOptions(cfg.url));
+  try {
+    try {
+      await client.bind(cfg.svcDn, cfg.svcPassword);
+    } catch (err) {
+      throw new LdapAuthError("DC_UNAVAILABLE", `Контроллер домена ${cfg.label} недоступен или сервисная учётка неверна`, err);
+    }
+    let searchEntries;
+    try {
+      ({ searchEntries } = await client.search(cfg.baseDn, {
+        scope: "sub",
+        filter: `(sAMAccountName=${escapeLdapFilter(login)})`,
+        attributes: ["memberOf", "userAccountControl"],
+      }));
+    } catch (err) {
+      throw new LdapAuthError("SEARCH_FAILED", `Ошибка поиска пользователя в домене ${cfg.label}: ${err.message}`, err);
+    }
+    if (!searchEntries.length) return { found: false, disabled: false, groups: [] };
+    const entry = searchEntries[0];
+    // Бит 2 (ACCOUNTDISABLE) в userAccountControl — учётка отключена.
+    const disabled = (Number(singleValue(entry.userAccountControl)) & 2) === 2;
+    return { found: true, disabled, groups: disabled ? [] : groupNames(entry.memberOf) };
+  } finally {
+    await client.unbind().catch(() => {});
+  }
+}
+
 /** Имена групп (CN) из списка DN memberOf. */
 function groupNames(memberOf) {
   return normalizeMemberOf(memberOf).map((dn) => {
@@ -196,4 +235,4 @@ class LdapAuthError extends Error {
   }
 }
 
-module.exports = { authenticate, clientOptions, LdapAuthError, isMemberOfGroup, groupNames };
+module.exports = { authenticate, lookupGroups, clientOptions, LdapAuthError, isMemberOfGroup, groupNames };

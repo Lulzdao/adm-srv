@@ -39,6 +39,35 @@ function userInGroup(db, userId, group) {
   return Boolean(row && row.ad_groups.includes(`,${g},`));
 }
 
+const GROUPS_TIMEOUT_MS = 10000;
+
+/**
+ * Уточнить группы доменного сотрудника в AD и записать их вместо запомненных
+ * при входе (см. lookupGroups в ldapAuth.js). Локальные учётки групп не имеют —
+ * у них ничего не меняется. Домен не ответил — остаются запомненные: рассылка
+ * не должна вставать из-за недоступного контроллера.
+ * Возвращает "live" (группы из домена) или "stored" (запомненные).
+ */
+async function refreshAdGroups(db, userId) {
+  const u = db.prepare("SELECT ad_login, auth_type, last_domain FROM users WHERE id = ?").get(userId);
+  if (!u || u.auth_type !== "ad" || !u.last_domain) return "stored";
+  let timer;
+  try {
+    const { lookupGroups } = require("./ldapAuth");
+    const r = await Promise.race([
+      lookupGroups(u.last_domain, u.ad_login),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("домен не ответил вовремя")), GROUPS_TIMEOUT_MS); }),
+    ]);
+    db.prepare("UPDATE users SET ad_groups = ? WHERE id = ?").run(packGroups(r.groups), userId);
+    return "live";
+  } catch (err) {
+    console.warn(`[группы] ${u.ad_login}: не удалось уточнить в домене (${err.message}) — берутся запомненные при входе`);
+    return "stored";
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Условие SQL «пользователь состоит в этом отделе». Возвращает шаблон для LIKE. */
 function roleLike(role) {
   return `%,${role},%`;
@@ -85,4 +114,4 @@ function upsertFromLdap(db, ldapUser) {
   return db.prepare("SELECT * FROM users WHERE id = ?").get(info.lastInsertRowid);
 }
 
-module.exports = { upsertFromLdap, packRoles, unpackRoles, roleLike, packGroups, userInGroup };
+module.exports = { upsertFromLdap, packRoles, unpackRoles, roleLike, packGroups, userInGroup, refreshAdGroups };

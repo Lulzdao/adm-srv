@@ -151,6 +151,11 @@ module.exports = function adminRoutes(db) {
 
   router.get("/backup", (req, res) => res.json(backupInfo()));
 
+  // Состояние системы: службы, копии, диски, сертификат, планировщик, почта (services/health.js).
+  router.get("/health", async (req, res, next) => {
+    try { res.json(await require("../services/health").collect(db)); } catch (err) { next(err); }
+  });
+
   router.post("/backup/check", (req, res) => {
     const dir = (req.body || {}).dir;
     if (typeof dir !== "string" || dir.length > 400) return res.status(400).json({ error: "Путь — строка до 400 символов" });

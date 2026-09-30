@@ -266,3 +266,28 @@ test("сервер требует пароль приложения — так �
   ]) assert.match(describeError({ code: "EAUTH", message: text }), /требует пароль приложения/);
   assert.match(describeError({ code: "EAUTH", message: "535 5.7.8 Authentication failed" }), /отверг логин или пароль/);
 });
+
+test("повтор со своего ящика после завершения: сначала просит пароль, с паролем — отправляет", async (t) => {
+  // Раньше повтор сначала возвращал неотправленные в очередь, а потом отказывал
+  // «Введите пароль» — и следующая попытка уже с паролем отвечала «неотправленных нет».
+  const { app, smtp, U } = await стенд(t, { rejectRecipient: "two@example.invalid", auth: { user: "u1@example.invalid", pass: "верный-пароль" } });
+  const r = await form(app, U, "/api/mailings", { payload: {
+    subject: "Т", body: "Б", sender_mode: "own", own_address: "u1@example.invalid", own_password: "верный-пароль",
+    recipients: [{ row_no: 2, emails: ["one@example.invalid"] }, { row_no: 3, emails: ["two@example.invalid"] }],
+  } });
+  assert.strictEqual(r.status, 201, r.text);
+  const done = await дождаться(U, r.json.id, (x) => x.campaign.status === "done");
+  assert.strictEqual(done.campaign.failed, 1);
+
+  const noPass = await U.post(`/api/mailings/${r.json.id}/retry`, {});
+  assert.strictEqual(noPass.status, 400);
+  assert.match(noPass.json.error, /Введите пароль/);
+  assert.strictEqual((await U.get(`/api/mailings/${r.json.id}`)).json.campaign.failed, 1, "отказ ничего не поменял");
+
+  smtp.reset();
+  const withPass = await U.post(`/api/mailings/${r.json.id}/retry`, { password: "верный-пароль" });
+  assert.strictEqual(withPass.status, 200, withPass.text);
+  const again = await дождаться(U, r.json.id, (x) => x.campaign.status === "done");
+  assert.strictEqual(again.campaign.failed, 1, "адрес по-прежнему отклоняется — но попытка была");
+  assert.ok(smtp.messages.some((m) => m.subject.startsWith("Отчёт")), "повтор прошёл до конца");
+});

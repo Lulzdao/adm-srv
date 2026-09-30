@@ -6,6 +6,7 @@ const http = require('http');
 const https = require('https');
 const tls = require('tls');
 const { diagnoseServer } = require('./diagnose');
+const { parseMachinePolicy } = require('./policy');
 const { SERVER_URL } = require('./config');
 const { autoUpdater } = require('electron-updater');
 
@@ -255,34 +256,15 @@ const MACHINE_POLICY_PATH = process.platform === 'win32'
   ? path.join(process.env.ProgramData || 'C:\\ProgramData', 'Iskra', 'config.json')
   : '/etc/iskra/config.json';
 
+// Разбор — в policy.js (там же про метку BOM, из-за которой политика раньше молча не действовала).
+// Файл есть, но прочитать нельзя — пишем в журнал: иначе администратор видел бы только, что
+// клиенты «почему-то» идут на адрес из сборки.
 function readMachinePolicy() {
-  const empty = { serverUrl: null, allowInsecureHttp: false, extraCa: [], source: null };
-  let raw;
-  try { raw = fs.readFileSync(MACHINE_POLICY_PATH, 'utf8'); } catch { return empty; }
-
-  let cfg;
-  try { cfg = JSON.parse(raw); } catch { return empty; }
-
-  const extraCa = [];
-  // Корни можно задать и текстом прямо в файле, и путями к .crt — второе удобнее для GPO,
-  // которая обычно кладёт рядом готовые файлы.
-  for (const pem of [].concat(cfg.extraCaPem || [])) {
-    if (typeof pem === 'string' && pem.includes('BEGIN CERTIFICATE')) extraCa.push(pem);
-  }
-  for (const file of [].concat(cfg.extraCaFiles || [])) {
-    if (typeof file !== 'string') continue;
-    try { extraCa.push(fs.readFileSync(file, 'utf8')); } catch { /* файла нет — пропускаем */ }
-  }
-
-  return {
-    serverUrl: typeof cfg.serverUrl === 'string' && cfg.serverUrl.trim() ? cfg.serverUrl.trim() : null,
-    // Работа без шифрования — только явным решением администратора и только через политику.
-    // Автоматического отката при ошибке сертификата нет намеренно: иначе любой в сети смог бы
-    // уронить TLS и заставить клиентов самих перейти на открытый канал.
-    allowInsecureHttp: cfg.allowInsecureHttp === true,
-    extraCa,
-    source: MACHINE_POLICY_PATH,
-  };
+  let raw = null;
+  try { raw = fs.readFileSync(MACHINE_POLICY_PATH, 'utf8'); } catch { /* файла нет — обычное дело */ }
+  const { policy, error } = parseMachinePolicy(raw, (f) => fs.readFileSync(f, 'utf8'), MACHINE_POLICY_PATH);
+  if (error) logLocal('machine_policy_invalid', { file: MACHINE_POLICY_PATH, error }, 'WARN');
+  return policy;
 }
 
 const machinePolicy = readMachinePolicy();
@@ -648,6 +630,27 @@ function createRoster() {
   });
 }
 
+// Постоянный идентификатор значка трея (GUID) — чтобы «призраки» не копились.
+//
+// Процесс, снятый принудительно (установка поверх работающего клиента, диспетчер задач, сбой),
+// не успевает убрать свой значок, и Windows держит его, пока над ним не проведут мышью. Без
+// идентификатора каждый новый запуск добавлял значок рядом с «призраком» — их набиралось по
+// нескольку. С GUID Windows считает значок тем же самым, и новый запуск занимает место старого.
+// Проверено на ПК 2026-09-30: три запуска с принудительным снятием между ними — было два лишних
+// значка, стало ни одного. Корректный выход и так убирает значок (tray.destroy в will-quit).
+//
+// У неподписанной программы Windows привязывает GUID к пути exe: тот же GUID из другой папки
+// значок не создаст. Поэтому GUID выводится из пути — в одной папке он всегда один и тот же, в
+// другой (установка с /D=) свой. Только собранное приложение на Windows: при разработке exe —
+// electron.exe из node_modules, и занимать под него идентификатор незачем.
+function trayGuid() {
+  if (process.platform !== 'win32' || !app.isPackaged) return undefined;
+  const h = require('crypto').createHash('sha1').update('iskra-tray:' + process.execPath.toLowerCase()).digest('hex');
+  // Вид 8-4-4-4-12 с версией 5 и вариантом RFC 4122 — чтобы это был правильный GUID.
+  const variant = ((parseInt(h[16], 16) & 0x3) | 0x8).toString(16);
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-${variant}${h.slice(17, 20)}-${h.slice(20, 32)}`;
+}
+
 function createTray() {
   const iconPath = path.join(__dirname, 'tray-icon.ico');
   let icon = nativeImage.createFromPath(iconPath);
@@ -662,7 +665,11 @@ function createTray() {
     // не попали в установщик: проверьте поле "files" секции "build" в package.json
     console.warn('Иконка трея не найдена или пуста:', iconPath);
   }
-  tray = new Tray(icon);
+  const guid = trayGuid();
+  try { tray = guid ? new Tray(icon, guid) : new Tray(icon); } catch (err) {
+    logLocal('tray_guid_failed', { message: String((err && err.message) || err) }, 'WARN');
+    tray = new Tray(icon);
+  }
   tray.setToolTip('Искра');
   const menu = Menu.buildFromTemplate([
     { label: 'Открыть', click: () => { rosterWin.show(); rosterWin.focus(); } },
@@ -895,7 +902,12 @@ function checkForUpdates() {
     return;
   }
   try {
-    autoUpdater.setFeedURL({ provider: 'generic', url: updateFeedUrl() });
+    // useMultipleRangeRequest: false — докачивать только изменившиеся куски установщика запросами по
+    // одному диапазону. По умолчанию electron-updater просит много диапазонов одним запросом и ждёт
+    // ответ multipart/byteranges, а раздача файлов сервера (express.static) такое не умеет и отдаёт
+    // файл целиком. Итог был — «Cannot download differentially, fallback to full download» и все
+    // 200 МБ установщика на каждое рабочее место при каждом обновлении (проверено на пилоте 2026-09-30).
+    autoUpdater.setFeedURL({ provider: 'generic', url: updateFeedUrl(), useMultipleRangeRequest: false });
     autoUpdater.autoDownload = !!settings.autoUpdate;
     // Обещание отвергается при той же ошибке, о которой уже сообщило событие 'error' (с уровнем и
     // понятным текстом, см. setupUpdater). Без .catch оно всплывало ещё раз — как main_unhandled_rejection

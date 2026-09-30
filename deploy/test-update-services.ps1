@@ -42,6 +42,9 @@ function AppPid([string]$name) {
   $p = SvcPid $name
   (Get-CimInstance Win32_Process -Filter "ParentProcessId=$p" | Where-Object Name -eq 'node.exe' | Select-Object -First 1).ProcessId
 }
+# Сколько строк в таблице (или «нет», если таблицы нет): & $node -e $sqlCount <база> <таблица>.
+$sqlCount = "const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync(process.argv[1],{readOnly:true});" +
+            "const t=d.prepare('SELECT 1 FROM sqlite_master WHERE name=?').get(process.argv[2]);console.log(t?d.prepare('SELECT COUNT(*) n FROM '+process.argv[2]).get().n:'none')"
 function Listening([int]$port) { [bool](Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue) }
 function Wait-Port([int]$port) { for ($i = 0; $i -lt 30; $i++) { if (Listening $port) { return $true }; Start-Sleep 1 }; return $false }
 
@@ -147,6 +150,10 @@ try {
   Check ([IO.File]::ReadAllText("$root\helpdesk-backend\server.js", [Text.Encoding]::UTF8) -match 'проверка обновления') 'файл платформы новый'
   $health = (Invoke-WebRequest -UseBasicParsing http://127.0.0.1:4000/api/health).Content
   Check ($health -match '"ok":true') "платформа отвечает: $health"
+  $bk = @(Get-ChildItem "$root\.update\backup" -Directory | Sort-Object Name)[-1].FullName
+  Check ($r.Out -match 'Копия баз' -and (Test-Path "$bk\db\helpdesk-backend\data\helpdesk.db") -and (Test-Path "$bk\db\MESSENGER\messenger.db")) 'базы платформы и «Искры» скопированы перед заменой'
+  Check (-not (Test-Path "$bk\db\SMDR") -and -not (Test-Path "$bk\db\CERTVIEWER")) 'базы служб, которые не обновлялись, не копируются'
+  Check ((& $node --no-warnings -e $sqlCount "$bk\db\helpdesk-backend\data\helpdesk.db" 'users') -match '^\d+$') 'копия базы платформы — рабочая SQLite (VACUUM INTO)'
 
   # --- 2б. Изменился только клиент «Искры» — служба не перезапускается ---------
   Write-Host "`n2б. Изменился только клиент «Искры» (desktop-client)"
@@ -163,10 +170,14 @@ try {
   Check ([IO.File]::ReadAllText("$root\MESSENGER\desktop-client\main.js", [Text.Encoding]::UTF8) -match 'правка только клиента') 'файл клиента обновлён'
 
   # --- 3. Сломанная версия: платформа не поднимается -> откат ------------------
-  Write-Host "`n3. Сломанная версия платформы — откат"
+  # Перед падением она успевает «перестроить» базу (как миграция) — откат должен вернуть и базу.
+  Write-Host "`n3. Сломанная версия платформы — откат файлов и базы"
   $zipBad = Join-Path $T 'bad.zip'
+  $platformDb = "$root\helpdesk-backend\data\helpdesk.db".Replace('\', '/')
+  $broken = "const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync('$platformDb');" +
+            "d.exec('CREATE TABLE IF NOT EXISTS broken_migration(x INTEGER)');d.close();throw new Error('broken build for rollback test');"
   & python "$sp\make_test_zip.py" "$src\adm-srv-main" $zipBad 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' `
-      'helpdesk-backend/server.js=!throw new Error("broken build for rollback test");' | Out-Null
+      "helpdesk-backend/server.js=!$broken" | Out-Null
   $r = Run $zipBad
   Check ($r.Code -eq 2) "код выхода 2 — откат (получен $($r.Code))"
   if ($r.Code -ne 2) { Write-Host $r.Out }
@@ -176,6 +187,8 @@ try {
   $health = (Invoke-WebRequest -UseBasicParsing http://127.0.0.1:4000/api/health).Content
   Check ($health -match '"ok":true') "платформа снова отвечает: $health"
   Check ((Get-Content "$root\.update\version.txt" -Raw).Trim() -eq 'cccccccccccccccccccccccccccccccccccccccc') 'версия осталась прежней'
+  Check ($r.Out -match 'база возвращена') 'в выводе — база возвращена'
+  Check ((& $node --no-warnings -e $sqlCount "$root\helpdesk-backend\data\helpdesk.db" 'broken_migration') -eq 'none') 'изменения сломанной версии в базе платформы откачены'
 
   foreach ($name in $foreign.Keys) {
     Check ((AppPid $name) -eq $foreign[$name]) "служба другой установки $name не перезапускалась"

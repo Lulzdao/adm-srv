@@ -7,7 +7,7 @@ const { requireAuth, requireAdmin } = require("../middleware/auth");
 const { setSetting } = require("../services/settings");
 const { readTable } = require("../services/tables");
 const { isEmail } = require("../services/mailer");
-const { userInGroup } = require("../services/userStore");
+const { userInGroup, refreshAdGroups } = require("../services/userStore");
 const { buildXlsx, XLSX_TYPE } = require("../services/xlsx");
 const Q = require("../services/mailQueue");
 const { handle, str, int, Invalid } = require("./assistant");
@@ -111,6 +111,18 @@ function parseRecipients(rows) {
  */
 function canUseBox(db, user, box) {
   return !box.ad_group || userInGroup(db, user.id, box.ad_group);
+}
+
+/**
+ * То же перед отправкой с ящика — с группами, уточнёнными в домене прямо сейчас:
+ * запомненные при входе устаревают (вход живёт до 30 дней), и исключённый из
+ * группы иначе слал бы с ящика отдела до следующего входа. Домен не ответил —
+ * решают запомненные.
+ */
+async function mayUseBox(db, user, box) {
+  if (!box.ad_group) return true;
+  await refreshAdGroups(db, user.id);
+  return canUseBox(db, user, box);
 }
 
 /** Общие ящики, доступные человеку: без группы — всем, с группой — её участникам. */
@@ -276,7 +288,7 @@ module.exports = function mailingRoutes(db) {
     if (mode === "shared") {
       const box = parseId(p.mailbox_id) && db.prepare("SELECT * FROM mail_boxes WHERE id = ?").get(parseId(p.mailbox_id));
       if (!box) fail("Выберите общий ящик — или отправьте со своего");
-      if (!canUseBox(db, req.session.user, box)) fail("Этот общий ящик доступен только участникам его группы — отправьте со своего ящика");
+      if (!(await mayUseBox(db, req.session.user, box))) fail("Этот общий ящик доступен только участникам его группы — отправьте со своего ящика");
       senderAddress = box.address;
       mailboxId = box.id;
     } else {
@@ -384,7 +396,13 @@ module.exports = function mailingRoutes(db) {
     res.json({ ok: true });
   });
 
-  function restart(req, res, c) {
+  // Всё, без чего продолжать нельзя, — ДО каких-либо изменений: иначе отказ
+  // оставлял бы рассылку наполовину переключённой (повтор уже вернул письма в
+  // очередь, а следующая попытка с паролем отвечала «неотправленных нет»).
+  async function checkRestart(req, c) {
+    // Продолжение и повтор снова шлют с общего ящика — право на него проверяется заново.
+    const box = c.sender_mode === "shared" && c.mailbox_id && db.prepare("SELECT * FROM mail_boxes WHERE id = ?").get(c.mailbox_id);
+    if (box && !(await mayUseBox(db, req.session.user, box))) fail("Этот общий ящик доступен только участникам его группы — вас в ней больше нет");
     if (c.sender_mode === "own") {
       const pass = (req.body || {}).password;
       // Пароль нужен, только если его уже нет в памяти: после ручной паузы он
@@ -392,23 +410,29 @@ module.exports = function mailingRoutes(db) {
       if (typeof pass === "string" && pass) queue.setSecret(c.id, pass);
       else if (!queue.hasSecret(c.id)) fail("Введите пароль от своего ящика");
     }
+  }
+
+  function restart(res, c) {
     db.prepare("UPDATE mail_campaigns SET status = 'sending', paused_reason = NULL, finished_at = NULL WHERE id = ?").run(c.id);
     queue.kick();
     res.json({ ok: true });
   }
 
-  router.post("/:id/resume", handle((req, res) => {
+  router.post("/:id/resume", handle(async (req, res) => {
     const c = campaignFromParams(req, res); if (!c) return;
     if (c.status !== "paused") return res.status(409).json({ error: "Рассылка не на паузе" });
-    restart(req, res, c);
+    await checkRestart(req, c);
+    restart(res, c);
   }));
 
-  router.post("/:id/retry", handle((req, res) => {
+  router.post("/:id/retry", handle(async (req, res) => {
     const c = campaignFromParams(req, res); if (!c) return;
     if (c.status === "sending") return res.status(409).json({ error: "Рассылка ещё идёт" });
-    const n = db.prepare("UPDATE mail_recipients SET status = 'pending', attempts = 0, error = NULL WHERE campaign_id = ? AND status = 'failed'").run(c.id).changes;
-    if (!n && c.status !== "paused") return res.status(409).json({ error: "Неотправленных писем нет" });
-    restart(req, res, c);
+    const failed = db.prepare("SELECT COUNT(*) AS n FROM mail_recipients WHERE campaign_id = ? AND status = 'failed'").get(c.id).n;
+    if (!failed && c.status !== "paused") return res.status(409).json({ error: "Неотправленных писем нет" });
+    await checkRestart(req, c);
+    db.prepare("UPDATE mail_recipients SET status = 'pending', attempts = 0, error = NULL WHERE campaign_id = ? AND status = 'failed'").run(c.id);
+    restart(res, c);
   }));
 
   router.post("/:id/cancel", (req, res) => {
