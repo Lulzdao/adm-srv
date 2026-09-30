@@ -99,3 +99,33 @@ test("свежая база по-прежнему создаётся, повто
     db.close();
   }
 });
+
+test("общий ящик рассылок из прежних настроек переезжает в список ящиков вместе с паролем и группой", () => {
+  const { freshDb, resetModuleCache } = require("./helpers/tempDb");
+  const { db, cleanup } = freshDb();
+  try {
+    const set = db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)");
+    set.run("mail_from", "rassylka@example.invalid");
+    set.run("mail_password", "пароль-приложения");
+    set.run("mail_shared_group", "Рассылка-Цены");
+    set.run("mail_user", "rassylka");
+    const uid = db.prepare("INSERT INTO users (ad_login, full_name) VALUES ('u', 'Тестов Т.Т.')").run().lastInsertRowid;
+    db.prepare("INSERT INTO mail_campaigns (created_by, subject, body, sender_mode, sender_address, status) VALUES (?, 'Т', 'Б', 'shared', 'rassylka@example.invalid', 'paused')").run(uid);
+    db.close();
+
+    resetModuleCache();
+    const db2 = require("../db/init").initDb();
+    const box = db2.prepare("SELECT * FROM mail_boxes").get();
+    assert.deepStrictEqual([box.address, box.password, box.ad_group], ["rassylka@example.invalid", "пароль-приложения", "Рассылка-Цены"]);
+    assert.strictEqual(db2.prepare("SELECT mailbox_id FROM mail_campaigns").get().mailbox_id, box.id, "идущая рассылка знает свой ящик");
+    assert.strictEqual(db2.prepare("SELECT COUNT(*) AS n FROM settings WHERE key LIKE 'mail_from' OR key LIKE 'mail_password' OR key LIKE 'mail_user' OR key LIKE 'mail_shared_group'").get().n, 0);
+    db2.close();
+    // Повторный запуск ничего не дублирует.
+    resetModuleCache();
+    const db3 = require("../db/init").initDb();
+    assert.strictEqual(db3.prepare("SELECT COUNT(*) AS n FROM mail_boxes").get().n, 1);
+    db3.close();
+  } finally {
+    cleanup();
+  }
+});

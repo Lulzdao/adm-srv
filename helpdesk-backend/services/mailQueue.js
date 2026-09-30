@@ -25,11 +25,11 @@ const MAX_ATTEMPTS = 3;
 // и перебирать на нём оставшиеся сотни адресов бессмысленно.
 const MAX_CONNECTION_FAILURES = 3;
 
+// Общие ящики (адрес, пароль, группа) — в таблице mail_boxes: их несколько,
+// у каждого отдела свой. Здесь — то, что общее для всех рассылок.
 const KEYS = {
   host: "mail_host", port: "mail_port", secure: "mail_secure",
-  user: "mail_user", password: "mail_password", from: "mail_from",
   delay: "mail_delay_ms", signature: "mail_signature", allowOwn: "mail_allow_own",
-  sharedGroup: "mail_shared_group",
 };
 
 /**
@@ -48,14 +48,9 @@ function readSettings(db) {
     host: get("host") || base.host || "",
     port: Number(get("port")) || base.port || 465,
     secure: get("secure") === null ? base.secure : get("secure") === "1",
-    user: get("user") || "",
-    password: get("password") || "",
-    from: get("from") || "",
     delayMs: delay === null ? 3000 : Math.max(0, Math.min(60000, Number(delay) || 0)),
     signature: get("signature") ?? "Липецкстат",
     allowOwn: get("allowOwn") !== "0",
-    // Группа AD, участникам которой доступен общий ящик. Пусто — всем.
-    sharedGroup: get("sharedGroup") || "",
     hostFromPlatform: !get("host"),
   };
 }
@@ -65,7 +60,9 @@ function transportFor(s, auth) {
     host: s.host,
     port: s.port,
     secure: s.secure,
-    auth: auth && auth.user ? { user: auth.user, pass: auth.pass } : undefined,
+    // Без пароля — без входа: так работают серверы, которые принимают письма
+    // из внутренней сети без авторизации. Слать им пустой пароль — отказ.
+    auth: auth && auth.user && auth.pass ? { user: auth.user, pass: auth.pass } : undefined,
     connectionTimeout: 15000,
     greetingTimeout: 15000,
     socketTimeout: 30000,
@@ -112,7 +109,10 @@ function createQueue(db) {
       if (pass === undefined) return null;
       auth = { user: c.sender_login || c.sender_address, pass };
     } else {
-      auth = { user: s.user, pass: s.password };
+      // Общий ящик — по номеру; логин ящика — его адрес.
+      const box = c.mailbox_id && db.prepare("SELECT * FROM mail_boxes WHERE id = ?").get(c.mailbox_id);
+      if (!box) return undefined;
+      auth = { user: box.address, pass: box.password };
     }
     const t = transportFor(s, auth);
     transports.set(c.id, t);
@@ -155,6 +155,7 @@ function createQueue(db) {
     `).get(c.id);
     if (!r) { await finish(c); return; }
     const t = transport(c, s);
+    if (t === undefined) { pause(c.id, "Общий ящик этой рассылки удалён из настроек — продолжить её нельзя"); return; }
     if (!t) { pause(c.id, "Нужен пароль от ящика: отправка остановилась при перезапуске службы"); return; }
 
     const attachments = db.prepare("SELECT filename, path FROM mail_attachments WHERE campaign_id = ? ORDER BY id").all(c.id)
@@ -235,6 +236,13 @@ function createQueue(db) {
     setSecret(id, pass) { secrets.set(id, pass); transports.delete(id); },
     forget(id) { secrets.delete(id); transports.delete(id); },
     hasSecret: (id) => secrets.has(id),
+    /** Пароль общего ящика сменили или ящик удалили — соединения с прежним пароль забываем. */
+    forgetBox(boxId) {
+      for (const id of [...transports.keys()]) {
+        const c = campaign(id);
+        if (!c || c.mailbox_id === boxId || c.mailbox_id === null) transports.delete(id);
+      }
+    },
     isRunning: () => running,
     /** После старта службы: свои ящики — на паузу (пароля нет), общий — дальше. */
     resume() {

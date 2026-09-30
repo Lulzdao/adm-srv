@@ -109,8 +109,13 @@ function parseRecipients(rows) {
  * участникам (по группам на момент последнего входа), иначе всем. Остальным
  * общий ящик не показывается вовсе: ни вариант, ни его адрес.
  */
-function canUseShared(db, user, s) {
-  return !s.sharedGroup || userInGroup(db, user.id, s.sharedGroup);
+function canUseBox(db, user, box) {
+  return !box.ad_group || userInGroup(db, user.id, box.ad_group);
+}
+
+/** Общие ящики, доступные человеку: без группы — всем, с группой — её участникам. */
+function boxesFor(db, user) {
+  return db.prepare("SELECT * FROM mail_boxes ORDER BY address").all().filter((b) => canUseBox(db, user, b));
 }
 
 function canSee(user, c) {
@@ -141,17 +146,18 @@ module.exports = function mailingRoutes(db) {
 
   router.get("/settings", (req, res) => {
     const s = Q.readSettings(db);
-    const shared = Boolean(s.from) && canUseShared(db, req.session.user, s);
+    const mine = boxesFor(db, req.session.user).map((b) => ({ id: b.id, address: b.address }));
     const base = {
-      from: shared ? s.from : "", delayMs: s.delayMs, signature: s.signature, allowOwn: s.allowOwn,
-      configured: Boolean(s.host && (shared || s.allowOwn)),
+      mailboxes: mine, delayMs: s.delayMs, signature: s.signature, allowOwn: s.allowOwn,
+      configured: Boolean(s.host && (mine.length || s.allowOwn)),
     };
     if (!req.session.user.is_admin) return res.json(base);
-    // Администратору в настройках нужен адрес общего ящика, даже если сам он
-    // в группе не состоит.
+    // Администратору в настройках нужны все ящики, в том числе тех групп, где
+    // сам он не состоит. Пароли наружу не отдаются — только «задан или нет».
     res.json({
-      ...base, sharedFrom: s.from, sharedGroup: s.sharedGroup, host: s.host, port: s.port, secure: s.secure,
-      user: s.user, hasPassword: Boolean(s.password), hostFromPlatform: s.hostFromPlatform,
+      ...base, host: s.host, port: s.port, secure: s.secure, hostFromPlatform: s.hostFromPlatform,
+      allMailboxes: db.prepare("SELECT id, address, ad_group, password != '' AS has_password FROM mail_boxes ORDER BY address").all()
+        .map((b) => ({ ...b, has_password: Boolean(b.has_password) })),
     });
   });
 
@@ -161,27 +167,68 @@ module.exports = function mailingRoutes(db) {
     if (b.host !== undefined) put("host", str(b.host, { field: "Сервер", max: 200 }));
     if (b.port !== undefined) put("port", int(b.port, { field: "Порт", min: 1, max: 65535, fallback: "" }));
     if (b.secure !== undefined) put("secure", b.secure ? "1" : "0");
-    if (b.user !== undefined) put("user", str(b.user, { field: "Логин", max: 200 }));
-    if (b.from !== undefined) {
-      const from = str(b.from, { field: "Адрес общего ящика", max: 200 });
-      if (from && !isEmail(from)) fail("Адрес общего ящика — почтовый адрес");
-      put("from", from);
-    }
-    if (b.clearPassword) put("password", "");
-    else if (b.password) put("password", String(b.password));
     if (b.delayMs !== undefined) put("delay", int(b.delayMs, { field: "Пауза", min: 0, max: 60000 }));
     if (b.signature !== undefined) put("signature", str(b.signature, { field: "Подпись", max: 300 }) || "");
     if (b.allowOwn !== undefined) put("allowOwn", b.allowOwn ? "1" : "0");
-    if (b.sharedGroup !== undefined) put("sharedGroup", str(b.sharedGroup, { field: "Группа с доступом к общему ящику", max: 200 }) || "");
     res.json({ ok: true });
   }));
 
-  // Проверка соединения общим ящиком — кнопка «Проверить».
-  router.post("/settings/verify", requireAdmin, async (req, res) => {
+  // Общие ящики: у каждого отдела свой. Логин — сам адрес.
+  function boxValues(b, partial) {
+    const out = {};
+    if (!partial || b.address !== undefined) {
+      const address = str(b.address, { field: "Адрес ящика", max: 200, required: true });
+      if (!isEmail(address)) fail("Адрес ящика — почтовый адрес");
+      out.address = address;
+    }
+    if (b.ad_group !== undefined || !partial) out.ad_group = str(b.ad_group, { field: "Группа домена", max: 200 }) || "";
+    // Пустой пароль при правке — «не менять», как у SMTP оповещений.
+    if (typeof b.password === "string" && b.password) out.password = b.password;
+    else if (!partial) out.password = "";
+    return out;
+  }
+  const boxFromParams = (req, res) => {
+    const id = parseId(req.params.id);
+    const box = id && db.prepare("SELECT * FROM mail_boxes WHERE id = ?").get(id);
+    if (!box) res.status(404).json({ error: "Ящик не найден" });
+    return box;
+  };
+  const saveBox = (fn) => {
+    try { return fn(); } catch (err) {
+      if (/UNIQUE/.test(err.message)) fail("Такой ящик уже есть");
+      throw err;
+    }
+  };
+
+  router.post("/settings/mailboxes", requireAdmin, handle((req, res) => {
+    const v = boxValues(req.body || {}, false);
+    const info = saveBox(() => db.prepare("INSERT INTO mail_boxes (address, password, ad_group) VALUES (?, ?, ?)").run(v.address, v.password, v.ad_group));
+    res.status(201).json({ id: Number(info.lastInsertRowid) });
+  }));
+
+  router.put("/settings/mailboxes/:id", requireAdmin, handle((req, res) => {
+    const box = boxFromParams(req, res); if (!box) return;
+    const v = boxValues(req.body || {}, true);
+    const keys = Object.keys(v);
+    if (keys.length) saveBox(() => db.prepare(`UPDATE mail_boxes SET ${keys.map((k) => `${k} = ?`).join(", ")} WHERE id = ?`).run(...keys.map((k) => v[k]), box.id));
+    queue.forgetBox(box.id);
+    res.json({ ok: true });
+  }));
+
+  router.delete("/settings/mailboxes/:id", requireAdmin, (req, res) => {
+    const box = boxFromParams(req, res); if (!box) return;
+    db.prepare("DELETE FROM mail_boxes WHERE id = ?").run(box.id);
+    queue.forgetBox(box.id);
+    res.json({ ok: true });
+  });
+
+  // Проверка входа в ящик — кнопка «Проверить» у каждого ящика.
+  router.post("/settings/mailboxes/:id/verify", requireAdmin, async (req, res) => {
+    const box = boxFromParams(req, res); if (!box) return;
     const s = Q.readSettings(db);
     if (!s.host) return res.json({ ok: false, error: "Сервер не задан" });
     try {
-      await Q.transportFor(s, { user: s.user, pass: s.password }).verify();
+      await Q.transportFor(s, { user: box.address, pass: box.password }).verify();
       res.json({ ok: true });
     } catch (err) {
       res.json({ ok: false, error: require("../services/mailer").describeError(err) });
@@ -225,11 +272,13 @@ module.exports = function mailingRoutes(db) {
     const subject = str(p.subject, { field: "Тема", max: 200, required: true });
     const body = str(p.body, { field: "Текст", max: 20000, required: true });
     const mode = p.sender_mode === "own" ? "own" : "shared";
-    let senderAddress, senderLogin = null, password = null;
+    let senderAddress, senderLogin = null, password = null, mailboxId = null;
     if (mode === "shared") {
-      if (!s.from) fail("Общий ящик не настроен — выберите «Свой ящик» или обратитесь к администратору");
-      if (!canUseShared(db, req.session.user, s)) fail("Общий ящик доступен только участникам группы — отправьте со своего ящика");
-      senderAddress = s.from;
+      const box = parseId(p.mailbox_id) && db.prepare("SELECT * FROM mail_boxes WHERE id = ?").get(parseId(p.mailbox_id));
+      if (!box) fail("Выберите общий ящик — или отправьте со своего");
+      if (!canUseBox(db, req.session.user, box)) fail("Этот общий ящик доступен только участникам его группы — отправьте со своего ящика");
+      senderAddress = box.address;
+      mailboxId = box.id;
     } else {
       if (!s.allowOwn) fail("Отправка со своего ящика выключена администратором");
       senderAddress = str(p.own_address, { field: "Ваш адрес", max: 200, required: true });
@@ -273,9 +322,9 @@ module.exports = function mailingRoutes(db) {
     const dir = () => path.join(config.uploadsDir, "mail", String(id));
     try {
       const info = db.prepare(`
-        INSERT INTO mail_campaigns (created_by, subject, body, use_template, sender_mode, sender_address, sender_login, status, total)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'sending', ?)
-      `).run(req.session.user.id, subject, body, p.use_template === false ? 0 : 1, mode, senderAddress, senderLogin, recipients.length);
+        INSERT INTO mail_campaigns (created_by, subject, body, use_template, sender_mode, sender_address, sender_login, mailbox_id, status, total)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'sending', ?)
+      `).run(req.session.user.id, subject, body, p.use_template === false ? 0 : 1, mode, senderAddress, senderLogin, mailboxId, recipients.length);
       id = Number(info.lastInsertRowid);
       const ins = db.prepare("INSERT INTO mail_recipients (campaign_id, row_no, okpo, name, emails, fields) VALUES (?, ?, ?, ?, ?, ?)");
       for (const r of recipients) ins.run(id, r.row_no, r.okpo, r.name, r.emails, r.fields);

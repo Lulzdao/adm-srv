@@ -416,6 +416,17 @@ CREATE TABLE IF NOT EXISTS asst_journal (
 );
 CREATE INDEX IF NOT EXISTS idx_asst_journal_date ON asst_journal(date DESC);
 
+-- Общие ящики рассылок: у каждого отдела свой. Логин — сам адрес; пароль —
+-- пароль приложения (почта не пускает программы по обычному). ad_group —
+-- группа домена, участникам которой ящик виден; пусто — виден всем.
+CREATE TABLE IF NOT EXISTS mail_boxes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  address TEXT NOT NULL UNIQUE,
+  password TEXT NOT NULL DEFAULT '',
+  ad_group TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- Рассылки респондентам (бывший «Почтальон»).
 CREATE TABLE IF NOT EXISTS mail_campaigns (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -426,6 +437,7 @@ CREATE TABLE IF NOT EXISTS mail_campaigns (
   sender_mode TEXT NOT NULL CHECK (sender_mode IN ('shared', 'own')),
   sender_address TEXT,             -- с какого адреса ушло: общий ящик или свой
   sender_login TEXT,               -- логин своего ящика; пароль не хранится нигде
+  mailbox_id INTEGER REFERENCES mail_boxes(id) ON DELETE SET NULL, -- общий ящик, с которого идёт рассылка
   status TEXT NOT NULL DEFAULT 'sending' CHECK (status IN ('sending', 'paused', 'done', 'cancelled')),
   paused_reason TEXT,
   total INTEGER NOT NULL DEFAULT 0,
