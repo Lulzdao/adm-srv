@@ -630,6 +630,27 @@ function createRoster() {
   });
 }
 
+// Постоянный идентификатор значка трея (GUID) — чтобы «призраки» не копились.
+//
+// Процесс, снятый принудительно (установка поверх работающего клиента, диспетчер задач, сбой),
+// не успевает убрать свой значок, и Windows держит его, пока над ним не проведут мышью. Без
+// идентификатора каждый новый запуск добавлял значок рядом с «призраком» — их набиралось по
+// нескольку. С GUID Windows считает значок тем же самым, и новый запуск занимает место старого.
+// Проверено на ПК 2026-09-30: три запуска с принудительным снятием между ними — было два лишних
+// значка, стало ни одного. Корректный выход и так убирает значок (tray.destroy в will-quit).
+//
+// У неподписанной программы Windows привязывает GUID к пути exe: тот же GUID из другой папки
+// значок не создаст. Поэтому GUID выводится из пути — в одной папке он всегда один и тот же, в
+// другой (установка с /D=) свой. Только собранное приложение на Windows: при разработке exe —
+// electron.exe из node_modules, и занимать под него идентификатор незачем.
+function trayGuid() {
+  if (process.platform !== 'win32' || !app.isPackaged) return undefined;
+  const h = require('crypto').createHash('sha1').update('iskra-tray:' + process.execPath.toLowerCase()).digest('hex');
+  // Вид 8-4-4-4-12 с версией 5 и вариантом RFC 4122 — чтобы это был правильный GUID.
+  const variant = ((parseInt(h[16], 16) & 0x3) | 0x8).toString(16);
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-${variant}${h.slice(17, 20)}-${h.slice(20, 32)}`;
+}
+
 function createTray() {
   const iconPath = path.join(__dirname, 'tray-icon.ico');
   let icon = nativeImage.createFromPath(iconPath);
@@ -644,7 +665,11 @@ function createTray() {
     // не попали в установщик: проверьте поле "files" секции "build" в package.json
     console.warn('Иконка трея не найдена или пуста:', iconPath);
   }
-  tray = new Tray(icon);
+  const guid = trayGuid();
+  try { tray = guid ? new Tray(icon, guid) : new Tray(icon); } catch (err) {
+    logLocal('tray_guid_failed', { message: String((err && err.message) || err) }, 'WARN');
+    tray = new Tray(icon);
+  }
   tray.setToolTip('Искра');
   const menu = Menu.buildFromTemplate([
     { label: 'Открыть', click: () => { rosterWin.show(); rosterWin.focus(); } },
