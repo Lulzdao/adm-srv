@@ -163,3 +163,13 @@ test("выгрузки из 1С: разделитель «t###t», пустые 
   assert.throws(() => parseParts("просто текст"), /rep\.txt/);
   assert.strictEqual(shortName("Тестов Тест Тестович"), "Тестов Т.Т.");
 });
+
+test("название отдела склоняется само: «Отдел …» и «…ый/…ий отдел»", () => {
+  const { deptGen } = require("../services/assistant");
+  assert.strictEqual(deptGen("Отдел статистики цен"), "отдела статистики цен");
+  assert.strictEqual(deptGen("Административный отдел"), "административного отдела");
+  assert.strictEqual(deptGen("Общий отдел"), "общего отдела");
+  assert.strictEqual(deptGen("Бухгалтерский отдел"), "бухгалтерского отдела");
+  assert.strictEqual(deptGen("  Отдел   сводных работ "), "отдела сводных работ");
+  assert.strictEqual(deptGen("Сектор учёта"), "сектор учёта", "не по правилам — как есть");
+});

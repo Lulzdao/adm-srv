@@ -80,10 +80,6 @@ const DICTS = {
     table: "asst_depts", order: "sort, name",
     fields: {
       name: { field: "Отдел", max: 150, required: true },
-      name_gen: { field: "Отдел (кого? чего?)", max: 150 },
-      chief_post: { field: "Должность начальника", max: 100 },
-      chief_post_gen: { field: "Должность (кого?)", max: 100 },
-      chief_post_dat: { field: "Должность (кому?)", max: 100 },
       chief_name: { field: "Начальник", max: 100 },
       chief_name_gen: { field: "Начальник (кого?)", max: 100 },
       chief_name_dat: { field: "Начальник (кому?)", max: 100 },
@@ -292,7 +288,7 @@ module.exports = function assistantRoutes(db) {
       TYPEREQUEST: d.typeLabel,
       FIO: d.fio, post: d.post || "", department: d.department, location: d.room || "",
       tel: phones, appList: apps.join(", "), comment: d.comment || "",
-      chiefType: [dep.chief_post, dep.name_gen].filter(Boolean).join(" ") || "Начальник отдела",
+      chiefType: `${A.CHIEF.post} ${A.deptGen(d.department)}`,
       chiefFIO: dep.chief_name || "",
     });
     A.sendFile(res, buf, `${ticket.display_id} ${d.typeLabel}.docx`);
@@ -358,10 +354,10 @@ module.exports = function assistantRoutes(db) {
     const buf = A.renderDoc(db, "transfer", {
       ...A.commonFields(db, new Date(t.created_at.replace(" ", "T") + "Z")),
       num: `${t.num}`,
-      postFrom: from.chief_post_gen || "", depFrom: from.name_gen || t.from_dept, FIOFrom: from.chief_name_gen || "",
-      postTo: to.chief_post_dat || "", depTo: to.name_gen || t.to_dept, FIOTo: to.chief_name_dat || "",
-      postFromI: from.chief_post || "", FIOFromI: from.chief_name || "",
-      postToI: to.chief_post || "", FIOToI: to.chief_name || "",
+      postFrom: A.CHIEF.gen, depFrom: A.deptGen(t.from_dept), FIOFrom: from.chief_name_gen || "",
+      postTo: A.CHIEF.dat, depTo: A.deptGen(t.to_dept), FIOTo: to.chief_name_dat || "",
+      postFromI: A.CHIEF.post, FIOFromI: from.chief_name || "",
+      postToI: A.CHIEF.post, FIOToI: to.chief_name || "",
       tec: items,
     });
     A.sendFile(res, buf, `${A.ruDate(t.created_at.slice(0, 10))} заявка на передачу оборудования № ${t.num}.docx`);

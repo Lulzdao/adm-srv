@@ -89,7 +89,6 @@ async function renderMailingNew(main) {
         <div id="mOwn">
           <div class="form-row" style="margin-bottom:0">
             <div><div class="field-label">Ваш адрес *</div><input class="field-input" id="mAddr" value="${esc(state.user.email || "")}" autocomplete="off"></div>
-            <div><div class="field-label">Логин (если не совпадает с адресом)</div><input class="field-input" id="mLogin" autocomplete="off"></div>
             <div><div class="field-label">Пароль от почты *</div><input class="field-input" id="mPass" type="password" autocomplete="new-password"></div>
           </div>
           <div class="as-note">Пароль нигде не сохраняется: он нужен, только пока идёт отправка. Если службу перезапустят, рассылка встанет на паузу и попросит его снова.</div>
@@ -205,7 +204,7 @@ async function renderMailingNew(main) {
     const fd = new FormData();
     fd.append("payload", JSON.stringify({
       subject: $("mSubject").value, body: $("mBody").value, use_template: $("mTpl").checked, sender_mode: st.mode,
-      own_address: $("mAddr").value, own_login: $("mLogin").value, own_password: $("mPass").value,
+      own_address: $("mAddr").value, own_password: $("mPass").value,
       recipients: list.map((r) => ({ row_no: r.row_no, okpo: r.okpo, name: r.name, emails: r.emails, fields: r.fields })),
     }));
     for (const f of st.files) fd.append("attachments", f, f.name);

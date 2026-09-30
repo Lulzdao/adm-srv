@@ -234,7 +234,8 @@ module.exports = function mailingRoutes(db) {
       if (!s.allowOwn) fail("Отправка со своего ящика выключена администратором");
       senderAddress = str(p.own_address, { field: "Ваш адрес", max: 200, required: true });
       if (!isEmail(senderAddress)) fail("Ваш адрес — почтовый адрес");
-      senderLogin = str(p.own_login, { field: "Логин", max: 200 }) || senderAddress;
+      // Логин почты — всегда сам адрес: отдельного логина у ящиков нет.
+      senderLogin = senderAddress;
       password = typeof p.own_password === "string" && p.own_password ? p.own_password : fail("Введите пароль от своего ящика");
     }
 
