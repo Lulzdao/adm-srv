@@ -4,6 +4,7 @@ const path = require("path");
 const crypto = require("crypto");
 const { requireAdmin } = require("../middleware/auth");
 const modules = require("../config/modules");
+const selfRestart = require("../services/selfRestart");
 const {
   currentTlsState,
   describeChain,
@@ -49,11 +50,15 @@ module.exports = function certificateRoutes() {
       where: state.where,
       sharedStore: SHARED_PFX,
       // "store" — файл в общем хранилище, его можно заменить прямо здесь.
-      // "env" — путь прописан в .env, тогда замена только через .env и перезапуск.
-      managedBy: state.source === "shared-store" ? "store" : "env",
+      // "env" — хранилище пустое, работает запасной путь из .env; загрузка файла
+      //         сюда заменит его (хранилище важнее).
+      // "none" — сертификата нет вовсе, платформа работает по http.
+      managedBy: !state.secure ? "none" : state.source === "shared-store" ? "store" : "env",
       // Куда платформа смотрит за общим хранилищем. Нужно как раз в случае
       // "env": по этому пути видно, найдёт ли она «Искру», если убрать TLS_PFX.
       storeDir: path.dirname(SHARED_PFX),
+      // Переменная сертификата задана, но не действует — хранилище важнее.
+      shadowedEnv: state.shadowedEnv || null,
       certificate: state.certificate,
     });
   });
@@ -130,7 +135,22 @@ module.exports = function certificateRoutes() {
       // в https на ходу нельзя, и это единственный такой случай.
       applied: applied.applied,
       restartRequired: !applied.applied,
+      // Можно ли перезапустить прямо из панели (только когда платформа — служба NSSM).
+      canRestart: !applied.applied && selfRestart.runsUnderService(),
     });
+  });
+
+  // Перезапуск платформы из панели — после первой загрузки сертификата, чтобы
+  // перейти с http на https (см. services/selfRestart.js). Процесс завершается,
+  // служба NSSM поднимает его снова через несколько секунд.
+  router.post("/restart", (req, res) => {
+    if (!selfRestart.runsUnderService()) {
+      return res.status(409).json({
+        error: "Платформа запущена не службой — перезапуск отсюда её бы просто выключил. Перезапустите вручную.",
+      });
+    }
+    res.status(202).json({ ok: true, restartDelaySec: 5 });
+    selfRestart.scheduleRestart(req.session.user && req.session.user.ad_login);
   });
 
   // Кому мы доверяем. Доменов два, поэтому корней может быть несколько; плюс

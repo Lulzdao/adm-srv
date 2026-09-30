@@ -88,3 +88,23 @@ test("переключатель страниц: первая, последня�
   // Пропуск ровно в одну страницу многоточием не заменяется — это была бы лишняя кнопка «…».
   assert.deepStrictEqual(pageNumbers(4, 7), [1, 2, 3, 4, 5, 6, 7]);
 });
+
+// Щит «Сертификаты» краснеет за 30 дней до конца срока. Дни — от даты окончания и на сегодня: число
+// daysLeft с сервера считается при запуске службы и через месяц без перезапуска устаревает.
+test("срок сертификата: дни считаются от validTo на сегодня, щит красный с 30 дней и после истечения", () => {
+  const src = fs.readFileSync(path.join(__dirname, "..", "public", "app.js"), "utf8");
+  const days = src.match(/function certDaysLeft\(c\) \{[\s\S]*?\n\}/);
+  const warn = src.match(/const CERT_WARN_DAYS = (\d+);/);
+  assert.ok(days && warn, "certDaysLeft()/CERT_WARN_DAYS не найдены в public/app.js — тест устарел");
+  const certDaysLeft = new Function(`${days[0]}; return certDaysLeft;`)();
+  const WARN = Number(warn[1]);
+  const через = (d) => ({ validTo: new Date(Date.now() + d * 86400000 + 3600000).toUTCString(), daysLeft: 999 });
+
+  assert.strictEqual(WARN, 30, "порог — как у «Искры» (tls_certificate_expiring)");
+  assert.strictEqual(certDaysLeft(через(200)), 200, "устаревший daysLeft с сервера не используется");
+  assert.ok(certDaysLeft(через(31)) > WARN, "за 31 день — ещё не красный");
+  assert.ok(certDaysLeft(через(30)) <= WARN, "за 30 дней — красный");
+  assert.ok(certDaysLeft(через(-3)) < 0, "истёк — отрицательное число");
+  assert.strictEqual(certDaysLeft(null), null);
+  assert.strictEqual(certDaysLeft({ validTo: "не дата" }), null);
+});

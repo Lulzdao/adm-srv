@@ -39,7 +39,9 @@ test("resolveTlsOptions: без переменных и без хранилищ�
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test("resolveTlsOptions: TLS_PFX имеет приоритет над общим хранилищем", () => {
+// Порядок — как у «Искры»: общее хранилище (его загружают из панели) важнее переменных. Раньше
+// у платформы было наоборот, и забытая в .env TLS_PFX тихо перекрывала сертификат из панели.
+test("resolveTlsOptions: общее хранилище важнее TLS_PFX — как у «Искры»", () => {
   const tls = свежийTls();
   const dir = временныйКаталог();
   const pfxИзПеременной = path.join(dir, "из-переменной.pfx");
@@ -47,10 +49,98 @@ test("resolveTlsOptions: TLS_PFX имеет приоритет над общим
   fs.writeFileSync(path.join(dir, "server.pfx"), Buffer.from("выдуманное-содержимое-2"));
 
   const r = tls.resolveTlsOptions({ TLS_PFX: pfxИзПеременной, SHARED_CERT_DIR: dir });
+  assert.strictEqual(r.source, "shared-store");
+  assert.strictEqual(r.options.pfx.toString(), "выдуманное-содержимое-2");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("resolveTlsOptions: без файла в хранилище работает запасной путь TLS_PFX", () => {
+  const tls = свежийTls();
+  const dir = временныйКаталог();
+  const pfxИзПеременной = path.join(dir, "из-переменной.pfx");
+  fs.writeFileSync(pfxИзПеременной, Buffer.from("выдуманное-содержимое-1"));
+
+  const r = tls.resolveTlsOptions({ TLS_PFX: pfxИзПеременной, SHARED_CERT_DIR: dir });
   assert.strictEqual(r.source, "env-pfx");
   assert.strictEqual(r.where, pfxИзПеременной);
-  assert.strictEqual(r.options.pfx.toString(), "выдуманное-содержимое-1");
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// Дальше — на настоящих сертификатах (openssl; нет его — тесты пропускаются, как в certificateRoutes).
+const { findOpenssl, makePki } = require("./helpers/testPki");
+const OPENSSL = findOpenssl();
+let pkiCache = null;
+function pki() {
+  if (!pkiCache) pkiCache = makePki(OPENSSL, временныйКаталог());
+  return pkiCache;
+}
+function молча(t, ...names) {
+  const saved = names.map((n) => [n, console[n]]);
+  const out = [];
+  for (const n of names) console[n] = (...a) => out.push(a.join(" "));
+  t.after(() => { for (const [n, f] of saved) console[n] = f; });
+  return out;
+}
+
+test("запуск: хранилище и TLS_PFX сразу — действует хранилище, лишняя переменная названа", { skip: !OPENSSL }, (t) => {
+  const tls = свежийTls();
+  const dir = временныйКаталог();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(dir, "server.pfx"), pki().pfxOpen);
+  const old = path.join(dir, "старый.pfx");
+  fs.writeFileSync(old, pki().pfxExpired);
+  const said = молча(t, "log", "warn");
+
+  const { secure } = tls.createAppServer(() => {}, { TLS_PFX: old, SHARED_CERT_DIR: dir });
+  assert.strictEqual(secure, true);
+  const state = tls.currentTlsState();
+  assert.strictEqual(state.source, "shared-store");
+  assert.strictEqual(state.shadowedEnv, "TLS_PFX");
+  assert.ok(said.some((s) => /TLS_PFX тоже задана, но не используется/.test(s)), said.join(" | "));
+});
+
+test("стартовали с TLS_PFX, потом файл загрузили в хранилище — переход на него без перезапуска", { skip: !OPENSSL }, async (t) => {
+  const tls = свежийTls();
+  const dir = временныйКаталог();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const fromEnv = path.join(dir, "из-переменной.pfx");
+  fs.writeFileSync(fromEnv, pki().pfxOpen);
+  const said = молча(t, "log", "warn", "error");
+
+  // Хранилище по умолчанию указывает на каталог процесса — для перечитывания задаём его явно.
+  const prev = process.env.SHARED_CERT_DIR;
+  process.env.SHARED_CERT_DIR = dir;
+  t.after(() => { if (prev === undefined) delete process.env.SHARED_CERT_DIR; else process.env.SHARED_CERT_DIR = prev; });
+
+  tls.createAppServer(() => {}, { TLS_PFX: fromEnv, SHARED_CERT_DIR: dir });
+  assert.strictEqual(tls.currentTlsState().source, "env-pfx");
+
+  fs.writeFileSync(path.join(dir, "server.pfx"), pki().pfxOpen);
+  const r = await tls.reloadCertStore();
+  assert.strictEqual(r.applied, true, JSON.stringify(r) + " " + said.join(" | "));
+  assert.strictEqual(tls.currentTlsState().source, "shared-store");
+});
+
+// На Windows слежение за удалённым каталогом не падает, а шлёт события без конца (десятки тысяч в
+// секунду) — процессор на 100% до перезапуска. Каталог исчез — слежение должно остановиться.
+test("каталог хранилища удалили — слежение останавливается, а не крутится вхолостую", { skip: !OPENSSL }, async (t) => {
+  const tls = свежийTls();
+  const dir = временныйКаталог();
+  fs.writeFileSync(path.join(dir, "server.pfx"), pki().pfxOpen);
+  const said = молча(t, "log", "warn", "error");
+  tls.createAppServer(() => {}, { SHARED_CERT_DIR: dir });
+  await new Promise((r) => setTimeout(r, 200));
+
+  fs.rmSync(dir, { recursive: true, force: true });
+  // Счётчик событий снаружи не виден, поэтому меряем занятость цикла: при «вечных» событиях таймер
+  // на 50 мс срабатывает с большим опозданием или цикл целиком занят обработкой.
+  const started = Date.now();
+  let ticks = 0;
+  await new Promise((resolve) => {
+    const iv = setInterval(() => { if (++ticks === 10) { clearInterval(iv); resolve(); } }, 50);
+  });
+  assert.ok(Date.now() - started < 2000, `цикл событий занят: 10 тиков по 50 мс заняли ${Date.now() - started} мс`);
+  assert.ok(said.some((s) => /исчез — слежение за ним остановлено/.test(s)), said.join(" | "));
 });
 
 test("resolveTlsOptions: общее хранилище подхватывает пароль из соседнего файла", () => {
