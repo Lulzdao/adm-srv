@@ -83,8 +83,8 @@ async function renderMailingNew(main) {
       <div class="form-card">
         <div class="form-card-title" style="margin-bottom:14px">3. С какого ящика</div>
         <div class="toggle-group" id="mMode" style="margin-bottom:14px">
-          <button class="toggle-btn" data-m="shared" ${settings.from ? "" : "disabled"}>Общий ящик${settings.from ? ` — ${esc(settings.from)}` : " (не настроен)"}</button>
-          <button class="toggle-btn" data-m="own" ${settings.allowOwn ? "" : "disabled"}>Свой ящик</button>
+          ${settings.from ? `<button class="toggle-btn" data-m="shared">Общий ящик — ${esc(settings.from)}</button>` : ""}
+          ${settings.allowOwn ? `<button class="toggle-btn" data-m="own">Свой ящик</button>` : ""}
         </div>
         <div id="mOwn">
           <div class="form-row" style="margin-bottom:0">
@@ -338,10 +338,13 @@ async function mailSettingsTab(box) {
       <div class="form-card">
         <div class="form-card-title" style="margin-bottom:14px">Общий ящик</div>
         <div class="form-row">
-          <div><div class="field-label">Адрес отправителя</div><input class="field-input" id="msFrom" value="${esc(s.from)}" placeholder="rassylka@…"></div>
+          <div><div class="field-label">Адрес отправителя</div><input class="field-input" id="msFrom" value="${esc(s.sharedFrom)}" placeholder="rassylka@…"></div>
           <div><div class="field-label">Логин</div><input class="field-input" id="msUser" value="${esc(s.user)}" autocomplete="off"></div>
           <div><div class="field-label">Пароль</div><input class="field-input" id="msPass" type="password" autocomplete="new-password" placeholder="${s.hasPassword ? "задан — пусто, чтобы не менять" : ""}"></div>
+          <div><div class="field-label">Группа домена с доступом</div><input class="field-input" id="msGroup" value="${esc(s.sharedGroup)}" placeholder="пусто — всем" autocomplete="off"></div>
         </div>
+        <div class="as-note" style="margin-bottom:12px">Если группа задана, общий ящик видят и могут выбрать только её участники; остальные отправляют со своего ящика.
+          Имя группы — как в AD (без учёта регистра). Состав группы платформа узнаёт при входе сотрудника: кого добавили в группу — увидит ящик после повторного входа.</div>
         <label class="as-check"><input type="checkbox" id="msOwn" ${s.allowOwn ? "checked" : ""}><span>Разрешить сотрудникам отправлять со своего ящика</span></label>
       </div>
       <div class="form-card">
@@ -357,7 +360,7 @@ async function mailSettingsTab(box) {
   const $ = (id) => box.querySelector("#" + id);
   const save = async () => {
     const body = {
-      host: $("msHost").value, port: $("msPort").value, secure: $("msTls").checked, from: $("msFrom").value, user: $("msUser").value,
+      host: $("msHost").value, port: $("msPort").value, secure: $("msTls").checked, from: $("msFrom").value, user: $("msUser").value, sharedGroup: $("msGroup").value,
       delayMs: Math.round(Number($("msDelay").value || 0) * 1000), signature: $("msSign").value, allowOwn: $("msOwn").checked,
     };
     if ($("msPass").value) body.password = $("msPass").value;

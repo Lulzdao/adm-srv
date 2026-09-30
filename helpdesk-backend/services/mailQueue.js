@@ -29,6 +29,7 @@ const KEYS = {
   host: "mail_host", port: "mail_port", secure: "mail_secure",
   user: "mail_user", password: "mail_password", from: "mail_from",
   delay: "mail_delay_ms", signature: "mail_signature", allowOwn: "mail_allow_own",
+  sharedGroup: "mail_shared_group",
 };
 
 /**
@@ -53,6 +54,8 @@ function readSettings(db) {
     delayMs: delay === null ? 3000 : Math.max(0, Math.min(60000, Number(delay) || 0)),
     signature: get("signature") ?? "Липецкстат",
     allowOwn: get("allowOwn") !== "0",
+    // Группа AD, участникам которой доступен общий ящик. Пусто — всем.
+    sharedGroup: get("sharedGroup") || "",
     hostFromPlatform: !get("host"),
   };
 }

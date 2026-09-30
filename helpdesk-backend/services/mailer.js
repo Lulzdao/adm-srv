@@ -186,7 +186,18 @@ function isRetriable(err) {
 function describe(err) {
   const code = err && err.code;
   const text = (err && err.message) || "неизвестная ошибка";
-  if (code === "EAUTH") return `Сервер отверг логин или пароль: ${text}`;
+  if (code === "EAUTH") {
+    // Почтовые серверы, где для программ нужен отдельный пароль (почта
+    // «Среда», Яндекс, Mail.ru), отвечают об этом транслитом или по-английски —
+    // «NEOBHODIM parol prilozheniya / Application password is REQUIRED». Такой
+    // отказ легко принять за опечатку в пароле, хотя дело не в нём.
+    if (/parol\s*prilozheniya|application\s*password|app\s*password|пароль\s*приложения/i.test(text)) {
+      return "Почтовый сервер требует пароль приложения, а не обычный пароль от почты. "
+        + "Создайте его в настройках своей почты (раздел «Пароли приложений» или «Безопасность») "
+        + "и введите вместо обычного пароля";
+    }
+    return `Сервер отверг логин или пароль: ${text}`;
+  }
   if (code === "ECONNECTION" || code === "ESOCKET") {
     return `Не удалось соединиться с сервером — проверьте адрес, порт и режим TLS: ${text}`;
   }

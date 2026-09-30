@@ -21,6 +21,24 @@ function unpackRoles(packed) {
   return String(packed || "").split(",").filter(Boolean);
 }
 
+// Группы AD хранятся так же, как отделы: ",имя1,имя2," — но строчными, потому
+// что AD имена групп не различает по регистру. Запятая внутри имени группы
+// встречается, поэтому она заменяется на точку с запятой и при записи, и при
+// проверке — совпадение от этого не страдает.
+const normGroup = (g) => String(g || "").trim().toLowerCase().replace(/,/g, ";");
+function packGroups(groups) {
+  const clean = [...new Set((groups || []).map(normGroup).filter(Boolean))];
+  return clean.length ? `,${clean.join(",")},` : "";
+}
+
+/** Состоит ли пользователь в группе AD (по списку, сохранённому при последнем входе). */
+function userInGroup(db, userId, group) {
+  const g = normGroup(group);
+  if (!g) return false;
+  const row = db.prepare("SELECT ad_groups FROM users WHERE id = ?").get(userId);
+  return Boolean(row && row.ad_groups.includes(`,${g},`));
+}
+
 /** Условие SQL «пользователь состоит в этом отделе». Возвращает шаблон для LIKE. */
 function roleLike(role) {
   return `%,${role},%`;
@@ -40,6 +58,7 @@ function upsertFromLdap(db, ldapUser) {
   // Отделов может быть несколько; role хранит первый по порядку — для подписи
   // и для тех мест, где нужен «основной» отдел.
   const roles = packRoles(ldapUser.roles);
+  const groups = packGroups(ldapUser.groups);
 
   const existing = db.prepare("SELECT * FROM users WHERE ad_login = ?").get(login);
 
@@ -53,17 +72,17 @@ function upsertFromLdap(db, ldapUser) {
   if (existing) {
     db.prepare(
       `UPDATE users SET full_name = ?, department = ?, email = ?, phone = ?,
-       role = ?, roles = ?, is_admin = ?, last_domain = ?, last_login_at = datetime('now')
+       role = ?, roles = ?, is_admin = ?, ad_groups = ?, last_domain = ?, last_login_at = datetime('now')
        WHERE id = ?`
-    ).run(fullName, department, email, phone, role, roles, isAdmin, domain, existing.id);
+    ).run(fullName, department, email, phone, role, roles, isAdmin, groups, domain, existing.id);
     return db.prepare("SELECT * FROM users WHERE id = ?").get(existing.id);
   }
 
   const info = db.prepare(
-    `INSERT INTO users (ad_login, full_name, department, email, phone, role, roles, is_admin, auth_type, last_domain, last_login_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ad', ?, datetime('now'))`
-  ).run(login, fullName, department, email, phone, role, roles, isAdmin, domain);
+    `INSERT INTO users (ad_login, full_name, department, email, phone, role, roles, is_admin, ad_groups, auth_type, last_domain, last_login_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ad', ?, datetime('now'))`
+  ).run(login, fullName, department, email, phone, role, roles, isAdmin, groups, domain);
   return db.prepare("SELECT * FROM users WHERE id = ?").get(info.lastInsertRowid);
 }
 
-module.exports = { upsertFromLdap, packRoles, unpackRoles, roleLike };
+module.exports = { upsertFromLdap, packRoles, unpackRoles, roleLike, packGroups, userInGroup };

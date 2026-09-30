@@ -179,3 +179,23 @@ test("подсети и адреса разбираются правильно",
   assert.strictEqual(detectDomain("::ffff:192.168.254.10", cfg), "B");
   assert.strictEqual(detectDomain("172.16.0.1", cfg), null);
 });
+
+test("все группы из домена запоминаются по имени и пересчитываются при входе — для общего ящика рассылок", async (t) => {
+  const { db, app } = await stand(t);
+  const { userInGroup } = require("../services/userStore");
+  ldap.addUser("rassylkin", {
+    password: "пароль-1", displayName: "Рассылкин Тест Тестович",
+    memberOf: [ldap.group("Рассылка-Респондентам"), ldap.group("Иванов\\, Отдел цен")],
+  });
+  assert.strictEqual((await войти(app, "rassylkin", "пароль-1")).status, 200);
+  const id = db.prepare("SELECT id FROM users WHERE ad_login = 'rassylkin'").get().id;
+  assert.ok(userInGroup(db, id, "рассылка-респондентам"), "регистр не важен");
+  assert.ok(userInGroup(db, id, "Иванов, Отдел цен"), "запятая в имени группы");
+  assert.ok(!userInGroup(db, id, "Рассылка"), "подстрока — не членство");
+  assert.ok(!userInGroup(db, id, ""));
+
+  // Вышел из группы в домене — на следующем входе доступ пропал.
+  ldap.addUser("rassylkin", { password: "пароль-1", displayName: "Рассылкин Тест Тестович", memberOf: [] });
+  await войти(app, "rassylkin", "пароль-1");
+  assert.ok(!userInGroup(db, id, "Рассылка-Респондентам"));
+});

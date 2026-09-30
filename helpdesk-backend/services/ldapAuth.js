@@ -126,7 +126,19 @@ async function authenticate(domainKey, login, password, db) {
     role,
     roles,
     isAdmin,
+    // Все группы — именами (CN): по ним Ассистент решает, кому доступен общий
+    // ящик рассылок. Хранятся у пользователя, чтобы группу можно было задать
+    // в панели в любой момент, не дожидаясь повторного входа сотрудников.
+    groups: groupNames(memberOf),
   };
+}
+
+/** Имена групп (CN) из списка DN memberOf. */
+function groupNames(memberOf) {
+  return normalizeMemberOf(memberOf).map((dn) => {
+    const rdn = String(dn).split(/(?<!\\),/)[0].trim();
+    return /^cn=/i.test(rdn) ? rdn.slice(3).replace(/\\(.)/g, "$1").trim() : null;
+  }).filter(Boolean);
 }
 
 function normalizeMemberOf(memberOf) {
@@ -184,4 +196,4 @@ class LdapAuthError extends Error {
   }
 }
 
-module.exports = { authenticate, clientOptions, LdapAuthError, isMemberOfGroup };
+module.exports = { authenticate, clientOptions, LdapAuthError, isMemberOfGroup, groupNames };
