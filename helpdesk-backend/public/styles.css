@@ -1113,6 +1113,12 @@ textarea.input { font-family: inherit; resize: vertical; }
 .as-rows th { padding: 4px 6px 6px 0; }
 .as-rows .field-input { padding: 8px 10px; margin: 0; }
 .as-rows tbody tr:hover td { background: transparent; }
-/* Плитка «Доступ к программам» на экране новой заявки — сиреневая, чтобы
+/* Плитка «Заявка на доступ» на экране новой заявки — сиреневая, чтобы
    не путать её с отделами: это не очередь, а готовая форма. */
 .dept-tile.access .dept-icon { color: #663AB5; }
+
+/* Отдел в заявке на доступ — выпадающий список рядом с полями ввода: той же
+   высоты и с тем же красным контуром, когда отдел не выбран. */
+.form-row .select-wrap:has(> #acDept) { margin-bottom: 16px; }
+.form-row .select-wrap:has(> #acDept) .select-btn { padding: 15px 16px; }
+.select-wrap:has(> select.invalid) .select-btn { border-color: var(--md-error); }

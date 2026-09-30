@@ -152,6 +152,15 @@ module.exports = function assistantRoutes(db) {
   // -------------------------------------------------------------------------
 
   // Всё, что нужно формам: отделы, программы, должности, подписанты актов.
+  // Отдел из AD, если он есть в справочнике (без учёта регистра и лишних
+  // пробелов) — под названием из справочника; иначе пусто.
+  const myDept = (name) => {
+    const key = String(name || "").trim().replace(/\s+/g, " ").toLowerCase();
+    if (!key) return "";
+    const d = db.prepare("SELECT name FROM asst_depts").all().find((x) => x.name.trim().replace(/\s+/g, " ").toLowerCase() === key);
+    return d ? d.name : "";
+  };
+
   router.get("/refs", (req, res) => {
     const s = A.settings(db);
     res.json({
@@ -163,7 +172,8 @@ module.exports = function assistantRoutes(db) {
       responsibles: db.prepare("SELECT id, name, post FROM asst_people WHERE role = 'responsible' ORDER BY sort, name").all(),
       reasons: db.prepare("SELECT id, title, reason FROM asst_writeoff_reasons ORDER BY title").all(),
       rules: db.prepare("SELECT id, title, defect, repair_works, remains FROM asst_repair_rules ORDER BY sort, title").all(),
-      myDepartment: req.session.user.department || "",
+      // Отдел сотрудника из AD — только чтобы выбрать его в списке по умолчанию.
+      myDepartment: myDept(req.session.user.department),
     });
   });
 
@@ -178,6 +188,8 @@ module.exports = function assistantRoutes(db) {
     const first = str(b.first_name, { field: "Имя", max: 60, required: true });
     const middle = str(b.middle_name, { field: "Отчество", max: 60 });
     const department = str(b.department, { field: "Отдел", max: 150, required: true });
+    // Отдел — только из справочника: по нему в записку попадает начальник.
+    if (!A.dept(db, department)) fail("Выберите отдел из списка");
     const post = str(b.post, { field: "Должность", max: 150, required: type === "register" });
     const room = str(b.room, { field: "Кабинет", max: 20 });
     const phoneInt = str(b.phone_int, { field: "Внутренний телефон", max: 20 });
