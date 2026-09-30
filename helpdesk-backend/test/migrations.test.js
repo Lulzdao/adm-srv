@@ -129,3 +129,23 @@ test("общий ящик рассылок из прежних настроек 
     cleanup();
   }
 });
+
+test("таблицы убранных разделов Ассистента удаляются при запуске, подписанты «заместитель» и «начальник ОИРиТ» — тоже", () => {
+  const { freshDb, resetModuleCache } = require("./helpers/tempDb");
+  const { db, cleanup } = freshDb();
+  try {
+    for (const t of ["asst_journal", "asst_transfers", "asst_links", "asst_equipment", "asst_parts"]) db.exec(`CREATE TABLE ${t} (id INTEGER)`);
+    db.prepare("INSERT INTO settings (key, value) VALUES ('asst_equipment_imported_at', 'x'), ('asst_org_name', 'Липецкстат')").run();
+    db.prepare("INSERT INTO asst_people (role, name) VALUES ('it_chief', 'Тестов Т.Т.'), ('deputy', 'Замов З.З.'), ('boss', 'Главный Г.Г.')").run();
+    db.close();
+    resetModuleCache();
+    const db2 = require("../db/init").initDb();
+    const tables = db2.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((r) => r.name);
+    for (const t of ["asst_journal", "asst_transfers", "asst_links", "asst_equipment", "asst_parts"]) assert.ok(!tables.includes(t), t);
+    assert.deepStrictEqual(db2.prepare("SELECT key FROM settings WHERE key LIKE 'asst_%'").all().map((r) => r.key), ["asst_org_name"]);
+    assert.deepStrictEqual(db2.prepare("SELECT role FROM asst_people").all().map((r) => r.role), ["boss"]);
+    db2.close();
+  } finally {
+    cleanup();
+  }
+});

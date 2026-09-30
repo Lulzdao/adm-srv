@@ -118,6 +118,8 @@ async function renderAdmin(main) {
         ${executors.length ? executors.map(a => человек(a, true)).join("") : пусто("Пока никто не входил под ролью исполнителя.")}
       </div>
 
+      <div class="card" style="margin-bottom:20px;" id="accessAdmin"><div class="spinner">Загрузка…</div></div>
+
       <div class="card" style="margin-bottom:20px;">
         <div class="section-label">Резервные копии баз</div>
         <div style="font-size:12px;color:var(--ink-soft);margin-bottom:14px;">
@@ -170,6 +172,9 @@ async function renderAdmin(main) {
           <div id="saveMsg" style="margin-top:8px;font-size:12px;color:var(--green);display:none;text-align:center;">Сохранено</div>
         </div>
       </div>`;
+
+    // ---- Заявка на доступ: отделы, начальники, отдел ИТ (app-assistant.js) ----
+    renderAccessAdmin(main.querySelector("#accessAdmin"));
 
     // ---- Резервные копии баз (раньше — «Оповещения → Отправка») ----
     const bkMsg = main.querySelector("#bkMsg");

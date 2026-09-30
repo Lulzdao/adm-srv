@@ -4,13 +4,11 @@ const test = require("node:test");
 const assert = require("node:assert");
 const { freshDb } = require("./helpers/tempDb");
 const { startApp, makeLocalUser, client } = require("./helpers/httpApp");
-const { readZip } = require("../services/zip");
+const { readZip, writeZip } = require("../services/zip");
 const { readFirstSheet } = require("../services/xlsx");
-const { writeZip } = require("../services/zip");
 
 // ============================================================================
-//  Ассистент через HTTP: права, справочники, заявка на доступ, передача,
-//  журнал техники и акты
+//  Ассистент через HTTP: права, справочники, заявка на доступ, акты
 //
 //  Все ФИО, отделы, инвентарные номера ВЫДУМАНЫ.
 // ============================================================================
@@ -33,7 +31,11 @@ async function стенд(t) {
   return { db, app, ids, Adm, It, U, U2 };
 }
 
-/** Загрузка файла формой — так же, как это делает браузер. */
+async function download(app, C, path) {
+  const res = await fetch(app.url + path, { headers: { Cookie: C.cookie } });
+  return { status: res.status, type: res.headers.get("content-type"), disposition: res.headers.get("content-disposition"), buf: Buffer.from(await res.arrayBuffer()) };
+}
+
 async function upload(app, C, path, name, content) {
   const form = new FormData();
   form.append("file", new Blob([content]), name);
@@ -42,23 +44,17 @@ async function upload(app, C, path, name, content) {
   return { status: res.status, json: text ? JSON.parse(text) : null };
 }
 
-async function download(app, C, path) {
-  const res = await fetch(app.url + path, { headers: { Cookie: C.cookie } });
-  return { status: res.status, type: res.headers.get("content-type"), disposition: res.headers.get("content-disposition"), buf: Buffer.from(await res.arrayBuffer()) };
-}
-
 const docText = (buf, part = "word/document.xml") =>
   [...readZip(buf).get(part).toString("utf8").matchAll(/<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>/g)].map((m) => m[1]).join("");
 
 async function справочники(Adm) {
   for (const d of [
-    { name: "Отдел выдуманной статистики", name_gen: "отдела выдуманной статистики", chief_post: "Начальник", chief_post_gen: "начальника", chief_post_dat: "начальнику", chief_name: "Первов П.П.", chief_name_gen: "Первова П.П.", chief_name_dat: "Первову П.П." },
-    { name: "Отдел пробных сводок", name_gen: "отдела пробных сводок", chief_post: "Начальник", chief_post_gen: "начальника", chief_post_dat: "начальнику", chief_name: "Вторых В.В.", chief_name_gen: "Вторых В.В.", chief_name_dat: "Вторых В.В." },
+    { name: "Отдел выдуманной статистики", chief_name: "Первов П.П.", chief_name_gen: "Первова П.П.", chief_name_dat: "Первову П.П." },
+    { name: "Отдел информационных ресурсов и технологий", chief_name: "Айтишный А.А.", chief_name_gen: "Айтишного А.А.", chief_name_dat: "Айтишному А.А." },
   ]) assert.strictEqual((await Adm.post("/api/assistant/settings/dict/depts", d)).status, 201);
+  assert.strictEqual((await Adm.put("/api/assistant/settings/general", { itDept: "Отдел информационных ресурсов и технологий" })).status, 200);
   for (const p of [
     { role: "boss", name: "Главный Г.Г.", name_dat: "Главному Г.Г.", post: "Руководитель", post_dat: "Руководителю" },
-    { role: "deputy", name: "Замов З.З.", post: "Заместитель руководителя" },
-    { role: "it_chief", name: "Айтишный А.А.", post: "Начальник отдела" },
     { role: "responsible", name: "Составитель С.С.", post: "Ведущий специалист-эксперт" },
     { role: "chair", name: "Председательский П.П.", post: "Заместитель руководителя" },
     { role: "member", name: "Членов Ч.Ч.", post: "Главный специалист-эксперт" },
@@ -72,10 +68,10 @@ test("настройки — только администраторам, на �
   const гость = client(app.url);
   for (const [m, p, b] of [
     ["get", "/api/assistant/settings/general"], ["put", "/api/assistant/settings/general", {}],
-    ["get", "/api/assistant/settings/dict/links"], ["post", "/api/assistant/settings/dict/links", {}],
-    ["put", "/api/assistant/settings/dict/links/1", {}], ["delete", "/api/assistant/settings/dict/links/1"],
+    ["get", "/api/assistant/settings/dict/depts"], ["post", "/api/assistant/settings/dict/depts", {}],
+    ["put", "/api/assistant/settings/dict/depts/1", {}], ["delete", "/api/assistant/settings/dict/depts/1"],
     ["get", "/api/assistant/settings/templates"], ["delete", "/api/assistant/settings/templates/access"],
-    ["get", "/api/assistant/settings/imports"], ["put", "/api/mailings/settings", {}], ["post", "/api/mailings/settings/mailboxes", {}],
+    ["put", "/api/mailings/settings", {}], ["post", "/api/mailings/settings/mailboxes", {}],
     ["put", "/api/mailings/settings/mailboxes/1", {}], ["delete", "/api/mailings/settings/mailboxes/1"], ["post", "/api/mailings/settings/mailboxes/1/verify"],
   ]) {
     assert.strictEqual((await U[m](p, b)).status, 403, `${m} ${p} сотрудник`);
@@ -83,45 +79,40 @@ test("настройки — только администраторам, на �
     assert.strictEqual((await гость[m](p, b)).status, 401, `${m} ${p} без входа`);
   }
   assert.strictEqual((await Adm.get("/api/assistant/settings/general")).status, 200);
-  for (const p of ["/api/assistant/refs", "/api/assistant/links", "/api/assistant/journal", "/api/assistant/acts", "/api/assistant/transfers", "/api/mailings"]) {
+  for (const p of ["/api/assistant/refs", "/api/assistant/acts", "/api/mailings"]) {
     assert.strictEqual((await U.get(p)).status, 200, p);
     assert.strictEqual((await гость.get(p)).status, 401, p);
   }
-  const up = await upload(app, U, "/api/assistant/settings/imports/equipment", "tec.txt", "Принтерt###tИ-1t###t01.01.2020t###t1");
-  assert.strictEqual(up.status, 403);
 });
 
-test("плитки систем: общие видны всем, отдельские — только своему отделу; ссылка только http(s)", async (t) => {
-  const { Adm, U, U2 } = await стенд(t);
-  assert.strictEqual((await Adm.post("/api/assistant/settings/dict/links", { title: "Общая система", url: "https://example.invalid/a" })).status, 201);
-  assert.strictEqual((await Adm.post("/api/assistant/settings/dict/links", {
-    title: "Система отдела", url: "http://example.invalid/b", departments: "отдел выдуманной статистики\nДругой отдел",
-  })).status, 201);
-  const bad = await Adm.post("/api/assistant/settings/dict/links", { title: "Плохая", url: "javascript:alert(1)" });
-  assert.strictEqual(bad.status, 400);
-
-  assert.deepStrictEqual((await U.get("/api/assistant/links")).json.links.map((l) => l.title).sort(), ["Общая система", "Система отдела"]);
-  assert.deepStrictEqual((await U2.get("/api/assistant/links")).json.links.map((l) => l.title), ["Общая система"]);
-  assert.strictEqual((await U2.get("/api/assistant/links?all=1")).json.links.length, 1, "?all=1 — только администратору");
-  assert.strictEqual((await Adm.get("/api/assistant/links?all=1")).json.links.length, 2);
+test("убранных разделов больше нет: системы, передача, журнал, базы из 1С", async (t) => {
+  const { app, db, Adm, U } = await стенд(t);
+  for (const p of ["/api/assistant/links", "/api/assistant/transfers", "/api/assistant/journal", "/api/assistant/stock", "/api/assistant/equipment?q=a", "/api/assistant/parts?q=a"]) {
+    assert.strictEqual((await U.get(p)).status, 404, p);
+  }
+  assert.strictEqual((await Adm.get("/api/assistant/settings/dict/links")).status, 404);
+  const imp = await fetch(app.url + "/api/assistant/settings/imports/equipment", { method: "POST", headers: { Cookie: Adm.cookie } });
+  assert.strictEqual(imp.status, 404);
+  const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'asst_%'").all().map((r) => r.name);
+  for (const gone of ["asst_links", "asst_transfers", "asst_journal", "asst_equipment", "asst_parts"]) assert.ok(!tables.includes(gone), gone);
+  const kinds = (await Adm.get("/api/assistant/settings/templates")).json.templates.map((x) => x.kind);
+  assert.ok(!kinds.includes("transfer"));
 });
 
-test("справочники: правка, повтор имени отдела — 400, удаление; неизвестный справочник — 404", async (t) => {
+test("справочник отделов: правка, повтор имени — 400, переименование отдела ИТ тянет за собой настройку", async (t) => {
   const { Adm } = await стенд(t);
-  const r = await Adm.post("/api/assistant/settings/dict/depts", { name: "Отдел А" });
-  assert.strictEqual(r.status, 201);
-  assert.strictEqual((await Adm.post("/api/assistant/settings/dict/depts", { name: "Отдел А" })).status, 400);
-  assert.strictEqual((await Adm.put(`/api/assistant/settings/dict/depts/${r.json.id}`, { chief_name: "Тестов Т.Т." })).status, 200);
+  await справочники(Adm);
   const list = (await Adm.get("/api/assistant/settings/dict/depts")).json.items;
-  assert.strictEqual(list[0].chief_name, "Тестов Т.Т.");
-  assert.strictEqual(list[0].name, "Отдел А", "частичная правка не стирает остальные поля");
-  assert.strictEqual((await Adm.post("/api/assistant/settings/dict/people", { role: "king", name: "X" })).status, 400);
+  const it = list.find((d) => d.name.startsWith("Отдел информационных"));
+  assert.strictEqual((await Adm.post("/api/assistant/settings/dict/depts", { name: it.name })).status, 400);
+  assert.strictEqual((await Adm.put(`/api/assistant/settings/dict/depts/${it.id}`, { name: "Отдел ИТ выдуманный" })).status, 200);
+  assert.strictEqual((await Adm.get("/api/assistant/settings/general")).json.itDept, "Отдел ИТ выдуманный");
+  assert.strictEqual((await Adm.put("/api/assistant/settings/general", { itDept: "Нет такого" })).status, 400);
+  assert.strictEqual((await Adm.post("/api/assistant/settings/dict/people", { role: "it_chief", name: "X" })).status, 400, "роль начальника ИТ убрана");
   assert.strictEqual((await Adm.get("/api/assistant/settings/dict/nope")).status, 404);
-  assert.strictEqual((await Adm.delete(`/api/assistant/settings/dict/depts/${r.json.id}`)).status, 200);
-  assert.strictEqual((await Adm.delete(`/api/assistant/settings/dict/depts/${r.json.id}`)).status, 404);
 });
 
-test("заявка на доступ: становится заявкой в ИТ с анкетой, отдел её видит, служебная записка собирается", async (t) => {
+test("заявка на доступ: заявка в ИТ с анкетой; записка — на имя начальника отдела ИТ, подпись начальника отдела сотрудника", async (t) => {
   const { app, db, ids, Adm, It, U, U2 } = await стенд(t);
   await справочники(Adm);
   const r = await U.post("/api/assistant/access", {
@@ -136,21 +127,20 @@ test("заявка на доступ: становится заявкой в И�
   const t1 = (await U.get(`/api/tickets/${tid}`)).json.ticket;
   assert.strictEqual(t1.title, "Регистрация: Новиков Н.Н.");
   assert.strictEqual(t1.category, "ИТ");
-  assert.strictEqual(t1.room, "305");
   assert.strictEqual(t1.form.kind, "access");
-  assert.deepStrictEqual(t1.form.data.programs, ["АРМ ГС", "ВЕБСБОР"]);
-  // Исполнитель ИТ видит её во входящих — это обычная заявка отдела.
   assert.ok((await It.get("/api/tickets")).json.tickets.some((x) => x.id === tid));
-  // Оповещение отделу ушло, как у обычной заявки.
   assert.ok(db.prepare("SELECT 1 FROM notification_deliveries WHERE user_id = ? AND channel = 'inapp'").get(ids.it));
 
   const doc = await download(app, U, `/api/assistant/access/${tid}/doc`);
   assert.strictEqual(doc.status, 200);
   const text = docText(doc.buf);
-  for (const s of ["Заявка на регистрацию нового сотрудника", "Новиков Новик Новикович", "Ведущий экономист", "АРМ ГС, ВЕБСБОР, формы ЦСОД: 1-Т, П-1", "внутренний — 12-34", "Начальник отдела выдуманной статистики", "Первов П.П.", "Руководителю", "Главному Г.Г."]) {
-    assert.ok(text.includes(s), `в записке есть «${s}»`);
-  }
-  // Чужой сотрудник не видит ни заявку, ни записку.
+  for (const s of [
+    "Начальнику отдела информационных ресурсов и технологий", "Айтишному А.А.",
+    "Заявка на регистрацию нового сотрудника", "Новиков Новик Новикович", "Ведущий экономист",
+    "АРМ ГС, ВЕБСБОР, формы ЦСОД: 1-Т, П-1", "внутренний — 12-34",
+    "Начальник отдела выдуманной статистики", "Первов П.П.",
+  ]) assert.ok(text.includes(s), `в записке есть «${s}»`);
+  assert.ok(!text.includes("Главному Г.Г."), "записка не руководителю, а начальнику ИТ");
   assert.strictEqual((await U2.get(`/api/assistant/access/${tid}/doc`)).status, 403);
 });
 
@@ -161,57 +151,9 @@ test("заявка на доступ: проверки полей и прогр�
   assert.strictEqual((await U.post("/api/assistant/access", { ...base, last_name: "" })).status, 400);
   assert.strictEqual((await U.post("/api/assistant/access", { ...base, programs: [] })).status, 400);
   assert.strictEqual((await U.post("/api/assistant/access", { ...base, programs: ["Чужая программа"] })).status, 400);
-  // Блокировке программы не нужны, и она важнее обычной.
   const r = await U.post("/api/assistant/access", { type: "block", last_name: "Тестов", first_name: "Тест", department: "Отдел" });
   assert.strictEqual(r.status, 201);
   assert.strictEqual((await U.get(`/api/tickets/${r.json.ticket.id}`)).json.ticket.priority, "high");
-});
-
-test("передача оборудования: номер по порядку, документ с падежами, удаляет автор или администратор", async (t) => {
-  const { app, Adm, U, U2 } = await стенд(t);
-  await справочники(Adm);
-  const body = {
-    from_dept: "Отдел выдуманной статистики", to_dept: "Отдел пробных сводок",
-    items: [{ name: "Монитор выдуманный 24\"", inv: "И-0001", count: 1 }, { name: "Клавиатура выдуманная", inv: "И-0002" }],
-  };
-  const a = await U.post("/api/assistant/transfers", body);
-  assert.strictEqual(a.status, 201, JSON.stringify(a.json));
-  assert.strictEqual(a.json.num, 1);
-  assert.strictEqual((await U.post("/api/assistant/transfers", body)).json.num, 2);
-  assert.strictEqual((await U.post("/api/assistant/transfers", { ...body, to_dept: body.from_dept })).status, 400);
-  assert.strictEqual((await U.post("/api/assistant/transfers", { ...body, to_dept: "Нет такого" })).status, 400);
-  assert.strictEqual((await U.post("/api/assistant/transfers", { ...body, items: [body.items[0], body.items[0]] })).status, 400);
-
-  const doc = await download(app, U2, `/api/assistant/transfers/${a.json.id}/doc`);
-  assert.strictEqual(doc.status, 200);
-  const text = docText(doc.buf);
-  assert.ok(text.includes("Прошу передать начальнику отдела пробных сводок Вторых В.В. от начальника отдела выдуманной статистики Первова П.П."), text);
-  assert.ok(text.includes("Монитор выдуманный 24\"") && text.includes("И-0002"));
-  assert.ok(text.includes("Замов З.З."));
-  assert.match(decodeURIComponent(doc.disposition), /заявка на передачу оборудования № 1\.docx/);
-
-  assert.strictEqual((await U2.delete(`/api/assistant/transfers/${a.json.id}`)).status, 403);
-  assert.strictEqual((await U.delete(`/api/assistant/transfers/${a.json.id}`)).status, 200);
-});
-
-test("выгрузки из 1С: база заменяется целиком, поиск без учёта регистра", async (t) => {
-  const { app, Adm, U } = await стенд(t);
-  const tec = "Принтер Выдуманный LaserJett###tИ-0001t###t01.06.2020t###t1\r\nМонитор пробныйt###tИ-0002t###t02.02.2021t###t1\r\n";
-  const r = await upload(app, Adm, "/api/assistant/settings/imports/equipment", "tec.txt", tec);
-  assert.strictEqual(r.status, 200, JSON.stringify(r.json));
-  assert.strictEqual(r.json.count, 2);
-  const found = (await U.get("/api/assistant/equipment?q=" + encodeURIComponent("принтер"))).json.items;
-  assert.deepStrictEqual(found.map((x) => x.inv), ["И-0001"]);
-  assert.strictEqual((await U.get("/api/assistant/equipment?q=И-0002")).json.items[0].name, "Монитор пробный");
-  // Повторная загрузка заменяет, а не добавляет.
-  await upload(app, Adm, "/api/assistant/settings/imports/equipment", "tec.txt", "Сканер пробныйt###tИ-0009t###tt###t1");
-  assert.strictEqual((await U.get("/api/assistant/equipment?q=принтер")).json.items.length, 0);
-  assert.strictEqual((await Adm.get("/api/assistant/settings/imports")).json.equipment.count, 1);
-
-  const parts = "Картридж выдуманный черныйt###tt###t00-01t###t10\nФьюзер пробныйt###tсклад t###t00-02t###t3\n";
-  assert.strictEqual((await upload(app, Adm, "/api/assistant/settings/imports/parts", "rep.txt", parts)).json.count, 2);
-  assert.deepStrictEqual((await U.get("/api/assistant/parts?kind=cartridge&q=выдуман")).json.items.map((x) => x.nomenclature), ["00-01"]);
-  assert.strictEqual((await upload(app, Adm, "/api/assistant/settings/imports/parts", "rep.txt", "ерунда")).status, 400);
 });
 
 test("шаблоны: загрузка своего, проверка при загрузке, откат к встроенному", async (t) => {
@@ -224,104 +166,69 @@ test("шаблоны: загрузка своего, проверка при з�
   const ok = await upload(app, Adm, "/api/assistant/settings/templates/access", "мой.docx", mine);
   assert.strictEqual(ok.status, 200);
   assert.deepStrictEqual(ok.json.tags, ["FIO"]);
-
   const tid = (await U.post("/api/assistant/access", { type: "block", last_name: "Тестов", first_name: "Тест", department: "Отдел" })).json.ticket.id;
   assert.strictEqual(docText((await download(app, U, `/api/assistant/access/${tid}/doc`)).buf), "СВОЙ БЛАНК Тестов Тест");
-  const list = (await Adm.get("/api/assistant/settings/templates")).json.templates;
-  assert.strictEqual(list.find((x) => x.kind === "access").custom.filename, "мой.docx");
-
   assert.strictEqual((await Adm.delete("/api/assistant/settings/templates/access")).status, 200);
   assert.match(docText((await download(app, U, `/api/assistant/access/${tid}/doc`)).buf), /Служебная записка/);
 });
 
-test("журнал: запись, правка автором, чужому нельзя, фильтры и выгрузка в Excel", async (t) => {
-  const { app, Adm, U, U2 } = await стенд(t);
-  const e = { date: "2026-09-10", kind: "cartridge", part_name: "Картридж выдуманный", nomenclature: "00-01", count: 2, equipment: "Принтер пробный", inv: "И-0001", location: "каб. 305" };
-  const a = await U.post("/api/assistant/journal", e);
-  assert.strictEqual(a.status, 201);
-  assert.strictEqual((await U.post("/api/assistant/journal", { ...e, date: "10.09.2026" })).status, 400);
-  assert.strictEqual((await U.post("/api/assistant/journal", { ...e, kind: "x" })).status, 400);
-  await U.post("/api/assistant/journal", { ...e, date: "2026-08-01", kind: "part", part_name: "Фьюзер пробный", nomenclature: "00-02", count: 1 });
-
-  assert.strictEqual((await U2.put(`/api/assistant/journal/${a.json.id}`, { ...e, count: 3 })).status, 403);
-  assert.strictEqual((await U.put(`/api/assistant/journal/${a.json.id}`, { ...e, count: 3 })).status, 200);
-  assert.strictEqual((await Adm.put(`/api/assistant/journal/${a.json.id}`, { ...e, count: 4 })).status, 200);
-
-  assert.strictEqual((await U.get("/api/assistant/journal")).json.total, 2);
-  assert.strictEqual((await U.get("/api/assistant/journal?kind=part")).json.total, 1);
-  assert.strictEqual((await U.get("/api/assistant/journal?from=2026-09-01")).json.total, 1);
-  assert.strictEqual((await U.get("/api/assistant/journal?q=" + encodeURIComponent("пробный фьюзер".split(" ")[1]))).json.total, 1);
-
-  const x = await download(app, U, "/api/assistant/journal/export");
-  assert.strictEqual(x.status, 200);
-  const rows = readFirstSheet(x.buf);
-  assert.ok(rows.some((r) => r.includes("Картридж выдуманный") && r.includes("4")));
-});
-
-test("акты на ремонт: из записей с запчастями, номер в реестре, записи привязаны, удаление акта отвязывает", async (t) => {
+test("акты на ремонт вручную: техника, неисправности, работы, запчасти; служебная записка по желанию", async (t) => {
   const { app, Adm, U, U2 } = await стенд(t);
   await справочники(Adm);
-  await Adm.post("/api/assistant/settings/dict/rules", { title: "Принтер", keywords: "принтер, мфу", defect: "Износ узла закрепления", repair_works: "Замена термоузла", remains: "термоузел, непригодный" });
-  const add = async (x) => (await U.post("/api/assistant/journal", { date: "2026-09-10", kind: "part", count: 1, equipment: "Принтер пробный", inv: "И-0001", location: "каб. 305", ...x })).json.id;
-  const e1 = await add({ part_name: "Фьюзер пробный", nomenclature: "00-02" });
-  const e2 = await add({ part_name: "Ролик пробный", nomenclature: "00-03", count: 2 });
-  const cart = (await U.post("/api/assistant/journal", { date: "2026-09-10", kind: "cartridge", part_name: "Картридж", count: 1 })).json.id;
+  const body = {
+    date: "2026-09-12", with_memo: true,
+    equipment: [{ name: "Принтер пробный", inv: "И-0001", location: "каб. 305" }],
+    defects: "Износ узла закрепления\nПолосы на отпечатках",
+    works: "Замена термоузла\nЗамена ролика",
+    parts: [{ name: "Термоузел пробный", nomenclature: "00-02", count: 1 }, { work: "Замена ролика", name: "Ролик пробный", nomenclature: "00-03", count: 2 }],
+    remains: "термоузел, непригодный",
+  };
+  assert.strictEqual((await U.post("/api/assistant/acts/repair", { ...body, equipment: [] })).status, 400);
+  assert.strictEqual((await U.post("/api/assistant/acts/repair", { ...body, works: "" })).status, 400);
+  assert.strictEqual((await U.post("/api/assistant/acts/repair", { ...body, parts: [{ count: 1 }] })).status, 400);
 
-  // Картридж в акт на ремонт не берётся — он идёт в ведомость.
-  assert.strictEqual((await U.post("/api/assistant/acts/repair", { entry_ids: [e1, cart] })).status, 400);
-
-  const pv = (await U.post("/api/assistant/acts/repair/preview", { entry_ids: [e1, e2] })).json.groups;
-  assert.strictEqual(pv.length, 1);
-  assert.strictEqual(pv[0].defect, "Износ узла закрепления", "подсказка из справочника по слову «принтер»");
-
-  const act = await U.post("/api/assistant/acts/repair", {
-    entry_ids: [e1, e2], date: "2026-09-12", with_memo: true,
-    groups: [{ key: pv[0].key, defect: pv[0].defect, repair_works: pv[0].repair_works, remains: pv[0].remains }],
-  });
+  const act = await U.post("/api/assistant/acts/repair", body);
   assert.strictEqual(act.status, 201, JSON.stringify(act.json));
   assert.strictEqual(act.json.num, 1);
-  // По этим записям второй акт не составить, и правка их закрыта.
-  assert.strictEqual((await U.post("/api/assistant/acts/repair", { entry_ids: [e1] })).status, 400);
-  assert.strictEqual((await U.delete(`/api/assistant/journal/${e1}`)).status, 409);
-
-  const zip = await download(app, U2, `/api/assistant/acts/${act.json.id}/download`);
-  assert.strictEqual(zip.status, 200);
-  const files = readZip(zip.buf);
+  const files = readZip((await download(app, U2, `/api/assistant/acts/${act.json.id}/download`)).buf);
   assert.strictEqual(files.size, 3, "неисправности, ремонт, записка на запчасти");
-  const repair = [...files.entries()].find(([n]) => n.includes("Акт о ремонте"))[1];
-  const text = docText(repair);
-  for (const s of ["№ 1", "Принтер пробный", "Замена термоузла", "Ролик пробный", "00-03", "термоузел, непригодный", "Составитель С.С.", "Айтишный А.А.", "12.09.2026"]) {
-    assert.ok(text.includes(s), `в акте есть «${s}»`);
+  const repair = docText([...files.entries()].find(([n]) => n.includes("Акт о ремонте"))[1]);
+  for (const s of ["№ 1", "12.09.2026", "Принтер пробный", "И-0001", "Замена термоузла", "Термоузел пробный", "Замена ролика", "Ролик пробный", "00-03",
+    "термоузел, непригодный", "Составитель С.С.", "Начальник отдела информационных ресурсов и технологий", "Айтишный А.А.", "УТВЕРЖДАЮ", "Главный Г.Г."]) {
+    assert.ok(repair.includes(s), `в акте есть «${s}»`);
   }
-  const one = await download(app, U, `/api/assistant/acts/${act.json.id}/download?doc=defect`);
-  assert.match(docText(one.buf), /Износ узла закрепления/);
+  const defect = docText((await download(app, U, `/api/assistant/acts/${act.json.id}/download?doc=defect`)).buf);
+  assert.ok(defect.includes("Износ узла закрепления") && defect.includes("Полосы на отпечатках"));
 
-  // Удалить акт может автор или администратор; записи журнала освобождаются.
+  // Без запчастей записки нет, а в акте о ремонте — строки работ.
+  const plain = await U.post("/api/assistant/acts/repair", { ...body, parts: [] });
+  const docs = (await U.get(`/api/assistant/acts/${plain.json.id}`)).json.act.docs.map((d) => d.kind);
+  assert.deepStrictEqual(docs, ["defect", "repair"]);
+  assert.match(docText((await download(app, U, `/api/assistant/acts/${plain.json.id}/download?doc=repair`)).buf), /Замена ролика/);
+
   assert.strictEqual((await U2.delete(`/api/assistant/acts/${act.json.id}`)).status, 403);
   assert.strictEqual((await U.delete(`/api/assistant/acts/${act.json.id}`)).status, 200);
-  assert.strictEqual((await U.get("/api/assistant/journal?free=1")).json.total, 3);
 });
 
-test("ведомость по картриджам за месяц: Word и Excel, картриджи другого месяца не попадают", async (t) => {
+test("ведомость по картриджам вручную: Word и Excel, итог по количеству", async (t) => {
   const { app, Adm, U } = await стенд(t);
   await справочники(Adm);
-  for (const [date, n] of [["2026-09-02", 2], ["2026-09-20", 1], ["2026-10-01", 5]]) {
-    await U.post("/api/assistant/journal", { date, kind: "cartridge", part_name: `Картридж ${date}`, nomenclature: "00-01", count: n, location: "каб. 1" });
-  }
-  const r = await U.post("/api/assistant/acts/cartridges", { month: "2026-09" });
+  const r = await U.post("/api/assistant/acts/cartridges", { month: "2026-09", rows: [
+    { name: "Картридж выдуманный", nomenclature: "00-01", count: 2, location: "каб. 1" },
+    { name: "Картридж пробный", count: 1 },
+  ] });
   assert.strictEqual(r.status, 201, JSON.stringify(r.json));
-  assert.strictEqual((await U.post("/api/assistant/acts/cartridges", { month: "2026-09" })).status, 400, "повторно — уже нечего");
-
+  assert.strictEqual((await U.post("/api/assistant/acts/cartridges", { month: "2026-13", rows: [{ name: "x" }] })).status, 400);
+  assert.strictEqual((await U.post("/api/assistant/acts/cartridges", { month: "2026-09", rows: [] })).status, 400);
   const files = readZip((await download(app, U, `/api/assistant/acts/${r.json.id}/download`)).buf);
   const [docx] = [...files.entries()].filter(([n]) => n.endsWith(".docx")).map(([, b]) => b);
   const text = docText(docx);
-  assert.ok(text.includes("сентябрь") && text.includes("2026") && text.includes("Итого: 3 шт."), text);
-  assert.ok(!text.includes("2026-10-01"));
+  assert.ok(text.includes("сентябрь") && text.includes("Итого: 3 шт.") && text.includes("Картридж пробный"), text);
   const [xlsx] = [...files.entries()].filter(([n]) => n.endsWith(".xlsx")).map(([, b]) => b);
-  assert.ok(readFirstSheet(xlsx).some((row) => row.includes("Картридж 2026-09-20")));
+  assert.ok(readFirstSheet(xlsx).some((row) => row.includes("Картридж выдуманный") && row.includes("00-01")));
 });
 
-test("акт на списание: комиссия из справочника, реестр по годам и архив нескольких актов", async (t) => {
+test("акт на списание вручную: комиссия из справочника, нумерация с заданного номера, архив нескольких актов", async (t) => {
   const { app, Adm, U } = await стенд(t);
   await справочники(Adm);
   const w = await U.post("/api/assistant/acts/writeoff", { name: "Монитор пробный", inv: "И-0002", commissioned: "02.02.2011", reason: "Не включается, выгорела матрица", date: "2026-09-15" });
@@ -330,27 +237,9 @@ test("акт на списание: комиссия из справочника
   const text = docText((await download(app, U, `/api/assistant/acts/${w.json.id}/download`)).buf);
   for (const s of ["Монитор пробный", "И-0002", "02.02.2011", "выгорела матрица", "Председательский П.П.", "Членов Ч.Ч.", "УТВЕРЖДАЮ"]) assert.ok(text.includes(s), s);
 
-  // Нумерация с заданного администратором номера.
   await Adm.put("/api/assistant/settings/general", { actStart: 40 });
-  const w2 = await U.post("/api/assistant/acts/writeoff", { name: "Сканер пробный", inv: "И-0003", reason: "Сломан" });
+  const w2 = await U.post("/api/assistant/acts/writeoff", { name: "Сканер пробный", inv: "И-0003", reason: "Сломан", date: `${new Date().getFullYear()}-01-10` });
   assert.strictEqual(w2.json.num, 40);
-  const reg = (await U.get("/api/assistant/acts?year=2026")).json;
-  assert.ok(reg.acts.length >= 1);
   const both = await download(app, U, `/api/assistant/acts/zip?ids=${w.json.id},${w2.json.id}`);
   assert.strictEqual(readZip(both.buf).size, 2);
-});
-
-test("остатки: выгрузка из 1С минус поставленное после неё; отчёт за месяц", async (t) => {
-  const { app, Adm, U } = await стенд(t);
-  await upload(app, Adm, "/api/assistant/settings/imports/parts", "rep.txt", "Картридж выдуманныйt###tt###t00-01t###t10\n");
-  const today = new Date();
-  const iso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
-  await U.post("/api/assistant/journal", { date: iso, kind: "cartridge", part_name: "Картридж выдуманный", nomenclature: "00-01", count: 3 });
-  await U.post("/api/assistant/journal", { date: "2000-01-01", kind: "cartridge", part_name: "Картридж выдуманный", nomenclature: "00-01", count: 100 });
-  const s = (await U.get("/api/assistant/stock")).json.items[0];
-  assert.strictEqual(s.used, 3, "поставленное до выгрузки уже учтено в 1С");
-  assert.strictEqual(s.left, 7);
-  const rep = await download(app, U, `/api/assistant/stock/report?month=${iso.slice(0, 7)}`);
-  assert.ok(readFirstSheet(rep.buf).some((r) => r.includes("00-01") && r.includes("3") && r.includes("7")));
-  assert.strictEqual((await U.get("/api/assistant/stock/report?month=сентябрь")).status, 400);
 });

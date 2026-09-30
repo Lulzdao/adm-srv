@@ -5,7 +5,7 @@ const { fillDocx, DOCX_TYPE } = require("./docx");
 // ============================================================================
 //  Ассистент: общее для его разделов
 //
-//  Справочники, шаблоны документов, нумерация, разбор выгрузок из 1С. Сами
+//  Справочники, шаблоны документов, нумерация актов. Сами
 //  разделы — в routes/assistant*.js и routes/mailings.js.
 // ============================================================================
 
@@ -16,10 +16,6 @@ const TEMPLATES = {
   access: {
     label: "Служебная записка на доступ сотрудника",
     tags: "TYPEREQUEST, FIO, post, department, location, tel, appList, comment, chiefType, chiefFIO, bossPostD, bossFIOD, orgName, date",
-  },
-  transfer: {
-    label: "Заявка на передачу оборудования",
-    tags: "num, date, postTo, depTo, FIOTo, postFrom, depFrom, FIOFrom, postToI, FIOToI, postFromI, FIOFromI, bossPostD, bossFIOD, bossZamPost, bossZamFIO, orgName; список {#tec}: num, name, inv, count",
   },
   defect: {
     label: "Акт о выявленных неисправностях (дефектах)",
@@ -77,6 +73,8 @@ function settings(db) {
   return {
     orgName: getSetting(db, "asst_org_name") || "Липецкстат",
     accessDept: getSetting(db, "asst_access_dept") || "",
+    // Отдел ИТ из справочника отделов: его начальнику адресована записка на доступ.
+    itDept: getSetting(db, "asst_it_dept") || "",
     programs: getJson(db, "asst_programs", DEFAULT_PROGRAMS),
     posts: getJson(db, "asst_posts", DEFAULT_POSTS),
   };
@@ -137,24 +135,41 @@ function people(db, role) {
 const person = (db, role) => people(db, role)[0] || null;
 const dept = (db, name) => db.prepare("SELECT * FROM asst_depts WHERE name = ?").get(name) || null;
 
+const capitalize = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
+
+/**
+ * Начальник отдела ИТ — из справочника отделов: какой отдел — отдел ИТ,
+ * выбирается в Администрировании заявок. Ему адресована служебная записка на
+ * доступ, он же подписывает акты.
+ */
+function itChief(db) {
+  const name = getSetting(db, "asst_it_dept") || "";
+  const d = name ? dept(db, name) : null;
+  if (!d) return { dept: "", post: "", postDat: "", name: "", nameDat: "" };
+  return {
+    dept: d.name,
+    post: `${CHIEF.post} ${deptGen(d.name)}`,
+    postDat: capitalize(`${CHIEF.dat} ${deptGen(d.name)}`),
+    name: d.chief_name || "",
+    nameDat: d.chief_name_dat || d.chief_name || "",
+  };
+}
+
 /**
  * Поля, общие для всех документов: организация, руководитель в шапке «кому»,
- * заместитель, начальник ОИРиТ и блок «УТВЕРЖДАЮ» для актов.
+ * начальник отдела ИТ и блок «УТВЕРЖДАЮ» для актов.
  */
 function commonFields(db, now = new Date()) {
   const boss = person(db, "boss") || {};
-  const deputy = person(db, "deputy") || {};
-  const chief = person(db, "it_chief") || {};
+  const chief = itChief(db);
   const { orgName } = settings(db);
   return {
     orgName,
     date: ruDate(today(now)),
     bossPostD: boss.post_dat || boss.post || "",
     bossFIOD: boss.name_dat || boss.name || "",
-    bossZamPost: deputy.post || "",
-    bossZamFIO: deputy.name || "",
-    chiefPost: chief.post || "",
-    chiefName: chief.name || "",
+    chiefPost: chief.post,
+    chiefName: chief.name,
     approveBlock: boss.name
       ? `УТВЕРЖДАЮ\n${boss.post || "Руководитель"} ${orgName}\n____________ ${boss.name}\n«___» ____________ ${now.getFullYear()} г.`
       : "",
@@ -182,11 +197,10 @@ function renderDoc(db, kind, data) {
   return fillDocx(templateOf(db, kind), data);
 }
 
-/** Следующий номер в году: реестр актов и заявок на передачу — свои. */
-function nextNumber(db, table, year) {
-  const row = db.prepare(`SELECT MAX(num) AS n FROM ${table} WHERE year = ?`).get(year);
-  const start = table === "asst_acts" ? Number(getSetting(db, `asst_act_start_${year}`)) || 1 : 1;
-  return Math.max((row.n || 0) + 1, start);
+/** Следующий номер акта в году — не меньше первого номера из настроек. */
+function nextActNumber(db, year) {
+  const row = db.prepare("SELECT MAX(num) AS n FROM asst_acts WHERE year = ?").get(year);
+  return Math.max((row.n || 0) + 1, Number(getSetting(db, `asst_act_start_${year}`)) || 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -205,51 +219,10 @@ function sendFile(res, buf, filename, type = DOCX_TYPE) {
   res.end(buf);
 }
 
-// ---------------------------------------------------------------------------
-//  Выгрузки из 1С
-// ---------------------------------------------------------------------------
-
-// Поля в выгрузке разделены «t###t» — так их пишет обработка в 1С (задумывался
-// «\t###\t», но обратные косые черты по дороге потерялись). Принимаем и то,
-// и другое, и просто табуляцию — если выгрузку когда-нибудь поправят.
-const FIELD_SEP = /\\?t###\\?t|\t###\t|\t/;
-
-function parseExport(text) {
-  return String(text).replace(/^﻿/, "").split(/\r?\n/)
-    .map((line) => line.trimEnd())
-    .filter((line) => line.trim())
-    .map((line) => line.split(FIELD_SEP).map((f) => f.trim()));
-}
-
-const toCount = (s) => {
-  const n = Number(String(s || "").replace(/\s/g, "").replace(",", "."));
-  return Number.isFinite(n) ? Math.round(n) : null;
-};
-
-/** tec.txt: наименование | инвентарный | дата ввода | количество. */
-function parseEquipment(text) {
-  const rows = parseExport(text).filter((f) => f.length >= 2 && f[0]);
-  if (!rows.length) throw new Error("В файле не нашлось ни одной строки с оборудованием — это точно выгрузка tec.txt?");
-  return rows.map((f) => ({ name: f[0], inv: f[1] || null, commissioned: f[2] || null, count: toCount(f[3]) ?? 1 }));
-}
-
-const CARTRIDGE = /картридж|тонер|драм|фотобарабан|фотопроводник|чернил/i;
-
-/** rep.txt: наименование | местонахождение | номенклатурный номер | количество. */
-function parseParts(text) {
-  const rows = parseExport(text).filter((f) => f.length >= 3 && f[0]);
-  if (!rows.length) throw new Error("В файле не нашлось ни одной строки с запчастями — это точно выгрузка rep.txt?");
-  return rows.map((f) => ({
-    name: f[0], location: f[1] || null, nomenclature: f[2] || null, count: toCount(f[3]) ?? 0,
-    cartridge: CARTRIDGE.test(f[0]) ? 1 : 0,
-  }));
-}
-
 module.exports = {
   TEMPLATES, ACCESS_TYPES, DEFAULT_PROGRAMS, DEFAULT_POSTS, MONTHS,
   getJson, setJson, settings,
   CHIEF, deptGen,
-  today, ruDate, isIsoDate, shortName, people, person, dept, commonFields, responsible,
-  templateOf, renderDoc, nextNumber, sendFile, safeFileName,
-  parseExport, parseEquipment, parseParts, CARTRIDGE,
+  today, ruDate, isIsoDate, shortName, people, person, dept, itChief, commonFields, responsible,
+  templateOf, renderDoc, nextActNumber, sendFile, safeFileName,
 };

@@ -247,6 +247,20 @@ function renderCreate(main) {
       <span class="dept-check">${icon("check", 12)}</span>
     </button>`;
 
+  // Заявка на доступ сотрудника — не отдел, а готовая анкета для отдела ИТ:
+  // по ней ИТ заводит учётную запись, а сотрудник печатает служебную записку.
+  // Плитка стоит сразу за ИТ, потому что уходит туда же.
+  const ACCESS = "__access";
+  const доступHtml = `
+    <button type="button" class="dept-tile access" data-dept="${ACCESS}">
+      <span class="dept-icon">${icon("key", 22)}</span>
+      <span class="dept-name">Доступ к программам</span>
+      <span class="dept-hint">Учётная запись сотрудника: регистрация, блокировка, восстановление, права</span>
+      <span class="dept-check">${icon("check", 12)}</span>
+    </button>`;
+  const плитки = отделы.map(плиткаHtml);
+  плитки.splice(Math.min(1, плитки.length), 0, доступHtml);
+
   main.innerHTML = `
     <div class="topbar"><div class="topbar-title">Новая заявка</div></div>
     <div class="page">
@@ -258,12 +272,13 @@ function renderCreate(main) {
           <div class="dept-strip" id="deptStrip">
             <div class="dept-fade left" hidden></div>
             <button type="button" class="dept-nav prev" hidden aria-label="Предыдущие отделы">${icon("chevron-left", 16)}</button>
-            <div class="dept-scroll" id="deptScroll">${отделы.map(плиткаHtml).join("")}</div>
+            <div class="dept-scroll" id="deptScroll">${плитки.join("")}</div>
             <div class="dept-fade right" hidden></div>
             <button type="button" class="dept-nav next" hidden aria-label="Следующие отделы">${icon("chevron", 16)}</button>
           </div>
         </div>
 
+        <div id="ticketPart">
         <div class="form-card">
           <div class="form-card-title" style="margin-bottom:16px;">Суть обращения</div>
 
@@ -302,6 +317,8 @@ function renderCreate(main) {
             <button class="btn-send" id="submitBtn">Отправить заявку</button>
           </div>
         </div>
+        </div>
+        <div id="accessPart" hidden></div>
 
       </div>
     </div>`;
@@ -346,10 +363,18 @@ function renderCreate(main) {
   window.addEventListener("resize", updateStrip);
   updateStrip();
 
+  const ticketPart = document.getElementById("ticketPart");
+  const accessPart = document.getElementById("accessPart");
   scroll.querySelectorAll(".dept-tile").forEach(tile => {
     tile.onclick = () => {
-      отдел = tile.dataset.dept;
       scroll.querySelectorAll(".dept-tile").forEach(t => t.classList.toggle("active", t === tile));
+      const доступ = tile.dataset.dept === ACCESS;
+      ticketPart.hidden = доступ;
+      accessPart.hidden = !доступ;
+      // Анкету рисуем один раз: вернулись с другой плитки — введённое на месте.
+      if (доступ && !accessPart.childElementCount) renderAccessForm(accessPart, { onCancel: () => setView("inbox") });
+      if (доступ) return;
+      отдел = tile.dataset.dept;
       showRouteHint();
     };
   });

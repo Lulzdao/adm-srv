@@ -992,7 +992,7 @@ textarea.input { font-family: inherit; resize: vertical; }
 .ag-load .td-av { border-width: 0; }
 
 /* ============================================================================
-   Ассистент (app-assistant.js, app-journal.js, app-mailings.js)
+   Ассистент (app-assistant.js, app-acts.js, app-mailings.js)
    Префикс as- — чтобы не задеть классы остальных разделов.
    ========================================================================= */
 .as-top-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
@@ -1008,28 +1008,6 @@ textarea.input { font-family: inherit; resize: vertical; }
 .as-empty a { color: var(--md-primary); font-weight: 600; }
 .as-btn-sm { padding: 7px 14px; font-size: 12.5px; }
 .nowrap { white-space: nowrap; }
-
-/* Плитки систем и быстрые действия */
-.as-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; }
-.as-tile {
-  position: relative; display: flex; flex-direction: column; gap: 4px; padding: 16px; text-decoration: none; color: inherit;
-  background: var(--md-surface-container-low); border-radius: var(--md-shape-l); border: 1px solid transparent;
-  transition: border-color .15s ease, background .15s ease, transform .15s ease;
-}
-.as-tile:hover { border-color: var(--md-primary); background: #fff; transform: translateY(-1px); }
-.as-tile-ic { width: 38px; height: 38px; border-radius: 10px; color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 13px; margin-bottom: 8px; }
-.as-tile-t { font-weight: 700; font-size: 14px; }
-.as-tile-h { font-size: 12px; color: var(--md-on-surface-variant); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.as-tile-tag { position: absolute; top: 12px; right: 12px; font-size: 10.5px; font-weight: 700; color: var(--md-on-secondary-container); background: var(--md-secondary-container); padding: 2px 7px; border-radius: 10px; }
-.as-quick { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
-.as-q {
-  display: flex; gap: 12px; align-items: flex-start; text-align: left; padding: 14px 16px; cursor: pointer; font: inherit; color: inherit;
-  background: #fff; border: 1px solid var(--md-outline); border-radius: var(--md-shape-l); transition: border-color .15s ease, background .15s ease;
-}
-.as-q:hover { border-color: var(--md-primary); background: var(--md-surface-container-low); }
-.as-q-ic { color: var(--md-primary); background: var(--md-primary-container); border-radius: 8px; padding: 8px; display: inline-flex; }
-.as-q b { display: block; font-size: 13.5px; margin-bottom: 3px; }
-.as-q small { display: block; font-size: 12px; color: var(--md-on-surface-variant); line-height: 1.35; }
 
 /* Таблицы */
 .as-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px; }
@@ -1065,7 +1043,6 @@ textarea.input { font-family: inherit; resize: vertical; }
 .as-checks .as-check:has(input:checked) { border-color: var(--md-primary); box-shadow: inset 0 0 0 1px var(--md-primary); font-weight: 700; }
 .as-inline { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--md-on-surface-variant); }
 .as-date { padding: 8px 10px; border: 1px solid var(--md-outline); border-radius: var(--md-shape-s); font: inherit; font-size: 13px; color: var(--md-on-surface); background: #fff; }
-.as-add-row { display: flex; gap: 8px; align-items: center; }
 .as-done { display: flex; gap: 14px; align-items: center; margin-top: 18px; padding: 16px 18px; border-radius: var(--md-shape-l); background: var(--md-success-container); flex-wrap: wrap; }
 .as-done > div { flex: 1; min-width: 200px; }
 .as-done b { display: block; }
@@ -1076,20 +1053,6 @@ textarea.input { font-family: inherit; resize: vertical; }
 .as-kv .v { font-weight: 500; word-break: break-word; }
 .as-cols { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 24px; align-items: start; }
 @media (max-width: 1100px) { .as-cols { grid-template-columns: minmax(0, 1fr); } }
-.as-li { display: flex; align-items: center; gap: 6px; padding: 10px 12px; background: var(--md-surface-container-low); border-radius: var(--md-shape-m); margin-bottom: 6px; }
-.as-li-main { flex: 1; min-width: 0; }
-.as-li-main b { font-size: 13px; }
-.as-li-main small { display: block; font-size: 12px; color: var(--md-on-surface-variant); margin-top: 2px; }
-
-/* Подсказки из базы под полем */
-.as-ac {
-  position: absolute; left: 0; right: 0; top: 100%; z-index: 30; margin-top: 4px; max-height: 280px; overflow-y: auto;
-  background: #fff; border: 1px solid var(--md-outline); border-radius: var(--md-shape-m); box-shadow: 0 10px 28px rgba(10, 40, 80, .14);
-}
-.as-ac-row { padding: 8px 12px; cursor: pointer; font-size: 13px; }
-.as-ac-row small { display: block; font-size: 11.5px; color: var(--md-on-surface-variant); margin-top: 1px; }
-.as-ac-row:hover, .as-ac-row.on { background: var(--md-primary-container); }
-.as-ac-empty { padding: 10px 12px; font-size: 12.5px; color: var(--md-on-surface-variant); }
 
 /* Окно */
 .as-modal-back { position: fixed; inset: 0; z-index: 100; background: rgba(20, 30, 45, .38); display: flex; align-items: flex-start; justify-content: center; padding: 6vh 16px; overflow-y: auto; }
@@ -1123,10 +1086,6 @@ textarea.input { font-family: inherit; resize: vertical; }
 .as-tpl-t { font-weight: 700; font-size: 14px; display: flex; gap: 8px; align-items: center; margin-bottom: 3px; }
 .as-tags { font-size: 11.5px; color: var(--md-on-surface-variant); margin-top: 6px; font-family: var(--mono); line-height: 1.5; }
 .as-tpl-act { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; max-width: 380px; }
-.as-imp { display: flex; gap: 16px; align-items: center; padding: 18px; background: var(--md-surface-container-low); border-radius: var(--md-shape-l); margin-bottom: 10px; }
-.as-imp-ic { color: var(--md-primary); background: var(--md-primary-container); border-radius: 10px; padding: 10px; display: inline-flex; }
-.as-imp-main { flex: 1; }
-.as-imp-stat { font-size: 12.5px; margin-top: 6px; }
 
 /* Рассылки */
 .as-prog { height: 6px; border-radius: 4px; background: var(--md-surface-container-highest); overflow: hidden; margin-bottom: 4px; }
@@ -1149,3 +1108,11 @@ textarea.input { font-family: inherit; resize: vertical; }
 .as-note-row a.btn:hover { border-color: var(--md-primary); }
 .as-ok { color: var(--md-on-success-container); }
 .as-dict-head .btn { white-space: nowrap; flex-shrink: 0; }
+/* Строки, которые заполняют руками в форме акта: техника, запчасти, картриджи */
+.as-rows td { padding: 4px 6px 4px 0; border-bottom: none; }
+.as-rows th { padding: 4px 6px 6px 0; }
+.as-rows .field-input { padding: 8px 10px; margin: 0; }
+.as-rows tbody tr:hover td { background: transparent; }
+/* Плитка «Доступ к программам» на экране новой заявки — сиреневая, чтобы
+   не путать её с отделами: это не очередь, а готовая форма. */
+.dept-tile.access .dept-icon { color: #663AB5; }
