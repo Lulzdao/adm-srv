@@ -1139,3 +1139,8 @@ textarea.input { font-family: inherit; resize: vertical; }
 .dropzone[hidden] { display: none; }
 .as-table-wrap { overflow-x: auto; }
 .as-table .mono, .as-table .as-sub.mono { white-space: nowrap; }
+.as-note-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 2px; }
+.as-note-row .as-note { flex: 1; min-width: 260px; }
+.as-note a, .form-foot .hint a { color: var(--md-primary); font-weight: 600; }
+.as-note-row a.btn { text-decoration: none; background: #fff; border: 1px solid var(--md-outline); color: var(--md-primary); }
+.as-note-row a.btn:hover { border-color: var(--md-primary); }
