@@ -75,7 +75,8 @@ test("настройки — только администраторам, на �
     ["get", "/api/assistant/settings/dict/links"], ["post", "/api/assistant/settings/dict/links", {}],
     ["put", "/api/assistant/settings/dict/links/1", {}], ["delete", "/api/assistant/settings/dict/links/1"],
     ["get", "/api/assistant/settings/templates"], ["delete", "/api/assistant/settings/templates/access"],
-    ["get", "/api/assistant/settings/imports"], ["put", "/api/mailings/settings", {}], ["post", "/api/mailings/settings/verify"],
+    ["get", "/api/assistant/settings/imports"], ["put", "/api/mailings/settings", {}], ["post", "/api/mailings/settings/mailboxes", {}],
+    ["put", "/api/mailings/settings/mailboxes/1", {}], ["delete", "/api/mailings/settings/mailboxes/1"], ["post", "/api/mailings/settings/mailboxes/1/verify"],
   ]) {
     assert.strictEqual((await U[m](p, b)).status, 403, `${m} ${p} сотрудник`);
     assert.strictEqual((await It[m](p, b)).status, 403, `${m} ${p} исполнитель ИТ`);

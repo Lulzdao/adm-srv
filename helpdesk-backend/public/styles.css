@@ -1147,3 +1147,5 @@ textarea.input { font-family: inherit; resize: vertical; }
 .as-note a, .form-foot .hint a { color: var(--md-primary); font-weight: 600; }
 .as-note-row a.btn { text-decoration: none; background: #fff; border: 1px solid var(--md-outline); color: var(--md-primary); }
 .as-note-row a.btn:hover { border-color: var(--md-primary); }
+.as-ok { color: var(--md-on-success-container); }
+.as-dict-head .btn { white-space: nowrap; flex-shrink: 0; }

@@ -107,6 +107,7 @@ function initDb() {
     migrateDeliveryChannels(db, schema);
     migrateNotificationChannels(db);
     migrateUserGroups(db);
+    migrateMailBoxes(db);
     db.exec("COMMIT");
   } catch (err) {
     db.exec("ROLLBACK");
@@ -279,6 +280,26 @@ function migrateUserGroups(db) {
   const columns = db.prepare("PRAGMA table_info(users)").all().map((c) => c.name);
   if (columns.includes("ad_groups")) return;
   db.exec("ALTER TABLE users ADD COLUMN ad_groups TEXT NOT NULL DEFAULT ''");
+}
+
+// Общих ящиков рассылок стало несколько (у каждого отдела свой). Рассылке
+// нужна колонка mailbox_id, а ящик, заведённый раньше единственным набором
+// настроек (mail_from / mail_password / mail_shared_group), переезжает в
+// таблицу первым ящиком — чтобы после обновления ничего не вводить заново.
+function migrateMailBoxes(db) {
+  const columns = db.prepare("PRAGMA table_info(mail_campaigns)").all().map((c) => c.name);
+  if (!columns.includes("mailbox_id")) {
+    db.exec("ALTER TABLE mail_campaigns ADD COLUMN mailbox_id INTEGER REFERENCES mail_boxes(id) ON DELETE SET NULL");
+  }
+  const get = (k) => (db.prepare("SELECT value FROM settings WHERE key = ?").get(k) || {}).value || "";
+  const from = get("mail_from").trim();
+  if (!from) return;
+  db.prepare("INSERT OR IGNORE INTO mail_boxes (address, password, ad_group) VALUES (?, ?, ?)")
+    .run(from, get("mail_password"), get("mail_shared_group"));
+  const box = db.prepare("SELECT id FROM mail_boxes WHERE address = ?").get(from);
+  db.prepare("UPDATE mail_campaigns SET mailbox_id = ? WHERE sender_mode = 'shared' AND mailbox_id IS NULL AND sender_address = ?").run(box.id, from);
+  db.prepare("DELETE FROM settings WHERE key IN ('mail_from', 'mail_user', 'mail_password', 'mail_shared_group')").run();
+  console.log(`Общий ящик рассылок ${from} перенесён в список ящиков`);
 }
 
 // Посев локальных аварийных аккаунтов ("break glass"), на случай если оба

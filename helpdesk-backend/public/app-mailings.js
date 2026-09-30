@@ -58,7 +58,9 @@ async function renderMailingNew(main) {
   clearViewPoll();
   let settings;
   try { settings = await api("/mailings/settings"); } catch (e) { toast(e.message, true); return; }
-  const st = { recipients: [], columns: [], skipDup: true, files: [], mode: settings.from ? "shared" : "own" };
+  const st = { recipients: [], columns: [], skipDup: true, files: [], mode: settings.mailboxes.length ? `box:${settings.mailboxes[0].id}` : "own" };
+  // Выбранный общий ящик ("box:12") или свой ("own").
+  const boxOf = () => settings.mailboxes.find((b) => `box:${b.id}` === st.mode) || null;
 
   main.innerHTML = `
     <div class="topbar"><div class="topbar-title-row"><button class="icon-btn" id="mBack" title="Назад">${icon("chevron", 18)}</button><div class="topbar-title">Новая рассылка</div></div></div>
@@ -88,7 +90,7 @@ async function renderMailingNew(main) {
       <div class="form-card">
         <div class="form-card-title" style="margin-bottom:14px">3. С какого ящика</div>
         <div class="toggle-group" id="mMode" style="margin-bottom:14px">
-          ${settings.from ? `<button class="toggle-btn" data-m="shared">Общий ящик — ${esc(settings.from)}</button>` : ""}
+          ${settings.mailboxes.map((b) => `<button class="toggle-btn" data-m="box:${b.id}">${esc(b.address)}</button>`).join("")}
           ${settings.allowOwn ? `<button class="toggle-btn" data-m="own">Свой ящик</button>` : ""}
         </div>
         <div id="mOwn">
@@ -115,7 +117,7 @@ async function renderMailingNew(main) {
   const paintMode = () => {
     main.querySelectorAll("#mMode .toggle-btn").forEach((b) => b.classList.toggle("active", b.dataset.m === st.mode));
     $("mOwn").hidden = st.mode !== "own";
-    $("mSharedNote").hidden = st.mode !== "shared";
+    $("mSharedNote").hidden = st.mode === "own";
   };
   main.querySelectorAll("#mMode .toggle-btn").forEach((b) => { b.onclick = () => { if (!b.disabled) { st.mode = b.dataset.m; paintMode(); } }; });
   paintMode();
@@ -208,10 +210,11 @@ async function renderMailingNew(main) {
     const list = chosen();
     if (!$("mSubject").value.trim() || !$("mBody").value.trim()) { toast("Заполните тему и текст письма", true); return; }
     if (st.mode === "own" && (!$("mAddr").value.trim() || !$("mPass").value)) { toast("Укажите свой адрес и пароль приложения", true); return; }
-    if (!confirm(`Отправить ${list.length} писем с адреса ${st.mode === "own" ? $("mAddr").value.trim() : settings.from}?`)) return;
+    if (!confirm(`Отправить ${list.length} писем с адреса ${st.mode === "own" ? $("mAddr").value.trim() : boxOf().address}?`)) return;
     const fd = new FormData();
     fd.append("payload", JSON.stringify({
-      subject: $("mSubject").value, body: $("mBody").value, use_template: $("mTpl").checked, sender_mode: st.mode,
+      subject: $("mSubject").value, body: $("mBody").value, use_template: $("mTpl").checked,
+      sender_mode: st.mode === "own" ? "own" : "shared", mailbox_id: boxOf() ? boxOf().id : null,
       own_address: $("mAddr").value, own_password: $("mPass").value,
       recipients: list.map((r) => ({ row_no: r.row_no, okpo: r.okpo, name: r.name, emails: r.emails, fields: r.fields })),
     }));
@@ -345,16 +348,19 @@ async function mailSettingsTab(box) {
         <div class="as-note">Пусто — тот же сервер, что у оповещений платформы.</div>
       </div>
       <div class="form-card">
-        <div class="form-card-title" style="margin-bottom:14px">Общий ящик</div>
-        <div class="form-row">
-          <div><div class="field-label">Адрес отправителя</div><input class="field-input" id="msFrom" value="${esc(s.sharedFrom)}" placeholder="rassylka@…"></div>
-          <div><div class="field-label">Логин</div><input class="field-input" id="msUser" value="${esc(s.user)}" autocomplete="off"></div>
-          <div><div class="field-label">Пароль</div><input class="field-input" id="msPass" type="password" autocomplete="new-password" placeholder="${s.hasPassword ? "задан — пусто, чтобы не менять" : ""}"></div>
-          <div><div class="field-label">Группа домена с доступом</div><input class="field-input" id="msGroup" value="${esc(s.sharedGroup)}" placeholder="пусто — всем" autocomplete="off"></div>
-        </div>
-        <div class="as-note" style="margin-bottom:12px">Если группа задана, общий ящик видят и могут выбрать только её участники; остальные отправляют со своего ящика.
-          Имя группы — как в AD (без учёта регистра). Состав группы платформа узнаёт при входе сотрудника: кого добавили в группу — увидит ящик после повторного входа.</div>
-        <label class="as-check"><input type="checkbox" id="msOwn" ${s.allowOwn ? "checked" : ""}><span>Разрешить сотрудникам отправлять со своего ящика</span></label>
+        <div class="as-dict-head" style="margin-bottom:8px"><div><div class="form-card-title">Общие ящики отделов</div>
+          <div class="as-note">Логин — сам адрес, пароль — пароль приложения. Ящик с группой видят и выбирают только её участники (группы платформа узнаёт при входе сотрудника); без группы — все.</div></div>
+          <button class="btn btn-ghost" id="mbAdd">${icon("plus", 15)} Добавить ящик</button></div>
+        ${s.allMailboxes.length ? `<div class="as-table-wrap"><table class="as-table"><thead><tr><th>Адрес</th><th>Группа домена</th><th>Пароль</th><th></th></tr></thead><tbody>
+          ${s.allMailboxes.map((b) => `<tr data-id="${b.id}"><td><b>${esc(b.address)}</b></td>
+            <td>${b.ad_group ? esc(b.ad_group) : `<span class="as-muted">все сотрудники</span>`}</td>
+            <td>${b.has_password ? "задан" : `<span class="as-red">не задан</span>`}</td>
+            <td class="as-row-act"><button class="btn btn-text as-btn-sm" data-verify="${b.id}">Проверить</button>
+              <button class="as-icon-btn" data-edit="${b.id}" title="Изменить">${icon("edit", 14)}</button>
+              <button class="as-icon-btn" data-rm="${b.id}" title="Удалить">${icon("trash", 14)}</button></td></tr>
+            <tr class="as-verify-row" data-for="${b.id}" hidden><td colspan="4" class="as-sub"></td></tr>`).join("")}
+          </tbody></table></div>` : `<div class="as-empty">Общих ящиков пока нет — сотрудники смогут отправлять только со своего.</div>`}
+        <label class="as-check" style="margin-top:14px"><input type="checkbox" id="msOwn" ${s.allowOwn ? "checked" : ""}><span>Разрешить сотрудникам отправлять со своего ящика</span></label>
       </div>
       <div class="form-card">
         <div class="form-row" style="margin-bottom:0">
@@ -364,27 +370,71 @@ async function mailSettingsTab(box) {
         <div class="as-note">300 писем с паузой 3 с уходят примерно за 15 минут. Меньше 1 с — риск, что почтовый сервер сочтёт рассылку спамом.</div>
       </div>
       <div class="form-foot"><div class="hint" id="msHint"></div>
-        <div class="actions"><button class="btn btn-ghost" id="msTest">Проверить соединение</button><button class="btn btn-wire" id="msSave">Сохранить</button></div></div>
+        <div class="actions"><button class="btn btn-wire" id="msSave">Сохранить</button></div></div>
     </div>`;
   const $ = (id) => box.querySelector("#" + id);
-  const save = async () => {
-    const body = {
-      host: $("msHost").value, port: $("msPort").value, secure: $("msTls").checked, from: $("msFrom").value, user: $("msUser").value, sharedGroup: $("msGroup").value,
-      delayMs: Math.round(Number($("msDelay").value || 0) * 1000), signature: $("msSign").value, allowOwn: $("msOwn").checked,
-    };
-    if ($("msPass").value) body.password = $("msPass").value;
-    await api("/mailings/settings", { method: "PUT", body });
-  };
   $("msSave").onclick = async () => {
-    try { await save(); toast("Сохранено"); mailSettingsTab(box); } catch (e) { toast(e.message, true); }
-  };
-  $("msTest").onclick = async () => {
-    $("msHint").textContent = "Проверяю…";
     try {
-      await save();
-      const r = await api("/mailings/settings/verify", { method: "POST" });
-      $("msHint").textContent = r.ok ? "Соединение и вход в общий ящик — в порядке" : r.error;
-      $("msHint").classList.toggle("invalid", !r.ok);
-    } catch (e) { $("msHint").textContent = e.message; }
+      await api("/mailings/settings", { method: "PUT", body: {
+        host: $("msHost").value, port: $("msPort").value, secure: $("msTls").checked,
+        delayMs: Math.round(Number($("msDelay").value || 0) * 1000), signature: $("msSign").value, allowOwn: $("msOwn").checked,
+      } });
+      toast("Сохранено");
+      mailSettingsTab(box);
+    } catch (e) { toast(e.message, true); }
+  };
+  const reload = () => mailSettingsTab(box);
+  $("mbAdd").onclick = () => mailboxForm(null, reload);
+  box.querySelectorAll("[data-edit]").forEach((b) => { b.onclick = () => mailboxForm(s.allMailboxes.find((x) => x.id === Number(b.dataset.edit)), reload); });
+  box.querySelectorAll("[data-rm]").forEach((b) => {
+    b.onclick = async () => {
+      const mb = s.allMailboxes.find((x) => x.id === Number(b.dataset.rm));
+      if (!confirm(`Удалить ящик ${mb.address}? Идущие с него рассылки встанут на паузу.`)) return;
+      try { await api(`/mailings/settings/mailboxes/${mb.id}`, { method: "DELETE" }); reload(); } catch (e) { toast(e.message, true); }
+    };
+  });
+  // Проверка входа — у каждого ящика своя: ответ сервера под строкой ящика.
+  box.querySelectorAll("[data-verify]").forEach((b) => {
+    b.onclick = async () => {
+      const row = box.querySelector(`.as-verify-row[data-for="${b.dataset.verify}"]`);
+      const cell = row.querySelector("td");
+      row.hidden = false;
+      cell.className = "as-sub";
+      cell.textContent = "Проверяю вход в ящик…";
+      try {
+        const r = await api(`/mailings/settings/mailboxes/${b.dataset.verify}/verify`, { method: "POST" });
+        cell.textContent = r.ok ? "Вход в ящик — в порядке" : r.error;
+        cell.className = r.ok ? "as-sub as-ok" : "as-sub as-red";
+      } catch (e) { cell.textContent = e.message; cell.className = "as-sub as-red"; }
+    };
+  });
+}
+
+/** Добавить или изменить общий ящик. Логин — сам адрес, отдельного поля нет. */
+function mailboxForm(mb, onSaved) {
+  const m = asstModal(mb ? "Общий ящик" : "Новый общий ящик", `
+    <div class="as-grid">
+      <div class="as-f wide"><div class="field-label">Адрес ящика *</div><input class="field-input" id="mbAddr" value="${esc(mb ? mb.address : "")}" placeholder="48.otdel@…" autocomplete="off"></div>
+      <div class="as-f wide"><div class="field-label">Пароль приложения ${mb ? "" : "*"}</div>
+        <input class="field-input" id="mbPass" type="password" autocomplete="new-password" placeholder="${mb && mb.has_password ? "задан — пусто, чтобы не менять" : ""}">
+        <div class="as-note" style="margin-top:6px">Обычный пароль почта не примет — <a href="${APP_PASSWORD_GUIDE}" target="_blank" rel="noopener">как получить пароль приложения</a>.</div></div>
+      <div class="as-f wide"><div class="field-label">Группа домена</div><input class="field-input" id="mbGroup" value="${esc(mb ? mb.ad_group : "")}" placeholder="пусто — ящик видят все сотрудники" autocomplete="off">
+        <div class="as-note" style="margin-top:6px">Имя группы — как в AD, регистр не важен. Кого добавили в группу, увидит ящик после повторного входа в «Центр».</div></div>
+    </div>
+    <div class="td-form-foot"><span class="td-form-err" id="mbErr"></span>
+      <button class="btn btn-text" data-cancel>Отмена</button><button class="btn btn-wire" data-save>Сохранить</button></div>`);
+  const $ = (id) => m.el.querySelector("#" + id);
+  m.el.querySelector("[data-cancel]").onclick = m.close;
+  m.el.querySelector("[data-save]").onclick = async () => {
+    const body = { address: $("mbAddr").value, ad_group: $("mbGroup").value };
+    if ($("mbPass").value) body.password = $("mbPass").value;
+    if (!mb && !body.password) { $("mbErr").textContent = "Введите пароль приложения"; return; }
+    try {
+      if (mb) await api(`/mailings/settings/mailboxes/${mb.id}`, { method: "PUT", body });
+      else await api("/mailings/settings/mailboxes", { method: "POST", body });
+      m.close();
+      toast("Ящик сохранён");
+      onSaved();
+    } catch (e) { $("mbErr").textContent = e.message; }
   };
 }

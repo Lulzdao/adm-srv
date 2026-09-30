@@ -24,11 +24,14 @@ async function стенд(t, smtpOpts = {}) {
   const U = client(app.url); await U.login("u1");
   const U2 = client(app.url); await U2.login("u2");
   const r = await Adm.put("/api/mailings/settings", {
-    host: "127.0.0.1", port: smtp.port, secure: false, from: "rassylka@example.invalid", delayMs: 0, signature: "Выдуманный статорган",
+    host: "127.0.0.1", port: smtp.port, secure: false, delayMs: 0, signature: "Выдуманный статорган",
   });
   assert.strictEqual(r.status, 200, r.text);
+  // Общий ящик без пароля: поддельный приёмник принимает письма без входа.
+  const box = await Adm.post("/api/mailings/settings/mailboxes", { address: "rassylka@example.invalid" });
+  assert.strictEqual(box.status, 201, box.text);
   t.after(async () => { await app.close(); await smtp.close(); cleanup(); });
-  return { db, app, smtp, Adm, U, U2 };
+  return { db, app, smtp, Adm, U, U2, box: box.json.id };
 }
 
 async function form(app, C, path, { file, payload, attachments = [] }) {
@@ -80,7 +83,7 @@ test("отправка с общего ящика: шаблон с реквиз�
   const parsed = (await form(app, U, "/api/mailings/parse", { file: { name: "список.csv", content: LIST_CSV } })).json;
   const recipients = parsed.recipients.filter((x) => !x.problem && !x.duplicateOf);
   const r = await form(app, U, "/api/mailings", {
-    payload: { subject: "Отчёт по форме {Форма}", body: "Напоминаем о сдаче формы {Форма}.", use_template: true, sender_mode: "shared", recipients },
+    payload: { subject: "Отчёт по форме {Форма}", body: "Напоминаем о сдаче формы {Форма}.", use_template: true, sender_mode: "shared", mailbox_id: 1, recipients },
     attachments: [{ name: "указания.txt", content: "Текст вложения" }],
   });
   assert.strictEqual(r.status, 201, r.text);
@@ -113,7 +116,7 @@ test("отказ сервера по адресу — строка «не отп
     { row_no: 2, okpo: "1", name: "А", emails: ["one@example.invalid"] },
     { row_no: 3, okpo: "2", name: "Б", emails: ["two@example.invalid"] },
   ];
-  const r = await form(app, U, "/api/mailings", { payload: { subject: "Тема", body: "Текст", use_template: false, sender_mode: "shared", recipients } });
+  const r = await form(app, U, "/api/mailings", { payload: { subject: "Тема", body: "Текст", use_template: false, sender_mode: "shared", mailbox_id: 1, recipients } });
   const done = await дождаться(U, r.json.id, (x) => x.campaign.status === "done");
   assert.strictEqual(done.campaign.sent, 1);
   assert.strictEqual(done.campaign.failed, 1);
@@ -151,7 +154,7 @@ test("свой ящик: неверный пароль — сразу 400, ве�
 
 test("чужую рассылку не видно и не остановить; администратор видит все", async (t) => {
   const { app, U, U2, Adm } = await стенд(t);
-  const r = await form(app, U, "/api/mailings", { payload: { subject: "Т", body: "Б", sender_mode: "shared", recipients: [{ row_no: 2, emails: ["one@example.invalid"] }] } });
+  const r = await form(app, U, "/api/mailings", { payload: { subject: "Т", body: "Б", sender_mode: "shared", mailbox_id: 1, recipients: [{ row_no: 2, emails: ["one@example.invalid"] }] } });
   for (const [m, p] of [["get", ""], ["post", "/pause"], ["post", "/cancel"], ["post", "/retry"], ["delete", ""]]) {
     assert.strictEqual((await U2[m](`/api/mailings/${r.json.id}${p}`, {})).status, 403, `${m} ${p}`);
   }
@@ -162,15 +165,14 @@ test("чужую рассылку не видно и не остановить; 
 
 test("проверки формы: пустой список, кривой адрес, слишком большие вложения, общий ящик не настроен", async (t) => {
   const { app, U, Adm } = await стенд(t);
-  const base = { subject: "Т", body: "Б", sender_mode: "shared", recipients: [{ row_no: 2, emails: ["one@example.invalid"] }] };
+  const base = { subject: "Т", body: "Б", sender_mode: "shared", mailbox_id: 1, recipients: [{ row_no: 2, emails: ["one@example.invalid"] }] };
   assert.strictEqual((await form(app, U, "/api/mailings", { payload: { ...base, recipients: [] } })).status, 400);
   assert.strictEqual((await form(app, U, "/api/mailings", { payload: { ...base, recipients: [{ emails: ["bad@"] }] } })).status, 400);
   assert.strictEqual((await form(app, U, "/api/mailings", { payload: { ...base, subject: "" } })).status, 400);
   const big = Buffer.alloc(6 * 1024 * 1024, 1);
   const r = await form(app, U, "/api/mailings", { payload: base, attachments: [{ name: "a.bin", content: big }, { name: "b.bin", content: big }] });
   assert.strictEqual(r.status, 400);
-  await Adm.put("/api/mailings/settings", { from: "" });
-  assert.match((await form(app, U, "/api/mailings", { payload: base })).json.error, /Общий ящик не настроен/);
+  assert.match((await form(app, U, "/api/mailings", { payload: { ...base, mailbox_id: 999 } })).json.error, /Выберите общий ящик/);
   // Сотруднику настройки видны без логина и пароля сервера.
   const s = (await U.get("/api/mailings/settings")).json;
   assert.strictEqual(s.host, undefined);
@@ -181,7 +183,7 @@ test("пауза и продолжение: остановленная расс�
   const { app, smtp, U, Adm } = await стенд(t);
   await Adm.put("/api/mailings/settings", { delayMs: 150 });
   const recipients = Array.from({ length: 6 }, (_, i) => ({ row_no: i + 2, emails: [`r${i}@example.invalid`] }));
-  const r = await form(app, U, "/api/mailings", { payload: { subject: "Т", body: "Б", sender_mode: "shared", recipients } });
+  const r = await form(app, U, "/api/mailings", { payload: { subject: "Т", body: "Б", sender_mode: "shared", mailbox_id: 1, recipients } });
   await дождаться(U, r.json.id, (x) => x.campaign.sent >= 1);
   assert.strictEqual((await U.post(`/api/mailings/${r.json.id}/pause`, {})).status, 200);
   await new Promise((res) => setTimeout(res, 500));
@@ -197,32 +199,63 @@ test("пауза и продолжение: остановленная расс�
   assert.strictEqual(new Set(smtp.messages.filter((m) => m.subject === "Т").map((m) => m.to[0])).size, 6, "каждому ровно одно");
 });
 
-test("общий ящик для группы домена: участник видит и отправляет, остальные — только со своего", async (t) => {
+test("общие ящики отделов: каждый видят участники своей группы, ящик без группы — все", async (t) => {
   const { app, db, U, U2, Adm } = await стенд(t);
   const { packGroups } = require("../services/userStore");
   // Группы кладём, как их записал бы вход через домен (см. domainLogin.test.js).
-  db.prepare("UPDATE users SET ad_groups = ? WHERE ad_login = 'u1'").run(packGroups(["Рассылка-Респондентам", "Прочая"]));
-  assert.strictEqual((await Adm.put("/api/mailings/settings", { sharedGroup: "рассылка-респондентам" })).status, 200);
+  db.prepare("UPDATE users SET ad_groups = ? WHERE ad_login = 'u1'").run(packGroups(["Рассылка-Цены", "Прочая"]));
+  db.prepare("UPDATE users SET ad_groups = ? WHERE ad_login = 'u2'").run(packGroups(["Рассылка-Сводный"]));
+  const prices = (await Adm.post("/api/mailings/settings/mailboxes", { address: "ceny@example.invalid", ad_group: "рассылка-цены" })).json.id;
+  const svod = (await Adm.post("/api/mailings/settings/mailboxes", { address: "svod@example.invalid", ad_group: "Рассылка-Сводный" })).json.id;
+  assert.strictEqual((await Adm.post("/api/mailings/settings/mailboxes", { address: "ceny@example.invalid" })).status, 400, "повтор адреса");
+  assert.strictEqual((await Adm.post("/api/mailings/settings/mailboxes", { address: "не адрес" })).status, 400);
 
-  const member = (await U.get("/api/mailings/settings")).json;
-  const other = (await U2.get("/api/mailings/settings")).json;
-  assert.strictEqual(member.from, "rassylka@example.invalid");
-  assert.strictEqual(other.from, "", "не участнику адрес общего ящика не показывается");
-  assert.strictEqual(other.configured, true, "свой ящик ему по-прежнему доступен");
+  const addr = async (C) => (await C.get("/api/mailings/settings")).json.mailboxes.map((b) => b.address).sort();
+  assert.deepStrictEqual(await addr(U), ["ceny@example.invalid", "rassylka@example.invalid"]);
+  assert.deepStrictEqual(await addr(U2), ["rassylka@example.invalid", "svod@example.invalid"]);
 
   const base = { subject: "Т", body: "Б", sender_mode: "shared", recipients: [{ row_no: 2, emails: ["one@example.invalid"] }] };
-  const denied = await form(app, U2, "/api/mailings", { payload: base });
+  const denied = await form(app, U2, "/api/mailings", { payload: { ...base, mailbox_id: prices } });
   assert.strictEqual(denied.status, 400);
-  assert.match(denied.json.error, /только участникам группы/);
-  assert.strictEqual((await form(app, U, "/api/mailings", { payload: base })).status, 201);
+  assert.match(denied.json.error, /только участникам его группы/);
+  const ok = await form(app, U2, "/api/mailings", { payload: { ...base, mailbox_id: svod } });
+  assert.strictEqual(ok.status, 201, ok.text);
+  assert.strictEqual(db.prepare("SELECT sender_address FROM mail_campaigns WHERE id = ?").get(ok.json.id).sender_address, "svod@example.invalid");
 
-  // Администратор в настройках видит адрес и группу, даже не состоя в ней.
+  // Администратор видит все ящики с группами, но не пароли.
   const s = (await Adm.get("/api/mailings/settings")).json;
-  assert.strictEqual(s.sharedFrom, "rassylka@example.invalid");
-  assert.strictEqual(s.sharedGroup, "рассылка-респондентам");
-  // Группу убрали — общий ящик снова доступен всем.
-  await Adm.put("/api/mailings/settings", { sharedGroup: "" });
-  assert.strictEqual((await U2.get("/api/mailings/settings")).json.from, "rassylka@example.invalid");
+  assert.deepStrictEqual(s.allMailboxes.map((b) => [b.address, b.ad_group]).sort(),
+    [["ceny@example.invalid", "рассылка-цены"], ["rassylka@example.invalid", ""], ["svod@example.invalid", "Рассылка-Сводный"]]);
+  assert.ok(!JSON.stringify(s).includes("password\":\""));
+  // Группу у ящика убрали — он виден всем.
+  assert.strictEqual((await Adm.put(`/api/mailings/settings/mailboxes/${prices}`, { ad_group: "" })).status, 200);
+  assert.ok((await addr(U2)).includes("ceny@example.invalid"));
+  // Сотруднику управлять ящиками нельзя.
+  assert.strictEqual((await U.post("/api/mailings/settings/mailboxes", { address: "x@example.invalid" })).status, 403);
+  assert.strictEqual((await U.delete(`/api/mailings/settings/mailboxes/${svod}`)).status, 403);
+});
+
+test("ящик сменил пароль — новый действует сразу; ящик удалили — рассылка встаёт на паузу", async (t) => {
+  const smtpAuth = { user: "otdel@example.invalid", pass: "пароль-приложения-2" };
+  const { app, U, Adm, smtp } = await стенд(t, { auth: smtpAuth });
+  const id = (await Adm.post("/api/mailings/settings/mailboxes", { address: "otdel@example.invalid", password: "старый" })).json.id;
+  const bad = (await Adm.post(`/api/mailings/settings/mailboxes/${id}/verify`, {})).json;
+  assert.strictEqual(bad.ok, false);
+  await Adm.put(`/api/mailings/settings/mailboxes/${id}`, { password: "пароль-приложения-2" });
+  assert.deepStrictEqual((await Adm.post(`/api/mailings/settings/mailboxes/${id}/verify`, {})).json, { ok: true });
+  // Пустой пароль при правке — «не менять».
+  await Adm.put(`/api/mailings/settings/mailboxes/${id}`, { password: "", ad_group: "" });
+  assert.strictEqual((await Adm.post(`/api/mailings/settings/mailboxes/${id}/verify`, {})).json.ok, true);
+
+  await Adm.put("/api/mailings/settings", { delayMs: 300 });
+  const recipients = Array.from({ length: 5 }, (_, i) => ({ row_no: i + 2, emails: [`r${i}@example.invalid`] }));
+  const r = await form(app, U, "/api/mailings", { payload: { subject: "Т", body: "Б", sender_mode: "shared", mailbox_id: id, recipients } });
+  assert.strictEqual(r.status, 201, r.text);
+  await дождаться(U, r.json.id, (x) => x.campaign.sent >= 1);
+  assert.strictEqual(smtp.messages[0].login, "otdel@example.invalid", "логин — адрес ящика");
+  await Adm.delete(`/api/mailings/settings/mailboxes/${id}`);
+  const paused = await дождаться(U, r.json.id, (x) => x.campaign.status === "paused");
+  assert.match(paused.campaign.paused_reason, /удалён из настроек/);
 });
 
 test("сервер требует пароль приложения — так и написано по-русски, а не транслитом сервера", () => {
