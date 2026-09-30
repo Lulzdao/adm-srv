@@ -165,6 +165,19 @@ function mail(db) {
   const failed = q.failed || 0;
   out.push(item(failed ? "warn" : pending > 20 ? "warn" : "ok", "Письма оповещений",
     `в очереди ${pending}, не ушло за 7 дней ${failed}`));
+  // Пароли ящиков зашифрованы ключом вне базы (services/secretBox.js). База переехала без
+  // secret.key — расшифровать нельзя, и рассылки с этих ящиков молча не пройдут входа.
+  const secretBox = require("./secretBox");
+  const sealed = db.prepare("SELECT address, password FROM mail_boxes WHERE password LIKE 'enc:v1:%'").all();
+  const smtpPass = db.prepare("SELECT value FROM settings WHERE key = 'smtp_password' AND value LIKE 'enc:v1:%'").get();
+  const broken = sealed.filter((b) => secretBox.open(b.password) === null).map((b) => b.address);
+  if (smtpPass && secretBox.open(smtpPass.value) === null) broken.push("почта оповещений");
+  if (broken.length) {
+    out.push(item("crit", "Ключ паролей почты", `не подходит к паролям: ${broken.join(", ")} — верните прежний secret.key рядом с базой или введите пароли заново`));
+  } else if (sealed.length || smtpPass) {
+    const k = secretBox.keyInfo();
+    out.push(item("ok", "Ключ паролей почты", k.source === "env" ? "SECRET_KEY в .env" : `файл ${k.file} — переносите вместе с базой`));
+  }
   const paused = db.prepare("SELECT COUNT(*) AS n FROM mail_campaigns WHERE status = 'paused'").get().n;
   if (paused) out.push(item("warn", "Рассылки", `на паузе: ${paused} — откройте «Ассистент → Рассылки»`));
   return out;

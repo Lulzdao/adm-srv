@@ -203,7 +203,7 @@ test('много строк собираются целиком и сжимаю�
 });
 
 test('имя файла кириллическое, в заголовке есть ASCII-запасной вариант', () => {
-  const имя = xlsx.fileName(new Date('2026-09-04T10:00:00Z'));
+  const имя = xlsx.fileName(new Date(2026, 8, 4, 10, 0)); // местное время: имя — по дате сервера в любом поясе
   assert.strictEqual(имя, 'журнал-звонков-2026-09-04.xlsx');
   const заголовок = xlsx.contentDisposition(имя);
   assert.ok(заголовок.includes('filename="calls.xlsx"'));

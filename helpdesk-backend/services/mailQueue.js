@@ -2,6 +2,7 @@ const fs = require("node:fs");
 const nodemailer = require("nodemailer");
 const mailer = require("./mailer");
 const { getSetting } = require("./settings");
+const secretBox = require("./secretBox");
 
 // ============================================================================
 //  Очередь рассылок
@@ -112,7 +113,7 @@ function createQueue(db) {
       // Общий ящик — по номеру; логин ящика — его адрес.
       const box = c.mailbox_id && db.prepare("SELECT * FROM mail_boxes WHERE id = ?").get(c.mailbox_id);
       if (!box) return undefined;
-      auth = { user: box.address, pass: box.password };
+      auth = { user: box.address, pass: secretBox.open(box.password) || "" };
     }
     const t = transportFor(s, auth);
     transports.set(c.id, t);

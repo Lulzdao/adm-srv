@@ -10,6 +10,7 @@ const { isEmail } = require("../services/mailer");
 const { userInGroup, refreshAdGroups } = require("../services/userStore");
 const { buildXlsx, XLSX_TYPE } = require("../services/xlsx");
 const Q = require("../services/mailQueue");
+const secretBox = require("../services/secretBox");
 const { handle, str, int, Invalid } = require("./assistant");
 const A = require("../services/assistant");
 
@@ -195,7 +196,8 @@ module.exports = function mailingRoutes(db) {
     }
     if (b.ad_group !== undefined || !partial) out.ad_group = str(b.ad_group, { field: "Группа домена", max: 200 }) || "";
     // Пустой пароль при правке — «не менять», как у SMTP оповещений.
-    if (typeof b.password === "string" && b.password) out.password = b.password;
+    // В базе — зашифрованным (services/secretBox.js): копии баз уходят на сетевую шару.
+    if (typeof b.password === "string" && b.password) out.password = secretBox.seal(b.password);
     else if (!partial) out.password = "";
     return out;
   }
@@ -240,7 +242,7 @@ module.exports = function mailingRoutes(db) {
     const s = Q.readSettings(db);
     if (!s.host) return res.json({ ok: false, error: "Сервер не задан" });
     try {
-      await Q.transportFor(s, { user: box.address, pass: box.password }).verify();
+      await Q.transportFor(s, { user: box.address, pass: secretBox.open(box.password) || "" }).verify();
       res.json({ ok: true });
     } catch (err) {
       res.json({ ok: false, error: require("../services/mailer").describeError(err) });

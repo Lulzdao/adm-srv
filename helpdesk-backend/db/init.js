@@ -109,7 +109,11 @@ function initDb() {
     migrateUserGroups(db);
     migrateMailBoxes(db);
     dropAssistantExtras(db);
+    encryptStoredPasswords(db);
     db.exec("COMMIT");
+    // Открытые пароли остались бы в свободных страницах файла и в журнале WAL —
+    // пересобираем файл и чистим журнал (только если миграция что-то шифровала).
+    if (needsVacuum) { db.exec("VACUUM"); db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); }
   } catch (err) {
     db.exec("ROLLBACK");
     db.close(); // дальше служба остановится; открытый файл базы ей ни к чему
@@ -324,6 +328,31 @@ function dropAssistantExtras(db) {
     }
   }
   if (gone.length) console.log(`Ассистент: удалены таблицы убранных разделов (${gone.join(", ")})`);
+}
+
+// Пароли почты, сохранённые до шифрования (services/secretBox.js), — зашифровать.
+// Идемпотентно: зашифрованные («enc:v1:…») и пустые не трогаются. Открытый текст
+// остался бы в свободных страницах файла — поэтому после миграции VACUUM (он вне
+// транзакции, см. initDb).
+let needsVacuum = false;
+function encryptStoredPasswords(db) {
+  needsVacuum = false;
+  const box = require("../services/secretBox");
+  let n = 0;
+  for (const r of db.prepare("SELECT id, password FROM mail_boxes WHERE password != ''").all()) {
+    if (box.isSealed(r.password)) continue;
+    db.prepare("UPDATE mail_boxes SET password = ? WHERE id = ?").run(box.seal(r.password), r.id);
+    n++;
+  }
+  const smtp = db.prepare("SELECT value FROM settings WHERE key = 'smtp_password'").get();
+  if (smtp && smtp.value && !box.isSealed(smtp.value)) {
+    db.prepare("UPDATE settings SET value = ? WHERE key = 'smtp_password'").run(box.seal(smtp.value));
+    n++;
+  }
+  if (n) {
+    console.log(`Пароли почты зашифрованы: ${n} (ключ — ${box.keyInfo().source === "env" ? "SECRET_KEY в .env" : box.keyInfo().file})`);
+    needsVacuum = true;
+  }
 }
 
 // Посев локальных аварийных аккаунтов ("break glass"), на случай если оба

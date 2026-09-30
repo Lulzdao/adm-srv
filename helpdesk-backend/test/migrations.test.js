@@ -116,7 +116,10 @@ test("общий ящик рассылок из прежних настроек 
     resetModuleCache();
     const db2 = require("../db/init").initDb();
     const box = db2.prepare("SELECT * FROM mail_boxes").get();
-    assert.deepStrictEqual([box.address, box.password, box.ad_group], ["rassylka@example.invalid", "пароль-приложения", "Рассылка-Цены"]);
+    assert.deepStrictEqual([box.address, box.ad_group], ["rassylka@example.invalid", "Рассылка-Цены"]);
+    // Пароль в том же запуске ещё и шифруется (encryptStoredPasswords, services/secretBox.js).
+    assert.match(box.password, /^enc:v1:/);
+    assert.strictEqual(require("../services/secretBox").open(box.password), "пароль-приложения");
     assert.strictEqual(db2.prepare("SELECT mailbox_id FROM mail_campaigns").get().mailbox_id, box.id, "идущая рассылка знает свой ящик");
     assert.strictEqual(db2.prepare("SELECT COUNT(*) AS n FROM settings WHERE key LIKE 'mail_from' OR key LIKE 'mail_password' OR key LIKE 'mail_user' OR key LIKE 'mail_shared_group'").get().n, 0);
     db2.close();
