@@ -58,11 +58,11 @@ require.cache[require.resolve("ldapts")] = {
 };
 
 /** Пользователь в «домене». memberOf — полные DN групп. */
-function addUser(login, { password, displayName, mail, department, phone, memberOf = [] }) {
+function addUser(login, { password, displayName, mail, department, phone, memberOf = [], userAccountControl = 512 }) {
   directory.users.set(login, {
     dn: `CN=${displayName || login},OU=Сотрудники,DC=test,DC=local`,
     password,
-    attrs: { displayName, mail, department, telephoneNumber: phone, memberOf },
+    attrs: { displayName, mail, department, telephoneNumber: phone, memberOf, userAccountControl: String(userAccountControl) },
   });
 }
 
