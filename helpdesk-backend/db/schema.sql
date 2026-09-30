@@ -25,6 +25,10 @@ CREATE TABLE IF NOT EXISTS users (
   -- Отдельная таблица связей была бы правильнее по форме, но на трёх отделах
   -- и двух сотнях сотрудников она даёт только лишние соединения.
   roles TEXT NOT NULL DEFAULT '',
+  -- Все группы AD по имени, строчными: ",группа1,группа2,". Снимок на момент
+  -- последнего входа — по нему, например, решается, кому доступен общий ящик
+  -- рассылок Ассистента.
+  ad_groups TEXT NOT NULL DEFAULT '',
   auth_type TEXT NOT NULL DEFAULT 'ad' CHECK (auth_type IN ('ad', 'local')),
   local_password_hash TEXT,
   last_domain TEXT,

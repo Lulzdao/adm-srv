@@ -8,6 +8,11 @@
 // Пароль от своего ящика уходит только на сервер и живёт там в памяти, пока
 // идёт отправка; в браузере он тоже нигде не сохраняется.
 
+// Инструкция, как создать пароль приложения в почте: для своего ящика почта
+// принимает только его. Файл лежит в public/docs — заменить его можно без
+// правки кода, достаточно положить новый под тем же именем.
+const APP_PASSWORD_GUIDE = "/docs/app-password.pdf";
+
 const MAIL_STATUS = {
   sending: ["идёт отправка", "blue"], paused: ["на паузе", "orange"], done: ["завершена", "green"], cancelled: ["отменена", ""],
 };
@@ -83,16 +88,18 @@ async function renderMailingNew(main) {
       <div class="form-card">
         <div class="form-card-title" style="margin-bottom:14px">3. С какого ящика</div>
         <div class="toggle-group" id="mMode" style="margin-bottom:14px">
-          <button class="toggle-btn" data-m="shared" ${settings.from ? "" : "disabled"}>Общий ящик${settings.from ? ` — ${esc(settings.from)}` : " (не настроен)"}</button>
-          <button class="toggle-btn" data-m="own" ${settings.allowOwn ? "" : "disabled"}>Свой ящик</button>
+          ${settings.from ? `<button class="toggle-btn" data-m="shared">Общий ящик — ${esc(settings.from)}</button>` : ""}
+          ${settings.allowOwn ? `<button class="toggle-btn" data-m="own">Свой ящик</button>` : ""}
         </div>
         <div id="mOwn">
           <div class="form-row" style="margin-bottom:0">
             <div><div class="field-label">Ваш адрес *</div><input class="field-input" id="mAddr" value="${esc(state.user.email || "")}" autocomplete="off"></div>
-            <div><div class="field-label">Логин (если не совпадает с адресом)</div><input class="field-input" id="mLogin" autocomplete="off"></div>
-            <div><div class="field-label">Пароль от почты *</div><input class="field-input" id="mPass" type="password" autocomplete="new-password"></div>
+            <div><div class="field-label">Пароль приложения *</div><input class="field-input" id="mPass" type="password" autocomplete="new-password"></div>
           </div>
-          <div class="as-note">Пароль нигде не сохраняется: он нужен, только пока идёт отправка. Если службу перезапустят, рассылка встанет на паузу и попросит его снова.</div>
+          <div class="as-note-row">
+            <a class="btn btn-ghost as-btn-sm" href="${APP_PASSWORD_GUIDE}" target="_blank" rel="noopener">${icon("doc", 14)} Как получить пароль приложения</a>
+            <span class="as-note">Почта принимает только пароль приложения, а не обычный пароль от почты. Он нигде не сохраняется: нужен, только пока идёт отправка.</span>
+          </div>
         </div>
         <div class="as-note" id="mSharedNote">Ответы респондентов придут вам${state.user.email ? ` на ${esc(state.user.email)}` : ""}, а не в общий ящик. Отчёт о доставке — тоже вам.</div>
       </div>
@@ -200,12 +207,12 @@ async function renderMailingNew(main) {
   $("mSend").onclick = async () => {
     const list = chosen();
     if (!$("mSubject").value.trim() || !$("mBody").value.trim()) { toast("Заполните тему и текст письма", true); return; }
-    if (st.mode === "own" && (!$("mAddr").value.trim() || !$("mPass").value)) { toast("Укажите свой адрес и пароль от почты", true); return; }
+    if (st.mode === "own" && (!$("mAddr").value.trim() || !$("mPass").value)) { toast("Укажите свой адрес и пароль приложения", true); return; }
     if (!confirm(`Отправить ${list.length} писем с адреса ${st.mode === "own" ? $("mAddr").value.trim() : settings.from}?`)) return;
     const fd = new FormData();
     fd.append("payload", JSON.stringify({
       subject: $("mSubject").value, body: $("mBody").value, use_template: $("mTpl").checked, sender_mode: st.mode,
-      own_address: $("mAddr").value, own_login: $("mLogin").value, own_password: $("mPass").value,
+      own_address: $("mAddr").value, own_password: $("mPass").value,
       recipients: list.map((r) => ({ row_no: r.row_no, okpo: r.okpo, name: r.name, emails: r.emails, fields: r.fields })),
     }));
     for (const f of st.files) fd.append("attachments", f, f.name);
@@ -218,7 +225,8 @@ async function renderMailingNew(main) {
       setView("asst:mail", r.id);
     } catch (e) {
       toast(e.message, true);
-      $("mHint").textContent = e.message;
+      $("mHint").innerHTML = esc(e.message) + (/пароль приложения/i.test(e.message)
+        ? ` <a href="${APP_PASSWORD_GUIDE}" target="_blank" rel="noopener">Инструкция</a>` : "");
       $("mSend").disabled = false;
     }
   };
@@ -306,8 +314,9 @@ async function renderMailing(main, id) {
 /** Пароль своего ящика для продолжения. Пусто — «попробовать без него» (он ещё в памяти сервера). */
 function askMailPassword(c) {
   return new Promise((resolve) => {
-    const m = asstModal("Пароль от почты", `
-      <div class="as-note" style="margin-bottom:12px">Рассылка идёт с ящика ${esc(c.sender_address)}. Если служба перезапускалась или пароль был неверным, введите его заново; после обычной паузы можно оставить поле пустым.</div>
+    const m = asstModal("Пароль приложения", `
+      <div class="as-note" style="margin-bottom:12px">Рассылка идёт с ящика ${esc(c.sender_address)}. Если служба перезапускалась или пароль был неверным, введите его заново; после обычной паузы можно оставить поле пустым.
+        Нужен пароль приложения — <a href="${APP_PASSWORD_GUIDE}" target="_blank" rel="noopener">как его получить</a>.</div>
       <input class="field-input" id="mpPass" type="password" autocomplete="new-password">
       <div class="td-form-foot"><button class="btn btn-text" data-cancel>Отмена</button><button class="btn btn-wire" data-ok>Продолжить</button></div>`);
     let done = false;
@@ -338,10 +347,13 @@ async function mailSettingsTab(box) {
       <div class="form-card">
         <div class="form-card-title" style="margin-bottom:14px">Общий ящик</div>
         <div class="form-row">
-          <div><div class="field-label">Адрес отправителя</div><input class="field-input" id="msFrom" value="${esc(s.from)}" placeholder="rassylka@…"></div>
+          <div><div class="field-label">Адрес отправителя</div><input class="field-input" id="msFrom" value="${esc(s.sharedFrom)}" placeholder="rassylka@…"></div>
           <div><div class="field-label">Логин</div><input class="field-input" id="msUser" value="${esc(s.user)}" autocomplete="off"></div>
           <div><div class="field-label">Пароль</div><input class="field-input" id="msPass" type="password" autocomplete="new-password" placeholder="${s.hasPassword ? "задан — пусто, чтобы не менять" : ""}"></div>
+          <div><div class="field-label">Группа домена с доступом</div><input class="field-input" id="msGroup" value="${esc(s.sharedGroup)}" placeholder="пусто — всем" autocomplete="off"></div>
         </div>
+        <div class="as-note" style="margin-bottom:12px">Если группа задана, общий ящик видят и могут выбрать только её участники; остальные отправляют со своего ящика.
+          Имя группы — как в AD (без учёта регистра). Состав группы платформа узнаёт при входе сотрудника: кого добавили в группу — увидит ящик после повторного входа.</div>
         <label class="as-check"><input type="checkbox" id="msOwn" ${s.allowOwn ? "checked" : ""}><span>Разрешить сотрудникам отправлять со своего ящика</span></label>
       </div>
       <div class="form-card">
@@ -357,7 +369,7 @@ async function mailSettingsTab(box) {
   const $ = (id) => box.querySelector("#" + id);
   const save = async () => {
     const body = {
-      host: $("msHost").value, port: $("msPort").value, secure: $("msTls").checked, from: $("msFrom").value, user: $("msUser").value,
+      host: $("msHost").value, port: $("msPort").value, secure: $("msTls").checked, from: $("msFrom").value, user: $("msUser").value, sharedGroup: $("msGroup").value,
       delayMs: Math.round(Number($("msDelay").value || 0) * 1000), signature: $("msSign").value, allowOwn: $("msOwn").checked,
     };
     if ($("msPass").value) body.password = $("msPass").value;

@@ -7,6 +7,7 @@ const { requireAuth, requireAdmin } = require("../middleware/auth");
 const { setSetting } = require("../services/settings");
 const { readTable } = require("../services/tables");
 const { isEmail } = require("../services/mailer");
+const { userInGroup } = require("../services/userStore");
 const { buildXlsx, XLSX_TYPE } = require("../services/xlsx");
 const Q = require("../services/mailQueue");
 const { handle, str, int, Invalid } = require("./assistant");
@@ -103,6 +104,15 @@ function parseRecipients(rows) {
   };
 }
 
+/**
+ * Можно ли человеку слать с общего ящика. Если группа задана — только её
+ * участникам (по группам на момент последнего входа), иначе всем. Остальным
+ * общий ящик не показывается вовсе: ни вариант, ни его адрес.
+ */
+function canUseShared(db, user, s) {
+  return !s.sharedGroup || userInGroup(db, user.id, s.sharedGroup);
+}
+
 function canSee(user, c) {
   return user.is_admin || c.created_by === user.id;
 }
@@ -131,9 +141,18 @@ module.exports = function mailingRoutes(db) {
 
   router.get("/settings", (req, res) => {
     const s = Q.readSettings(db);
-    const base = { from: s.from, delayMs: s.delayMs, signature: s.signature, allowOwn: s.allowOwn, configured: Boolean(s.host && (s.from || s.allowOwn)) };
+    const shared = Boolean(s.from) && canUseShared(db, req.session.user, s);
+    const base = {
+      from: shared ? s.from : "", delayMs: s.delayMs, signature: s.signature, allowOwn: s.allowOwn,
+      configured: Boolean(s.host && (shared || s.allowOwn)),
+    };
     if (!req.session.user.is_admin) return res.json(base);
-    res.json({ ...base, host: s.host, port: s.port, secure: s.secure, user: s.user, hasPassword: Boolean(s.password), hostFromPlatform: s.hostFromPlatform });
+    // Администратору в настройках нужен адрес общего ящика, даже если сам он
+    // в группе не состоит.
+    res.json({
+      ...base, sharedFrom: s.from, sharedGroup: s.sharedGroup, host: s.host, port: s.port, secure: s.secure,
+      user: s.user, hasPassword: Boolean(s.password), hostFromPlatform: s.hostFromPlatform,
+    });
   });
 
   router.put("/settings", requireAdmin, handle((req, res) => {
@@ -153,6 +172,7 @@ module.exports = function mailingRoutes(db) {
     if (b.delayMs !== undefined) put("delay", int(b.delayMs, { field: "Пауза", min: 0, max: 60000 }));
     if (b.signature !== undefined) put("signature", str(b.signature, { field: "Подпись", max: 300 }) || "");
     if (b.allowOwn !== undefined) put("allowOwn", b.allowOwn ? "1" : "0");
+    if (b.sharedGroup !== undefined) put("sharedGroup", str(b.sharedGroup, { field: "Группа с доступом к общему ящику", max: 200 }) || "");
     res.json({ ok: true });
   }));
 
@@ -208,12 +228,14 @@ module.exports = function mailingRoutes(db) {
     let senderAddress, senderLogin = null, password = null;
     if (mode === "shared") {
       if (!s.from) fail("Общий ящик не настроен — выберите «Свой ящик» или обратитесь к администратору");
+      if (!canUseShared(db, req.session.user, s)) fail("Общий ящик доступен только участникам группы — отправьте со своего ящика");
       senderAddress = s.from;
     } else {
       if (!s.allowOwn) fail("Отправка со своего ящика выключена администратором");
       senderAddress = str(p.own_address, { field: "Ваш адрес", max: 200, required: true });
       if (!isEmail(senderAddress)) fail("Ваш адрес — почтовый адрес");
-      senderLogin = str(p.own_login, { field: "Логин", max: 200 }) || senderAddress;
+      // Логин почты — всегда сам адрес: отдельного логина у ящиков нет.
+      senderLogin = senderAddress;
       password = typeof p.own_password === "string" && p.own_password ? p.own_password : fail("Введите пароль от своего ящика");
     }
 

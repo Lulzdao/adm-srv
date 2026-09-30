@@ -105,6 +105,32 @@ function shortName(full) {
   return `${last} ${rest.filter(Boolean).map((w) => w[0].toUpperCase() + ".").join("")}`.trim();
 }
 
+// Должность начальника отдела у всех одна — в справочник её не вписывают.
+const CHIEF = { post: "Начальник", gen: "начальника", dat: "начальнику" };
+
+/**
+ * Название отдела в родительном падеже — «прошу передать начальнику отдела …».
+ * Названия устроены однотипно, поэтому склоняем сами, а не просим вписывать:
+ *   «Отдел статистики цен»      -> «отдела статистики цен»
+ *   «Административный отдел»    -> «административного отдела»
+ *   «Общий отдел»               -> «общего отдела»
+ * Что под правила не попало — остаётся как есть, с маленькой буквы.
+ */
+function deptGen(name) {
+  const s = String(name || "").trim().replace(/\s+/g, " ");
+  if (!s) return "";
+  let m = /^отдел(\s.*)?$/i.exec(s);
+  if (m) return `отдела${m[1] || ""}`;
+  m = /^(.*\s)?(\S+?)(ый|ой|ий)\s+отдел(\s.*)?$/i.exec(s);
+  if (m) {
+    const [, before = "", stem, end, tail = ""] = m;
+    const ending = end.toLowerCase() === "ий" && !/[гкх]$/i.test(stem) ? "его" : "ого";
+    const adj = `${before}${stem}${ending}`;
+    return `${adj[0].toLowerCase()}${adj.slice(1)} отдела${tail}`;
+  }
+  return s[0].toLowerCase() + s.slice(1);
+}
+
 function people(db, role) {
   return db.prepare("SELECT * FROM asst_people WHERE role = ? ORDER BY sort, id").all(role);
 }
@@ -222,6 +248,7 @@ function parseParts(text) {
 module.exports = {
   TEMPLATES, ACCESS_TYPES, DEFAULT_PROGRAMS, DEFAULT_POSTS, MONTHS,
   getJson, setJson, settings,
+  CHIEF, deptGen,
   today, ruDate, isIsoDate, shortName, people, person, dept, commonFields, responsible,
   templateOf, renderDoc, nextNumber, sendFile, safeFileName,
   parseExport, parseEquipment, parseParts, CARTRIDGE,

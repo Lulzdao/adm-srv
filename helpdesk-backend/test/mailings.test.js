@@ -196,3 +196,40 @@ test("пауза и продолжение: остановленная расс�
   assert.strictEqual(done.campaign.sent, 6);
   assert.strictEqual(new Set(smtp.messages.filter((m) => m.subject === "Т").map((m) => m.to[0])).size, 6, "каждому ровно одно");
 });
+
+test("общий ящик для группы домена: участник видит и отправляет, остальные — только со своего", async (t) => {
+  const { app, db, U, U2, Adm } = await стенд(t);
+  const { packGroups } = require("../services/userStore");
+  // Группы кладём, как их записал бы вход через домен (см. domainLogin.test.js).
+  db.prepare("UPDATE users SET ad_groups = ? WHERE ad_login = 'u1'").run(packGroups(["Рассылка-Респондентам", "Прочая"]));
+  assert.strictEqual((await Adm.put("/api/mailings/settings", { sharedGroup: "рассылка-респондентам" })).status, 200);
+
+  const member = (await U.get("/api/mailings/settings")).json;
+  const other = (await U2.get("/api/mailings/settings")).json;
+  assert.strictEqual(member.from, "rassylka@example.invalid");
+  assert.strictEqual(other.from, "", "не участнику адрес общего ящика не показывается");
+  assert.strictEqual(other.configured, true, "свой ящик ему по-прежнему доступен");
+
+  const base = { subject: "Т", body: "Б", sender_mode: "shared", recipients: [{ row_no: 2, emails: ["one@example.invalid"] }] };
+  const denied = await form(app, U2, "/api/mailings", { payload: base });
+  assert.strictEqual(denied.status, 400);
+  assert.match(denied.json.error, /только участникам группы/);
+  assert.strictEqual((await form(app, U, "/api/mailings", { payload: base })).status, 201);
+
+  // Администратор в настройках видит адрес и группу, даже не состоя в ней.
+  const s = (await Adm.get("/api/mailings/settings")).json;
+  assert.strictEqual(s.sharedFrom, "rassylka@example.invalid");
+  assert.strictEqual(s.sharedGroup, "рассылка-респондентам");
+  // Группу убрали — общий ящик снова доступен всем.
+  await Adm.put("/api/mailings/settings", { sharedGroup: "" });
+  assert.strictEqual((await U2.get("/api/mailings/settings")).json.from, "rassylka@example.invalid");
+});
+
+test("сервер требует пароль приложения — так и написано по-русски, а не транслитом сервера", () => {
+  const { describeError } = require("../services/mailer");
+  for (const text of [
+    "Invalid login: 535 5.7.0 NEOBHODIM parol prilozheniya / Application password is REQUIRED",
+    "Invalid login: 535 5.7.8 Error: authentication failed: This user does not have access rights to this service or app password required",
+  ]) assert.match(describeError({ code: "EAUTH", message: text }), /требует пароль приложения/);
+  assert.match(describeError({ code: "EAUTH", message: "535 5.7.8 Authentication failed" }), /отверг логин или пароль/);
+});

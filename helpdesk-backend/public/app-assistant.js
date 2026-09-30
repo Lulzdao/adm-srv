@@ -416,11 +416,10 @@ let asstSettingsTab = "general";
 const ASST_DICTS = {
   depts: {
     title: "Отделы и начальники", add: "Добавить отдел",
-    sub: "Падежи нужны документам: «прошу передать начальнику отдела … Иванову И.И. от начальника отдела … Петрова П.П.»",
-    cols: [["name", "Отдел"], ["chief_name", "Начальник"], ["chief_post", "Должность"]],
+    sub: "Падежи ФИО нужны документам: «прошу передать начальнику отдела … Иванову И.И. от начальника отдела … Петрова П.П.». Должность и склонение названия отдела подставляются сами",
+    cols: [["name", "Отдел"], ["chief_name", "Начальник"], ["sort", "Порядок"]],
     fields: [
-      ["name", "Название отдела *", "Отдел статистики цен"], ["name_gen", "Отдел — кого? чего?", "отдела статистики цен"],
-      ["chief_post", "Должность начальника", "Начальник"], ["chief_post_gen", "Должность — кого?", "начальника"], ["chief_post_dat", "Должность — кому?", "начальнику"],
+      ["name", "Название отдела *", "Отдел статистики цен"],
       ["chief_name", "Начальник (Фамилия И.О.)", "Иванов И.И."], ["chief_name_gen", "Начальник — кого?", "Иванова И.И."], ["chief_name_dat", "Начальник — кому?", "Иванову И.И."],
       ["sort", "Порядок", "0"],
     ],
@@ -533,7 +532,7 @@ async function asstDictEditor(box, dictId, general) {
   const roles = (general && general.roles) || {};
   const cell = (it, key) => key === "role" ? esc(roles[it.role] || it.role)
     : key === "departments" ? (it.departments.trim() ? esc(it.departments.split("\n").filter(Boolean).join(", ")) : `<span class="as-muted">все отделы</span>`)
-    : esc(it[key] || "—");
+    : esc(it[key] === null || it[key] === undefined || it[key] === "" ? "—" : it[key]);
   box.innerHTML = `
     <div class="as-dict-head"><div><div class="as-h">${esc(d.title)}</div><div class="as-note">${esc(d.sub)}</div></div>
       <button class="btn btn-ghost" data-add>${icon("plus", 15)} ${esc(d.add)}</button></div>

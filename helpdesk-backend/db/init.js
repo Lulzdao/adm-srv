@@ -106,6 +106,7 @@ function initDb() {
     migrateStatuses(db);
     migrateDeliveryChannels(db, schema);
     migrateNotificationChannels(db);
+    migrateUserGroups(db);
     db.exec("COMMIT");
   } catch (err) {
     db.exec("ROLLBACK");
@@ -270,6 +271,14 @@ function migrateNotificationChannels(db) {
   const columns = db.prepare("PRAGMA table_info(notification_settings)").all().map((c) => c.name);
   if (columns.includes("channels")) return;
   db.exec("ALTER TABLE notification_settings ADD COLUMN channels TEXT");
+}
+
+// Группы AD у пользователя — для прав Ассистента. Заполнятся при следующем
+// входе каждого сотрудника; до того пусто, то есть «ни в одной группе».
+function migrateUserGroups(db) {
+  const columns = db.prepare("PRAGMA table_info(users)").all().map((c) => c.name);
+  if (columns.includes("ad_groups")) return;
+  db.exec("ALTER TABLE users ADD COLUMN ad_groups TEXT NOT NULL DEFAULT ''");
 }
 
 // Посев локальных аварийных аккаунтов ("break glass"), на случай если оба
