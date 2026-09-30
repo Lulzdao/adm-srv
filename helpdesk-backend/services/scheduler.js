@@ -40,7 +40,7 @@ const JOBS = [
     id: "backup",
     label: "Резервная копия баз",
     period: "monthly",
-    run: (db) => backup.run(db),
+    run: (db) => backup.runWatched(db),
   },
   {
     id: "tasks",

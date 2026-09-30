@@ -65,10 +65,47 @@ async function renderDashboard(main) {
 // Разделы — вкладками сверху, как в настройках Ассистента: страница выросла, и
 // листать её целиком ради одной настройки стало неудобно.
 const ADMIN_TABS = [
+  ["health", "Состояние"],
   ["people", "Администраторы и исполнители"], ["groups", "Группы исполнителей"],
   ["access", "Заявка на доступ"], ["backup", "Резервные копии"],
 ];
-let adminTab = "people";
+let adminTab = "health";
+
+// ---- Состояние системы (GET /admin/health, services/health.js) ----
+const HEALTH_COLOR = { ok: "var(--green)", warn: "var(--amber)", crit: "var(--red)" };
+
+async function renderHealth(box) {
+  box.innerHTML = `<div class="spinner">Проверяю службы…</div>`;
+  let h;
+  try { h = await api("/admin/health"); }
+  catch (e) { box.innerHTML = `<div class="empty-state">Не удалось получить состояние: ${esc(e.message)}</div>`; return; }
+
+  const итог = h.crit
+    ? { level: "crit", text: `Требует внимания: ${h.crit}` + (h.warn ? `, предупреждений: ${h.warn}` : "") }
+    : h.warn ? { level: "warn", text: `Работает, предупреждений: ${h.warn}` } : { level: "ok", text: "Всё в порядке" };
+  const когда = (iso) => (iso ? fmtDate(iso) : "");
+  const строка = (i) => `
+    <div style="display:flex;gap:10px;align-items:baseline;padding:7px 0;border-top:1px solid var(--line-soft);">
+      <span title="${i.level}" style="flex-shrink:0;width:9px;height:9px;border-radius:50%;background:${HEALTH_COLOR[i.level]};transform:translateY(1px);"></span>
+      <span style="width:230px;flex-shrink:0;font-size:12.5px;font-weight:600;">${esc(i.label)}</span>
+      <span style="flex:1;font-size:12.5px;${i.level === "ok" ? "" : `color:${HEALTH_COLOR[i.level]};`}">${esc(i.text)}${i.target ? ` <span class="mono" style="color:var(--ink-soft);font-size:11.5px;">${esc(i.target)}</span>` : ""}</span>
+      <span style="flex-shrink:0;font-size:11px;color:var(--ink-soft);">${esc(когда(i.at || i.since || i.updatedAt || i.modified))}</span>
+    </div>`;
+
+  box.innerHTML = `
+    <div class="card" style="margin-bottom:14px;display:flex;align-items:center;gap:12px;">
+      <span style="width:12px;height:12px;border-radius:50%;background:${HEALTH_COLOR[итог.level]};"></span>
+      <span style="font-size:14px;font-weight:600;">${esc(итог.text)}</span>
+      <span style="flex:1;font-size:11.5px;color:var(--ink-soft);">проверено ${esc(fmtDate(h.checkedAt))}</span>
+      <button class="btn btn-ghost" id="healthRefresh">Проверить снова</button>
+    </div>
+    ${h.sections.map((s) => `
+      <div class="card" style="margin-bottom:14px;">
+        <div class="section-label">${esc(s.title)}</div>
+        ${s.items.map(строка).join("")}
+      </div>`).join("")}`;
+  box.querySelector("#healthRefresh").onclick = () => renderHealth(box);
+}
 
 async function renderAdmin(main) {
   main.innerHTML = `<div class="topbar"><div class="topbar-title">Администрирование</div></div><div class="page"><div class="spinner">Загрузка…</div></div>`;
@@ -110,6 +147,8 @@ async function renderAdmin(main) {
       <div class="toggle-group as-tabs" id="admTabs">
         ${ADMIN_TABS.map(([id, l]) => `<button class="toggle-btn${adminTab === id ? " active" : ""}" data-tab="${id}">${l}</button>`).join("")}
       </div>
+
+      <div data-pane="health" id="healthPane"></div>
 
       <div data-pane="people">
       <div class="card" style="margin-bottom:14px;">
@@ -201,6 +240,9 @@ async function renderAdmin(main) {
     };
     main.querySelectorAll("#admTabs .toggle-btn").forEach((b) => { b.onclick = () => { adminTab = b.dataset.tab; showTab(); }; });
     showTab();
+
+    // ---- Состояние: опрос модулей идёт отдельно и страницу не задерживает ----
+    renderHealth(main.querySelector("#healthPane"));
 
     // ---- Заявка на доступ: отделы, начальники, отдел ИТ (app-assistant.js) ----
     renderAccessAdmin(main.querySelector("#accessAdmin"));

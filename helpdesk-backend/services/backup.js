@@ -195,9 +195,40 @@ async function run(db, now = new Date()) {
   return detail;
 }
 
+// Сколько попыток подряд не удалось. Один сбой — не повод писать: сетевая папка
+// бывает недоступна минуту, а следующая попытка через час. Три подряд — уже нет.
+const STREAK = "backup_fail_streak";
+const ALERT_AFTER = 3;
+
+/**
+ * run() для планировщика: считает неудачи подряд и после третьей оповещает
+ * (категория «Резервная копия баз не удалась», одно событие за месяц).
+ */
+async function runWatched(db, now = new Date()) {
+  try {
+    const detail = await run(db, now);
+    setSetting(db, STREAK, "0");
+    return detail;
+  } catch (err) {
+    const streak = (Number(getSetting(db, STREAK)) || 0) + 1;
+    setSetting(db, STREAK, String(streak));
+    if (streak >= ALERT_AFTER) {
+      const month = monthKey(now);
+      require("./notifications").emit(db, {
+        kind: "backup_failed",
+        subject: `Резервная копия баз за ${month} не удалась`,
+        subjectRef: month,
+        dedupKey: `backup_failed:${month}`,
+        payload: { месяц: month, ошибка: err.message, папка: backupDir(db).dir, попыток: String(streak) },
+      });
+    }
+    throw err;
+  }
+}
+
 /** Сохранить папку из панели. Пусто — вернуться к .env / папке по умолчанию. */
 function setBackupDir(db, dir) {
   setSetting(db, SETTING, String(dir || "").trim());
 }
 
-module.exports = { run, databases, backupDir, setBackupDir, checkDir, listCopies, snapshot, DEFAULT_DIR };
+module.exports = { run, runWatched, databases, backupDir, setBackupDir, checkDir, listCopies, snapshot, DEFAULT_DIR };

@@ -252,7 +252,27 @@ const tasks = [
   },
 ];
 
-const KINDS = [...ticketNew, ...rest, ...tasks];
+// Сама платформа: о сбоях, которые иначе видны только на сервере.
+const platform = [
+  {
+    kind: "backup_failed",
+    label: "Резервная копия баз не удалась",
+    hint: "Если ежемесячная копия не выходит три попытки подряд (они раз в час). Одно письмо за месяц.",
+    source: "platform",
+    severity: "crit",
+    recipients: RECIPIENTS.LIST,
+    trigger: "event",
+    vars: ["месяц", "ошибка", "папка", "попыток"],
+    defaultSubject: "Резервная копия баз за {{месяц}} не удалась",
+    defaultBody:
+      "Ежемесячная копия баз не получается уже {{попыток}} попытки подряд.\n" +
+      "Папка: {{папка}}\n" +
+      "Ошибка: {{ошибка}}\n\n" +
+      "Платформа продолжит пробовать раз в час. Состояние — «Администрирование → Состояние».",
+  },
+];
+
+const KINDS = [...ticketNew, ...rest, ...tasks, ...platform];
 const BY_KIND = new Map(KINDS.map((k) => [k.kind, k]));
 
 function byKind(kind) {

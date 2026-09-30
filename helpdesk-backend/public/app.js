@@ -335,7 +335,10 @@ const DATE_FMT = new Intl.DateTimeFormat("ru-RU", {
 
 function fmtDate(iso) {
   if (!iso) return "—";
-  const d = new Date(iso.replace(" ", "T") + "Z");
+  // Из SQLite приходит «ГГГГ-ММ-ДД ЧЧ:ММ:СС» в UTC без пояса; из JS (toISOString) —
+  // уже с «Z». Приписанная вторая «Z» делала дату нечитаемой, и на экран шла сырая строка.
+  const s = String(iso);
+  const d = new Date(/(Z|[+-]\d\d:?\d\d)$/i.test(s) ? s : s.replace(" ", "T") + "Z");
   if (isNaN(d)) return iso;
   return DATE_FMT.format(d);
 }
