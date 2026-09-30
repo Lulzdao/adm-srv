@@ -1,6 +1,7 @@
 const nodemailer = require("nodemailer");
 const config = require("../config/config");
 const { getSetting, setSetting } = require("./settings");
+const secretBox = require("./secretBox");
 
 // ============================================================================
 //  Отправка почты
@@ -49,7 +50,8 @@ function readSettings(db) {
   const host = fromDb("host") || config.smtp.host || "";
   const portRaw = fromDb("port");
   const secureRaw = fromDb("secure");
-  const password = fromDb("password") || config.smtp.password || "";
+  // В базе пароль зашифрован (services/secretBox.js). Не расшифровался (чужой ключ) — как не заданный.
+  const password = secretBox.open(fromDb("password")) || config.smtp.password || "";
 
   return {
     host,
@@ -80,7 +82,7 @@ function writeSettings(db, values) {
   if (values.from !== undefined) put("from", String(values.from).trim());
 
   if (values.clearPassword) put("password", "");
-  else if (values.password) put("password", String(values.password));
+  else if (values.password) put("password", secretBox.seal(String(values.password)));
 
   reset();
 }
