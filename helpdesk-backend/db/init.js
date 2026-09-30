@@ -315,6 +315,14 @@ function dropAssistantExtras(db) {
   for (const t of gone) db.exec(`DROP TABLE ${t}`);
   db.prepare(`DELETE FROM settings WHERE key LIKE 'asst_equipment_imported_%' OR key LIKE 'asst_parts_imported_%'`).run();
   if (exists("asst_people")) db.prepare("DELETE FROM asst_people WHERE role IN ('deputy', 'it_chief')").run();
+  // Должность начальника и склонение названия отдела подставляются сами, ФИО
+  // «кого?» нигде не нужно — столбцы под них в справочнике отделов лишние.
+  if (exists("asst_depts")) {
+    const cols = db.prepare("PRAGMA table_info(asst_depts)").all().map((c) => c.name);
+    for (const c of ["name_gen", "chief_post", "chief_post_gen", "chief_post_dat", "chief_name_gen"]) {
+      if (cols.includes(c)) db.exec(`ALTER TABLE asst_depts DROP COLUMN ${c}`);
+    }
+  }
   if (gone.length) console.log(`Ассистент: удалены таблицы убранных разделов (${gone.join(", ")})`);
 }
 

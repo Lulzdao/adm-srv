@@ -74,7 +74,6 @@ const DICTS = {
     fields: {
       name: { field: "Отдел", max: 150, required: true },
       chief_name: { field: "Начальник", max: 100 },
-      chief_name_gen: { field: "Начальник (кого?)", max: 100 },
       chief_name_dat: { field: "Начальник (кому?)", max: 100 },
       sort: { field: "Порядок", int: true },
     },
@@ -279,6 +278,8 @@ module.exports = function assistantRoutes(db) {
       ...s,
       accessDepts: departments.map((d) => d.name),
       orgDepts: db.prepare("SELECT name FROM asst_depts ORDER BY sort, name").all().map((r) => r.name),
+      // У начальника отдела ИТ нет ФИО «кому?» — в шапке записки будет несклонённое.
+      itChiefDatMissing: !!s.itDept && !(A.dept(db, s.itDept) || {}).chief_name_dat,
       actStart: Number(getSetting(db, `asst_act_start_${year}`)) || 1,
       year,
       roles: ROLES,
