@@ -61,7 +61,6 @@ try {
     'helpdesk-backend\data\helpdesk.db' = 'БАЗА ЗАЯВОК'
     'helpdesk-backend\uploads\tickets\1\файл.pdf' = 'ВЛОЖЕНИЕ'
     'MESSENGER\bootstrap-admin.js'     = "module.exports = { username: 'admin', password: 'x' };"
-    'MESSENGER\messenger.db'           = 'БАЗА ИСКРЫ'
     'MESSENGER\certs\server.pfx'       = 'СЕРТИФИКАТ'
     'SMDR\smdr.db'                     = 'БАЗА ЗВОНКОВ'
     'SMDR\.env'                        = 'SMDR_PASSWORD=секрет'
@@ -72,6 +71,11 @@ try {
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $p) | Out-Null
     [IO.File]::WriteAllText($p, $data[$k])
   }
+  # База «Искры» — настоящая SQLite: её скрипт копирует через VACUUM INTO (остальные
+  # «базы» здесь — просто файлы, их он копирует как есть).
+  $iskraDb = Join-Path $root 'MESSENGER\messenger.db'
+  & node --no-warnings -e "const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync(process.argv[1]);d.exec('CREATE TABLE t(v TEXT)');d.prepare('INSERT INTO t VALUES (?)').run('chat-history');d.close()" $iskraDb
+  $iskraRows = { & node --no-warnings -e "const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync(process.argv[1],{readOnly:true});console.log(d.prepare('SELECT group_concat(v) v FROM t').get().v)" $iskraDb }
   foreach ($d in 'helpdesk-backend', 'CERTVIEWER', 'SMDR\web-node', 'MESSENGER') {
     New-Item -ItemType Directory -Force -Path (Join-Path $root "$d\node_modules\метка") | Out-Null
   }
@@ -94,6 +98,7 @@ try {
   $snapshot = @{}
   foreach ($k in $data.Keys) { $snapshot[$k] = Text "IT-services\$k" }
   $ticketsOld = Text 'IT-services\helpdesk-backend\routes\tickets.js'
+  $iskraHash = (Get-FileHash $iskraDb).Hash
 
   # --- 2. Сбой посреди обновления: всё должно вернуться -----------------------
   Write-Host "`n2. Сбой после замены файлов — откат"
@@ -104,6 +109,15 @@ try {
   Check (-not (Test-Path (Join-Path $root 'MESSENGER\test\files.test.js'))) 'добавленный файл убран'
   Check (Test-Path (Join-Path $root 'SMDR\web-node\node_modules\метка')) 'прежние node_modules на месте'
   Check ((Get-Content (Join-Path $root '.update\version.txt') -Raw).Trim() -eq $oldSha) 'версия осталась прежней'
+  Check ($r.Out -match 'Копия баз') 'базы скопированы перед заменой'
+  Check ((Text 'IT-services\helpdesk-backend\data\helpdesk.db') -eq $snapshot['helpdesk-backend\data\helpdesk.db'] -and
+         (Text 'IT-services\SMDR\smdr.db') -eq $snapshot['SMDR\smdr.db']) 'базы, «испорченные миграцией», возвращены (копия файлом)'
+  # Копия VACUUM INTO побайтно не совпадает с исходным файлом — сверяем данные.
+  # Копия VACUUM INTO побайтно не совпадает с исходным файлом — сверяем с самой копией и по данным.
+  $iskraCopy = @(Get-ChildItem (Join-Path $root '.update\backup') -Directory | Sort-Object Name)[-1].FullName + '\db\MESSENGER\messenger.db'
+  Check ((Test-Path $iskraCopy) -and (Get-FileHash $iskraDb).Hash -eq (Get-FileHash $iskraCopy).Hash -and (& $iskraRows) -eq 'chat-history') 'база «Искры» возвращена из копии VACUUM INTO, данные читаются'
+  $iskraHash = (Get-FileHash $iskraDb).Hash
+  Check (-not (Test-Path "$iskraDb-wal") -and -not (Test-Path (Join-Path $root 'helpdesk-backend\data\helpdesk.db-wal'))) 'журнал -wal новой версии убран'
 
   # --- 3. Обычное обновление --------------------------------------------------
   Write-Host "`n3. Обновление до новой версии"
@@ -123,6 +137,10 @@ try {
   Check ((Get-Content (Join-Path $root '.update\version.txt') -Raw).Trim() -eq $newSha) 'версия обновлена'
   $bk = @(Get-ChildItem (Join-Path $root '.update\backup') -Directory)
   Check ($bk.Count -ge 1 -and (Test-Path (Join-Path $bk[-1].FullName "files\$obsolete"))) 'удалённый файл лежит в резервной копии'
+  Check ((Test-Path (Join-Path $bk[-1].FullName 'db\helpdesk-backend\data\helpdesk.db')) -and
+         (Test-Path (Join-Path $bk[-1].FullName 'db\SMDR\smdr.db')) -and
+         (Test-Path (Join-Path $bk[-1].FullName 'db\MESSENGER\messenger.db'))) 'копии баз — в резервной копии обновления'
+  Check ((Get-FileHash $iskraDb).Hash -eq $iskraHash) 'база «Искры» после обновления не тронута'
 
   # --- 4. Повторный запуск -----------------------------------------------------
   Write-Host "`n4. Повторный запуск"

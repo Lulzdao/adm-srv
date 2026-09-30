@@ -13,14 +13,19 @@
        какие коммиты вошли. Если поменялись зависимости (package-lock.json), собирает
        node_modules заранее, во временной папке.
     2. После подтверждения: резервная копия заменяемых файлов, остановка ТОЛЬКО тех
-       служб, чьи файлы меняются, замена файлов, запуск, проверка — служба работает и
-       слушает свой порт.
-    3. Что-то не поднялось — прежняя версия возвращается сама, службы перезапускаются
-       на ней.
+       служб, чьи файлы меняются, копия их баз, замена файлов, запуск, проверка —
+       служба работает и слушает свой порт.
+    3. Что-то не поднялось — прежняя версия возвращается сама (файлы и базы), службы
+       перезапускаются на ней.
 
-  НИКОГДА не трогает: .env, базы (*.db), uploads, data, logs, certs, updates,
-  node_modules (кроме случая, когда поменялись зависимости), bootstrap-admin.js.
-  Эти файлы в репозитории и не лежат — список ниже лишь страховка.
+  Базы копируются потому, что новая версия при первом запуске может перестроить свою
+  базу (миграции, в том числе удаляющие таблицы) — после этого прежние файлы на новой
+  базе уже не поднимутся, и откат одних файлов не помог бы.
+
+  НИКОГДА не меняет: .env, базы (*.db — только копирует и при откате возвращает),
+  uploads, data, logs, certs, updates, node_modules (кроме случая, когда поменялись
+  зависимости), bootstrap-admin.js. Эти файлы в репозитории и не лежат — список ниже
+  лишь страховка.
 
   Где что стоит, скрипт узнаёт сам: по службам NSSM (их рабочие каталоги) и по
   характерным файлам внутри. Если «Искра» или модуль стоит не в корне установки,
@@ -89,12 +94,13 @@ $StateDir = Join-Path $Root '.update'
 
 # Компоненты репозитория. Marker — файлы, по которым каталог узнаётся в рабочем
 # каталоге службы NSSM (имена служб и папок на сервере могут отличаться от DEPLOY.md).
+# Db — база компонента относительно его каталога; DbEnv — переменная .env, которая её переносит.
 $Components = [ordered]@{
-  'helpdesk-backend' = @{ Markers = @('app.js', 'config\modules.js');       Port = 3000; EnvPort = '.env' }
-  'CERTVIEWER'       = @{ Markers = @('mchd.js', 'server.js');              Port = 3101; EnvPort = '.env' }
-  'SMDR'             = @{ Markers = @('Collector.Py');                      Port = $null; EnvPort = $null }
-  'SMDR\web-node'    = @{ Markers = @('views\dashboard.ejs', 'db.js');      Port = 3102; EnvPort = '.env' }
-  'MESSENGER'        = @{ Markers = @('server.js', 'bootstrap-admin.example.js'); Port = 3103; EnvPort = $null }
+  'helpdesk-backend' = @{ Markers = @('app.js', 'config\modules.js');       Port = 3000; EnvPort = '.env'; Db = 'data\helpdesk.db'; DbEnv = 'DB_PATH' }
+  'CERTVIEWER'       = @{ Markers = @('mchd.js', 'server.js');              Port = 3101; EnvPort = '.env'; Db = 'certificates.db' }
+  'SMDR'             = @{ Markers = @('Collector.Py');                      Port = $null; EnvPort = $null; Db = 'smdr.db' }
+  'SMDR\web-node'    = @{ Markers = @('views\dashboard.ejs', 'db.js');      Port = 3102; EnvPort = '.env'; Db = '..\smdr.db' }
+  'MESSENGER'        = @{ Markers = @('server.js', 'bootstrap-admin.example.js'); Port = 3103; EnvPort = $null; Db = 'messenger.db' }
 }
 # Каталоги с зависимостями на сервере. desktop-client собирается не здесь.
 $DepDirs = @('helpdesk-backend', 'CERTVIEWER', 'SMDR\web-node', 'MESSENGER')
@@ -143,9 +149,10 @@ function Get-NssmServices {
     $appDir = (Get-Item -LiteralPath $params).GetValue('AppDirectory')
     if (-not $appDir) { continue }
     $appDir = [IO.Path]::GetFullPath($appDir)
+    $app = (Get-Item -LiteralPath $params).GetValue('Application')
     foreach ($name in $Components.Keys) {
       if (Test-Markers $appDir $Components[$name].Markers) {
-        $result += [pscustomobject]@{ Name = $svc.Name; Dir = $appDir; Component = $name }
+        $result += [pscustomobject]@{ Name = $svc.Name; Dir = $appDir; Component = $name; App = $app }
         break
       }
     }
@@ -228,6 +235,90 @@ function Get-ServicePort($svc) {
     }
   }
   return $c.Port
+}
+
+# ---------------------------------------------------------------------------
+#  Базы
+# ---------------------------------------------------------------------------
+
+# Каталоги всех компонентов, включая вложенные (SMDR\web-node), — длинные первыми,
+# чтобы файл относился к самому точному.
+function Get-AllComponentDirs($dirs) {
+  $list = @()
+  foreach ($name in $Components.Keys) {
+    $first = $name.Split('\')[0]
+    if (-not $dirs[$first]) { continue }
+    $d = if ($name -eq $first) { $dirs[$first] } else { Join-Path $dirs[$first] $name.Substring($first.Length + 1) }
+    $list += [pscustomobject]@{ Component = $name; Dir = [IO.Path]::GetFullPath($d) }
+  }
+  return ,@($list | Sort-Object { $_.Dir.Length } -Descending)
+}
+
+function Get-ComponentOf([string]$target, $compDirs) {
+  foreach ($c in $compDirs) { if (Test-Under $target $c.Dir) { return $c } }
+  return $null
+}
+
+# Путь базы компонента: из .env (DB_PATH у платформы), иначе по умолчанию.
+function Get-ComponentDb([string]$component, [string]$dir) {
+  $c = $Components[$component]
+  if (-not $c.ContainsKey('Db')) { return $null }
+  $rel = $c.Db
+  if ($c.ContainsKey('DbEnv')) {
+    $envFile = Join-Path $dir '.env'
+    if (Test-Path -LiteralPath $envFile) {
+      $line = Get-Content -LiteralPath $envFile -Encoding UTF8 | Where-Object { $_ -match "^\s*$($c.DbEnv)\s*=\s*\S" } | Select-Object -Last 1
+      if ($line) { $v = ($line -replace "^\s*$($c.DbEnv)\s*=\s*", '').Trim().Trim('"', "'"); if ($v) { $rel = $v } }
+    }
+  }
+  $p = if ([IO.Path]::IsPathRooted($rel)) { $rel } else { Join-Path $dir $rel }
+  return [IO.Path]::GetFullPath($p)
+}
+
+# Node, которым копировать базы: тот же, что у служб, иначе какой найдётся.
+function Get-NodeExe($services) {
+  foreach ($s in $services) {
+    if ($s.App -and (Split-Path -Leaf $s.App) -ieq 'node.exe' -and (Test-Path -LiteralPath $s.App)) { return $s.App }
+  }
+  $cmd = Get-Command node.exe -ErrorAction SilentlyContinue
+  if ($cmd) { return $cmd.Source }
+  return $null
+}
+
+function Test-SqliteFile([string]$path) {
+  $fs = [IO.File]::Open($path, 'Open', 'Read', 'ReadWrite')
+  try { $buf = New-Object byte[] 16; $n = $fs.Read($buf, 0, 16) } finally { $fs.Dispose() }
+  return $n -eq 16 -and [Text.Encoding]::ASCII.GetString($buf, 0, 15) -eq 'SQLite format 3'
+}
+
+# Копия базы. SQLite — через VACUUM INTO: копия целостная, даже если базой в это время
+# пользуется служба, которую обновление не останавливает (сборщик журнала звонков пишет в
+# smdr.db, пока перезапускается веб-часть). Без Node или не SQLite — файлы как есть
+# (служба в этот момент остановлена).
+$VacuumJs = "const {DatabaseSync}=require('node:sqlite');const s=new DatabaseSync(process.argv[1],{readOnly:true});s.exec('PRAGMA busy_timeout=15000');s.prepare('VACUUM INTO ?').run(process.argv[2]);s.close();const c=new DatabaseSync(process.argv[2],{readOnly:true});const r=Object.values(c.prepare('PRAGMA quick_check').get())[0];c.close();if(r!=='ok'){console.error('quick_check: '+r);process.exit(1)}"
+
+function Backup-Database([string]$db, [string]$dest, [string]$node) {
+  New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dest) | Out-Null
+  if ($node -and (Test-SqliteFile $db)) {
+    # Предупреждения Node идут в stderr; в Windows PowerShell 5.1 при Stop это стало бы ошибкой.
+    $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try { $out = & $node --no-warnings -e $VacuumJs $db $dest 2>&1 | Out-String } finally { $ErrorActionPreference = $eap }
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $dest)) { Fail "Копия базы $db не удалась: $($out.Trim())" }
+    return [pscustomobject]@{ Path = $db; Backup = $dest; Mode = 'vacuum' }
+  }
+  Copy-Item -LiteralPath $db -Destination $dest -Force
+  foreach ($x in '-wal', '-shm') { if (Test-Path -LiteralPath "$db$x") { Copy-Item -LiteralPath "$db$x" -Destination "$dest$x" -Force } }
+  return [pscustomobject]@{ Path = $db; Backup = $dest; Mode = 'copy' }
+}
+
+# Вернуть базу из копии. Журнал -wal/-shm от новой версии убирается: иначе SQLite
+# «доиграл» бы его поверх прежней базы.
+function Restore-Database($b) {
+  Copy-Item -LiteralPath $b.Backup -Destination $b.Path -Force
+  foreach ($x in '-wal', '-shm') {
+    if ($b.Mode -eq 'copy' -and (Test-Path -LiteralPath "$($b.Backup)$x")) { Copy-Item -LiteralPath "$($b.Backup)$x" -Destination "$($b.Path)$x" -Force }
+    elseif (Test-Path -LiteralPath "$($b.Path)$x") { Remove-Item -LiteralPath "$($b.Path)$x" -Force }
+  }
 }
 
 # ---------------------------------------------------------------------------
@@ -551,6 +642,26 @@ function Invoke-Update {
   if ($restart) { Say ("   будут перезапущены: {0}" -f (($restart | ForEach-Object Name) -join ', ')) 'White' }
   elseif (-not $SkipServices) { Say '   перезапуск служб не нужен' }
 
+  # Какие базы скопировать: компонентов, чей код меняется (он и перестраивает базу при запуске).
+  $compDirs = Get-AllComponentDirs $dirs
+  $dbPlans = @()
+  $dbSeen = @{}
+  $touched = @($changes | Where-Object { $c = $_; -not @($NoRestart | Where-Object { $c.Rel -match $_ }).Count } | ForEach-Object Target) +
+             @($depPlans | ForEach-Object { Join-Path $_.TargetDir 'package.json' })
+  foreach ($t in $touched) {
+    $comp = Get-ComponentOf $t $compDirs
+    if (-not $comp) { continue }
+    $db = Get-ComponentDb $comp.Component $comp.Dir
+    if (-not $db -or $dbSeen.ContainsKey($db) -or -not (Test-Path -LiteralPath $db -PathType Leaf)) { continue }
+    $dbSeen[$db] = $true
+    $rel = if (Test-Under $db $Root) { $db.Substring($Root.TrimEnd('\').Length + 1) } else { "$($comp.Component)\$(Split-Path -Leaf $db)" }
+    $dbPlans += [pscustomobject]@{ Path = $db; Rel = $rel }
+  }
+  if ($dbPlans) {
+    Say '   базы будут скопированы перед заменой (при откате — возвращены):' 'White'
+    foreach ($p in $dbPlans) { Say ("     {0} ({1:N1} МБ)" -f $p.Rel, ((Get-Item -LiteralPath $p.Path).Length / 1MB)) }
+  }
+
   if (-not $changes -and -not $depPlans) {
     Say ''; Say 'Уже установлена актуальная версия.' 'Green'
     if ($newSha) { Set-Content -LiteralPath $versionFile -Value $newSha }
@@ -597,8 +708,21 @@ function Invoke-Update {
   New-Item -ItemType Directory -Force -Path $backup | Out-Null
   $done = [System.Collections.ArrayList]::new()   # что уже сделано — для отката
   $stopped = @()
+  $dbBackups = @()
   try {
     if ($restart -and -not $SkipServices) { Step 'Остановка служб'; Stop-Services $restart; $stopped = $restart }
+
+    # Базы — после остановки служб (в копию попадает всё, что они успели записать) и до
+    # замены файлов (новая версия ещё не запускалась и базу не трогала).
+    if ($dbPlans) {
+      Step 'Копия баз'
+      $node = Get-NodeExe $all
+      if (-not $node) { Say '   Node не найден — базы копируются файлами (службы остановлены)' 'Yellow' }
+      foreach ($p in $dbPlans) {
+        $dbBackups += Backup-Database $p.Path (Join-Path $backup "db\$($p.Rel)") $node
+        Say "   $($p.Rel)"
+      }
+    }
 
     Step 'Замена файлов'
     foreach ($c in $changes) {
@@ -626,7 +750,11 @@ function Invoke-Update {
       [void]$done.Add([pscustomobject]@{ Type = 'deps'; Target = $nm; Backup = $(if (Test-Path -LiteralPath $bkNm) { $bkNm }) })
     }
     Say "   файлов: $($changes.Count), резервная копия: $backup"
-    if ($TestFailAfterCopy) { Fail 'Проверочный сбой после замены файлов (-TestFailAfterCopy).' }
+    if ($TestFailAfterCopy) {
+      # Как будто новая версия успела перестроить базы — откат должен вернуть их.
+      foreach ($b in $dbBackups) { [IO.File]::AppendAllText($b.Path, 'МИГРАЦИЯ'); [IO.File]::WriteAllText("$($b.Path)-wal", 'ЖУРНАЛ НОВОЙ ВЕРСИИ') }
+      Fail 'Проверочный сбой после замены файлов (-TestFailAfterCopy).'
+    }
 
     if ($stopped) {
       Step 'Запуск и проверка'
@@ -652,6 +780,15 @@ function Invoke-Update {
       } catch { Say "   не удалось вернуть $($d.Change.Rel): $($_.Exception.Message)" 'Red' }
     }
     Say "   файлы возвращены ($($done.Count))"
+    foreach ($b in $dbBackups) {
+      # Базой пользуется и служба, которую обновление не останавливало (сборщик звонков), —
+      # подменять файл под работающей службой нельзя.
+      $busy = @($all | Where-Object { $stopped -notcontains $_ -and (Get-ComponentDb $_.Component $_.Dir) -eq $b.Path -and
+                                      (Get-Service -Name $_.Name -ErrorAction SilentlyContinue).Status -eq 'Running' })
+      if ($busy) { Say "   база $($b.Path) НЕ возвращена: ею пользуется работающая служба $($busy[0].Name). Копия: $($b.Backup)" 'Red'; continue }
+      try { Restore-Database $b; Say "   база возвращена: $($b.Path)" }
+      catch { Say "   не удалось вернуть базу $($b.Path): $($_.Exception.Message). Копия: $($b.Backup)" 'Red' }
+    }
     if ($stopped) {
       $again = Start-AndCheck $stopped
       if ($again) { Say ("ОТКАТ ВЫПОЛНЕН, НО СЛУЖБЫ НЕ ПОДНЯЛИСЬ:`n   " + ($again -join "`n   ")) 'Red'; $script:exitCode = 3 }
