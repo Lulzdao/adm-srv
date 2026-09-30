@@ -49,8 +49,8 @@ const docText = (buf, part = "word/document.xml") =>
 
 async function справочники(Adm) {
   for (const d of [
-    { name: "Отдел выдуманной статистики", chief_name: "Первов П.П.", chief_name_gen: "Первова П.П.", chief_name_dat: "Первову П.П." },
-    { name: "Отдел информационных ресурсов и технологий", chief_name: "Айтишный А.А.", chief_name_gen: "Айтишного А.А.", chief_name_dat: "Айтишному А.А." },
+    { name: "Отдел выдуманной статистики", chief_name: "Первов П.П.", chief_name_dat: "Первову П.П." },
+    { name: "Отдел информационных ресурсов и технологий", chief_name: "Айтишный А.А.", chief_name_dat: "Айтишному А.А." },
   ]) assert.strictEqual((await Adm.post("/api/assistant/settings/dict/depts", d)).status, 201);
   assert.strictEqual((await Adm.put("/api/assistant/settings/general", { itDept: "Отдел информационных ресурсов и технологий" })).status, 200);
   for (const p of [
@@ -107,6 +107,9 @@ test("справочник отделов: правка, повтор имени
   assert.strictEqual((await Adm.post("/api/assistant/settings/dict/depts", { name: it.name })).status, 400);
   assert.strictEqual((await Adm.put(`/api/assistant/settings/dict/depts/${it.id}`, { name: "Отдел ИТ выдуманный" })).status, 200);
   assert.strictEqual((await Adm.get("/api/assistant/settings/general")).json.itDept, "Отдел ИТ выдуманный");
+  assert.strictEqual((await Adm.get("/api/assistant/settings/general")).json.itChiefDatMissing, false);
+  assert.strictEqual((await Adm.put(`/api/assistant/settings/dict/depts/${it.id}`, { chief_name_dat: "" })).status, 200);
+  assert.strictEqual((await Adm.get("/api/assistant/settings/general")).json.itChiefDatMissing, true, "админ увидит предупреждение");
   assert.strictEqual((await Adm.put("/api/assistant/settings/general", { itDept: "Нет такого" })).status, 400);
   assert.strictEqual((await Adm.post("/api/assistant/settings/dict/people", { role: "it_chief", name: "X" })).status, 400, "роль начальника ИТ убрана");
   assert.strictEqual((await Adm.get("/api/assistant/settings/dict/nope")).status, 404);

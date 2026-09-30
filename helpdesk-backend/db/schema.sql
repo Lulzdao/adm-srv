@@ -275,14 +275,9 @@ CREATE INDEX IF NOT EXISTS idx_task_events_task ON task_events(task_id, id);
 -- начальнику отдела … Иванову И.И. от начальника отдела … Петрова П.П.».
 CREATE TABLE IF NOT EXISTS asst_depts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL UNIQUE,       -- «Отдел статистики цен»
-  name_gen TEXT,                   -- «отдела статистики цен»
-  chief_post TEXT,                 -- «Начальник»
-  chief_post_gen TEXT,             -- «начальника»
-  chief_post_dat TEXT,             -- «начальнику»
+  name TEXT NOT NULL UNIQUE,       -- «Отдел статистики цен»; склоняется само
   chief_name TEXT,                 -- «Иванов И.И.»
-  chief_name_gen TEXT,             -- «Иванова И.И.»
-  chief_name_dat TEXT,             -- «Иванову И.И.»
+  chief_name_dat TEXT,             -- «Иванову И.И.»: нужно только отделу ИТ
   sort INTEGER NOT NULL DEFAULT 0
 );
 

@@ -137,6 +137,8 @@ test("таблицы убранных разделов Ассистента уд
     for (const t of ["asst_journal", "asst_transfers", "asst_links", "asst_equipment", "asst_parts"]) db.exec(`CREATE TABLE ${t} (id INTEGER)`);
     db.prepare("INSERT INTO settings (key, value) VALUES ('asst_equipment_imported_at', 'x'), ('asst_org_name', 'Липецкстат')").run();
     db.prepare("INSERT INTO asst_people (role, name) VALUES ('it_chief', 'Тестов Т.Т.'), ('deputy', 'Замов З.З.'), ('boss', 'Главный Г.Г.')").run();
+    for (const c of ["name_gen", "chief_post", "chief_post_gen", "chief_post_dat", "chief_name_gen"]) db.exec(`ALTER TABLE asst_depts ADD COLUMN ${c} TEXT`);
+    db.prepare("INSERT INTO asst_depts (name, chief_name, chief_name_gen, chief_name_dat) VALUES ('Отдел выдуманный', 'Первов П.П.', 'Первова П.П.', 'Первову П.П.')").run();
     db.close();
     resetModuleCache();
     const db2 = require("../db/init").initDb();
@@ -144,6 +146,9 @@ test("таблицы убранных разделов Ассистента уд
     for (const t of ["asst_journal", "asst_transfers", "asst_links", "asst_equipment", "asst_parts"]) assert.ok(!tables.includes(t), t);
     assert.deepStrictEqual(db2.prepare("SELECT key FROM settings WHERE key LIKE 'asst_%'").all().map((r) => r.key), ["asst_org_name"]);
     assert.deepStrictEqual(db2.prepare("SELECT role FROM asst_people").all().map((r) => r.role), ["boss"]);
+    assert.deepStrictEqual({ ...db2.prepare("SELECT name, chief_name, chief_name_dat FROM asst_depts").get() },
+      { name: "Отдел выдуманный", chief_name: "Первов П.П.", chief_name_dat: "Первову П.П." }, "лишние столбцы отделов убраны, данные целы");
+    assert.deepStrictEqual(db2.prepare("PRAGMA table_info(asst_depts)").all().map((c) => c.name), ["id", "name", "chief_name", "chief_name_dat", "sort"]);
     db2.close();
   } finally {
     cleanup();

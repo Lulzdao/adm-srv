@@ -229,9 +229,10 @@ async function renderAccessAdmin(box) {
   box.innerHTML = `
     <div class="section-label">Заявка на доступ сотрудника</div>
     <div class="as-note" style="margin-bottom:14px;max-width:820px">Сотрудник заполняет её на экране «Новая заявка» (плитка «Заявка на доступ»).
-      Служебная записка по ней адресована <b>начальнику отдела ИТ</b> и подписывается начальником отдела сотрудника — поэтому нужны отделы с начальниками и падежами ФИО.
+      Служебная записка по ней адресована <b>начальнику отдела ИТ</b> и подписывается начальником отдела сотрудника — поэтому нужны отделы с начальниками; у отдела ИТ — ещё ФИО начальника «кому?».
       В заявке сотрудник выбирает отдел <b>из этого списка</b> (свой отдел из домена подставляется, если название совпадает), вписать другой нельзя.</div>
     ${itMissing ? `<div class="warn-box">Не выбран отдел ИТ — в служебной записке будет пустая шапка «кому». Выберите его ниже, после того как добавите в список.</div>` : ""}
+    ${g.itChiefDatMissing ? `<div class="warn-box">У начальника отдела ИТ не заполнено ФИО «кому?» — в шапке записки оно будет без склонения. Откройте отдел ИТ в списке ниже и впишите, например, «Иванову И.И.».</div>` : ""}
     <div class="form-row">
       <div><div class="field-label">Отдел ИТ — кому адресована служебная записка</div>
         <select id="axIt" class="field-select"><option value="">— не выбран —</option>${g.orgDepts.map((d) => `<option ${d === g.itDept ? "selected" : ""}>${esc(d)}</option>`).join("")}</select></div>
@@ -274,11 +275,13 @@ let asstSettingsTab = "general";
 const ASST_DICTS = {
   depts: {
     title: "Отделы и начальники", add: "Добавить отдел",
-    sub: "Падежи ФИО нужны служебной записке: «Начальнику отдела … Иванову И.И.». Должность и склонение названия отдела подставляются сами",
+    sub: "Должность начальника и склонение названия отдела подставляются сами. ФИО «кому?» заполняется только у отдела ИТ — для шапки служебной записки «Начальнику отдела … Иванову И.И.»",
     cols: [["name", "Отдел"], ["chief_name", "Начальник"], ["sort", "Порядок"]],
     fields: [
       ["name", "Название отдела *", "Отдел статистики цен"],
-      ["chief_name", "Начальник (Фамилия И.О.)", "Иванов И.И."], ["chief_name_gen", "Начальник — кого?", "Иванова И.И."], ["chief_name_dat", "Начальник — кому?", "Иванову И.И."],
+      ["chief_name", "Начальник (Фамилия И.О.)", "Иванов И.И."],
+      // «Кому?» нужно только в шапке записки, а адресована она начальнику отдела ИТ.
+      ["chief_name_dat", "Начальник — кому?", "Иванову И.И. — для шапки записки", "", (item, g) => !!item && !!g && item.name === g.itDept],
       ["sort", "Порядок", "0"],
     ],
   },
@@ -406,7 +409,7 @@ function asstDictForm(dictId, item, general, onSaved) {
       <input class="field-input" data-k="${k}" value="${esc(v(k))}" placeholder="${esc(ph)}" ${k === "sort" ? 'type="number"' : ""}></div>`;
   };
   const m = asstModal(item ? "Правка" : d.add, `
-    <div class="as-grid">${d.fields.map(field).join("")}</div>
+    <div class="as-grid">${d.fields.filter((f) => !f[4] || f[4](item, general)).map(field).join("")}</div>
     <div class="td-form-foot"><span class="td-form-err" id="dfErr"></span>
       <button class="btn btn-text" data-cancel>Отмена</button><button class="btn btn-wire" data-save>Сохранить</button></div>`, { wide: d.fields.length > 5 });
   m.el.querySelector("[data-cancel]").onclick = m.close;
