@@ -62,6 +62,14 @@ async function renderDashboard(main) {
 }
 
 // ====== Администрирование ======
+// Разделы — вкладками сверху, как в настройках Ассистента: страница выросла, и
+// листать её целиком ради одной настройки стало неудобно.
+const ADMIN_TABS = [
+  ["people", "Администраторы и исполнители"], ["groups", "Группы исполнителей"],
+  ["access", "Заявка на доступ"], ["backup", "Резервные копии"],
+];
+let adminTab = "people";
+
 async function renderAdmin(main) {
   main.innerHTML = `<div class="topbar"><div class="topbar-title">Администрирование</div></div><div class="page"><div class="spinner">Загрузка…</div></div>`;
   try {
@@ -99,6 +107,11 @@ async function renderAdmin(main) {
     const пусто = (текст) => `<div style="font-size:12.5px;color:var(--ink-soft);">${текст}</div>`;
 
     main.querySelector(".page").innerHTML = `
+      <div class="toggle-group as-tabs" id="admTabs">
+        ${ADMIN_TABS.map(([id, l]) => `<button class="toggle-btn${adminTab === id ? " active" : ""}" data-tab="${id}">${l}</button>`).join("")}
+      </div>
+
+      <div data-pane="people">
       <div class="card" style="margin-bottom:14px;">
         <div class="section-label">Администраторы платформы</div>
         <div style="font-size:11.5px;color:var(--ink-soft);margin-bottom:6px;">
@@ -117,9 +130,13 @@ async function renderAdmin(main) {
         </div>
         ${executors.length ? executors.map(a => человек(a, true)).join("") : пусто("Пока никто не входил под ролью исполнителя.")}
       </div>
+      </div>
 
+      <div data-pane="access">
       <div class="card" style="margin-bottom:20px;" id="accessAdmin"><div class="spinner">Загрузка…</div></div>
+      </div>
 
+      <div data-pane="backup">
       <div class="card" style="margin-bottom:20px;">
         <div class="section-label">Резервные копии баз</div>
         <div style="font-size:12px;color:var(--ink-soft);margin-bottom:14px;">
@@ -152,7 +169,9 @@ async function renderAdmin(main) {
             </div>`
           : `<div style="font-size:12px;color:var(--ink-soft);">${esc((backupInfo.copies && backupInfo.copies.error) || "Копий пока нет — первая появится при ближайшем ежемесячном обходе или по кнопке «Сделать копию сейчас».")}</div>`}
       </div>
+      </div>
 
+      <div data-pane="groups">
       <div style="display:flex;gap:20px;align-items:flex-start;">
         <div style="flex:1;min-width:0;">
           <div class="card">
@@ -171,7 +190,17 @@ async function renderAdmin(main) {
           <button class="btn btn-wire" id="saveGroups" style="width:100%;justify-content:center;">Сохранить</button>
           <div id="saveMsg" style="margin-top:8px;font-size:12px;color:var(--green);display:none;text-align:center;">Сохранено</div>
         </div>
+      </div>
       </div>`;
+
+    // Вкладки только прячут разделы: всё загружено разом, и введённое, но
+    // не сохранённое при переключении не теряется.
+    const showTab = () => {
+      main.querySelectorAll("#admTabs .toggle-btn").forEach((b) => b.classList.toggle("active", b.dataset.tab === adminTab));
+      main.querySelectorAll("[data-pane]").forEach((p) => { p.hidden = p.dataset.pane !== adminTab; });
+    };
+    main.querySelectorAll("#admTabs .toggle-btn").forEach((b) => { b.onclick = () => { adminTab = b.dataset.tab; showTab(); }; });
+    showTab();
 
     // ---- Заявка на доступ: отделы, начальники, отдел ИТ (app-assistant.js) ----
     renderAccessAdmin(main.querySelector("#accessAdmin"));
