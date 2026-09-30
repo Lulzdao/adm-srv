@@ -144,14 +144,19 @@ test("заявка на доступ: заявка в ИТ с анкетой; з
   assert.strictEqual((await U2.get(`/api/assistant/access/${tid}/doc`)).status, 403);
 });
 
-test("заявка на доступ: проверки полей и программ", async (t) => {
-  const { U } = await стенд(t);
-  const base = { type: "register", last_name: "Тестов", first_name: "Тест", department: "Отдел", post: "Экономист", programs: ["АРМ ГС"] };
+test("заявка на доступ: проверки полей, программ и отдела", async (t) => {
+  const { Adm, U } = await стенд(t);
+  await справочники(Adm);
+  assert.strictEqual((await U.get("/api/assistant/refs")).json.myDepartment, "Отдел выдуманной статистики", "свой отдел из домена выбран в списке");
+  const base = { type: "register", last_name: "Тестов", first_name: "Тест", department: "Отдел выдуманной статистики", post: "Экономист", programs: ["АРМ ГС"] };
   assert.strictEqual((await U.post("/api/assistant/access", { ...base, type: "hack" })).status, 400);
   assert.strictEqual((await U.post("/api/assistant/access", { ...base, last_name: "" })).status, 400);
   assert.strictEqual((await U.post("/api/assistant/access", { ...base, programs: [] })).status, 400);
   assert.strictEqual((await U.post("/api/assistant/access", { ...base, programs: ["Чужая программа"] })).status, 400);
-  const r = await U.post("/api/assistant/access", { type: "block", last_name: "Тестов", first_name: "Тест", department: "Отдел" });
+  const bad = await U.post("/api/assistant/access", { ...base, department: "Отдел, которого нет в справочнике" });
+  assert.strictEqual(bad.status, 400);
+  assert.match(bad.json.error, /из списка/);
+  const r = await U.post("/api/assistant/access", { type: "block", last_name: "Тестов", first_name: "Тест", department: "Отдел выдуманной статистики" });
   assert.strictEqual(r.status, 201);
   assert.strictEqual((await U.get(`/api/tickets/${r.json.ticket.id}`)).json.ticket.priority, "high");
 });
@@ -166,7 +171,7 @@ test("шаблоны: загрузка своего, проверка при з�
   const ok = await upload(app, Adm, "/api/assistant/settings/templates/access", "мой.docx", mine);
   assert.strictEqual(ok.status, 200);
   assert.deepStrictEqual(ok.json.tags, ["FIO"]);
-  const tid = (await U.post("/api/assistant/access", { type: "block", last_name: "Тестов", first_name: "Тест", department: "Отдел" })).json.ticket.id;
+  const tid = (await U.post("/api/assistant/access", { type: "block", last_name: "Тестов", first_name: "Тест", department: "Отдел выдуманной статистики" })).json.ticket.id;
   assert.strictEqual(docText((await download(app, U, `/api/assistant/access/${tid}/doc`)).buf), "СВОЙ БЛАНК Тестов Тест");
   assert.strictEqual((await Adm.delete("/api/assistant/settings/templates/access")).status, 200);
   assert.match(docText((await download(app, U, `/api/assistant/access/${tid}/doc`)).buf), /Служебная записка/);

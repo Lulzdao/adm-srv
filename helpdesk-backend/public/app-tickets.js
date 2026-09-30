@@ -254,7 +254,7 @@ function renderCreate(main) {
   const доступHtml = `
     <button type="button" class="dept-tile access" data-dept="${ACCESS}">
       <span class="dept-icon">${icon("key", 22)}</span>
-      <span class="dept-name">Доступ к программам</span>
+      <span class="dept-name">Заявка на доступ</span>
       <span class="dept-hint">Учётная запись сотрудника: регистрация, блокировка, восстановление, права</span>
       <span class="dept-check">${icon("check", 12)}</span>
     </button>`;

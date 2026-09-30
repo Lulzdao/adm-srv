@@ -5,7 +5,7 @@
 // меню).
 //
 // Здесь же — форма заявки на доступ сотрудника: она живёт на экране «Новая
-// заявка» плиткой «Доступ к программам», а её настройки (отделы и начальники,
+// заявка» плиткой «Заявка на доступ», а её настройки (отделы и начальники,
 // отдел ИТ, программы) — в Администрировании заявок. Файлы раздела: этот —
 // оболочка, заявка на доступ, настройки; app-acts.js — акты; app-mailings.js —
 // рассылки.
@@ -85,7 +85,7 @@ function asstModal(title, bodyHtml, { wide = false } = {}) {
 
 /**
  * Форма заявки на доступ сотрудника в контейнере box. Рисует экран «Новая
- * заявка», когда выбрана плитка «Доступ к программам». onCancel — кнопка
+ * заявка», когда выбрана плитка «Заявка на доступ». onCancel — кнопка
  * «Отмена».
  */
 async function renderAccessForm(box, { onCancel } = {}) {
@@ -115,8 +115,11 @@ async function renderAccessForm(box, { onCancel } = {}) {
           <input class="field-input" id="acPost" list="acPosts" maxlength="150" placeholder="выберите или впишите">
           <datalist id="acPosts">${refs.posts.map((p) => `<option value="${esc(p)}">`).join("")}</datalist></div>
         <div><div class="field-label">Отдел *</div>
-          <input class="field-input" id="acDept" list="acDepts" maxlength="150" value="${esc(refs.myDepartment)}" placeholder="выберите или впишите">
-          <datalist id="acDepts">${refs.depts.map((d) => `<option value="${esc(d.name)}">`).join("")}</datalist></div>
+          <select class="field-select" id="acDept"${refs.depts.length ? "" : " disabled"}>
+            <option value="">${refs.depts.length ? "— выберите отдел —" : "список отделов пуст"}</option>
+            ${refs.depts.map((d) => `<option${d.name === refs.myDepartment ? " selected" : ""}>${esc(d.name)}</option>`).join("")}
+          </select>
+          ${refs.depts.length ? "" : `<div class="as-note" style="margin-top:6px">Отделы ещё не заведены — обратитесь в отдел ИТ</div>`}</div>
       </div>
       <div class="form-row" style="margin-bottom:0">
         <div><div class="field-label">Кабинет</div><input class="field-input" id="acRoom" maxlength="20"></div>
@@ -225,8 +228,9 @@ async function renderAccessAdmin(box) {
   const itMissing = !g.itDept;
   box.innerHTML = `
     <div class="section-label">Заявка на доступ сотрудника</div>
-    <div class="as-note" style="margin-bottom:14px;max-width:820px">Сотрудник заполняет её на экране «Новая заявка» (плитка «Доступ к программам»).
-      Служебная записка по ней адресована <b>начальнику отдела ИТ</b> и подписывается начальником отдела сотрудника — поэтому нужны отделы с начальниками и падежами ФИО.</div>
+    <div class="as-note" style="margin-bottom:14px;max-width:820px">Сотрудник заполняет её на экране «Новая заявка» (плитка «Заявка на доступ»).
+      Служебная записка по ней адресована <b>начальнику отдела ИТ</b> и подписывается начальником отдела сотрудника — поэтому нужны отделы с начальниками и падежами ФИО.
+      В заявке сотрудник выбирает отдел <b>из этого списка</b> (свой отдел из домена подставляется, если название совпадает), вписать другой нельзя.</div>
     ${itMissing ? `<div class="warn-box">Не выбран отдел ИТ — в служебной записке будет пустая шапка «кому». Выберите его ниже, после того как добавите в список.</div>` : ""}
     <div class="form-row">
       <div><div class="field-label">Отдел ИТ — кому адресована служебная записка</div>
