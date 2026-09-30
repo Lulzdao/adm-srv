@@ -72,6 +72,8 @@ module.exports = {
     // Без этой строки собранное приложение падало бы при старте: файл в сборку не попал бы.
     // Тест diagnose.test.js рядом с ним не перечислен и в сборку не идёт — так и надо.
     'diagnose.js',
+    // Разбор машинной политики C:\ProgramData\Iskra\config.json (require из main.js) — то же самое.
+    'policy.js',
     'renderer/**/*',
     'tray-icon.ico',
     'tray-icon-fallback.png', // запасной вариант, если .ico не декодируется — см. createTray в main.js

@@ -6,6 +6,7 @@ const http = require('http');
 const https = require('https');
 const tls = require('tls');
 const { diagnoseServer } = require('./diagnose');
+const { parseMachinePolicy } = require('./policy');
 const { SERVER_URL } = require('./config');
 const { autoUpdater } = require('electron-updater');
 
@@ -255,34 +256,15 @@ const MACHINE_POLICY_PATH = process.platform === 'win32'
   ? path.join(process.env.ProgramData || 'C:\\ProgramData', 'Iskra', 'config.json')
   : '/etc/iskra/config.json';
 
+// Разбор — в policy.js (там же про метку BOM, из-за которой политика раньше молча не действовала).
+// Файл есть, но прочитать нельзя — пишем в журнал: иначе администратор видел бы только, что
+// клиенты «почему-то» идут на адрес из сборки.
 function readMachinePolicy() {
-  const empty = { serverUrl: null, allowInsecureHttp: false, extraCa: [], source: null };
-  let raw;
-  try { raw = fs.readFileSync(MACHINE_POLICY_PATH, 'utf8'); } catch { return empty; }
-
-  let cfg;
-  try { cfg = JSON.parse(raw); } catch { return empty; }
-
-  const extraCa = [];
-  // Корни можно задать и текстом прямо в файле, и путями к .crt — второе удобнее для GPO,
-  // которая обычно кладёт рядом готовые файлы.
-  for (const pem of [].concat(cfg.extraCaPem || [])) {
-    if (typeof pem === 'string' && pem.includes('BEGIN CERTIFICATE')) extraCa.push(pem);
-  }
-  for (const file of [].concat(cfg.extraCaFiles || [])) {
-    if (typeof file !== 'string') continue;
-    try { extraCa.push(fs.readFileSync(file, 'utf8')); } catch { /* файла нет — пропускаем */ }
-  }
-
-  return {
-    serverUrl: typeof cfg.serverUrl === 'string' && cfg.serverUrl.trim() ? cfg.serverUrl.trim() : null,
-    // Работа без шифрования — только явным решением администратора и только через политику.
-    // Автоматического отката при ошибке сертификата нет намеренно: иначе любой в сети смог бы
-    // уронить TLS и заставить клиентов самих перейти на открытый канал.
-    allowInsecureHttp: cfg.allowInsecureHttp === true,
-    extraCa,
-    source: MACHINE_POLICY_PATH,
-  };
+  let raw = null;
+  try { raw = fs.readFileSync(MACHINE_POLICY_PATH, 'utf8'); } catch { /* файла нет — обычное дело */ }
+  const { policy, error } = parseMachinePolicy(raw, (f) => fs.readFileSync(f, 'utf8'), MACHINE_POLICY_PATH);
+  if (error) logLocal('machine_policy_invalid', { file: MACHINE_POLICY_PATH, error }, 'WARN');
+  return policy;
 }
 
 const machinePolicy = readMachinePolicy();
@@ -895,7 +877,12 @@ function checkForUpdates() {
     return;
   }
   try {
-    autoUpdater.setFeedURL({ provider: 'generic', url: updateFeedUrl() });
+    // useMultipleRangeRequest: false — докачивать только изменившиеся куски установщика запросами по
+    // одному диапазону. По умолчанию electron-updater просит много диапазонов одним запросом и ждёт
+    // ответ multipart/byteranges, а раздача файлов сервера (express.static) такое не умеет и отдаёт
+    // файл целиком. Итог был — «Cannot download differentially, fallback to full download» и все
+    // 200 МБ установщика на каждое рабочее место при каждом обновлении (проверено на пилоте 2026-09-30).
+    autoUpdater.setFeedURL({ provider: 'generic', url: updateFeedUrl(), useMultipleRangeRequest: false });
     autoUpdater.autoDownload = !!settings.autoUpdate;
     // Обещание отвергается при той же ошибке, о которой уже сообщило событие 'error' (с уровнем и
     // понятным текстом, см. setupUpdater). Без .catch оно всплывало ещё раз — как main_unhandled_rejection
