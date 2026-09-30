@@ -7,7 +7,7 @@ const { readFirstSheet, buildXlsx } = require("../services/xlsx");
 const { readTable, parseCsv } = require("../services/tables");
 const { fillDocx, listTags, checkTemplate } = require("../services/docx");
 const { defaultTemplate, KINDS } = require("../services/docxDefaults");
-const { parseEquipment, parseParts, shortName } = require("../services/assistant");
+const { shortName } = require("../services/assistant");
 
 // ============================================================================
 //  Ассистент: документы без HTTP — zip, книги Excel, CSV, шаблоны Word
@@ -136,7 +136,6 @@ test("шаблон: незакрытый список — понятная ош�
 test("встроенные шаблоны собираются и заполняются без остатков меток", () => {
   const data = {
     num: 3, actNumber: 7, date: "01.10.2026", orgName: "Липецкстат",
-    tec: [{ num: 1, name: "Монитор выдуманный", inv: "И-1", count: 1 }],
     tecToRepair: [{ name: "Принтер выдуманный", inventoryNum: "И-2", location: "каб. 1" }],
     defects: [{ defectsName: "износ", count: 1 }], defectRepair: [{ repairWorks: "замена", count: 1 }],
     repair: [{ repairWorks: "замена", name: "Фьюзер", nomenclature: "00-1", count: 1 }],
@@ -147,20 +146,10 @@ test("встроенные шаблоны собираются и заполня
     const out = docXml(fillDocx(defaultTemplate(kind), data));
     assert.doesNotMatch(textOf(out), /[{}]/, kind);
   }
-  assert.match(textOf(docXml(fillDocx(defaultTemplate("transfer"), data))), /Монитор выдуманный/);
+  assert.match(textOf(docXml(fillDocx(defaultTemplate("repair"), data))), /Принтер выдуманный/);
 });
 
-test("выгрузки из 1С: разделитель «t###t», пустые поля, количество", () => {
-  const eq = parseEquipment("Калькулятор выдуманный t###tИ-0001t###t01.06.2006t###t1\r\nФлеш диск Ethernett###tt###tt###t2\r\n\r\n");
-  assert.deepStrictEqual(eq, [
-    { name: "Калькулятор выдуманный", inv: "И-0001", commissioned: "01.06.2006", count: 1 },
-    { name: "Флеш диск Ethernet", inv: null, commissioned: null, count: 2 },
-  ]);
-  const parts = parseParts("﻿Картридж выдуманный (черный)t###tt###t00-000000000001t###t6\nФьюзер выдуманныйt###tсклад t###t00-000000000002t###t2");
-  assert.strictEqual(parts[0].cartridge, 1);
-  assert.strictEqual(parts[1].cartridge, 0);
-  assert.strictEqual(parts[1].location, "склад");
-  assert.throws(() => parseParts("просто текст"), /rep\.txt/);
+test("ФИО сокращается до «Фамилия И.О.»", () => {
   assert.strictEqual(shortName("Тестов Тест Тестович"), "Тестов Т.Т.");
 });
 

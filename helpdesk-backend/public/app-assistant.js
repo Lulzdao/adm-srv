@@ -1,20 +1,18 @@
 // ====== Ассистент ======
 //
-// Замена прежним «Ассистенту» и «Почтальону»: системы отдела, заявки на доступ
-// сотрудника, передача оборудования, журнал техники и акты, рассылки
-// респондентам. Раздел видят все; «Настройки» — только администраторы (и
-// проверяет это сервер, а не только меню).
+// Акты (заполняются вручную) и рассылки респондентам. Раздел видят все;
+// «Настройки» — только администраторы (и проверяет это сервер, а не только
+// меню).
 //
-// Файлы раздела: этот — оболочка, системы, заявка на доступ, передача и
-// настройки; app-journal.js — журнал техники и акты; app-mailings.js — рассылки.
+// Здесь же — форма заявки на доступ сотрудника: она живёт на экране «Новая
+// заявка» плиткой «Доступ к программам», а её настройки (отделы и начальники,
+// отдел ИТ, программы) — в Администрировании заявок. Файлы раздела: этот —
+// оболочка, заявка на доступ, настройки; app-acts.js — акты; app-mailings.js —
+// рассылки.
 //
 // Всё, что пришло из базы, — в разметку только через esc().
 
 const ASSISTANT_VIEWS = [
-  { id: "asst:home", label: "Системы отдела", icon: "link" },
-  { id: "asst:access", label: "Заявка на доступ", icon: "key" },
-  { id: "asst:transfer", label: "Передача техники", icon: "box" },
-  { id: "asst:journal", label: "Журнал техники", icon: "monitor" },
   { id: "asst:acts", label: "Акты", icon: "receipt" },
   { id: "asst:mail", label: "Рассылки", icon: "mail" },
   { id: "asst:settings", label: "Настройки", icon: "sliders" },
@@ -28,10 +26,6 @@ async function asstRefs(force) {
 
 function renderAssistant(main, sub) {
   clearViewPoll();
-  if (sub === "home") return renderAsstHome(main);
-  if (sub === "access") return renderAsstAccess(main);
-  if (sub === "transfer") return renderAsstTransfer(main);
-  if (sub === "journal") return renderAsstJournal(main);
   if (sub === "acts") return renderAsstActs(main);
   if (sub === "mail") return state.mailOpenId ? renderMailing(main, state.mailOpenId) : renderMailings(main);
   if (sub === "settings") return renderAsstSettings(main);
@@ -87,171 +81,88 @@ function asstModal(title, bodyHtml, { wide = false } = {}) {
   return { el: wrap.querySelector(".as-modal"), close };
 }
 
+// ---- Заявка на доступ (экран «Новая заявка») --------------------------------
+
 /**
- * Поле с подсказками из базы (техника, запчасти): печатаешь — под полем
- * список, щелчок по строке вызывает onPick. Своё значение ввести тоже можно.
+ * Форма заявки на доступ сотрудника в контейнере box. Рисует экран «Новая
+ * заявка», когда выбрана плитка «Доступ к программам». onCancel — кнопка
+ * «Отмена».
  */
-function asstAutocomplete(input, fetchItems, renderItem, onPick) {
-  const box = document.createElement("div");
-  box.className = "as-ac";
-  box.hidden = true;
-  input.parentNode.style.position = "relative";
-  input.parentNode.appendChild(box);
-  let timer, items = [], active = -1;
-  const hide = () => { box.hidden = true; active = -1; };
-  const paint = () => {
-    box.innerHTML = items.length
-      ? items.map((it, i) => `<div class="as-ac-row${i === active ? " on" : ""}" data-i="${i}">${renderItem(it)}</div>`).join("")
-      : `<div class="as-ac-empty">В базе не найдено — можно вписать вручную</div>`;
-    box.hidden = false;
-    box.querySelectorAll(".as-ac-row").forEach((r) => {
-      r.onmousedown = (e) => { e.preventDefault(); onPick(items[Number(r.dataset.i)]); hide(); };
-    });
-  };
-  input.addEventListener("input", () => {
-    clearTimeout(timer);
-    const q = input.value.trim();
-    if (q.length < 2) { hide(); return; }
-    timer = setTimeout(async () => {
-      try { items = await fetchItems(q); } catch { items = []; }
-      active = -1;
-      if (document.activeElement === input) paint();
-    }, 200);
-  });
-  input.addEventListener("keydown", (e) => {
-    if (box.hidden || !items.length) return;
-    if (e.key === "ArrowDown") { e.preventDefault(); active = (active + 1) % items.length; paint(); }
-    else if (e.key === "ArrowUp") { e.preventDefault(); active = (active - 1 + items.length) % items.length; paint(); }
-    else if (e.key === "Enter" && active >= 0) { e.preventDefault(); onPick(items[active]); hide(); }
-    else if (e.key === "Escape") hide();
-  });
-  input.addEventListener("blur", () => setTimeout(hide, 120));
-}
-
-// ---- Системы отдела ----------------------------------------------------------
-
-async function renderAsstHome(main) {
-  const isAdmin = state.user.is_admin;
-  main.innerHTML = `
-    ${asstTopbar("Ассистент", isAdmin ? `<button class="btn btn-ghost" id="asHomeAll">Показать все плитки</button>` : "")}
-    <div class="page">
-      <div class="as-sec">Системы вашего отдела</div>
-      <div class="as-tiles" id="asTiles"><div class="spinner">Загрузка…</div></div>
-      <div class="as-sec" style="margin-top:28px">Что сделать</div>
-      <div class="as-quick">
-        ${[
-          ["asst:access", "key", "Заявка на доступ", "Регистрация, блокировка, восстановление учётной записи сотрудника"],
-          ["asst:transfer", "box", "Передача техники", "Заявка на передачу оборудования между отделами"],
-          ["asst:journal", "monitor", "Журнал техники", "Картриджи и запчасти: что куда поставлено, остатки"],
-          ["asst:acts", "receipt", "Акты", "Ремонт, списание оборудования, ведомость по картриджам"],
-          ["asst:mail", "mail", "Рассылка", "Письма респондентам по списку — с отчётом о доставке"],
-        ].map(([id, ic, t, h]) => `
-          <button class="as-q" data-go="${id}"><span class="as-q-ic">${icon(ic, 20)}</span>
-            <span><b>${t}</b><small>${h}</small></span></button>`).join("")}
-      </div>
-    </div>`;
-  main.querySelectorAll("[data-go]").forEach((b) => { b.onclick = () => setView(b.dataset.go); });
-  let all = false;
-  const load = async () => {
-    const tiles = main.querySelector("#asTiles");
-    let links;
-    try { links = (await api("/assistant/links" + (all ? "?all=1" : ""))).links; } catch (e) {
-      tiles.innerHTML = `<div class="empty-state">${esc(e.message)}</div>`; return;
-    }
-    if (!links.length) {
-      tiles.innerHTML = `<div class="as-empty">${isAdmin
-        ? `Плиток пока нет. Добавьте ссылки на системы в <a href="#asst:settings">настройках</a> — каждому отделу свой набор.`
-        : "Администратор ещё не добавил ссылки на системы для вашего отдела."}</div>`;
-      return;
-    }
-    tiles.innerHTML = links.map((l, i) => `
-      <a class="as-tile" href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">
-        <span class="as-tile-ic" style="background:${DEPT_FALLBACK_COLORS[i % DEPT_FALLBACK_COLORS.length]}">${esc(l.title.replace(/[^\p{L}\p{N}]/gu, "").slice(0, 2).toUpperCase())}</span>
-        <span class="as-tile-t">${esc(l.title)}</span>
-        <span class="as-tile-h">${esc(l.hint || l.url.replace(/^https?:\/\//, ""))}</span>
-        ${l.shared ? "" : `<span class="as-tile-tag">отдел</span>`}
-      </a>`).join("");
-  };
-  const allBtn = main.querySelector("#asHomeAll");
-  if (allBtn) allBtn.onclick = () => { all = !all; allBtn.textContent = all ? "Только мои" : "Показать все плитки"; load(); };
-  load();
-}
-
-// ---- Заявка на доступ -------------------------------------------------------
-
-async function renderAsstAccess(main) {
-  main.innerHTML = `${asstTopbar("Заявка на доступ")}<div class="page"><div class="spinner">Загрузка…</div></div>`;
+async function renderAccessForm(box, { onCancel } = {}) {
+  box.innerHTML = `<div class="spinner">Загрузка…</div>`;
   let refs;
-  try { refs = await asstRefs(true); } catch (e) { main.querySelector(".page").innerHTML = `<div class="empty-state">${esc(e.message)}</div>`; return; }
+  try { refs = await asstRefs(true); } catch (e) { box.innerHTML = `<div class="empty-state">${esc(e.message)}</div>`; return; }
   let type = "register";
   const needsAccess = () => ["register", "edit", "restore"].includes(type);
 
-  main.querySelector(".page").innerHTML = `
-    <div class="form-narrow">
-      <div class="form-card">
-        <div class="form-card-title">Что нужно сделать</div>
-        <div class="form-card-sub">Заявка уйдёт в отдел ИТ обычной заявкой: её статус и переписка — в «Мои заявки»</div>
-        <div class="prio-row" id="acType" style="margin-bottom:0">
-          ${refs.accessTypes.map((t) => `<button type="button" class="prio-chip${t.id === type ? " active" : ""}" data-t="${t.id}">${esc(t.short)}</button>`).join("")}
-        </div>
+  box.innerHTML = `
+    <div class="form-card">
+      <div class="form-card-title">Что нужно сделать</div>
+      <div class="form-card-sub">Заявка уйдёт в отдел ИТ; её статус и переписка — в «Мои заявки»</div>
+      <div class="prio-row" id="acType" style="margin-bottom:0">
+        ${refs.accessTypes.map((t) => `<button type="button" class="prio-chip${t.id === type ? " active" : ""}" data-t="${t.id}">${esc(t.short)}</button>`).join("")}
       </div>
-      <div class="form-card">
-        <div class="form-card-title" style="margin-bottom:16px">Сотрудник</div>
-        <div class="form-row">
-          <div><div class="field-label">Фамилия *</div><input class="field-input" id="acLast" maxlength="60"></div>
-          <div><div class="field-label">Имя *</div><input class="field-input" id="acFirst" maxlength="60"></div>
-          <div><div class="field-label">Отчество</div><input class="field-input" id="acMiddle" maxlength="60"></div>
-        </div>
-        <div class="form-row">
-          <div><div class="field-label">Должность <span id="acPostStar">*</span></div>
-            <input class="field-input" id="acPost" list="acPosts" maxlength="150" placeholder="выберите или впишите">
-            <datalist id="acPosts">${refs.posts.map((p) => `<option value="${esc(p)}">`).join("")}</datalist></div>
-          <div><div class="field-label">Отдел *</div>
-            <input class="field-input" id="acDept" list="acDepts" maxlength="150" value="${esc(refs.myDepartment)}">
-            <datalist id="acDepts">${refs.depts.map((d) => `<option value="${esc(d.name)}">`).join("")}</datalist></div>
-        </div>
-        <div class="form-row" style="margin-bottom:0">
-          <div><div class="field-label">Кабинет</div><input class="field-input" id="acRoom" maxlength="20"></div>
-          <div><div class="field-label">Внутренний тел.</div><input class="field-input" id="acInt" maxlength="20"></div>
-          <div><div class="field-label">Внешний тел.</div><input class="field-input" id="acExt" maxlength="30"></div>
-          <div><div class="field-label">Мобильный</div><input class="field-input" id="acMob" maxlength="30"></div>
-        </div>
+    </div>
+    <div class="form-card">
+      <div class="form-card-title" style="margin-bottom:16px">Сотрудник</div>
+      <div class="form-row">
+        <div><div class="field-label">Фамилия *</div><input class="field-input" id="acLast" maxlength="60"></div>
+        <div><div class="field-label">Имя *</div><input class="field-input" id="acFirst" maxlength="60"></div>
+        <div><div class="field-label">Отчество</div><input class="field-input" id="acMiddle" maxlength="60"></div>
       </div>
-      <div class="form-card" id="acAccessCard">
-        <div class="form-card-title">Необходимо предоставить доступ</div>
-        <div class="form-card-sub">Отметьте программы, которые нужны сотруднику</div>
-        <div class="as-checks" id="acProgs">
-          ${refs.programs.map((p) => `<label class="as-check"><input type="checkbox" value="${esc(p)}"><span>${esc(p)}</span></label>`).join("")}
-        </div>
-        <div class="field-label" style="margin-top:16px">Формы в ЦСОД (через запятую)</div>
-        <input class="field-input" id="acCsod" maxlength="1000" placeholder="напр. 1-Т, П-1, П-4">
+      <div class="form-row">
+        <div><div class="field-label">Должность <span id="acPostStar">*</span></div>
+          <input class="field-input" id="acPost" list="acPosts" maxlength="150" placeholder="выберите или впишите">
+          <datalist id="acPosts">${refs.posts.map((p) => `<option value="${esc(p)}">`).join("")}</datalist></div>
+        <div><div class="field-label">Отдел *</div>
+          <input class="field-input" id="acDept" list="acDepts" maxlength="150" value="${esc(refs.myDepartment)}" placeholder="выберите или впишите">
+          <datalist id="acDepts">${refs.depts.map((d) => `<option value="${esc(d.name)}">`).join("")}</datalist></div>
       </div>
-      <div class="form-card">
-        <div class="field-label">Комментарий</div>
-        <textarea class="field-input" id="acComment" rows="3" maxlength="1000" style="resize:vertical;margin-bottom:0" placeholder="С какой даты, чьи права скопировать, до какого числа блокировать…"></textarea>
+      <div class="form-row" style="margin-bottom:0">
+        <div><div class="field-label">Кабинет</div><input class="field-input" id="acRoom" maxlength="20"></div>
+        <div><div class="field-label">Внутренний тел.</div><input class="field-input" id="acInt" maxlength="20"></div>
+        <div><div class="field-label">Внешний тел.</div><input class="field-input" id="acExt" maxlength="30"></div>
+        <div><div class="field-label">Мобильный</div><input class="field-input" id="acMob" maxlength="30"></div>
       </div>
-      <div class="form-foot">
-        <div class="hint" id="acHint">После отправки можно скачать служебную записку для подписи начальника отдела</div>
-        <div class="actions"><button class="btn btn-wire" id="acSend">Отправить в ИТ</button></div>
+    </div>
+    <div class="form-card" id="acAccessCard">
+      <div class="form-card-title">Необходимо предоставить доступ</div>
+      <div class="form-card-sub">Отметьте программы, которые нужны сотруднику</div>
+      <div class="as-checks" id="acProgs">
+        ${refs.programs.map((p) => `<label class="as-check"><input type="checkbox" value="${esc(p)}"><span>${esc(p)}</span></label>`).join("")}
       </div>
-      <div id="acDone"></div>
-    </div>`;
+      <div class="field-label" style="margin-top:16px">Формы в ЦСОД (через запятую)</div>
+      <input class="field-input" id="acCsod" maxlength="1000" placeholder="напр. 1-Т, П-1, П-4" style="margin-bottom:0">
+    </div>
+    <div class="form-card">
+      <div class="field-label">Комментарий</div>
+      <textarea class="field-input" id="acComment" rows="3" maxlength="1000" style="resize:vertical;margin-bottom:0" placeholder="С какой даты, чьи права скопировать, до какого числа блокировать…"></textarea>
+    </div>
+    <div class="form-foot">
+      <div class="hint" id="acHint">После отправки скачайте служебную записку: её подписывает начальник отдела сотрудника</div>
+      <div class="actions">
+        <button class="btn-text" id="acCancel">Отмена</button>
+        <button class="btn-send" id="acSend">Отправить заявку</button>
+      </div>
+    </div>
+    <div id="acDone"></div>`;
 
-  const $ = (id) => main.querySelector("#" + id);
+  const $ = (id) => box.querySelector("#" + id);
   const syncType = () => {
-    main.querySelectorAll("#acType .prio-chip").forEach((b) => b.classList.toggle("active", b.dataset.t === type));
+    box.querySelectorAll("#acType .prio-chip").forEach((b) => b.classList.toggle("active", b.dataset.t === type));
     $("acAccessCard").hidden = !needsAccess();
     $("acPostStar").hidden = type !== "register";
   };
-  main.querySelectorAll("#acType .prio-chip").forEach((b) => { b.onclick = () => { type = b.dataset.t; syncType(); }; });
+  box.querySelectorAll("#acType .prio-chip").forEach((b) => { b.onclick = () => { type = b.dataset.t; syncType(); }; });
   syncType();
+  $("acCancel").onclick = () => (onCancel ? onCancel() : setView("inbox"));
 
   $("acSend").onclick = async () => {
     const body = {
       type, last_name: $("acLast").value, first_name: $("acFirst").value, middle_name: $("acMiddle").value,
       post: $("acPost").value, department: $("acDept").value, room: $("acRoom").value,
       phone_int: $("acInt").value, phone_ext: $("acExt").value, phone_mobile: $("acMob").value,
-      programs: needsAccess() ? [...main.querySelectorAll("#acProgs input:checked")].map((c) => c.value) : [],
+      programs: needsAccess() ? [...box.querySelectorAll("#acProgs input:checked")].map((c) => c.value) : [],
       csod_forms: needsAccess() ? $("acCsod").value : "", comment: $("acComment").value,
     };
     const required = [["acLast", body.last_name], ["acFirst", body.first_name], ["acDept", body.department]];
@@ -260,7 +171,7 @@ async function renderAsstAccess(main) {
     for (const [id, v] of required) { const miss = !String(v).trim(); $(id).classList.toggle("invalid", miss); bad = bad || miss; }
     $("acHint").classList.toggle("invalid", bad);
     if (bad) { $("acHint").textContent = "Заполните отмеченные поля"; return; }
-    $("acHint").textContent = "После отправки можно скачать служебную записку для подписи начальника отдела";
+    $("acHint").textContent = "После отправки скачайте служебную записку: её подписывает начальник отдела сотрудника";
     $("acSend").disabled = true;
     try {
       const { ticket } = await api("/assistant/access", { method: "POST", body });
@@ -268,7 +179,7 @@ async function renderAsstAccess(main) {
       $("acDone").innerHTML = `
         <div class="as-done">
           <span class="as-done-ic">${icon("check", 18)}</span>
-          <div><b>Заявка ${esc(ticket.display_id)} отправлена</b><small>Служебную записку распечатайте и подпишите у начальника отдела</small></div>
+          <div><b>Заявка ${esc(ticket.display_id)} отправлена</b><small>Распечатайте служебную записку и подпишите у начальника своего отдела</small></div>
           <button class="btn btn-ghost" id="acDoc">${icon("download", 15)} Служебная записка</button>
           <button class="btn btn-ghost" id="acOpen">Открыть заявку</button>
         </div>`;
@@ -279,13 +190,12 @@ async function renderAsstAccess(main) {
       $("acDone").scrollIntoView({ behavior: "smooth", block: "nearest" });
     } catch (e) {
       toast(e.message, true);
-    } finally {
       $("acSend").disabled = false;
     }
   };
 }
 
-/** Анкета в карточке заявки (заявка на доступ из Ассистента). */
+/** Анкета в карточке заявки (заявка на доступ). */
 function ticketFormCard(ticket) {
   const d = ticket.form.data || {};
   const phones = [d.phone_int && `внутр. ${d.phone_int}`, d.phone_ext && `внеш. ${d.phone_ext}`, d.phone_mobile && `моб. ${d.phone_mobile}`].filter(Boolean).join(", ");
@@ -302,113 +212,57 @@ function ticketFormCard(ticket) {
     </div>`;
 }
 
-// ---- Передача техники ---------------------------------------------------------
+// ---- Заявка на доступ: настройки в Администрировании ------------------------
 
-async function renderAsstTransfer(main) {
-  main.innerHTML = `${asstTopbar("Передача техники")}<div class="page"><div class="spinner">Загрузка…</div></div>`;
-  let refs;
-  try { refs = await asstRefs(true); } catch (e) { main.querySelector(".page").innerHTML = `<div class="empty-state">${esc(e.message)}</div>`; return; }
-  const items = [];
-  const deptOptions = (sel) => `<option value="">— выберите отдел —</option>` + refs.depts.map((d) => `<option ${d.name === sel ? "selected" : ""}>${esc(d.name)}</option>`).join("");
-  const mine = refs.depts.some((d) => d.name === refs.myDepartment) ? refs.myDepartment : "";
-
-  main.querySelector(".page").innerHTML = `
-    <div class="as-cols">
-      <div>
-        ${refs.depts.length ? "" : `<div class="warn-box">Справочник отделов пуст — ${state.user.is_admin ? `заполните его в <a href="#asst:settings">настройках</a>` : "попросите администратора заполнить его"}: без начальников отделов заявку не собрать.</div>`}
-        <div class="form-card">
-          <div class="form-row" style="margin-bottom:0">
-            <div><div class="field-label">От кого (отдел)</div><select id="trFrom" class="field-select">${deptOptions(mine)}</select></div>
-            <div><div class="field-label">Кому (отдел)</div><select id="trTo" class="field-select">${deptOptions("")}</select></div>
-          </div>
-        </div>
-        <div class="form-card">
-          <div class="form-card-title">Оборудование на передачу</div>
-          <div class="form-card-sub">Начните вводить название или инвентарный номер — подскажу из базы техники</div>
-          <div class="as-add-row">
-            <div style="flex:1"><input class="field-input" id="trName" placeholder="Название или инвентарный номер" style="margin-bottom:0"></div>
-            <input class="field-input" id="trInv" placeholder="Инв. №" style="width:150px;margin-bottom:0">
-            <input class="field-input" id="trCount" type="number" min="1" value="1" style="width:80px;margin-bottom:0" title="Количество">
-            <button class="btn btn-ghost" id="trAdd">${icon("plus", 15)} Добавить</button>
-          </div>
-          <div id="trItems" style="margin-top:14px"></div>
-        </div>
-        <div class="form-foot">
-          <div class="hint" id="trHint">Заявку распечатайте: её подписывают оба начальника и согласует заместитель руководителя</div>
-          <div class="actions"><button class="btn btn-wire" id="trSave">${icon("download", 15)} Сформировать</button></div>
-        </div>
-      </div>
-      <div>
-        <div class="as-sec">Последние заявки</div>
-        <div id="trList"><div class="spinner">Загрузка…</div></div>
-      </div>
-    </div>`;
-
-  const $ = (id) => main.querySelector("#" + id);
-  const paint = () => {
-    $("trItems").innerHTML = items.length ? `
-      <div class="as-table-wrap"><table class="as-table"><thead><tr><th>№</th><th>Наименование</th><th>Инв. №</th><th>Кол-во</th><th></th></tr></thead><tbody>
-      ${items.map((it, i) => `<tr><td>${i + 1}</td><td>${esc(it.name)}</td><td class="mono">${esc(it.inv || "—")}</td><td>${it.count}</td>
-        <td><button class="as-icon-btn" data-del="${i}" title="Убрать">${icon("x", 14)}</button></td></tr>`).join("")}
-      </tbody></table></div></div>` : `<div class="as-empty">Список пуст</div>`;
-    $("trItems").querySelectorAll("[data-del]").forEach((b) => { b.onclick = () => { items.splice(Number(b.dataset.del), 1); paint(); }; });
-  };
-  paint();
-  const add = (it) => {
-    if (it.inv && items.some((x) => x.inv === it.inv)) { toast("Позиция уже внесена в список", true); return; }
-    items.push(it);
-    $("trName").value = ""; $("trInv").value = ""; $("trCount").value = 1;
-    paint();
-  };
-  asstAutocomplete($("trName"),
-    async (q) => (await api("/assistant/equipment?q=" + encodeURIComponent(q))).items,
-    (it) => `<b>${esc(it.name)}</b><small>инв. № ${esc(it.inv || "—")}${it.commissioned ? ` · с ${esc(it.commissioned)}` : ""}</small>`,
-    (it) => add({ name: it.name, inv: it.inv || "", count: it.count || 1 }));
-  $("trAdd").onclick = () => {
-    const name = $("trName").value.trim();
-    if (!name) { $("trName").classList.add("invalid"); return; }
-    $("trName").classList.remove("invalid");
-    add({ name, inv: $("trInv").value.trim(), count: Math.max(1, Number($("trCount").value) || 1) });
-  };
-
-  $("trSave").onclick = async () => {
-    if (!items.length) { toast("Добавьте оборудование на передачу", true); return; }
-    $("trSave").disabled = true;
+/**
+ * Блок «Заявка на доступ» в Администрировании заявок: отделы и начальники,
+ * какой отдел — ИТ (его начальнику адресована служебная записка), в какую
+ * очередь идут заявки, списки программ и должностей.
+ */
+async function renderAccessAdmin(box) {
+  let g;
+  try { g = await api("/assistant/settings/general"); } catch (e) { box.innerHTML = `<div class="empty-state">${esc(e.message)}</div>`; return; }
+  const itMissing = !g.itDept;
+  box.innerHTML = `
+    <div class="section-label">Заявка на доступ сотрудника</div>
+    <div class="as-note" style="margin-bottom:14px;max-width:820px">Сотрудник заполняет её на экране «Новая заявка» (плитка «Доступ к программам»).
+      Служебная записка по ней адресована <b>начальнику отдела ИТ</b> и подписывается начальником отдела сотрудника — поэтому нужны отделы с начальниками и падежами ФИО.</div>
+    ${itMissing ? `<div class="warn-box">Не выбран отдел ИТ — в служебной записке будет пустая шапка «кому». Выберите его ниже, после того как добавите в список.</div>` : ""}
+    <div class="form-row">
+      <div><div class="field-label">Отдел ИТ — кому адресована служебная записка</div>
+        <select id="axIt" class="field-select"><option value="">— не выбран —</option>${g.orgDepts.map((d) => `<option ${d === g.itDept ? "selected" : ""}>${esc(d)}</option>`).join("")}</select></div>
+      <div><div class="field-label">В какую очередь попадает заявка</div>
+        <select id="axQueue" class="field-select">${g.accessDepts.map((d) => `<option ${d === (g.accessDept || g.accessDepts[0]) ? "selected" : ""}>${esc(d)}</option>`).join("")}</select></div>
+    </div>
+    <div class="form-row">
+      <div><div class="field-label">Программы — по одной на строку</div>
+        <textarea class="field-input" id="axProgs" rows="7" style="resize:vertical">${esc(g.programs.join("\n"))}</textarea></div>
+      <div><div class="field-label">Должности — по одной на строку</div>
+        <textarea class="field-input" id="axPosts" rows="7" style="resize:vertical">${esc(g.posts.join("\n"))}</textarea></div>
+    </div>
+    <div style="display:flex;justify-content:flex-end;margin-bottom:22px"><button class="btn btn-wire" id="axSave">Сохранить</button></div>
+    <div id="axDepts"></div>`;
+  const lines = (id) => box.querySelector(id).value.split("\n").map((x) => x.trim()).filter(Boolean);
+  box.querySelector("#axSave").onclick = async () => {
     try {
-      const r = await api("/assistant/transfers", { method: "POST", body: { from_dept: $("trFrom").value, to_dept: $("trTo").value, items } });
-      toast(`Заявка № ${r.num} сформирована`);
-      asstDownload(`/assistant/transfers/${r.id}/doc`);
-      items.length = 0; paint(); loadList();
-    } catch (e) { toast(e.message, true); } finally { $("trSave").disabled = false; }
+      await api("/assistant/settings/general", { method: "PUT", body: {
+        itDept: box.querySelector("#axIt").value, accessDept: box.querySelector("#axQueue").value,
+        programs: lines("#axProgs"), posts: lines("#axPosts"),
+      } });
+      asstRefsCache = null;
+      toast("Сохранено");
+      renderAccessAdmin(box);
+    } catch (e) { toast(e.message, true); }
   };
-
-  async function loadList() {
-    let list;
-    try { list = (await api("/assistant/transfers")).transfers; } catch (e) { $("trList").innerHTML = `<div class="empty-state">${esc(e.message)}</div>`; return; }
-    if (!main.querySelector("#trList")) return;
-    $("trList").innerHTML = list.length ? list.slice(0, 30).map((t) => `
-      <div class="as-li">
-        <div class="as-li-main"><b>№ ${t.num} от ${esc(fmtDate(t.created_at).slice(0, 10))}</b>
-          <small>${esc(t.from_dept)} → ${esc(t.to_dept)} · ${t.items.length} поз. · ${esc(t.author)}</small></div>
-        <button class="as-icon-btn" data-doc="${t.id}" title="Скачать">${icon("download", 15)}</button>
-        ${t.created_by === state.user.id || state.user.is_admin ? `<button class="as-icon-btn" data-rm="${t.id}" title="Удалить">${icon("trash", 15)}</button>` : ""}
-      </div>`).join("") : `<div class="as-empty">Заявок пока нет</div>`;
-    $("trList").querySelectorAll("[data-doc]").forEach((b) => { b.onclick = () => asstDownload(`/assistant/transfers/${b.dataset.doc}/doc`); });
-    $("trList").querySelectorAll("[data-rm]").forEach((b) => {
-      b.onclick = async () => {
-        if (!confirm("Удалить заявку на передачу?")) return;
-        try { await api(`/assistant/transfers/${b.dataset.rm}`, { method: "DELETE" }); loadList(); } catch (e) { toast(e.message, true); }
-      };
-    });
-  }
-  loadList();
+  // Добавили или переименовали отдел — список «отдел ИТ» надо перечитать.
+  await asstDictEditor(box.querySelector("#axDepts"), "depts", g, () => renderAccessAdmin(box));
 }
 
 // ---- Настройки (администратор) ----------------------------------------------
 
 const ASST_SETTINGS_TABS = [
-  ["general", "Общие"], ["depts", "Отделы"], ["people", "Люди в документах"], ["links", "Системы"],
-  ["rules", "Неисправности"], ["templates", "Шаблоны"], ["imports", "Базы из 1С"], ["mail", "Почта рассылок"],
+  ["general", "Общие"], ["people", "Подписанты актов"], ["rules", "Неисправности"],
+  ["templates", "Шаблоны"], ["mail", "Почта рассылок"],
 ];
 let asstSettingsTab = "general";
 
@@ -416,7 +270,7 @@ let asstSettingsTab = "general";
 const ASST_DICTS = {
   depts: {
     title: "Отделы и начальники", add: "Добавить отдел",
-    sub: "Падежи ФИО нужны документам: «прошу передать начальнику отдела … Иванову И.И. от начальника отдела … Петрова П.П.». Должность и склонение названия отдела подставляются сами",
+    sub: "Падежи ФИО нужны служебной записке: «Начальнику отдела … Иванову И.И.». Должность и склонение названия отдела подставляются сами",
     cols: [["name", "Отдел"], ["chief_name", "Начальник"], ["sort", "Порядок"]],
     fields: [
       ["name", "Название отдела *", "Отдел статистики цен"],
@@ -425,30 +279,22 @@ const ASST_DICTS = {
     ],
   },
   people: {
-    title: "Люди в документах", add: "Добавить",
-    sub: "Руководитель — в шапке «кому» и в «УТВЕРЖДАЮ»; начальник ОИРиТ подписывает акты; составители выбираются при составлении акта",
+    title: "Подписанты актов", add: "Добавить",
+    sub: "Руководитель — в «УТВЕРЖДАЮ» актов; составители выбираются при составлении акта; комиссия — в акте на списание. Начальник отдела ИТ берётся из справочника отделов (Администрирование заявок)",
     cols: [["role", "Роль"], ["name", "Фамилия И.О."], ["post", "Должность"]],
     fields: [
       ["role", "Роль *", "", "role"], ["name", "Фамилия И.О. *", "Иванов И.И."], ["name_dat", "Фамилия И.О. — кому?", "Иванову И.И."],
       ["post", "Должность", "Руководитель"], ["post_dat", "Должность — кому?", "Руководителю"], ["sort", "Порядок", "0"],
     ],
   },
-  links: {
-    title: "Системы отдела", add: "Добавить систему",
-    sub: "Плитки на первой странице Ассистента. Без отделов плитку видят все; с отделами — только сотрудники этих отделов (название — как в AD)",
-    cols: [["title", "Название"], ["url", "Адрес"], ["departments", "Отделы"]],
-    fields: [
-      ["title", "Название *", "АРМ ГС"], ["url", "Адрес *", "http://…"], ["hint", "Подпись под названием", ""],
-      ["departments", "Отделы — по одному на строку", "", "depts"], ["sort", "Порядок", "0"],
-    ],
-  },
   rules: {
     title: "Типовые неисправности", add: "Добавить",
-    sub: "Подсказки для актов на ремонт: если в названии техники есть одно из слов, в акт подставятся эти тексты (их можно поправить)",
-    cols: [["title", "Вид техники"], ["keywords", "Слова"], ["defect", "Неисправность"]],
+    sub: "Готовые тексты для акта на ремонт: выбрали вид неисправности в форме акта — описание, работы и остатки подставились (их можно поправить)",
+    cols: [["title", "Вид"], ["defect", "Неисправность"], ["repair_works", "Работы"]],
     fields: [
-      ["title", "Вид техники *", "Принтер"], ["keywords", "Слова в названии (через запятую)", "принтер, мфу, laserjet"],
-      ["defect", "Неисправность", "", "text"], ["repair_works", "Работы", "", "text"], ["remains", "Что остаётся после ремонта", ""], ["sort", "Порядок", "0"],
+      ["title", "Вид неисправности *", "Принтер: износ термоузла"],
+      ["defect", "Неисправность (по одной на строку)", "", "text"], ["repair_works", "Работы (по одной на строку)", "", "text"],
+      ["remains", "Что остаётся после ремонта", ""], ["sort", "Порядок", "0"],
     ],
   },
   reasons: {
@@ -473,17 +319,15 @@ async function renderAsstSettings(main) {
   });
   const box = main.querySelector("#asTab");
   try {
-    let general = null;
-    if (["general", "people", "links"].includes(asstSettingsTab)) general = await api("/assistant/settings/general");
+    const general = ["general", "people"].includes(asstSettingsTab) ? await api("/assistant/settings/general") : null;
     if (asstSettingsTab === "general") return asstSettingsGeneral(box, general);
+    if (asstSettingsTab === "people") return asstDictEditor(box, "people", general);
     if (asstSettingsTab === "rules") {
       box.innerHTML = `<div id="asD1"></div><div id="asD2" style="margin-top:28px"></div>`;
       await asstDictEditor(box.querySelector("#asD1"), "rules", general);
       return asstDictEditor(box.querySelector("#asD2"), "reasons", general);
     }
-    if (ASST_DICTS[asstSettingsTab]) return asstDictEditor(box, asstSettingsTab, general);
     if (asstSettingsTab === "templates") return asstSettingsTemplates(box);
-    if (asstSettingsTab === "imports") return asstSettingsImports(box);
     if (asstSettingsTab === "mail") return mailSettingsTab(box);
   } catch (e) {
     box.innerHTML = `<div class="empty-state">${esc(e.message)}</div>`;
@@ -494,31 +338,20 @@ function asstSettingsGeneral(box, g) {
   box.innerHTML = `
     <div class="form-narrow" style="margin:0;max-width:760px">
       <div class="form-card">
-        <div class="form-row">
-          <div><div class="field-label">Организация — как в документах</div><input class="field-input" id="gOrg" value="${esc(g.orgName)}"></div>
-          <div><div class="field-label">Куда идут заявки на доступ</div>
-            <select id="gDept" class="field-select">${g.accessDepts.map((d) => `<option ${d === (g.accessDept || g.accessDepts[0]) ? "selected" : ""}>${esc(d)}</option>`).join("")}</select></div>
-        </div>
-        <div class="form-row">
-          <div><div class="field-label">Программы для заявки на доступ — по одной на строку</div>
-            <textarea class="field-input" id="gProgs" rows="9" style="resize:vertical">${esc(g.programs.join("\n"))}</textarea></div>
-          <div><div class="field-label">Должности — по одной на строку</div>
-            <textarea class="field-input" id="gPosts" rows="9" style="resize:vertical">${esc(g.posts.join("\n"))}</textarea></div>
-        </div>
         <div class="form-row" style="margin-bottom:0">
+          <div><div class="field-label">Организация — как в документах</div><input class="field-input" id="gOrg" value="${esc(g.orgName)}"></div>
           <div><div class="field-label">Первый номер акта в ${g.year} году</div>
             <input class="field-input" id="gStart" type="number" min="1" value="${g.actStart}" style="max-width:160px;margin-bottom:4px">
             <div class="as-note">Если в этом году акты уже составлялись вне Ассистента, нумерация продолжится с этого номера</div></div>
         </div>
       </div>
+      <div class="as-note" style="margin:-4px 0 14px">Заявка на доступ, отделы и начальники — в Администрировании заявок.</div>
       <div class="form-foot"><div class="actions"><button class="btn btn-wire" id="gSave">Сохранить</button></div></div>
     </div>`;
-  const lines = (id) => box.querySelector(id).value.split("\n").map((x) => x.trim()).filter(Boolean);
   box.querySelector("#gSave").onclick = async () => {
     try {
       await api("/assistant/settings/general", { method: "PUT", body: {
-        orgName: box.querySelector("#gOrg").value, accessDept: box.querySelector("#gDept").value,
-        programs: lines("#gProgs"), posts: lines("#gPosts"), actStart: box.querySelector("#gStart").value,
+        orgName: box.querySelector("#gOrg").value, actStart: box.querySelector("#gStart").value,
       } });
       asstRefsCache = null;
       toast("Сохранено");
@@ -526,21 +359,21 @@ function asstSettingsGeneral(box, g) {
   };
 }
 
-async function asstDictEditor(box, dictId, general) {
+/** Таблица справочника с добавлением, правкой и удалением. onChange — после любого изменения. */
+async function asstDictEditor(box, dictId, general, onChange) {
   const d = ASST_DICTS[dictId];
   const { items } = await api(`/assistant/settings/dict/${dictId}`);
   const roles = (general && general.roles) || {};
   const cell = (it, key) => key === "role" ? esc(roles[it.role] || it.role)
-    : key === "departments" ? (it.departments.trim() ? esc(it.departments.split("\n").filter(Boolean).join(", ")) : `<span class="as-muted">все отделы</span>`)
     : esc(it[key] === null || it[key] === undefined || it[key] === "" ? "—" : it[key]);
   box.innerHTML = `
     <div class="as-dict-head"><div><div class="as-h">${esc(d.title)}</div><div class="as-note">${esc(d.sub)}</div></div>
       <button class="btn btn-ghost" data-add>${icon("plus", 15)} ${esc(d.add)}</button></div>
     ${items.length ? `<div class="as-table-wrap"><table class="as-table as-click"><thead><tr>${d.cols.map(([, l]) => `<th>${esc(l)}</th>`).join("")}<th></th></tr></thead><tbody>
-      ${items.map((it) => `<tr data-id="${it.id}">${d.cols.map(([k]) => `<td class="${k === "url" ? "mono" : ""}">${cell(it, k)}</td>`).join("")}
+      ${items.map((it) => `<tr data-id="${it.id}">${d.cols.map(([k]) => `<td>${cell(it, k)}</td>`).join("")}
         <td class="as-row-act"><button class="as-icon-btn" data-rm="${it.id}" title="Удалить">${icon("trash", 14)}</button></td></tr>`).join("")}
-      </tbody></table></div></div>` : `<div class="as-empty">Пока пусто</div>`}`;
-  const reload = () => asstDictEditor(box, dictId, general);
+      </tbody></table></div>` : `<div class="as-empty">Пока пусто</div>`}`;
+  const reload = onChange || (() => asstDictEditor(box, dictId, general));
   box.querySelector("[data-add]").onclick = () => asstDictForm(dictId, null, general, reload);
   box.querySelectorAll("tr[data-id]").forEach((tr) => {
     tr.onclick = (e) => { if (!e.target.closest("[data-rm]")) asstDictForm(dictId, items.find((x) => x.id === Number(tr.dataset.id)), general, reload); };
@@ -561,11 +394,9 @@ function asstDictForm(dictId, item, general, onSaved) {
       return `<div class="as-f"><div class="field-label">${esc(label)}</div><select data-k="${k}" class="field-select">
         ${Object.entries(general.roles).map(([id, l]) => `<option value="${id}" ${v(k) === id ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></div>`;
     }
-    if (kind === "text" || kind === "depts") {
+    if (kind === "text") {
       return `<div class="as-f wide"><div class="field-label">${esc(label)}</div>
-        <textarea class="field-input" data-k="${k}" rows="${kind === "depts" ? 4 : 3}" placeholder="${esc(ph)}" style="resize:vertical">${esc(v(k))}</textarea>
-        ${kind === "depts" && general.adDepartments.length ? `<div class="as-note">Отделы из AD (щелчок — добавить):</div>
-          <div class="as-chips">${general.adDepartments.map((x) => `<button type="button" class="as-chip" data-dep="${esc(x)}">${esc(x)}</button>`).join("")}</div>` : ""}</div>`;
+        <textarea class="field-input" data-k="${k}" rows="3" placeholder="${esc(ph)}" style="resize:vertical">${esc(v(k))}</textarea></div>`;
     }
     return `<div class="as-f${k === "sort" ? " small" : ""}"><div class="field-label">${esc(label)}</div>
       <input class="field-input" data-k="${k}" value="${esc(v(k))}" placeholder="${esc(ph)}" ${k === "sort" ? 'type="number"' : ""}></div>`;
@@ -574,13 +405,6 @@ function asstDictForm(dictId, item, general, onSaved) {
     <div class="as-grid">${d.fields.map(field).join("")}</div>
     <div class="td-form-foot"><span class="td-form-err" id="dfErr"></span>
       <button class="btn btn-text" data-cancel>Отмена</button><button class="btn btn-wire" data-save>Сохранить</button></div>`, { wide: d.fields.length > 5 });
-  m.el.querySelectorAll("[data-dep]").forEach((b) => {
-    b.onclick = () => {
-      const ta = m.el.querySelector('[data-k="departments"]');
-      const have = ta.value.split("\n").map((x) => x.trim()).filter(Boolean);
-      if (!have.includes(b.dataset.dep)) ta.value = [...have, b.dataset.dep].join("\n");
-    };
-  });
   m.el.querySelector("[data-cancel]").onclick = m.close;
   m.el.querySelector("[data-save]").onclick = async () => {
     const body = {};
@@ -637,39 +461,4 @@ async function asstSettingsTemplates(box) {
       try { await api(`/assistant/settings/templates/${b.dataset.reset}`, { method: "DELETE" }); asstSettingsTemplates(box); } catch (e) { toast(e.message, true); }
     };
   });
-}
-
-async function asstSettingsImports(box) {
-  const info = await api("/assistant/settings/imports");
-  const card = (key, title, file, sub) => {
-    const i = info[key];
-    return `
-      <div class="as-imp">
-        <div class="as-imp-ic">${icon(key === "equipment" ? "monitor" : "box", 22)}</div>
-        <div class="as-imp-main">
-          <div class="as-h">${title}</div>
-          <div class="as-note">${sub}</div>
-          <div class="as-imp-stat">${i.count ? `<b>${i.count}</b> записей · загружено ${esc(fmtDate(i.at ? i.at.replace("T", " ").slice(0, 19) : ""))}${i.by ? ` · ${esc(i.by)}` : ""}${i.file ? ` · ${esc(i.file)}` : ""}` : "База пуста"}</div>
-        </div>
-        <button class="btn btn-wire" data-imp="${key}">${icon("upload", 15)} Загрузить ${file}</button>
-      </div>`;
-  };
-  box.innerHTML = `
-    ${card("equipment", "База техники", "tec.txt", "Выгрузка из 1С: наименование, инвентарный номер, дата ввода, количество. Нужна для передачи техники, журнала и актов на списание")}
-    ${card("parts", "База запчастей и расходников", "rep.txt", "Выгрузка из 1С: наименование, местонахождение, номенклатурный номер, остаток. Остатки в журнале считаются от неё")}
-    <div class="as-note" style="margin-top:8px">Каждая загрузка заменяет базу целиком — источник правды 1С. Записи журнала при этом не меняются.</div>
-    <input type="file" id="impFile" accept=".txt,.csv" hidden>`;
-  let kind = null;
-  const file = box.querySelector("#impFile");
-  box.querySelectorAll("[data-imp]").forEach((b) => { b.onclick = () => { kind = b.dataset.imp; file.value = ""; file.click(); }; });
-  file.onchange = async () => {
-    if (!file.files[0]) return;
-    const fd = new FormData();
-    fd.append("file", file.files[0]);
-    try {
-      const r = await api(`/assistant/settings/imports/${kind}`, { method: "POST", body: fd });
-      toast(`Загружено записей: ${r.count}`);
-      asstSettingsImports(box);
-    } catch (e) { toast(e.message, true); }
-  };
 }

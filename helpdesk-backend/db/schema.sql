@@ -265,22 +265,11 @@ CREATE INDEX IF NOT EXISTS idx_task_checklist_task ON task_checklist(task_id, po
 CREATE INDEX IF NOT EXISTS idx_task_events_task ON task_events(task_id, id);
 
 -- ============================================================================
---  Ассистент: документы отдела ИТ, заявки на доступ, журнал техники, рассылки
+--  Ассистент: акты, рассылки; справочники для заявки на доступ
 --
 --  Замена прежнему отдельному «Ассистенту» и «Почтальону». Всё с префиксом
 --  asst_ / mail_, чтобы в базе было видно, чьи это таблицы.
 -- ============================================================================
-
--- Плитки «Системы отдела»: ссылки на АРМ ГС, ЦСОД, ВЕБСБОР и т.п.
--- departments — названия отделов из AD по одному на строку; пусто — всем.
-CREATE TABLE IF NOT EXISTS asst_links (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  title TEXT NOT NULL,
-  url TEXT NOT NULL,
-  hint TEXT,
-  departments TEXT NOT NULL DEFAULT '',
-  sort INTEGER NOT NULL DEFAULT 0
-);
 
 -- Отделы и их начальники — с падежами: в документах пишется «прошу передать
 -- начальнику отдела … Иванову И.И. от начальника отдела … Петрова П.П.».
@@ -318,37 +307,11 @@ CREATE TABLE IF NOT EXISTS asst_templates (
   uploaded_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
--- База техники и база запчастей — выгрузки из 1С (tec.txt, rep.txt).
--- Каждая загрузка заменяет базу целиком: источник правды — 1С.
-CREATE TABLE IF NOT EXISTS asst_equipment (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL,
-  inv TEXT,
-  commissioned TEXT,               -- дата ввода в эксплуатацию, как в выгрузке
-  count INTEGER,
-  -- Строчными: LIKE в SQLite не приводит кириллицу к одному регистру, и поиск
-  -- «принтер» не находил бы «Принтер».
-  search TEXT NOT NULL DEFAULT ''
-);
-CREATE INDEX IF NOT EXISTS idx_asst_equipment_inv ON asst_equipment(inv);
-
-CREATE TABLE IF NOT EXISTS asst_parts (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL,
-  location TEXT,
-  nomenclature TEXT,
-  count INTEGER,                   -- остаток по выгрузке
-  cartridge INTEGER NOT NULL DEFAULT 0,
-  search TEXT NOT NULL DEFAULT ''
-);
-CREATE INDEX IF NOT EXISTS idx_asst_parts_nomenclature ON asst_parts(nomenclature);
-
--- Типовые неисправности: по словам в названии техники подсказывают, что
--- написать в акте («принтер» -> износ узла закрепления, замена фьюзера).
+-- Типовые неисправности: готовые тексты для акта на ремонт — выбрал вид
+-- неисправности, и в форму подставились описание, работы и остатки.
 CREATE TABLE IF NOT EXISTS asst_repair_rules (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   title TEXT NOT NULL,
-  keywords TEXT NOT NULL DEFAULT '',   -- через запятую
   defect TEXT,
   repair_works TEXT,
   remains TEXT,
@@ -359,19 +322,6 @@ CREATE TABLE IF NOT EXISTS asst_writeoff_reasons (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   title TEXT NOT NULL,
   reason TEXT NOT NULL
-);
-
--- Заявки на передачу оборудования между отделами.
-CREATE TABLE IF NOT EXISTS asst_transfers (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  year INTEGER NOT NULL,
-  num INTEGER NOT NULL,
-  from_dept TEXT NOT NULL,
-  to_dept TEXT NOT NULL,
-  items TEXT NOT NULL,             -- JSON: [{name, inv, count}]
-  created_by INTEGER NOT NULL REFERENCES users(id),
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  UNIQUE (year, num)
 );
 
 -- Анкета, из которой создана заявка (сейчас — заявка на доступ сотрудника).
@@ -397,24 +347,6 @@ CREATE TABLE IF NOT EXISTS asst_acts (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_asst_acts_year ON asst_acts(year, num);
-
--- Журнал техники: что из расходников и запчастей куда поставлено.
-CREATE TABLE IF NOT EXISTS asst_journal (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  date TEXT NOT NULL,              -- YYYY-MM-DD
-  kind TEXT NOT NULL CHECK (kind IN ('cartridge', 'part')),
-  part_name TEXT NOT NULL,
-  nomenclature TEXT,
-  count INTEGER NOT NULL DEFAULT 1,
-  equipment TEXT,
-  inv TEXT,
-  location TEXT,
-  note TEXT,
-  act_id INTEGER REFERENCES asst_acts(id) ON DELETE SET NULL,
-  created_by INTEGER NOT NULL REFERENCES users(id),
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-CREATE INDEX IF NOT EXISTS idx_asst_journal_date ON asst_journal(date DESC);
 
 -- Общие ящики рассылок: у каждого отдела свой. Логин — сам адрес; пароль —
 -- пароль приложения (почта не пускает программы по обычному). ad_group —

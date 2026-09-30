@@ -91,7 +91,8 @@ function docx(body, { landscape = false } = {}) {
   ]);
 }
 
-// Шапка «кому» в правом верхнем углу — руководителю в дательном падеже.
+// Шапка «кому» в правом верхнем углу — в дательном падеже: руководителю, а в
+// записке на доступ — начальнику отдела ИТ (поля те же, подставляет маршрут).
 const addressee = () => [
   p("{bossPostD}", { align: "right" }),
   p("{orgName}", { align: "right" }),
@@ -99,27 +100,6 @@ const addressee = () => [
 ];
 
 const BUILDERS = {
-  transfer: () => docx([
-    ...addressee(),
-    p("Заявка на передачу оборудования № {num}", { align: "center", bold: true }),
-    p("от {date}", { align: "center", after: 12 }),
-    p("Прошу передать {postTo} {depTo} {FIOTo} от {postFrom} {depFrom} {FIOFrom} следующее имущество:", { align: "both", after: 8 }),
-    table({
-      widths: [1.2, 8.8, 4, 2.3],
-      header: ["№", "Наименование", "Инвентарный номер", "Кол-во"],
-      rows: [["{#tec}{num}", "{name}", "{inv}", "{count}{/}"]],
-    }),
-    p("", { after: 18 }),
-    p("Передал:", { bold: true }),
-    signature("{postFromI} {depFrom}", "{FIOFromI}"),
-    p("", { after: 8 }),
-    p("Принял:", { bold: true }),
-    signature("{postToI} {depTo}", "{FIOToI}"),
-    p("", { after: 8 }),
-    p("Согласовано:", { bold: true }),
-    signature("{bossZamPost}", "{bossZamFIO}"),
-  ]),
-
   access: () => docx([
     ...addressee(),
     p("Служебная записка", { align: "center", bold: true }),

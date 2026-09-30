@@ -108,6 +108,7 @@ function initDb() {
     migrateNotificationChannels(db);
     migrateUserGroups(db);
     migrateMailBoxes(db);
+    dropAssistantExtras(db);
     db.exec("COMMIT");
   } catch (err) {
     db.exec("ROLLBACK");
@@ -300,6 +301,21 @@ function migrateMailBoxes(db) {
   db.prepare("UPDATE mail_campaigns SET mailbox_id = ? WHERE sender_mode = 'shared' AND mailbox_id IS NULL AND sender_address = ?").run(box.id, from);
   db.prepare("DELETE FROM settings WHERE key IN ('mail_from', 'mail_user', 'mail_password', 'mail_shared_group')").run();
   console.log(`Общий ящик рассылок ${from} перенесён в список ящиков`);
+}
+
+// Из Ассистента убраны «Системы отдела», «Передача техники», «Журнал техники»
+// и базы техники и запчастей из 1С: акты теперь заполняются вручную. Их
+// таблицы и настройки удаляются, чтобы в базе не оставалось данных, которых
+// больше никто не видит и не правит. Подписанты «заместитель» и «начальник
+// ОИРиТ» тоже больше не нужны: начальник отдела ИТ берётся из справочника
+// отделов.
+function dropAssistantExtras(db) {
+  const exists = (t) => db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(t);
+  const gone = ["asst_journal", "asst_transfers", "asst_links", "asst_equipment", "asst_parts"].filter(exists);
+  for (const t of gone) db.exec(`DROP TABLE ${t}`);
+  db.prepare(`DELETE FROM settings WHERE key LIKE 'asst_equipment_imported_%' OR key LIKE 'asst_parts_imported_%'`).run();
+  if (exists("asst_people")) db.prepare("DELETE FROM asst_people WHERE role IN ('deputy', 'it_chief')").run();
+  if (gone.length) console.log(`Ассистент: удалены таблицы убранных разделов (${gone.join(", ")})`);
 }
 
 // Посев локальных аварийных аккаунтов ("break glass"), на случай если оба
