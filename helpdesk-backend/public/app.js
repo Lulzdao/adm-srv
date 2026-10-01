@@ -264,11 +264,14 @@ const DESCRIPTION_MAX = 140;
 // Приоритет виден в списке цветной кромкой слева у строки (см. .ticket-row
 // в styles.css) и подложкой в карточке. Цвета — из дополнительной гаммы
 // брендбука (3.3): её он и предлагает для акцентов и сигналов.
+// Цвета — переменными темы (styles.css / themes.css), а не значениями: в голубой теме это те же
+// #E7004B/#FDE3EA и т. д., а в тёмной значок не остаётся светлым пятном. Подставляются в
+// инлайновые стили, где var() работает так же, как в правилах.
 const PRIORITIES = [
-  { id: "critical", label: "Критичный", color: "#E7004B", soft: "#FDE3EA" },
-  { id: "high", label: "Высокий", color: "#C25A18", soft: "#FFE7D6" },
-  { id: "medium", label: "Средний", color: "#0A61AE", soft: "#DCE7F6" },
-  { id: "low", label: "Низкий", color: "#5A5A5A", soft: "#ECECEC" },
+  { id: "critical", label: "Критичный", color: "var(--md-error)", soft: "var(--md-error-container)" },
+  { id: "high", label: "Высокий", color: "var(--md-on-warn-container)", soft: "var(--md-warn-container)" },
+  { id: "medium", label: "Средний", color: "var(--md-on-info-container)", soft: "var(--md-info-container)" },
+  { id: "low", label: "Низкий", color: "var(--md-on-neutral-container)", soft: "var(--md-neutral-container)" },
 ];
 const STATUSES = [
   { id: "new", label: "Новая" },
@@ -285,7 +288,9 @@ const statusLabel = (id) => (STATUSES.find(s => s.id === id) || {}).label || LEG
 // (два основных цвета брендбука), закрыта — серая. Текст тёмный: правило 3.4
 // требует тёмно-серого на светлых фонах.
 const STATUS_COLORS = {
-  new: ["#0A61AE", "#DCE7F6"], progress: ["#663AB5", "#E9E2F6"], closed: ["#5A5A5A", "#ECECEC"],
+  new: ["var(--md-on-info-container)", "var(--md-info-container)"],
+  progress: ["var(--md-on-secondary-container)", "var(--md-secondary-container)"],
+  closed: ["var(--md-on-neutral-container)", "var(--md-neutral-container)"],
 };
 
 // ====== Состояние ======
