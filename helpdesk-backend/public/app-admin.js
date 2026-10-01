@@ -67,9 +67,62 @@ async function renderDashboard(main) {
 const ADMIN_TABS = [
   ["health", "Состояние"],
   ["people", "Администраторы и исполнители"], ["groups", "Группы исполнителей"],
-  ["access", "Заявка на доступ"], ["backup", "Резервные копии"],
+  ["access", "Заявка на доступ"], ["backup", "Резервные копии"], ["audit", "Журнал действий"],
 ];
 let adminTab = "health";
+
+// ---- Журнал действий администраторов (GET /admin/audit, services/audit.js) ----
+// Кто и когда менял настройки. Только чтение: записи не правятся и не удаляются.
+function auditDetails(d) {
+  if (!d) return "";
+  const show = (v) => (Array.isArray(v) ? v.map(show).join("; ") : v && typeof v === "object"
+    ? Object.entries(v).map(([k, x]) => `${k}: ${show(x)}`).join(", ") : String(v));
+  return Object.entries(d).map(([k, v]) => `<span style="color:var(--ink-soft);">${esc(k)}:</span> ${esc(show(v))}`).join(" · ");
+}
+
+async function renderAudit(box) {
+  box.innerHTML = `
+    <div class="card" style="margin-bottom:14px;">
+      <div class="section-label">Журнал действий администраторов</div>
+      <div style="font-size:12px;color:var(--ink-soft);margin-bottom:12px;">
+        Кто и когда менял настройки: группы домена, папку копий, сертификат, почту и оповещения, ящики рассылок,
+        справочники Ассистента. Пароли в журнал не попадают — только отметка, что пароль изменён.
+        Записи нельзя ни исправить, ни удалить.
+      </div>
+      <div style="display:flex;gap:10px;margin-bottom:12px;">
+        <input class="input" id="auditQ" placeholder="Поиск: фамилия, логин, что менялось" style="flex:1;max-width:420px;">
+        <button class="btn btn-ghost" id="auditFind">Найти</button>
+      </div>
+      <div id="auditRows"></div>
+      <div style="margin-top:12px;"><button class="btn btn-ghost" id="auditMore" style="display:none;">Показать более ранние</button></div>
+    </div>`;
+  const rowsBox = box.querySelector("#auditRows");
+  const moreBtn = box.querySelector("#auditMore");
+  let last = null;
+  const row = (r) => `
+    <div style="display:flex;gap:14px;align-items:baseline;padding:8px 0;border-top:1px solid var(--line-soft);">
+      <span style="width:118px;flex-shrink:0;font-size:11.5px;color:var(--ink-soft);">${esc(fmtDate(r.at))}</span>
+      <span style="width:190px;flex-shrink:0;font-size:12.5px;font-weight:600;" title="${esc(r.login || "")}${r.ip ? " · " + esc(r.ip) : ""}">${esc(r.full_name || r.login || "—")}</span>
+      <span style="flex:1;min-width:0;font-size:12.5px;">${esc(r.summary)}
+        ${r.details ? `<div style="font-size:11.5px;margin-top:2px;word-break:break-word;">${auditDetails(r.details)}</div>` : ""}</span>
+    </div>`;
+  async function load(reset) {
+    if (reset) { last = null; rowsBox.innerHTML = `<div class="spinner">Загрузка…</div>`; }
+    try {
+      const q = box.querySelector("#auditQ").value.trim();
+      const res = await api(`/admin/audit?limit=100${q ? "&q=" + encodeURIComponent(q) : ""}${last ? "&before=" + last : ""}`);
+      const html = res.rows.map(row).join("");
+      if (reset) rowsBox.innerHTML = html || `<div style="font-size:12.5px;color:var(--ink-soft);">${q ? "Ничего не найдено." : "Записей пока нет — они появятся с первым изменением настроек."}</div>`;
+      else rowsBox.insertAdjacentHTML("beforeend", html);
+      if (res.rows.length) last = res.rows[res.rows.length - 1].id;
+      moreBtn.style.display = res.more ? "" : "none";   // .btn задаёт display — атрибут hidden не сработал бы
+    } catch (e) { rowsBox.innerHTML = `<div class="empty-state">Не удалось загрузить журнал: ${esc(e.message)}</div>`; }
+  }
+  box.querySelector("#auditFind").onclick = () => load(true);
+  box.querySelector("#auditQ").onkeydown = (e) => { if (e.key === "Enter") load(true); };
+  moreBtn.onclick = () => load(false);
+  load(true);
+}
 
 // ---- Состояние системы (GET /admin/health, services/health.js) ----
 const HEALTH_COLOR = { ok: "var(--green)", warn: "var(--amber)", crit: "var(--red)" };
@@ -149,6 +202,7 @@ async function renderAdmin(main) {
       </div>
 
       <div data-pane="health" id="healthPane"></div>
+      <div data-pane="audit" id="auditPane"></div>
 
       <div data-pane="people">
       <div class="card" style="margin-bottom:14px;">
@@ -246,6 +300,9 @@ async function renderAdmin(main) {
 
     // ---- Состояние: опрос модулей идёт отдельно и страницу не задерживает ----
     renderHealth(main.querySelector("#healthPane"));
+    // Журнал — при первом открытии вкладки и заново при каждом следующем: за это время могли появиться записи.
+    main.querySelector('#admTabs [data-tab="audit"]').addEventListener("click", () => renderAudit(main.querySelector("#auditPane")));
+    if (adminTab === "audit") renderAudit(main.querySelector("#auditPane"));
 
     // ---- Заявка на доступ: отделы, начальники, отдел ИТ (app-assistant.js) ----
     renderAccessAdmin(main.querySelector("#accessAdmin"));
