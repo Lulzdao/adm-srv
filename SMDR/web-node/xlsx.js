@@ -19,6 +19,7 @@
 // какая локаль стоит на машине.
 
 const zlib = require('node:zlib');
+const { ZipBuilder, crc32 } = require('./zip');
 
 const COLUMNS = ['Дата', 'Время', 'Внутренний', 'Направление', 'Детали', 'Длительность', 'Ожидание', 'Сотрудник'];
 // Ширины колонок в «символах» — как их понимает Excel.
@@ -143,132 +144,8 @@ const STYLES = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
   + '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>'
   + '</styleSheet>';
 
-// ============================================================================
-//  ZIP
-// ============================================================================
-
-const CRC_TABLE = (() => {
-  const t = new Int32Array(256);
-  for (let i = 0; i < 256; i++) {
-    let c = i;
-    for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
-    t[i] = c;
-  }
-  return t;
-})();
-
-/** CRC32 по кускам: crc32(кусок, crc32(предыдущий)). Начинать с нуля. */
-function crc32(buf, seed = 0) {
-  let c = ~seed;
-  for (let i = 0; i < buf.length; i++) c = CRC_TABLE[(c ^ buf[i]) & 0xFF] ^ (c >>> 8);
-  return ~c >>> 0;
-}
-
-/** Время в формате MS-DOS, как его хранит zip. */
-function dosTime(d) {
-  const time = (d.getHours() << 11) | (d.getMinutes() << 5) | Math.floor(d.getSeconds() / 2);
-  const date = ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
-  return { time, date };
-}
-
-function localHeader(entry) {
-  const имя = Buffer.from(entry.name, 'utf8');
-  const b = Buffer.alloc(30);
-  b.writeUInt32LE(0x04034b50, 0);
-  b.writeUInt16LE(20, 4);            // нужна версия 2.0
-  b.writeUInt16LE(0, 6);             // флагов нет: размеры известны заранее
-  b.writeUInt16LE(8, 8);             // deflate
-  b.writeUInt16LE(entry.time, 10);
-  b.writeUInt16LE(entry.date, 12);
-  b.writeUInt32LE(entry.crc, 14);
-  b.writeUInt32LE(entry.csize, 18);
-  b.writeUInt32LE(entry.usize, 22);
-  b.writeUInt16LE(имя.length, 26);
-  b.writeUInt16LE(0, 28);
-  return Buffer.concat([b, имя]);
-}
-
-function centralHeader(entry) {
-  const имя = Buffer.from(entry.name, 'utf8');
-  const b = Buffer.alloc(46);
-  b.writeUInt32LE(0x02014b50, 0);
-  b.writeUInt16LE(20, 4);            // чем создан
-  b.writeUInt16LE(20, 6);            // чем распаковывать
-  b.writeUInt16LE(0, 8);
-  b.writeUInt16LE(8, 10);
-  b.writeUInt16LE(entry.time, 12);
-  b.writeUInt16LE(entry.date, 14);
-  b.writeUInt32LE(entry.crc, 16);
-  b.writeUInt32LE(entry.csize, 20);
-  b.writeUInt32LE(entry.usize, 24);
-  b.writeUInt16LE(имя.length, 28);
-  b.writeUInt16LE(0, 30);            // extra
-  b.writeUInt16LE(0, 32);            // комментарий
-  b.writeUInt16LE(0, 34);            // диск
-  b.writeUInt16LE(0, 36);
-  b.writeUInt32LE(0, 38);
-  b.writeUInt32LE(entry.offset, 42);
-  return Buffer.concat([b, имя]);
-}
-
-function endOfCentralDirectory(count, size, offset) {
-  const b = Buffer.alloc(22);
-  b.writeUInt32LE(0x06054b50, 0);
-  b.writeUInt16LE(0, 4);
-  b.writeUInt16LE(0, 6);
-  b.writeUInt16LE(count, 8);
-  b.writeUInt16LE(count, 10);
-  b.writeUInt32LE(size, 12);
-  b.writeUInt32LE(offset, 16);
-  b.writeUInt16LE(0, 20);
-  return b;
-}
-
-/**
- * Сборщик zip.
- *
- * Заголовок записи несёт CRC и размеры, то есть его нельзя записать раньше,
- * чем сжаты данные. Поэтому куски копятся здесь, а наружу всё уходит одним
- * куском в конце. В памяти при этом лежит только СЖАТОЕ: лист с полусотней
- * тысяч звонков — это единицы мегабайт. Кому нужен по-настоящему потоковый
- * файл на весь журнал, у того есть CSV — он пишется строка за строкой.
- */
-class ZipBuilder {
-  constructor(now = new Date()) {
-    this.parts = [];
-    this.entries = [];
-    this.offset = 0;
-    this.stamp = dosTime(now);
-  }
-
-  /** Запись из уже сжатых кусков. */
-  addCompressed(name, chunks, crc, usize) {
-    const данные = Buffer.concat(chunks);
-    const entry = {
-      name, crc, usize, csize: данные.length, offset: this.offset,
-      time: this.stamp.time, date: this.stamp.date,
-    };
-    const шапка = localHeader(entry);
-    this.parts.push(шапка, данные);
-    this.offset += шапка.length + данные.length;
-    this.entries.push(entry);
-  }
-
-  /** Запись из готовой строки — для мелких XML. */
-  add(name, text) {
-    const сырое = Buffer.from(text, 'utf8');
-    this.addCompressed(name, [zlib.deflateRawSync(сырое)], crc32(сырое), сырое.length);
-  }
-
-  finish() {
-    const каталог = this.entries.map(centralHeader);
-    const размер = каталог.reduce((s, b) => s + b.length, 0);
-    return Buffer.concat([
-      ...this.parts, ...каталог,
-      endOfCentralDirectory(this.entries.length, размер, this.offset),
-    ]);
-  }
-}
+// Разметка zip (заголовки, каталог, CRC32) — в zip.js: общий с платформой файл, см. его шапку.
+// Раньше она была написана здесь второй раз.
 
 // ============================================================================
 //  Сборка книги
@@ -347,6 +224,6 @@ const BYTES_PER_ROW = 60;
 
 module.exports = {
   COLUMNS, MAX_ROWS, BYTES_PER_ROW, CONTENT_TYPE,
-  xmlEscape, colLetter, cell, row, sheetHead, sheetFoot,
+  xmlEscape, colLetter, cell, row,
   crc32, ZipBuilder, build, fileName, contentDisposition,
 };

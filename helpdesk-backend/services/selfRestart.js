@@ -40,4 +40,4 @@ function scheduleRestart(who) {
   setTimeout(() => process.exit(0), 500);
 }
 
-module.exports = { runsUnderService, scheduleRestart, parentImageName };
+module.exports = { runsUnderService, scheduleRestart };

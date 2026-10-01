@@ -29,3 +29,8 @@ process.env.HELPDESK_ENV_FILE = path.join(os.tmpdir(), "adm-srv-test-нет-та
 // (backup.test.js) задаёт свои базы и каталог.
 process.env.BACKUP_DATABASES = "-";
 process.env.BACKUP_DIR = path.join(os.tmpdir(), "adm-srv-test-backups-не-используется");
+
+// Очистка журналов служб (задание планировщика) по умолчанию смотрит в <корень>\logs — на
+// рабочей машине это могла бы оказаться настоящая папка. Тестам — несуществующая: задание
+// выполняется и ничего не находит. Тест самой очистки (logCleanup.test.js) задаёт свою папку.
+process.env.SERVICE_LOGS_DIR = path.join(os.tmpdir(), "adm-srv-test-нет-журналов");

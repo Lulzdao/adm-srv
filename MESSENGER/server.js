@@ -20,6 +20,7 @@ const crypto = require('crypto');
 const { openDatabase } = require('./lib/db');
 const { createTls } = require('./lib/tls');
 const { createRateLimits } = require('./lib/rateLimit');
+const { createReleases } = require('./lib/releases');
 const { createLogger, dayStamp, parseLogLine, LOG_VIEW_LIMIT } = require('./lib/log');
 
 // 3103, а не 3000: «Искра» стоит на одной машине с платформой, и 3000 занят
@@ -458,7 +459,9 @@ app.use(express.static(path.join(__dirname, 'public')));
 // а клиенту на этапе обновления может быть уже нечем предъявить токен.
 const updatesDir = path.join(__dirname, 'updates');
 if (!fs.existsSync(updatesDir)) fs.mkdirSync(updatesDir, { recursive: true });
-app.use('/updates', express.static(updatesDir));
+// dotfiles: 'deny' — ничего с точкой в имени (ни файлов, ни папок) наружу: по умолчанию express.static
+// прячет только файлы с точкой, а папку «.что-то» раздаёт.
+app.use('/updates', express.static(updatesDir, { dotfiles: 'deny' }));
 
 // Разрешаем запросы от десктоп-клиента (Electron грузит страницы с file://)
 app.use((req, res, next) => {
@@ -1484,6 +1487,28 @@ app.post('/api/admin/request-log', auth, requireCapability('can_admin'), (req, r
 // ---------- Сертификат сервера (раздел "Сертификат" в панели) ----------
 // Маршруты /api/admin/tls — lib/tls.js.
 tlsModule.registerRoutes(app, { auth, requireCapability });
+
+// ---------- Версии клиента: выкладка, откат, удаление (раздел "Клиенты" в панели) ----------
+// Маршруты /api/admin/releases — lib/releases.js. Выкладка версии — это запуск программы на всех
+// ПК, поэтому она подтверждается паролем администратора ЗАНОВО: открытого окна панели или
+// украденного токена для неё мало. Попытки считаются тем же счётчиком, что и вход, — подбирать
+// пароль через эту точку не быстрее, чем через экран входа.
+function confirmPassword(req, password) {
+  if (typeof password !== 'string' || !password) return { status: 400, error: 'Введите свой пароль: выкладка версии подтверждается паролем администратора' };
+  const username = req.user.username;
+  const lockedSec = checkLoginLock(username);
+  if (lockedSec) return { status: 429, error: `Слишком много неверных попыток, повторите через ${lockedSec} сек.` };
+  const row = getUserByName.get(username);
+  if (!row || !bcrypt.compareSync(password, row.password_hash)) {
+    registerLoginFail(username);
+    logServer('WARN', 'release_password_failed', { adminId: req.user.id, username, ip: req.ip });
+    // 403, а не 401: 401 панель понимает как «сеанс кончился».
+    return { status: 403, error: 'Пароль неверный' };
+  }
+  clearLoginFails(username);
+  return null;
+}
+createReleases({ updatesDir, logServer }).registerRoutes(app, { auth, requireCapability, confirmPassword });
 
 
 app.get('/api/admin/stats', auth, requireCapability('can_admin'), (req, res) => {

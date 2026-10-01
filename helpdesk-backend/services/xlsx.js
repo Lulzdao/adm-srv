@@ -206,4 +206,4 @@ function buildXlsx(sheets, now = new Date()) {
 
 const XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
-module.exports = { readFirstSheet, buildXlsx, XLSX_TYPE, colLetter, unxml };
+module.exports = { readFirstSheet, buildXlsx, XLSX_TYPE, colLetter };

@@ -84,12 +84,24 @@ function disk(label, dir) {
   }
 }
 
+/** Папка журналов служб: сколько занимает и чистится ли. */
+function logs() {
+  const u = require("./logCleanup").usage();
+  if (!u) return null;
+  const mb = u.bytes / 1048576;
+  const tail = u.keepDays ? `нарезанные куски старше ${u.keepDays} дн. удаляются раз в месяц` : "очистка выключена (LOG_KEEP_DAYS=0)";
+  return item(mb > 2048 ? "warn" : "ok", "Журналы служб", `${u.files} файл. — ${mb < 1 ? "меньше 1 МБ" : mb.toFixed(0) + " МБ"}; ${tail}`, { dir: u.dir });
+}
+
 function disks(db) {
   const list = [["Диск с платформой и базами", ROOT]];
   const { dir } = backup.backupDir(db);
   // Папку копий смотрим, только если она на другом томе — иначе это та же строка.
   if (volumeOf(dir) !== volumeOf(ROOT) && fs.existsSync(dir)) list.push(["Папка резервных копий", dir]);
-  return list.map(([label, d]) => disk(label, d));
+  const out = list.map(([label, d]) => disk(label, d));
+  const l = logs();
+  if (l) out.push(l);
+  return out;
 }
 
 function backups(db, now = Date.now()) {

@@ -100,6 +100,6 @@ function addEvent(db, taskId, userId, kind, text) {
 }
 
 module.exports = {
-  PRIORITY_LABEL, STATUS_LABEL, localDay, localTime, parseDay, daysUntil, isOverdue,
-  formatDue, relativeDue, taskLink, listLink, assigneesOf, taskPayload, addEvent,
+  PRIORITY_LABEL, STATUS_LABEL, localDay, parseDay, daysUntil, isOverdue,
+  formatDue, relativeDue, listLink, assigneesOf, taskPayload, addEvent,
 };

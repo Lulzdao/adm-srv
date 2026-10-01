@@ -1,6 +1,8 @@
 <!DOCTYPE html>
 <html lang="ru"><head><meta charset="utf-8"><title>Статистика</title>
 <link rel="stylesheet" href="style.css">
+<!-- Тема «Центра»: файлы платформы. Открыт напрямую — их нет, остаётся голубая. -->
+<script src="/theme.js"></script><link rel="stylesheet" href="/themes.css">
 <script src="vendor/chart.umd.js"></script>
 </head><body>
 <div class="container">
@@ -48,6 +50,24 @@ function escHtml(value) {
     return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
   });
 }
+// Подписи и сетка графиков — в цветах темы «Центра» (переменные из themes.css платформы): иначе в
+// тёмной теме серые подписи Chart.js почти не видны. Открыто напрямую, без темы, — прежние цвета.
+function applyChartTheme() {
+  const css = getComputedStyle(document.documentElement);
+  const v = (name, fallback) => (css.getPropertyValue(name) || '').trim() || fallback;
+  Chart.defaults.color = v('--md-on-surface-variant', '#666');
+  Chart.defaults.borderColor = v('--md-outline', 'rgba(0, 0, 0, 0.1)');
+}
+applyChartTheme();
+// Тему сменили в «Центре» — theme.js (подключён выше) уже переставил атрибут; перерисовываем графики.
+window.addEventListener('storage', function (e) {
+  if (e.key && e.key.indexOf('center.theme') !== 0) return;
+  setTimeout(function () {
+    applyChartTheme();
+    Object.values(Chart.instances).forEach(function (c) { c.update(); });
+  }, 0);
+});
+
 fetch('api/stats/daily').then(r => r.json()).then(data => {
   const days = [...new Set(data.map(d => d.day))].sort();
   const dirs = ['outgoing', 'incoming', 'internal'];

@@ -220,8 +220,8 @@ function sendFile(res, buf, filename, type = DOCX_TYPE) {
 }
 
 module.exports = {
-  TEMPLATES, ACCESS_TYPES, DEFAULT_PROGRAMS, DEFAULT_POSTS, MONTHS,
-  getJson, setJson, settings,
+  TEMPLATES, ACCESS_TYPES, MONTHS,
+  setJson, settings,
   CHIEF, deptGen,
   today, ruDate, isIsoDate, shortName, people, person, dept, itChief, commonFields, responsible,
   templateOf, renderDoc, nextActNumber, sendFile, safeFileName,

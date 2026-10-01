@@ -71,4 +71,4 @@ async function send({ to, text }) {
   return { ok: false, error: `«Искра»: ${detail}`, retriable: res.status >= 500 };
 }
 
-module.exports = { send, configured, whyDisabled, endpoint };
+module.exports = { send, configured, whyDisabled };

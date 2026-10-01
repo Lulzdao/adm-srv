@@ -6,6 +6,8 @@
 <title>Искра — панель администратора</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="stylesheet" href="panel.css">
+<!-- Тема «Центра»: файлы платформы. Открыт напрямую — их нет, остаётся голубая. -->
+<script src="/theme.js"></script><link rel="stylesheet" href="/themes.css">
 </head>
 <body>
 
@@ -185,12 +187,44 @@
       <h2>Клиенты и обновления</h2>
 
       <div class="panel">
-        <h3>Что выложено на сервере</h3>
+        <h3>Версии клиента на сервере</h3>
         <p style="color:var(--muted); font-size:12px; margin:0 0 10px;">
-          Версии из папок <code>updates/win7</code> и <code>updates/win10</code>. Если пусто —
-          сборки ещё не выложены, и клиенты обновляться не будут.
+          «Текущая» — та, которую клиенты скачивают и ставят сами. Установщик текущей версии можно
+          скачать и поставить на новый компьютер вручную. Если пусто — сборки ещё не выложены, и
+          клиенты обновляться не будут.
         </p>
-        <div id="publishedVersions" style="display:flex; gap:18px; flex-wrap:wrap;"></div>
+        <div id="publishedVersions" style="display:flex; gap:18px; flex-wrap:wrap; margin-bottom:14px;"></div>
+        <table>
+          <thead><tr><th>Сборка</th><th>Версия</th><th>Размер</th><th>Выложена</th><th>Действия</th></tr></thead>
+          <tbody id="releasesBody"></tbody>
+        </table>
+        <p style="color:var(--muted); font-size:12px; margin:10px 0 0;">
+          «Сделать текущей» останавливает раздачу неудачной версии: новым и ещё не обновившимся
+          клиентам снова предлагается выбранная. Те, кто уже обновился, назад сами не вернутся —
+          для них исправление выпускают под следующим номером. Удалять стоит только совсем старые:
+          предыдущая версия нужна, чтобы клиенты качали с неё не весь установщик, а разницу.
+        </p>
+      </div>
+
+      <div class="panel">
+        <h3>Выложить новую версию</h3>
+        <p style="color:var(--muted); font-size:12px; margin:0 0 10px;">
+          Выберите файлы из папки <code>release/&lt;версия&gt;</code>, которую собрала команда
+          <code>npm run release</code>: установщик <code>.exe</code>, его <code>.exe.blockmap</code>
+          и <code>latest-….yml</code> — для одной сборки или сразу для обеих. Сервер сверит
+          контрольную сумму установщика с записанной сборщиком и только после этого объявит версию
+          текущей. Выкладка подтверждается вашим паролем: с этого момента клиенты начнут ставить
+          эту версию на все компьютеры.
+        </p>
+        <div class="row-flex" style="margin-bottom:10px; align-items:center;">
+          <input type="file" id="releaseFiles" multiple accept=".exe,.blockmap,.yml" onchange="planRelease()">
+        </div>
+        <div id="releasePlan" style="font-size:12.5px; margin-bottom:10px;"></div>
+        <div class="row-flex" style="align-items:center;">
+          <input type="password" id="releasePassword" placeholder="Ваш пароль" autocomplete="current-password" style="max-width:220px;">
+          <button class="action" id="releasePublishBtn" onclick="publishRelease()" disabled>Выложить</button>
+          <span id="releaseProgress" style="color:var(--muted); font-size:12px;"></span>
+        </div>
       </div>
 
       <div class="panel">

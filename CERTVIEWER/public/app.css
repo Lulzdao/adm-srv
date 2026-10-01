@@ -165,10 +165,10 @@ html { font-kerning: none; }
     position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
     z-index: 50; padding: 14px 22px; border-radius: var(--md-shape-xs); font-size: 13.5px; font-weight: 500;
     box-shadow: var(--md-elev-3); pointer-events: none;
-    background: #37322B; color: #F6EEE6;
+    background: var(--md-inverse-surface, #37322B); color: var(--md-inverse-on-surface, #F6EEE6);
   }
   #status:empty { display: none; }
-  #status.error { background: var(--md-error); color: #fff; }
+  #status.error { background: var(--md-error); color: var(--md-on-primary, #fff); }
   #status.ok { background: var(--md-success-container); color: var(--md-on-success-container); }
 
   .table-wrap {
@@ -192,9 +192,9 @@ html { font-kerning: none; }
   tbody tr:last-child td { border-bottom: none; }
 
   tr.expired { background: var(--md-error-container); color: var(--md-on-error-container); }
-  tr.expired:hover { background: #FFCFC9; }
+  tr.expired:hover { background: var(--md-error-edge, #FFCFC9); }
   tr.soon { background: var(--md-warn-container); color: var(--md-on-warn-container); }
-  tr.soon:hover { background: #FFD0AC; }
+  tr.soon:hover { background: var(--md-warn-edge, #FFD0AC); }
   /* Подсветка строки — на тон ТЕМНЕЕ подложки, как во входящих заявках
      платформы. Раньше здесь стоял --md-surface-container, а он в этой палитре
      ровно белый, то есть цвет самой панели: наведение попросту не было видно.

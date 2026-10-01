@@ -4,6 +4,7 @@ const certs = require("./sources/certs");
 const smdr = require("./sources/smdr");
 const backup = require("./backup");
 const tasks = require("./sources/tasks");
+const logCleanup = require("./logCleanup");
 
 // ============================================================================
 //  Планировщик
@@ -41,6 +42,14 @@ const JOBS = [
     label: "Резервная копия баз",
     period: "monthly",
     run: (db) => backup.runWatched(db),
+  },
+  {
+    // Нарезанные NSSM куски журналов служб никто не удаляет — раз в месяц убираем старые
+    // (services/logCleanup.js).
+    id: "logs",
+    label: "Очистка старых журналов служб",
+    period: "monthly",
+    run: (db) => logCleanup.run(db),
   },
   {
     id: "tasks",
@@ -186,4 +195,4 @@ function isTicking() {
   return ticking;
 }
 
-module.exports = { start, stop, tick, runJob, status, isTicking, JOBS, DEFAULT_HOUR };
+module.exports = { start, stop, tick, runJob, status, isTicking, JOBS };

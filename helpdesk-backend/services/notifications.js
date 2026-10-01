@@ -341,4 +341,4 @@ async function retryPending(db, { includeFailed = false, limit = 100 } = {}) {
   });
 }
 
-module.exports = { emit, settingsFor, parseChannels, resolveEmails, render, renderBody, retryPending, backfillDeliveries };
+module.exports = { emit, settingsFor, resolveEmails, render, renderBody, retryPending, backfillDeliveries };

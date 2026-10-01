@@ -265,4 +265,4 @@ function isTemporary(err) {
 // Текст ошибки — тот же перевод, что у оповещений платформы.
 const mailerDescribe = (err) => String(mailer.describeError(err)).slice(0, 500);
 
-module.exports = { createQueue, readSettings, transportFor, fill, letterText, KEYS, MAX_ATTEMPTS };
+module.exports = { createQueue, readSettings, transportFor, fill, letterText, KEYS };

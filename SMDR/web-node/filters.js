@@ -139,6 +139,5 @@ function countExtraFilters(query = {}) {
 
 module.exports = {
   buildWhereClause, countExtraFilters,
-  parseList, parseDirections, directionClause,
-  SEARCH_COLUMNS, DIRECTION_CLAUSES, MAX_VALUES,
+  parseList, parseDirections,
 };

@@ -231,4 +231,4 @@ function setBackupDir(db, dir) {
   setSetting(db, SETTING, String(dir || "").trim());
 }
 
-module.exports = { run, runWatched, databases, backupDir, setBackupDir, checkDir, listCopies, snapshot, DEFAULT_DIR };
+module.exports = { run, runWatched, databases, backupDir, setBackupDir, checkDir, listCopies, DEFAULT_DIR };

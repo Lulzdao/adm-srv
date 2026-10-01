@@ -215,7 +215,7 @@
   }
   /* Голубой с прозрачностью, а не переменная: нужен именно полупрозрачный
      налёт поверх лотка, у --md-primary-container он был бы плотным. */
-  .nav-item:hover { color:var(--md-primary); background:rgba(10, 97, 174, 0.08); }
+  .nav-item:hover { color:var(--md-primary); background:var(--md-primary-tint, rgba(10, 97, 174, 0.08)); }
   .nav-item.active, .nav-item.active:hover { color:var(--md-on-primary); background:var(--md-primary); }
 
   /* Белый — как контентная область платформы: панель встроена в неё через
@@ -404,7 +404,7 @@
   button.action.danger:hover { background:var(--md-error); color:var(--md-on-primary); filter:none; }
   button.action.ghost { background:var(--md-secondary-container); color:var(--md-on-secondary-container); }
   button.action.ghost:hover { filter:brightness(0.96); box-shadow:none; }
-  button.action:disabled { background:var(--md-surface-container-high); color:rgba(40,42,46,0.38); cursor:not-allowed; box-shadow:none; filter:none; }
+  button.action:disabled { background:var(--md-surface-container-high); color:var(--md-on-disabled, rgba(40,42,46,0.38)); cursor:not-allowed; box-shadow:none; filter:none; }
 
   #histMessages {
     display:flex; flex-direction:column; gap:8px; max-height:440px; overflow-y:auto;

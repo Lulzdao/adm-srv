@@ -5,6 +5,8 @@ messenger.db-wal
 uploads/
 logs/
 updates/
+# Загруженные из панели, но ещё не выложенные версии клиента (lib/releases.js)
+updates-staging/
 bootstrap-admin.js
 .env
 
