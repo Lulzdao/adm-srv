@@ -74,4 +74,4 @@ function clean(rows) {
     .filter((r) => r.some((c) => c !== ""));
 }
 
-module.exports = { readTable, parseCsv, decodeText, guessDelimiter };
+module.exports = { readTable, parseCsv };

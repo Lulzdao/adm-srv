@@ -76,4 +76,4 @@ async function diagnoseServer(url, systemCa) {
 }
 
 
-module.exports = { diagnoseServer, probeServer, CERT_ERROR_CODES };
+module.exports = { diagnoseServer };

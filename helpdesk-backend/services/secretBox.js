@@ -98,4 +98,4 @@ function keyInfo() {
 /** Только для тестов: забыть ключ (новый DB_PATH / SECRET_KEY). */
 function reset() { cached = null; }
 
-module.exports = { seal, open, isSealed, keyInfo, keyFile, reset, PREFIX };
+module.exports = { seal, open, isSealed, keyInfo, keyFile, reset };

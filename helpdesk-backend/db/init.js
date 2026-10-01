@@ -490,4 +490,4 @@ if (require.main === module) {
   db.close();
 }
 
-module.exports = { initDb, ensureLocalAccounts, migrateStatuses, migrateDeliveryChannels };
+module.exports = { initDb, ensureLocalAccounts, migrateStatuses };

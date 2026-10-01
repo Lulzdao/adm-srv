@@ -224,6 +224,6 @@ const BYTES_PER_ROW = 60;
 
 module.exports = {
   COLUMNS, MAX_ROWS, BYTES_PER_ROW, CONTENT_TYPE,
-  xmlEscape, colLetter, cell, row, sheetHead, sheetFoot,
+  xmlEscape, colLetter, cell, row,
   crc32, ZipBuilder, build, fileName, contentDisposition,
 };

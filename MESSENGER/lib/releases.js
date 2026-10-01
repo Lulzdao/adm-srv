@@ -277,4 +277,4 @@ function createReleases({ updatesDir, logServer }) {
   return { registerRoutes, describe };
 }
 
-module.exports = { createReleases, parseLatestYml, parseExeName, compareVersions, TRACKS };
+module.exports = { createReleases, TRACKS };

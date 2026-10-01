@@ -195,4 +195,4 @@ function isTicking() {
   return ticking;
 }
 
-module.exports = { start, stop, tick, runJob, status, isTicking, JOBS, DEFAULT_HOUR };
+module.exports = { start, stop, tick, runJob, status, isTicking, JOBS };

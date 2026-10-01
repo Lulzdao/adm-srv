@@ -79,4 +79,4 @@ function run(db, now = new Date()) {
   return detail;
 }
 
-module.exports = { run, usage, rotatedFiles, logsDir, keepDays, DEFAULT_KEEP_DAYS };
+module.exports = { run, usage, logsDir, keepDays };

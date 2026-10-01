@@ -51,4 +51,4 @@ function parseMachinePolicy(raw, readFile, source) {
   };
 }
 
-module.exports = { parseMachinePolicy, EMPTY };
+module.exports = { parseMachinePolicy };

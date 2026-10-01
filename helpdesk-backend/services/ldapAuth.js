@@ -237,4 +237,4 @@ class LdapAuthError extends Error {
   }
 }
 
-module.exports = { authenticate, lookupGroups, clientOptions, LdapAuthError, isMemberOfGroup, groupNames };
+module.exports = { authenticate, lookupGroups, clientOptions, LdapAuthError, groupNames };
