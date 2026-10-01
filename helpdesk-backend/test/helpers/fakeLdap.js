@@ -43,7 +43,9 @@ class FakeClient {
     directory.filters.push(filter);
     if (directory.searchFails) throw new Error("referral");
     const m = /^\(sAMAccountName=(.*)\)$/.exec(filter);
-    const u = m && directory.users.get(m[1]);
+    // Как настоящий AD: sAMAccountName ищется без учёта регистра.
+    const key = m && [...directory.users.keys()].find((k) => k.toLowerCase() === m[1].toLowerCase());
+    const u = key && directory.users.get(key);
     return { searchEntries: u ? [{ dn: u.dn, ...u.attrs }] : [], searchReferences: [] };
   }
 
@@ -62,7 +64,7 @@ function addUser(login, { password, displayName, mail, department, phone, member
   directory.users.set(login, {
     dn: `CN=${displayName || login},OU=Сотрудники,DC=test,DC=local`,
     password,
-    attrs: { displayName, mail, department, telephoneNumber: phone, memberOf, userAccountControl: String(userAccountControl) },
+    attrs: { sAMAccountName: login, displayName, mail, department, telephoneNumber: phone, memberOf, userAccountControl: String(userAccountControl) },
   });
 }
 

@@ -106,6 +106,17 @@ test("права пересчитываются при каждом входе: 
   assert.strictEqual(db.prepare("SELECT COUNT(*) c FROM users WHERE ad_login = 'byvshiy'").get().c, 1, "та же строка, а не вторая учётка");
 });
 
+test("регистр логина не важен: «Volkov» и «volkov» — один пользователь, написание — как в домене", async (t) => {
+  const { db, app } = await stand(t);
+  ldap.addUser("Volkov.TT", { password: "верный-пароль", displayName: "Волков Тест Тестович" });
+  const a = await войти(app, "volkov.tt", "верный-пароль");
+  const b = await войти(app, "VOLKOV.TT", "верный-пароль");
+  assert.strictEqual(a.status, 200, a.text);
+  assert.strictEqual(b.status, 200, b.text);
+  assert.strictEqual(a.json.user.id, b.json.user.id, "одна запись, а не две");
+  assert.deepStrictEqual(db.prepare("SELECT ad_login FROM users WHERE auth_type = 'ad'").all().map((r) => r.ad_login), ["Volkov.TT"]);
+});
+
 test("неверный пароль и неизвестный логин — 401", async (t) => {
   const { app } = await stand(t);
   ldap.addUser("ivanov", { password: "верный", displayName: "Иванов" });
