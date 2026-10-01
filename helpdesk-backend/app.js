@@ -52,6 +52,9 @@ function createApp(db, { secureCookie = false } = {}) {
     },
   }));
 
+  // Журнал действий администраторов: до маршрутов, чтобы видеть ответ каждого (services/audit.js).
+  app.use(require("./services/audit").middleware(db));
+
   // Сертификаты — до общего парсера тела: PFX с цепочкой не влезает в его
   // предел, и маршрут читает тело сам (см. routes/certificates.js).
   app.use("/api/certificates", require("./routes/certificates")());

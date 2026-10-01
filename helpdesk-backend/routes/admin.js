@@ -151,6 +151,11 @@ module.exports = function adminRoutes(db) {
 
   router.get("/backup", (req, res) => res.json(backupInfo()));
 
+  // Журнал действий администраторов (services/audit.js): новые сверху, поиск, страницы через before.
+  router.get("/audit", (req, res) => {
+    res.json(require("../services/audit").list(db, { q: req.query.q, before: req.query.before, limit: req.query.limit }));
+  });
+
   // Состояние системы: службы, копии, диски, сертификат, планировщик, почта (services/health.js).
   router.get("/health", async (req, res, next) => {
     try { res.json(await require("../services/health").collect(db)); } catch (err) { next(err); }

@@ -398,6 +398,20 @@ CREATE TABLE IF NOT EXISTS mail_attachments (
 -- Сеансы входа (services/sessionStore.js). Раньше express-session держал их в памяти процесса,
 -- и любой перезапуск платформы — обновление, перезапуск службы, переход на https из панели —
 -- выкидывал из системы всех сразу, хотя вход обещан на 30 дней.
+-- Журнал действий администраторов (services/audit.js): кто и когда изменил настройки.
+-- Только дополняется. Паролей и содержимого файлов в нём нет — см. шапку audit.js.
+CREATE TABLE IF NOT EXISTS admin_audit (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  at TEXT NOT NULL,                 -- ISO 8601, UTC
+  user_id INTEGER,                  -- без внешнего ключа: запись переживает удаление пользователя
+  login TEXT,
+  full_name TEXT,
+  action TEXT NOT NULL,             -- метод и шаблон пути — для отбора
+  summary TEXT NOT NULL,            -- что сделано, человеческим языком
+  details TEXT,                     -- JSON с подробностями
+  ip TEXT
+);
+
 CREATE TABLE IF NOT EXISTS sessions (
   sid TEXT PRIMARY KEY,
   sess TEXT NOT NULL,
