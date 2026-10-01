@@ -216,10 +216,13 @@ async function renderAdmin(main) {
           <div class="card">
             <div class="section-label">Как добавить ещё одну группу исполнителей</div>
             <div style="font-size:12.5px;line-height:1.7;color:var(--ink);">
-              1. На сервере откройте файл <code class="mono" style="background:var(--line-soft);padding:1px 5px;border-radius:3px;">config/departments.js</code><br>
+              1. На сервере в папке <code class="mono" style="background:var(--line-soft);padding:1px 5px;border-radius:3px;">config</code> откройте файл
+              <code class="mono" style="background:var(--line-soft);padding:1px 5px;border-radius:3px;">departments.local.js</code>.
+              Если его ещё нет — скопируйте <code class="mono" style="background:var(--line-soft);padding:1px 5px;border-radius:3px;">departments.js</code> под этим именем.
+              Сам <code class="mono" style="background:var(--line-soft);padding:1px 5px;border-radius:3px;">departments.js</code> не правьте: обновление его перезапишет, а свой файл не тронет.<br>
               2. Добавьте одну строку в список, например:<br>
               <code class="mono" style="display:block;background:var(--line-soft);padding:8px 10px;border-radius:5px;margin:6px 0;font-size:11.5px;">{ name: "БУХ", prefix: "БУХ", role: "buh" }</code>
-              3. Перезапустите сервер (<code class="mono" style="background:var(--line-soft);padding:1px 5px;border-radius:3px;">npm start</code>)<br>
+              3. Перезапустите службу платформы (<code class="mono" style="background:var(--line-soft);padding:1px 5px;border-radius:3px;">nssm restart ITS-Platform</code>)<br>
               4. Новый отдел появится в форме создания заявки, в фильтре списка и справа на этой странице — впишите туда название AD-группы, как для остальных отделов.
             </div>
           </div>
