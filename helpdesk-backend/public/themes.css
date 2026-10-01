@@ -1,0 +1,200 @@
+/* ============================================================================
+   Цветовые темы «Центра» — личный выбор каждого сотрудника.
+
+   Тема — это набор переменных: правила в styles.css одни на все темы. Выбор
+   хранится в браузере (theme.js, localStorage) и ставится атрибутом
+   <html data-theme="…">; без атрибута действует голубая тема из styles.css.
+   Этот же файл подключают модули (Сертвивер, журнал звонков, панель «Искры»),
+   открытые внутри «Центра», — тема у них та же.
+
+   Цвета — из «Руководства по использованию фирменного стиля» Росстата:
+     3.1 основные: голубая и сиреневая гаммы — темы «Голубая» и «Сиреневая»;
+     3.2 изумрудная гамма — для внутренних коммуникаций, вместе с основными —
+         тема «Изумрудная» (вторым цветом в ней остаётся голубой);
+     3.3 дополнительные (розовый, оранжевый, зелёный, коричневый) брендбук
+         отводит под акценты. «Розовая» — личная тема по просьбе
+         пользователей, а не фирменный вид: по умолчанию остаётся голубая.
+     3.4 на тёмном фоне текст белый, на светлом — тёмно-серый: так собраны
+         «Светлая» (светлая боковая панель) и «Тёмная».
+
+   Где названный в брендбуке цвет слишком светел для белого текста на нём
+   (тёмно-изумрудный #008F9F, тёмно-розовый #E7004B в роли фона панели), взят
+   тон на ступень темнее — чтобы подписи в боковой панели читались.
+   ========================================================================= */
+
+/* ---------- Сиреневая ---------- */
+html[data-theme="lilac"] {
+  --md-primary: #663AB5;                 /* тёмно-сиреневый */
+  --md-primary-container: #E9E2F6;
+  --md-on-primary-container: #663AB5;
+  --md-secondary-container: #DCE7F6;     /* вторым — голубая гамма */
+  --md-on-secondary-container: #0A61AE;
+  --md-surface: #ECE8F4;
+  --md-surface-container-low: #F9F7FC;
+  --md-surface-container-high: #F9F7FC;
+  --md-surface-container-highest: #F0ECF8;
+  --md-outline: #DED6EC;
+  --md-outline-variant: #E6E0F1;
+  --md-info-container: #E9E2F6;
+  --md-on-info-container: #663AB5;
+  --md-state-hover: #F0ECF8;
+  --md-state-hover-strong: #E9E2F6;
+  --md-primary-strong: #55309A;
+  --md-primary-tint: rgba(102, 58, 181, 0.08);
+  --md-primary-ring: rgba(102, 58, 181, 0.14);
+  --md-primary-edge: #C5B4E2;            /* светло-сиреневый */
+  --md-secondary-faint: #F2F7FD;
+  --md-disabled: #E2DCEE;
+  --note: #0A61AE;
+  --sidebar-ink-soft: #E4DBF5;
+  --sidebar-ink-faint: #C5B4E2;
+}
+
+/* ---------- Изумрудная ---------- */
+html[data-theme="emerald"] {
+  --md-primary: #00818F;                 /* тёмно-изумрудный, на ступень темнее */
+  --md-primary-container: #DBF0F2;
+  --md-on-primary-container: #00707C;
+  --md-secondary-container: #DCE7F6;
+  --md-on-secondary-container: #0A61AE;
+  --md-surface: #E4EFF0;
+  --md-surface-container-low: #F6FAFB;
+  --md-surface-container-high: #F6FAFB;
+  --md-surface-container-highest: #E9F3F4;
+  --md-outline: #D3E5E7;
+  --md-outline-variant: #DEECEE;
+  --md-info-container: #DBF0F2;
+  --md-on-info-container: #00707C;
+  /* Изумрудный занят основным цветом — «всё в порядке» обозначает зелёный. */
+  --md-success-container: #EAF3CC;
+  --md-on-success-container: #5C7500;
+  --green: #5C7500;
+  --md-state-hover: #E9F3F4;
+  --md-state-hover-strong: #DBF0F2;
+  --md-primary-strong: #006B77;
+  --md-primary-tint: rgba(0, 143, 159, 0.09);
+  --md-primary-ring: rgba(0, 143, 159, 0.16);
+  --md-primary-edge: #A4E5D8;            /* светло-изумрудный */
+  --md-secondary-faint: #F2F7FD;
+  --md-disabled: #D8E6E8;
+  --note: #0A61AE;
+  --sidebar-ink-soft: #D6EEF0;
+  --sidebar-ink-faint: #A4E5D8;
+}
+
+/* ---------- Розовая ---------- */
+html[data-theme="pink"] {
+  --md-primary: #C2003F;                 /* тёмно-розовый, на ступень темнее */
+  --md-primary-container: #FDE3EA;
+  --md-on-primary-container: #B4003C;
+  --md-surface: #F5E9ED;
+  --md-surface-container-low: #FCF7F9;
+  --md-surface-container-high: #FCF7F9;
+  --md-surface-container-highest: #F7EDF1;
+  --md-outline: #EEDBE2;
+  --md-outline-variant: #F2E3E9;
+  --md-info-container: #FDE3EA;
+  --md-on-info-container: #B4003C;
+  --md-state-hover: #F7EDF1;
+  --md-state-hover-strong: #FDE3EA;
+  --md-primary-strong: #9E0034;
+  --md-primary-tint: rgba(231, 0, 75, 0.07);
+  --md-primary-ring: rgba(231, 0, 75, 0.14);
+  --md-primary-edge: #FEAFBF;            /* светло-розовый */
+  --md-disabled: #EBDDE2;
+  /* Розовым в остальных темах обозначена ошибка. Здесь он — основной цвет,
+     поэтому ошибка уходит в тёмно-оранжевую гамму, а «истекает срок» — в
+     коричневую: иначе тревожная кнопка не отличалась бы от обычной. */
+  --md-error: #D4380D;
+  --md-error-container: #FFE4DA;
+  --md-on-error-container: #B8320F;
+  --md-error-strong: #B8320F;
+  --md-error-edge: #FFA489;              /* светло-оранжевый */
+  --md-error-faint: #FFF4EF;
+  --md-warn-container: #F1E4DA;
+  --md-on-warn-container: #7A5140;
+  --amber: #8A5A44;
+  --sidebar-ink-soft: #FBD9E2;
+  --sidebar-ink-faint: #FEAFBF;
+}
+
+/* ---------- Светлая: та же голубая гамма, но боковая панель белая ---------- */
+html[data-theme="light"] {
+  --sidebar: #FFFFFF;
+  --sidebar-ink: #282A2E;                /* на светлом текст тёмно-серый (3.4) */
+  --sidebar-ink-soft: #4B5059;
+  --sidebar-ink-faint: #838383;
+  --sidebar-hover: rgba(10, 97, 174, 0.08);
+  --sidebar-chip: rgba(10, 97, 174, 0.10);
+  --sidebar-active: #DCE7F6;
+  --sidebar-active-ink: #0A61AE;
+}
+
+/* ---------- Тёмная ----------
+   Фон — производные тёмно-серого #282A2E, акцент — «голубой» и «светло-
+   голубой» из основной гаммы: тёмно-голубой на тёмном фоне не читается. */
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --md-primary: #87A9E3;                 /* голубой */
+  --md-on-primary: #0E2038;
+  --md-primary-container: #24344E;
+  --md-on-primary-container: #B0C8E7;    /* светло-голубой */
+  --md-secondary-container: #32294B;
+  --md-on-secondary-container: #C5B4E2;  /* светло-сиреневый */
+  --md-surface: #181A1D;
+  --md-surface-container-lowest: #23262B;
+  --md-surface-container-low: #2A2D33;
+  --md-surface-container: #23262B;
+  --md-surface-container-high: #2A2D33;
+  --md-surface-container-highest: #31353C;
+  --md-on-surface: #E6E8EC;
+  --md-on-surface-variant: #A1A7B1;
+  --md-outline: #3B4049;
+  --md-outline-variant: #343840;
+  --md-error: #FF5A67;                   /* розовый */
+  --md-error-container: #4A1F2A;
+  --md-on-error-container: #FEAFBF;
+  --md-warn-container: #4A2F1C;
+  --md-on-warn-container: #FFB08A;
+  --md-info-container: #24344E;
+  --md-on-info-container: #B0C8E7;
+  --md-success-container: #173B3F;
+  --md-on-success-container: #A4E5D8;
+  --md-neutral-container: #34373C;
+  --md-on-neutral-container: #BFBFBF;
+  --md-state-hover: #2E3239;
+  --md-state-hover-strong: #353B45;
+  --md-primary-strong: #A3BDEA;
+  --md-primary-tint: rgba(135, 169, 227, 0.10);
+  --md-primary-ring: rgba(135, 169, 227, 0.24);
+  --md-primary-edge: #44608F;
+  --md-secondary-faint: #2A2440;
+  --md-error-strong: #FF8A96;
+  --md-error-edge: #7A3040;
+  --md-error-faint: #33202A;
+  --md-disabled: #2E3239;
+  --md-on-disabled: #6B717B;
+  --md-inverse-surface: #E6E8EC;
+  --md-inverse-on-surface: #181A1D;
+  --md-scrim: rgba(0, 0, 0, 0.58);
+  --md-elev-3: 0 2px 14px rgba(0, 0, 0, 0.45);
+  --amber: #FFA05C;
+  --green: #1AC4BC;                      /* изумрудный */
+  --note: #C5B4E2;
+  --sidebar: #121416;
+  --sidebar-ink: #E6E8EC;
+  --sidebar-ink-soft: #B8BEC8;
+  --sidebar-ink-faint: #8E95A0;
+  --sidebar-hover: rgba(255, 255, 255, 0.07);
+  --sidebar-chip: rgba(255, 255, 255, 0.09);
+  --sidebar-active: #24344E;
+  --sidebar-active-ink: #B0C8E7;
+}
+
+/* Герб в боковой панели белый (фильтр в styles.css). На светлой панели — как есть, цветной. */
+html[data-theme="light"] .sidebar .brand-emblem { filter: none; }
+html[data-theme="light"] .sidebar { border-right: 1px solid var(--md-outline); }
+
+/* Подсветка строки «истекает срок» под курсором (Сертвивер) — в тон теме. */
+html[data-theme="pink"] { --md-warn-edge: #E7CDB4; }
+html[data-theme="dark"] { --md-warn-edge: #6A4326; }

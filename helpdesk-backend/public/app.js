@@ -11,6 +11,8 @@ const ICON_PATHS = {
   search: '<circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>',
   paperclip: '<path d="M21 12.5l-8.5 8.5a4 4 0 1 1-5.66-5.66l9-9a2.5 2.5 0 1 1 3.54 3.54l-9 9a1 1 0 1 1-1.42-1.42l8-8"/>',
   x: '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
+  // Палитра — выбор цветовой темы (низ боковой панели).
+  palette: '<path d="M12 3a9 9 0 1 0 0 18c1.1 0 1.8-.8 1.8-1.8 0-.5-.2-.9-.5-1.2-.3-.3-.5-.7-.5-1.2 0-1 .8-1.8 1.8-1.8H17a4 4 0 0 0 4-4c0-4.4-4-8-9-8z"/><circle cx="7.5" cy="11.5" r="1"/><circle cx="10" cy="7.5" r="1"/><circle cx="15" cy="7.5" r="1"/>',
   box: '<path d="M21 8L12 3 3 8l9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/>',
   // Иконки модулей: печать с лентами — Сертвивер, трубка — журнал звонков,
   // облачко реплики — «Искра». Общий «ящик» остаётся запасным вариантом для
@@ -67,6 +69,38 @@ const deptColor = (d, i) => d.color || DEPT_FALLBACK_COLORS[i % DEPT_FALLBACK_CO
 function icon(name, size) {
   size = size || 16;
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">${ICON_PATHS[name] || ""}</svg>`;
+}
+
+// ---- Цветовая тема (theme.js, themes.css): выбор в низу боковой панели ----
+// Тема личная: хранится в браузере для вошедшего сотрудника, на сервер не уходит.
+function themeOptionsHtml() {
+  const now = CenterTheme.get();
+  return CenterTheme.list.map((t) => `
+    <button class="theme-opt${t.id === now ? " on" : ""}" data-theme-id="${t.id}">
+      <span class="theme-swatch" style="background:linear-gradient(135deg, ${t.swatch[0]} 0 50%, ${t.swatch[1]} 50% 100%);"></span>
+      <span>${esc(t.name)}</span>
+    </button>`).join("");
+}
+
+function wireThemePicker() {
+  const btn = document.getElementById("themeBtn");
+  const pop = document.getElementById("themePop");
+  if (!btn || !pop) return;
+  btn.onclick = (e) => { e.stopPropagation(); pop.hidden = !pop.hidden; };
+  pop.onclick = (e) => {
+    const opt = e.target.closest(".theme-opt");
+    if (!opt) return;
+    CenterTheme.set(opt.dataset.themeId);
+    pop.querySelectorAll(".theme-opt").forEach((o) => o.classList.toggle("on", o === opt));
+  };
+  // Клик мимо — закрыть. Обработчик один на страницу, а не новый при каждой перерисовке оболочки.
+  if (!wireThemePicker.bound) {
+    wireThemePicker.bound = true;
+    document.addEventListener("click", (e) => {
+      const p = document.getElementById("themePop");
+      if (p && !p.hidden && !e.target.closest("#themePop")) p.hidden = true;
+    });
+  }
 }
 
 // Государственный герб — фирменный знак системы вместо прежней плитки с
@@ -372,6 +406,7 @@ async function boot() {
   try {
     const { user } = await api("/auth/me");
     state.user = user;
+    CenterTheme.useUser(user.ad_login);
     await enterApp();
   } catch (e) {
     await renderLogin();
@@ -462,6 +497,7 @@ async function renderLogin(errorMsg) {
     try {
       const { user } = await api("/auth/login", { method: "POST", body: { mode, login: loginRaw, password } });
       state.user = user;
+      CenterTheme.useUser(user.ad_login);
       await enterApp();
     } catch (e) {
       renderLogin(e.message || "Не удалось войти");
@@ -940,6 +976,8 @@ function renderShell() {
               <div class="user-role-badge">${esc(roleLabel)}</div>
             </div>
           </div>
+          <div class="theme-pop" id="themePop" hidden>${themeOptionsHtml()}</div>
+          <button class="logout-btn" id="themeBtn" title="Цветовая тема — только для вас, в этом браузере">${icon("palette")} Оформление</button>
           <button class="logout-btn" id="logoutBtn">${icon("logout")} Выйти</button>
         </div>
       </div>
@@ -953,6 +991,8 @@ function renderShell() {
 
   root.querySelectorAll(".nav-btn").forEach(btn => btn.onclick = () => setView(btn.dataset.view));
   root.querySelectorAll(".nav-group-header").forEach(btn => btn.onclick = () => toggleNavGroup(btn.closest(".nav-group")));
+
+  wireThemePicker();
 
   document.getElementById("logoutBtn").onclick = async () => {
     clearViewPoll();
