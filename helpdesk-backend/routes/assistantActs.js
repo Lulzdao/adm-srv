@@ -37,6 +37,12 @@ const DOC_NAMES = {
   cartridges: "Ведомость на списание картриджей",
 };
 
+/** Акты составляют администраторы и исполнители отдела ИТ (роль "it"). */
+function canActs(user) {
+  const roles = user.roles && user.roles.length ? user.roles : (user.role ? [user.role] : []);
+  return Boolean(user.is_admin) || roles.includes("it");
+}
+
 const canEdit = (user, row) => user.is_admin || row.created_by === user.id;
 
 /** Строки многострочного поля: по одной неисправности (работе) на строку. */
@@ -84,6 +90,9 @@ function actDocuments(db, act) {
 module.exports = function actRoutes(db) {
   const router = express.Router();
   router.use(requireAuth);
+  // Акты — работа отдела ИТ: остальным раздел не показывается и по адресу
+  // тоже не открывается.
+  router.use("/acts", (req, res, next) => (canActs(req.session.user) ? next() : res.status(403).json({ error: "Недостаточно прав" })));
 
   router.get("/acts", (req, res) => {
     const year = Number(req.query.year) || new Date().getFullYear();

@@ -99,6 +99,8 @@ function ticketPayload(db, ticketId) {
     "отдел": t.category || "",
     "статус": STATUS_LABEL[t.status] || t.status,
     "исполнитель": t.assigned_to_name || "не назначен",
+    // Без PUBLIC_URL ссылку собрать не из чего — тогда подсказка, где искать.
+    "ссылка": config.publicUrl ? `${config.publicUrl}/#detail/${ticketId}` : `«Центр» → заявка ${t.display_id}`,
   };
 }
 

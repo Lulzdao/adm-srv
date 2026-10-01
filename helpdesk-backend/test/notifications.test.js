@@ -154,6 +154,20 @@ test("render: подставляет кириллические имена и н
   assert.equal(notifications.render(null, {}), "");
 });
 
+test("письма по заявкам: ссылка на заявку в конце, даже если шаблон правили до появления ссылок", (t) => {
+  const { db, cleanup } = freshDb();
+  t.after(cleanup);
+  const { notifications } = load();
+  const { byKind } = require("../config/notifications");
+  const payload = { "номер": "ИТ-0148", "тема": "Принтер", "ссылка": "http://center.example.invalid/#detail/148" };
+  const def = notifications.renderBody(byKind("ticket_status").defaultBody, payload);
+  assert.match(def, /Открыть заявку: http:\/\/center\.example\.invalid\/#detail\/148$/);
+  assert.equal(def.match(/#detail\/148/g).length, 1, "ссылка из шаблона не дублируется");
+  assert.equal(notifications.renderBody("Заявка {{номер}} закрыта.\n", payload),
+    "Заявка ИТ-0148 закрыта.\n\nОткрыть заявку: http://center.example.invalid/#detail/148", "старый шаблон без метки — строка дописана");
+  assert.equal(notifications.renderBody("Истекает {{срок}}", { "срок": "01.01.2027" }), "Истекает 01.01.2027", "письма не по заявкам — без ссылки");
+});
+
 test("почта: письмо реально уходит, тема и текст собраны по шаблону", async (t) => {
   const { db, cleanup } = freshDb();
   t.after(cleanup);

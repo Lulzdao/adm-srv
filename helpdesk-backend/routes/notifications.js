@@ -1,7 +1,7 @@
 const express = require("express");
 const { requireAuth, requireAdmin } = require("../middleware/auth");
 const { KINDS, byKind, RECIPIENTS, TASK_CHANNELS } = require("../config/notifications");
-const { settingsFor, resolveEmails, render, retryPending, backfillDeliveries } = require("../services/notifications");
+const { settingsFor, resolveEmails, render, renderBody, retryPending, backfillDeliveries } = require("../services/notifications");
 const { setSetting } = require("../services/settings");
 const mailer = require("../services/mailer");
 const scheduler = require("../services/scheduler");
@@ -273,7 +273,10 @@ module.exports = function notificationRoutes(db) {
     const s = settingsFor(db, def.kind);
     const subjectTpl = (req.body && req.body.subjectTpl) || s.subjectTpl;
     const bodyTpl = (req.body && req.body.bodyTpl) || s.bodyTpl;
-    res.json({ subject: render(subjectTpl, sample), body: render(bodyTpl, sample), sample });
+    // Ссылка на заявку дописывается к письму и без метки в шаблоне — пусть
+    // предпросмотр показывает то, что уйдёт на самом деле.
+    const body = (def.vars || []).includes("ссылка") ? renderBody(bodyTpl, sample) : render(bodyTpl, sample);
+    res.json({ subject: render(subjectTpl, sample), body, sample });
   });
 
   // ---- Планировщик ---------------------------------------------------------
@@ -414,6 +417,7 @@ module.exports = function notificationRoutes(db) {
 function sampleFor(def) {
   const base = {
     "номер": "ИТ-0148",
+    "ссылка": "http://center.example.invalid/#detail/148",
     "тема": "Не печатает принтер в 212",
     "описание": "После обновления драйвера задания висят в очереди.",
     "автор": "Пробников Пробник Пробникович",

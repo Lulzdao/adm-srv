@@ -54,7 +54,7 @@ async function дождаться(C, id, pred, ms = 8000) {
   }
 }
 
-const LIST_CSV = "ОКПО;Наименование;Почта;Форма\r\n01234567;ООО \"Выдуманное\";one@example.invalid;1-Т\r\n12345678;АО Пробное;two@example.invalid, three@example.invalid;П-1\r\n23456789;ИП Без адреса;;П-4\r\n34567890;ЗАО Опечатка;bad@;1-Т\r\n45678901;ООО Повтор;one@example.invalid;1-Т\r\n";
+const LIST_CSV = "ОКПО;Наименование;Почта;Форма\r\n01234567;ООО \"Выдуманное\";one@example.invalid;1-Т\r\n12345678;АО Пробное;\"two@example.invalid; three@example.invalid\";П-1\r\n23456789;ИП Без адреса;;П-4\r\n34567890;ЗАО Опечатка;bad@;1-Т\r\n45678901;ООО Повтор;one@example.invalid;1-Т\r\n";
 
 test("разбор списка: колонки по заголовку, несколько адресов, пустые и кривые адреса, повторы", async (t) => {
   const { app, U } = await стенд(t);
@@ -108,6 +108,17 @@ test("отправка с общего ящика: шаблон с реквиз�
   assert.match(report.body, /Отправлено: 2 из 2/);
   // Текст письма с шаблоном — в предпросмотре карточки.
   assert.match(done.preview, /Здравствуйте, уважаемый респондент!\nОКПО: 01234567\nНаименование: ООО "Выдуманное"\n\nНапоминаем о сдаче формы 1-Т\.\n\nС уважением,\nВыдуманный статорган/);
+});
+
+test("несколько адресов в ячейке — через «; »: письмо уходит на все, в списке и отчёте они через «; »", async (t) => {
+  const { app, smtp, U } = await стенд(t);
+  const r = await form(app, U, "/api/mailings", { payload: { subject: "Тема", body: "Текст", use_template: false, sender_mode: "shared", mailbox_id: 1,
+    recipients: [{ row_no: 2, okpo: "1", name: "А", emails: ["one@example.invalid", "two@example.invalid"] }] } });
+  assert.strictEqual(r.status, 201, r.text);
+  const done = await дождаться(U, r.json.id, (x) => x.campaign.status === "done");
+  assert.strictEqual(done.recipients[0].emails, "one@example.invalid; two@example.invalid");
+  const sent = smtp.messages.find((m) => m.subject === "Тема");
+  assert.deepStrictEqual([...sent.to].sort(), ["one@example.invalid", "two@example.invalid"]);
 });
 
 test("отказ сервера по адресу — строка «не отправлено» с причиной; повтор неотправленных", async (t) => {
