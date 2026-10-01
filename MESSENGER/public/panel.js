@@ -941,6 +941,152 @@ async function loadPublishedVersions() {
     };
     box.innerHTML = cell('win7', 'Windows 7 / 8.1') + cell('win10', 'Windows 10+');
   } catch (e) { box.innerHTML = `<span style="color:var(--danger)">${escapeHtml(e.message)}</span>`; }
+  await loadReleases();
+}
+
+// ---------- Версии клиента: список, скачивание, откат, удаление, выкладка (lib/releases.js) ----------
+const TRACK_LABEL = { win7: 'Windows 7 / 8.1', win10: 'Windows 10+' };
+
+function renderReleases(data) {
+  const rows = [];
+  for (const track of ['win10', 'win7']) {
+    for (const v of (data[track] && data[track].versions) || []) {
+      const badge = v.current
+        ? ' <span style="color:var(--online, #2e7d32); font-weight:600;">текущая</span>'
+        : '';
+      const noMap = v.hasBlockmap ? '' : ' <span style="color:var(--warn)" title="Нет файла .blockmap: с этой версии клиенты скачают следующую целиком">без карты блоков</span>';
+      rows.push(`<tr>
+        <td style="color:var(--muted)">${TRACK_LABEL[track]}</td>
+        <td><b>${escapeHtml(v.version)}</b>${badge}${noMap}</td>
+        <td>${fmtSize(v.size)}</td>
+        <td style="color:var(--muted)">${new Date(v.modified).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' })}</td>
+        <td class="row-flex">
+          <button class="action ghost" data-track="${track}" data-file="${escapeHtml(v.file)}" onclick="downloadRelease(this.dataset.track, this.dataset.file)">Скачать</button>
+          ${v.current ? '' : `<button class="action ghost" data-track="${track}" data-version="${escapeHtml(v.version)}" onclick="makeReleaseCurrent(this.dataset.track, this.dataset.version)"${v.canMakeCurrent ? '' : ' disabled title="У этой версии нет своего latest.yml — вернуться к ней нельзя"'}>Сделать текущей</button>
+          <button class="action danger" data-track="${track}" data-version="${escapeHtml(v.version)}" onclick="deleteRelease(this.dataset.track, this.dataset.version)">Удалить</button>`}
+        </td>
+      </tr>`);
+    }
+  }
+  document.getElementById('releasesBody').innerHTML = rows.join('')
+    || '<tr><td colspan="5" style="color:var(--muted)">Версий на сервере пока нет</td></tr>';
+}
+
+// Установщик отдаётся без входа (клиентам при обновлении нечем предъявить токен) — обычная ссылка.
+// Путь относительный: панель открывают и напрямую, и через «Центр» (/modules/messenger/).
+function downloadRelease(track, file) {
+  const a = document.createElement('a');
+  a.href = `updates/${track}/${encodeURIComponent(file)}`;
+  a.download = file;
+  document.body.appendChild(a); a.click(); a.remove();
+}
+
+async function loadReleases() {
+  try { renderReleases(await api('api/admin/releases')); }
+  catch (e) { document.getElementById('releasesBody').innerHTML = `<tr><td colspan="5">Ошибка: ${escapeHtml(e.message)}</td></tr>`; }
+}
+
+// Пароль спрашиваем полем, а не prompt(): prompt показывает набранное открытым текстом.
+function releasePassword() {
+  const el = document.getElementById('releasePassword');
+  if (!el.value) { el.focus(); throw new Error('Введите свой пароль в поле «Ваш пароль» ниже — действие подтверждается им'); }
+  return el.value;
+}
+
+async function makeReleaseCurrent(track, version) {
+  try {
+    const password = releasePassword();
+    if (!confirm(`Сделать ${version} текущей версией для ${TRACK_LABEL[track]}? Клиентам, которые ещё не обновились, будет предлагаться она.`)) return;
+    await api(`api/admin/releases/${track}/current`, { method: 'POST', body: JSON.stringify({ version, password }) });
+    await loadPublishedVersions();
+  } catch (e) { alert(e.message); }
+}
+
+async function deleteRelease(track, version) {
+  if (!confirm(`Удалить с сервера версию ${version} (${TRACK_LABEL[track]})? Клиенты, у которых стоит она, следующую версию скачают целиком.`)) return;
+  try {
+    await api(`api/admin/releases/${track}/${encodeURIComponent(version)}`, { method: 'DELETE' });
+    await loadReleases();
+  } catch (e) { alert(e.message); }
+}
+
+// Что выбрано для выкладки: по latest-….yml (сборку и версию берём из его содержимого, а не из
+// имени файла) находим среди выбранных установщик и карту блоков.
+let releasePlan = [];
+
+async function planRelease() {
+  const files = [...document.getElementById('releaseFiles').files];
+  const byName = new Map(files.map((f) => [f.name, f]));
+  releasePlan = [];
+  const notes = [];
+  for (const f of files.filter((x) => /\.ya?ml$/i.test(x.name))) {
+    const yml = await f.text();
+    const p = (/^path:\s*'?([^'\r\n]+)'?\s*$/m.exec(yml) || [])[1];
+    const m = /^iskra-setup-(win7|win10)-(\d+\.\d+\.\d+)\.exe$/.exec(p || '');
+    if (!m) { notes.push(`<div style="color:var(--danger)">${escapeHtml(f.name)}: это не latest.yml сборки клиента</div>`); continue; }
+    const exe = byName.get(p); const map = byName.get(p + '.blockmap');
+    const ok = exe && map;
+    notes.push(`<div>${TRACK_LABEL[m[1]]}, версия <b>${m[2]}</b>: `
+      + `установщик ${exe ? '✓ ' + fmtSize(exe.size) : '<span style="color:var(--danger)">не выбран (' + escapeHtml(p) + ')</span>'}, `
+      + `карта блоков ${map ? '✓' : '<span style="color:var(--danger)">не выбрана</span>'}</div>`);
+    if (ok) releasePlan.push({ track: m[1], version: m[2], yml, exe, map });
+  }
+  if (!files.length) notes.length = 0;
+  else if (!files.some((x) => /\.ya?ml$/i.test(x.name))) notes.push('<div style="color:var(--danger)">Не выбран latest-….yml — без него сервер не сможет проверить установщик</div>');
+  document.getElementById('releasePlan').innerHTML = notes.join('');
+  document.getElementById('releasePublishBtn').disabled = !releasePlan.length;
+}
+
+// Загрузка с ходом выполнения: у fetch его нет, а установщик — сотни мегабайт.
+function uploadReleaseFile(track, file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', `api/admin/releases/${track}/upload?name=${encodeURIComponent(file.name)}`);
+    xhr.setRequestHeader('Authorization', 'Bearer ' + token);
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    xhr.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(e.loaded / e.total); };
+    xhr.onload = () => {
+      let data = {};
+      try { data = JSON.parse(xhr.responseText); } catch { /* не JSON */ }
+      if (xhr.status >= 200 && xhr.status < 300) resolve(data); else reject(new Error(data.error || `Ошибка загрузки (${xhr.status})`));
+    };
+    xhr.onerror = () => reject(new Error('Связь с сервером прервалась во время загрузки'));
+    xhr.send(file);
+  });
+}
+
+async function publishRelease() {
+  const btn = document.getElementById('releasePublishBtn');
+  const progress = document.getElementById('releaseProgress');
+  let password;
+  try { password = releasePassword(); } catch (e) { alert(e.message); return; }
+  const what = releasePlan.map((r) => `${TRACK_LABEL[r.track]} ${r.version}`).join(', ');
+  if (!confirm(`Выложить ${what}? Клиенты начнут обновляться сами: при следующем запуске и по «Проверить сейчас».`)) return;
+  btn.disabled = true;
+  try {
+    // Пароль — до загрузки: опечатка не должна стоить сотен мегабайт трафика.
+    progress.textContent = 'Проверка пароля…';
+    await api('api/admin/releases/confirm', { method: 'POST', body: JSON.stringify({ password }) });
+    for (const r of releasePlan) {
+      const label = `${TRACK_LABEL[r.track]} ${r.version}`;
+      await uploadReleaseFile(r.track, r.exe, (p) => { progress.textContent = `${label}: загрузка установщика ${Math.round(p * 100)}%`; });
+      progress.textContent = `${label}: карта блоков…`;
+      await uploadReleaseFile(r.track, r.map, () => {});
+      progress.textContent = `${label}: сервер проверяет контрольную сумму…`;
+      await api(`api/admin/releases/${r.track}/publish`, { method: 'POST', body: JSON.stringify({ yml: r.yml, password }) });
+    }
+    progress.textContent = `Выложено: ${what}`;
+    document.getElementById('releaseFiles').value = '';
+    document.getElementById('releasePassword').value = '';
+    releasePlan = [];
+    document.getElementById('releasePlan').innerHTML = '';
+    await loadClients();
+  } catch (e) {
+    progress.textContent = '';
+    alert(e.message);
+    btn.disabled = !releasePlan.length;
+    await loadReleases();
+  }
 }
 
 async function loadClients() {

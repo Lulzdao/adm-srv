@@ -10,7 +10,8 @@
     "test": "node --test \"*.test.js\"",
     "dist:win7": "electron-builder --win --config build-config/win7.js",
     "dist:win10": "electron-builder --win --config build-config/win10.js",
-    "dist": "npm run dist:win7 && npm run dist:win10"
+    "dist": "npm run dist:win7 && npm run dist:win10",
+    "release": "node scripts/release.js"
   },
   "dependencies": {
     "electron-updater": "6.3.9"
