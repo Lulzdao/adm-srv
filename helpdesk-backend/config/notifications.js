@@ -39,7 +39,13 @@ const departments = require("./departments");
 const RECIPIENTS = { LIST: "list", BORROW: "borrow", AUTHOR: "author", USERS: "users" };
 
 // Поля заявки, доступные в шаблоне любого «заявочного» письма.
-const TICKET_VARS = ["номер", "тема", "автор", "кабинет", "важность", "отдел"];
+// «ссылка» — адрес карточки заявки в «Центре» (из PUBLIC_URL в .env).
+const TICKET_VARS = ["номер", "тема", "автор", "кабинет", "важность", "отдел", "ссылка"];
+
+// Строка со ссылкой в конце каждого «заявочного» письма. В шаблоне, где её
+// нет (например, правленом до появления ссылок), она дописывается сама —
+// см. renderBody в services/notifications.js.
+const TICKET_LINK_LINE = "Открыть заявку: {{ссылка}}";
 
 // Категории «новая заявка» — по одной на отдел-исполнитель. Не перечисляем
 // руками: справочник отделов один, и он лежит в departments.js.
@@ -60,7 +66,7 @@ const ticketNew = departments.map((dept) => ({
     "Заявитель: {{автор}}\n" +
     "Кабинет:   {{кабинет}}\n" +
     "Важность:  {{важность}}\n\n" +
-    "{{описание}}",
+    "{{описание}}\n\n" + TICKET_LINK_LINE,
 }));
 
 const rest = [
@@ -77,7 +83,7 @@ const rest = [
     trigger: "event",
     vars: [...TICKET_VARS, "текст"],
     defaultSubject: "[{{номер}}] Комментарий заявителя",
-    defaultBody: "{{автор}} добавил комментарий к заявке {{номер}} «{{тема}}»:\n\n{{текст}}",
+    defaultBody: "{{автор}} добавил комментарий к заявке {{номер}} «{{тема}}»:\n\n{{текст}}\n\n" + TICKET_LINK_LINE,
   },
   {
     kind: "ticket_status",
@@ -91,7 +97,7 @@ const rest = [
     defaultSubject: "[{{номер}}] Статус заявки изменён: {{статус}}",
     defaultBody:
       "Ваша заявка {{номер}} «{{тема}}» перешла в статус «{{статус}}».\n\n" +
-      "Исполнитель: {{исполнитель}}",
+      "Исполнитель: {{исполнитель}}\n\n" + TICKET_LINK_LINE,
   },
   {
     // Идентификатор остался прежним (ticket_resolved), хотя статуса «выполнена»
@@ -109,7 +115,7 @@ const rest = [
     defaultBody:
       "Ваша заявка {{номер}} «{{тема}}» закрыта.\n\n" +
       "Исполнитель: {{исполнитель}}\n\n" +
-      "Если вопрос решён не полностью — откройте заявку и напишите комментарий.",
+      "Если вопрос решён не полностью — откройте заявку и напишите комментарий.\n\n" + TICKET_LINK_LINE,
   },
   {
     kind: "ticket_comment_out",
@@ -121,7 +127,7 @@ const rest = [
     trigger: "event",
     vars: [...TICKET_VARS, "текст", "автор_комментария"],
     defaultSubject: "[{{номер}}] Ответ по заявке",
-    defaultBody: "{{автор_комментария}} ответил по заявке {{номер}} «{{тема}}»:\n\n{{текст}}",
+    defaultBody: "{{автор_комментария}} ответил по заявке {{номер}} «{{тема}}»:\n\n{{текст}}\n\n" + TICKET_LINK_LINE,
   },
   {
     kind: "expiry",
@@ -267,4 +273,4 @@ function ticketNewKind(role) {
   return `ticket_new:${role}`;
 }
 
-module.exports = { KINDS, RECIPIENTS, TASK_CHANNELS, byKind, ticketNewKind };
+module.exports = { KINDS, RECIPIENTS, TASK_CHANNELS, TICKET_LINK_LINE, byKind, ticketNewKind };

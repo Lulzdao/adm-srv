@@ -1,6 +1,6 @@
 const mailer = require("./mailer");
 const iskra = require("./iskra");
-const { byKind, RECIPIENTS, TASK_CHANNELS } = require("../config/notifications");
+const { byKind, RECIPIENTS, TASK_CHANNELS, TICKET_LINK_LINE } = require("../config/notifications");
 
 // ============================================================================
 //  Оповещения: одно событие — сколько угодно доставок
@@ -98,6 +98,16 @@ function resolveEmails(db, kind, ctx) {
   return mailer.parseEmails(s.emails);
 }
 
+/**
+ * Текст письма. У писем по заявкам в конце — ссылка на заявку: если в шаблоне
+ * её нет (его правили до появления ссылок), строка дописывается сама.
+ */
+function renderBody(tpl, payload) {
+  const text = render(tpl, payload);
+  if (!payload || !payload["ссылка"] || /\{\{\s*ссылка\s*\}\}/.test(String(tpl || ""))) return text;
+  return `${text.replace(/\s+$/, "")}\n\n${render(TICKET_LINK_LINE, payload)}`;
+}
+
 /** Подстановка {{ключ}} значениями из payload. Ненайденное — пустая строка. */
 function render(tpl, payload) {
   return String(tpl || "").replace(/\{\{\s*([\wа-яёА-ЯЁ_]+)\s*\}\}/g, (_, key) => {
@@ -184,7 +194,7 @@ function emit(db, {
   }
 
   if (addresses.length || iskraCount) {
-    const text = render(s.bodyTpl, payload);
+    const text = renderBody(s.bodyTpl, payload);
     const subj = render(s.subjectTpl, payload);
     // Намеренно без await: вызов идёт из обработчика запроса.
     deliverPending(db, eventId, subj, text).catch((err) =>
@@ -324,11 +334,11 @@ async function retryPending(db, { includeFailed = false, limit = 100 } = {}) {
       if (!s) continue;
       let payload = {};
       try { payload = JSON.parse(row.payload || "{}"); } catch { /* повреждённый payload не повод падать */ }
-      const result = await sendOne(db, row.channel, row.address, render(s.subjectTpl, payload), render(s.bodyTpl, payload));
+      const result = await sendOne(db, row.channel, row.address, render(s.subjectTpl, payload), renderBody(s.bodyTpl, payload));
       writeOutcome(db, row.id, result);
     }
     return rows.length;
   });
 }
 
-module.exports = { emit, settingsFor, parseChannels, resolveEmails, render, retryPending, backfillDeliveries };
+module.exports = { emit, settingsFor, parseChannels, resolveEmails, render, renderBody, retryPending, backfillDeliveries };

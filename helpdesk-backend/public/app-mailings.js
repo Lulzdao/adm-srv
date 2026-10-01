@@ -69,7 +69,7 @@ async function renderMailingNew(main) {
       <div class="form-card">
         <div class="form-card-title">1. Кому</div>
         <div class="form-card-sub">CSV или Excel: колонки «ОКПО», «Наименование», «Почта» (названия — примерно такие; в ячейке с почтой может быть несколько адресов через точку с запятой: a@example.ru; b@example.ru)</div>
-        <div class="dropzone" id="mDrop" style="margin-bottom:0"><span class="dropzone-icon">${icon("upload", 18)}</span>Перетащите файл со списком сюда или нажмите, чтобы выбрать</div>
+        <div class="dropzone" id="mDrop" style="margin-bottom:0"><span class="dropzone-icon">${icon("upload", 18)}</span>Нажмите, чтобы выбрать файл со списком, или перетащите его сюда</div>
         <input type="file" id="mFile" accept=".csv,.xlsx,.txt" hidden>
         <div id="mParsed"></div>
       </div>
@@ -81,7 +81,7 @@ async function renderMailingNew(main) {
         <textarea class="field-input" id="mBody" rows="7" style="resize:vertical;margin-bottom:6px" placeholder="Напоминаем о сроке сдачи отчёта…"></textarea>
         <div class="as-note" id="mFields"></div>
         <label class="as-check" style="margin:12px 0"><input type="checkbox" id="mTpl" checked><span>Обращение и реквизиты респондента: «Здравствуйте, уважаемый респондент! ОКПО… Наименование…» и подпись «${esc(settings.signature)}»</span></label>
-        <div class="dropzone" id="aDrop"><span class="dropzone-icon">${icon("paperclip", 18)}</span>Вложения — не больше 10 МБ вместе</div>
+        <div class="dropzone" id="aDrop"><span class="dropzone-icon">${icon("paperclip", 18)}</span>Вложения: нажмите, чтобы выбрать файлы, или перетащите их сюда — не больше 10 МБ вместе</div>
         <input type="file" id="aFile" multiple hidden>
         <div id="aList"></div>
         <div class="field-label" style="margin-top:6px">Так письмо увидит первый получатель</div>
