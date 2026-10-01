@@ -164,7 +164,8 @@ function createQueue(db) {
     try {
       await t.sendMail({
         from: c.sender_address,
-        to: r.emails,
+        // Адреса хранятся через «; » (у старых рассылок — через запятую).
+        to: r.emails.split(/[;,]\s*/).filter(Boolean),
         // Ответ респондента должен прийти тому, кто рассылал, а не в общий ящик.
         replyTo: c.sender_mode === "shared" && author && author.email ? author.email : undefined,
         subject: fill(c.subject, { ...(r.fields ? JSON.parse(r.fields) : {}), ОКПО: r.okpo || "", Наименование: r.name || "" }),

@@ -39,7 +39,7 @@ async function renderList(main, opts = {}) {
   let page = memory.page;
 
   const titles = {
-    inbox: isAdmin || isExecutor ? "Входящие заявки" : "Заявки",
+    inbox: isAdmin || isExecutor ? "Входящие заявки" : "Мои заявки",
     mine: "Мои заявки",
   };
 

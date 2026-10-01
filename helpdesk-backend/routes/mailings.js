@@ -299,7 +299,7 @@ module.exports = function mailingRoutes(db) {
       return {
         row_no: int(r.row_no, { field: "Номер строки", min: 1, max: 1e6, fallback: i + 1 }),
         okpo: str(r.okpo, { field: "ОКПО", max: 20 }), name: str(r.name, { field: "Наименование", max: 500 }),
-        emails: emails.slice(0, 10).join(", "), fields: json,
+        emails: emails.slice(0, 10).join("; "), fields: json,
       };
     });
 

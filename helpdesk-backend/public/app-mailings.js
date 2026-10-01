@@ -68,7 +68,7 @@ async function renderMailingNew(main) {
       ${settings.configured ? "" : `<div class="warn-box">Почтовый сервер для рассылок не настроен — ${state.user.is_admin ? `задайте его в <a href="#asst:settings">настройках</a> («Почта рассылок»)` : "обратитесь к администратору"}.</div>`}
       <div class="form-card">
         <div class="form-card-title">1. Кому</div>
-        <div class="form-card-sub">CSV или Excel: колонки «ОКПО», «Наименование», «Почта» (названия — примерно такие; в ячейке с почтой может быть несколько адресов через запятую)</div>
+        <div class="form-card-sub">CSV или Excel: колонки «ОКПО», «Наименование», «Почта» (названия — примерно такие; в ячейке с почтой может быть несколько адресов через точку с запятой: a@example.ru; b@example.ru)</div>
         <div class="dropzone" id="mDrop" style="margin-bottom:0"><span class="dropzone-icon">${icon("upload", 18)}</span>Перетащите файл со списком сюда или нажмите, чтобы выбрать</div>
         <input type="file" id="mFile" accept=".csv,.xlsx,.txt" hidden>
         <div id="mParsed"></div>
@@ -141,7 +141,7 @@ async function renderMailingNew(main) {
       if (r.name) head.push(`Наименование: ${r.name}`);
       text = `${head.join("\n")}\n\n${text}\n\nС уважением,\n${settings.signature}`;
     }
-    $("mPreview").textContent = `Кому: ${r.emails.join(", ")}\nТема: ${fill($("mSubject").value, r)}\n\n${text}`;
+    $("mPreview").textContent = `Кому: ${r.emails.join("; ")}\nТема: ${fill($("mSubject").value, r)}\n\n${text}`;
   };
   ["mBody", "mSubject"].forEach((id) => { $(id).oninput = paintPreview; });
   $("mTpl").onchange = paintPreview;
@@ -160,7 +160,7 @@ async function renderMailingNew(main) {
       </div>
       ${bad.length ? `<div class="as-bad">${bad.slice(0, 20).map((r) => `<div>строка ${r.row_no}: ${esc(r.name || r.okpo || "")} — ${esc(r.problem)}</div>`).join("")}${bad.length > 20 ? `<div>…и ещё ${bad.length - 20}</div>` : ""}</div>` : ""}
       <div class="as-table-wrap"><table class="as-table" style="margin-top:10px"><thead><tr><th>Строка</th><th>ОКПО</th><th>Наименование</th><th>Почта</th></tr></thead>
-      <tbody>${ok.slice(0, 8).map((r) => `<tr><td>${r.row_no}</td><td class="mono">${esc(r.okpo)}</td><td>${esc(r.name)}</td><td>${esc(r.emails.join(", "))}</td></tr>`).join("")}</tbody></table></div>
+      <tbody>${ok.slice(0, 8).map((r) => `<tr><td>${r.row_no}</td><td class="mono">${esc(r.okpo)}</td><td>${esc(r.name)}</td><td>${esc(r.emails.join("; "))}</td></tr>`).join("")}</tbody></table></div>
       ${ok.length > 8 ? `<div class="as-note" style="margin-top:6px">…и ещё ${ok.length - 8}</div>` : ""}`;
     const dupCb = $("mParsed").querySelector("#mDup");
     if (dupCb) dupCb.onchange = () => { st.skipDup = dupCb.checked; paintParsed(); };

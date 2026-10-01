@@ -566,8 +566,14 @@ function viewExists(view) {
   if (!view) return false;
   const u = state.user;
   if (["inbox", "mine", "create"].includes(view)) return true;
-  // Ассистент — всем; его настройки — только администраторам.
-  if (view.startsWith("asst:")) return ASSISTANT_VIEWS.some((v) => v.id === view) && (view !== "asst:settings" || Boolean(u.is_admin));
+  // Рассылки — всем; акты — администраторам и исполнителям; настройки
+  // Ассистента — только администраторам.
+  if (view.startsWith("asst:")) {
+    if (!ASSISTANT_VIEWS.some((v) => v.id === view)) return false;
+    if (view === "asst:settings") return Boolean(u.is_admin);
+    if (view === "asst:acts") return Boolean(u.is_admin) || myDepts(u).length > 0;
+    return true;
+  }
   // Разделы администратора — по признаку is_admin, а не по роли: роль "it"
   // теперь значит «исполнитель отдела ИТ», и прав администратора не даёт.
   if (["dashboard", "admin", "certs", "tasks", "taskcal"].includes(view) || view.startsWith("notif:")) return Boolean(u.is_admin);
@@ -872,17 +878,22 @@ function renderShell() {
     ];
     navHtml = items.map(it => navBtnHtml(it, navView() === it.id, false)).join("");
   } else {
+    // Обычному сотруднику — только его заявки, новая заявка и рассылки:
+    // акты ему не нужны, и группа «Ассистент» ради одного пункта лишняя.
     const items = [
-      { id: "inbox", label: "Заявки", icon: "folder", badge: totalUnread },
+      { id: "inbox", label: "Мои заявки", icon: "folder", badge: totalUnread },
       { id: "create", label: "Новая заявка", icon: "plus" },
+      { id: "asst:mail", label: "Рассылки", icon: "mail" },
     ];
     navHtml = items.map(it => navBtnHtml(it, navView() === it.id, false)).join("");
   }
 
-  // Ассистент — всем сотрудникам, после заявок и задач: это тоже ежедневная
-  // работа. Настройки в нём — только администраторам.
-  navHtml += navGroupHtml("assistant", "Ассистент", "briefcase", 0,
-    ASSISTANT_VIEWS.filter((v) => v.id !== "asst:settings" || isAdmin));
+  // Ассистент — администраторам и исполнителям, после заявок и задач: это
+  // тоже ежедневная работа. Настройки в нём — только администраторам.
+  if (isAdmin || isExecutor) {
+    navHtml += navGroupHtml("assistant", "Ассистент", "briefcase", 0,
+      ASSISTANT_VIEWS.filter((v) => v.id !== "asst:settings" || isAdmin));
+  }
 
   if (state.modules.length) {
     navHtml += state.modules.map(m => {

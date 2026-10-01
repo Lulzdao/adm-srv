@@ -1,5 +1,6 @@
 const express = require("express");
 const { requireAuth } = require("../middleware/auth");
+const departments = require("../config/departments");
 const { buildXlsx, XLSX_TYPE } = require("../services/xlsx");
 const { ZipBuilder } = require("../services/zip");
 const { handle, str, int, Invalid } = require("./assistant");
@@ -36,6 +37,13 @@ const DOC_NAMES = {
   writeoff: "Акт на списание",
   cartridges: "Ведомость на списание картриджей",
 };
+
+/** Администратор или исполнитель хотя бы одного отдела. */
+const DEPT_ROLES = new Set(departments.map((d) => d.role));
+function isStaff(user) {
+  const roles = user.roles && user.roles.length ? user.roles : (user.role ? [user.role] : []);
+  return Boolean(user.is_admin) || roles.some((r) => DEPT_ROLES.has(r));
+}
 
 const canEdit = (user, row) => user.is_admin || row.created_by === user.id;
 
@@ -84,6 +92,9 @@ function actDocuments(db, act) {
 module.exports = function actRoutes(db) {
   const router = express.Router();
   router.use(requireAuth);
+  // Акты — работа ИТ и исполнителей; обычным сотрудникам раздел не показывается
+  // и по адресу тоже не открывается.
+  router.use("/acts", (req, res, next) => (isStaff(req.session.user) ? next() : res.status(403).json({ error: "Недостаточно прав" })));
 
   router.get("/acts", (req, res) => {
     const year = Number(req.query.year) || new Date().getFullYear();
