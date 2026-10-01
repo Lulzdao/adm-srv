@@ -20,7 +20,8 @@ async function стенд(t) {
     it: await makeLocalUser(db, { login: "it1", name: "Пробников Пробник Пробникович", role: "it" }),
     user: await makeLocalUser(db, { login: "u1", name: "Макетов Макет Макетович" }),
     other: await makeLocalUser(db, { login: "u2", name: "Образцов Образец Образцович" }),
-    it2: await makeLocalUser(db, { login: "it2", name: "Опытов Опыт Опытович", role: "hoz" }),
+    it2: await makeLocalUser(db, { login: "it2", name: "Опытов Опыт Опытович", role: "it" }),
+    hoz: await makeLocalUser(db, { login: "hoz1", name: "Хозяйкин Хоз Хозович", role: "hoz" }),
   };
   db.prepare("UPDATE users SET department = 'Отдел выдуманной статистики' WHERE id = ?").run(ids.user);
   const app = await startApp(db);
@@ -29,8 +30,9 @@ async function стенд(t) {
   const U = client(app.url); await U.login("u1");
   const U2 = client(app.url); await U2.login("u2");
   const It2 = client(app.url); await It2.login("it2");
+  const Hoz = client(app.url); await Hoz.login("hoz1");
   t.after(async () => { await app.close(); cleanup(); });
-  return { db, app, ids, Adm, It, It2, U, U2 };
+  return { db, app, ids, Adm, It, It2, Hoz, U, U2 };
 }
 
 async function download(app, C, path) {
@@ -65,8 +67,8 @@ async function справочники(Adm) {
 
 // ---------------------------------------------------------------------------
 
-test("настройки — только администраторам, на каждом маршруте; акты — администраторам и исполнителям; рассылки — всем вошедшим", async (t) => {
-  const { app, Adm, It, U } = await стенд(t);
+test("настройки — только администраторам, на каждом маршруте; акты — администраторам и отделу ИТ; рассылки — всем вошедшим", async (t) => {
+  const { app, Adm, It, Hoz, U } = await стенд(t);
   const гость = client(app.url);
   for (const [m, p, b] of [
     ["get", "/api/assistant/settings/general"], ["put", "/api/assistant/settings/general", {}],
@@ -85,11 +87,15 @@ test("настройки — только администраторам, на �
     assert.strictEqual((await It.get(p)).status, 200, p);
     assert.strictEqual((await гость.get(p)).status, 401, p);
   }
-  for (const p of ["/api/assistant/refs", "/api/mailings"]) assert.strictEqual((await U.get(p)).status, 200, p);
+  for (const p of ["/api/assistant/refs", "/api/mailings"]) {
+    assert.strictEqual((await U.get(p)).status, 200, p);
+    assert.strictEqual((await Hoz.get(p)).status, 200, p);
+  }
   assert.strictEqual((await Adm.get("/api/assistant/acts")).status, 200);
   for (const [m, p, b] of [["get", "/api/assistant/acts"], ["post", "/api/assistant/acts/repair", {}], ["post", "/api/assistant/acts/writeoff", {}],
     ["get", "/api/assistant/acts/1"], ["get", "/api/assistant/acts/zip?ids=1"], ["delete", "/api/assistant/acts/1"]]) {
     assert.strictEqual((await U[m](p, b)).status, 403, `${m} ${p}: акты обычному сотруднику закрыты`);
+    assert.strictEqual((await Hoz[m](p, b)).status, 403, `${m} ${p}: акты исполнителю ХОЗ закрыты`);
   }
 });
 

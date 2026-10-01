@@ -561,6 +561,12 @@ function writeHash(replace) {
   applyingHash = false;
 }
 
+/** Акты — администраторам и исполнителям отдела ИТ (роль "it"). */
+function canActs(u) {
+  const roles = (u.roles && u.roles.length) ? u.roles : (u.role ? [u.role] : []);
+  return Boolean(u.is_admin) || roles.includes("it");
+}
+
 /** Существует ли такая вкладка у ЭТОЙ роли. Чужую из адреса открывать нельзя. */
 function viewExists(view) {
   if (!view) return false;
@@ -571,7 +577,7 @@ function viewExists(view) {
   if (view.startsWith("asst:")) {
     if (!ASSISTANT_VIEWS.some((v) => v.id === view)) return false;
     if (view === "asst:settings") return Boolean(u.is_admin);
-    if (view === "asst:acts") return Boolean(u.is_admin) || myDepts(u).length > 0;
+    if (view === "asst:acts") return canActs(u);
     return true;
   }
   // Разделы администратора — по признаку is_admin, а не по роли: роль "it"
@@ -876,6 +882,8 @@ function renderShell() {
       { id: "mine", label: "Мои заявки", icon: "folder" },
       { id: "create", label: "Новая заявка", icon: "plus" },
     ];
+    // Исполнителям ХОЗ и ЕГРПО акты не нужны — рассылки отдельным пунктом.
+    if (!canActs(u)) items.push({ id: "asst:mail", label: "Рассылки", icon: "mail" });
     navHtml = items.map(it => navBtnHtml(it, navView() === it.id, false)).join("");
   } else {
     // Обычному сотруднику — только его заявки, новая заявка и рассылки:
@@ -888,9 +896,9 @@ function renderShell() {
     navHtml = items.map(it => navBtnHtml(it, navView() === it.id, false)).join("");
   }
 
-  // Ассистент — администраторам и исполнителям, после заявок и задач: это
-  // тоже ежедневная работа. Настройки в нём — только администраторам.
-  if (isAdmin || isExecutor) {
+  // Ассистент — администраторам и отделу ИТ, после заявок и задач: это тоже
+  // ежедневная работа. Настройки в нём — только администраторам.
+  if (canActs(u)) {
     navHtml += navGroupHtml("assistant", "Ассистент", "briefcase", 0,
       ASSISTANT_VIEWS.filter((v) => v.id !== "asst:settings" || isAdmin));
   }
