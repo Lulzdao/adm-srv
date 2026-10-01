@@ -56,7 +56,7 @@ async function authenticate(domainKey, login, password, db) {
       ({ searchEntries } = await svcClient.search(cfg.baseDn, {
         scope: "sub",
         filter: `(sAMAccountName=${escapeLdapFilter(login)})`,
-        attributes: ["dn", "displayName", "mail", "department", "memberOf", "telephoneNumber"],
+        attributes: ["dn", "sAMAccountName", "displayName", "mail", "department", "memberOf", "telephoneNumber"],
       }));
     } catch (err) {
       // Частая причина именно для новых/только что включённых учёток:
@@ -117,7 +117,9 @@ async function authenticate(domainKey, login, password, db) {
   const role = roles[0] || "user";
 
   return {
-    login,
+    // Логин — как он записан в домене, а не как его набрали: домен регистр
+    // не различает, и «Ivanov» с «ivanov» — один человек.
+    login: singleValue(userEntry.sAMAccountName) || login,
     domain: domainKey,
     fullName: singleValue(userEntry.displayName) || login,
     email: singleValue(userEntry.mail),

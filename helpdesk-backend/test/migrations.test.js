@@ -157,3 +157,42 @@ test("таблицы убранных разделов Ассистента уд
     cleanup();
   }
 });
+
+test("двойники из-за регистра логина сливаются в одну запись: заявки, комментарии, задачи — на ней, входы двойника сброшены", () => {
+  const { freshDb, resetModuleCache } = require("./helpers/tempDb");
+  const { db, cleanup } = freshDb();
+  try {
+    // База «до исправления»: индекса без учёта регистра ещё нет. Люди и логины выдуманы.
+    db.exec("DROP INDEX IF EXISTS idx_users_login_nocase");
+    const ins = db.prepare("INSERT INTO users (ad_login, full_name, role, roles, auth_type, last_login_at) VALUES (?, ?, 'it', ',it,', 'ad', ?)");
+    const a = Number(ins.run("48.ProbnikovPP", "Пробников П.П.", "2026-09-01 10:00:00").lastInsertRowid);
+    const b = Number(ins.run("48.probnikovpp", "Пробников Пробник Пробникович", "2026-09-20 10:00:00").lastInsertRowid);
+    const other = Number(ins.run("48.obrazcov", "Образцов О.О.", null).lastInsertRowid);
+    const cat = db.prepare("SELECT id FROM categories LIMIT 1").get().id;
+    const t1 = Number(db.prepare("INSERT INTO tickets (display_id, title, category_id, created_by, assigned_to) VALUES ('ИТ-0001', 'x', ?, ?, ?)").run(cat, a, b).lastInsertRowid);
+    db.prepare("INSERT INTO comments (ticket_id, user_id, text) VALUES (?, ?, 'y')").run(t1, b);
+    const task = Number(db.prepare("INSERT INTO tasks (title, created_by) VALUES ('z', ?)").run(b).lastInsertRowid);
+    for (const u of [a, b, other]) db.prepare("INSERT INTO task_assignees (task_id, user_id) VALUES (?, ?)").run(task, u);
+    db.prepare("INSERT INTO sessions (sid, sess, expires) VALUES ('s-dup', ?, 9e15), ('s-keep', ?, 9e15)").run(
+      JSON.stringify({ user: { id: b } }), JSON.stringify({ user: { id: other } }));
+    db.close();
+    resetModuleCache();
+    const db2 = require("../db/init").initDb();
+    const users = db2.prepare("SELECT id, ad_login, full_name FROM users ORDER BY id").all().map((r) => ({ ...r }));
+    assert.deepStrictEqual(users, [
+      { id: a, ad_login: "48.probnikovpp", full_name: "Пробников Пробник Пробникович" },
+      { id: other, ad_login: "48.obrazcov", full_name: "Образцов О.О." },
+    ], "осталась ранняя запись с профилем последнего входа");
+    assert.deepStrictEqual({ ...db2.prepare("SELECT created_by, assigned_to FROM tickets").get() }, { created_by: a, assigned_to: a });
+    assert.strictEqual(db2.prepare("SELECT user_id FROM comments").get().user_id, a);
+    assert.strictEqual(db2.prepare("SELECT created_by FROM tasks").get().created_by, a);
+    assert.deepStrictEqual(db2.prepare("SELECT user_id FROM task_assignees ORDER BY user_id").all().map((r) => r.user_id), [a, other]);
+    assert.deepStrictEqual(db2.prepare("SELECT sid FROM sessions").all().map((r) => r.sid), ["s-keep"]);
+    assert.throws(() => db2.prepare("INSERT INTO users (ad_login, full_name, auth_type) VALUES ('48.OBRAZCOV', 'x', 'ad')").run(), /UNIQUE/,
+      "больше двойников не завести");
+    db2.close();
+  } finally {
+    cleanup();
+  }
+});
+

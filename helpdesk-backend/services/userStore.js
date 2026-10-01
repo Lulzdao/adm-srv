@@ -89,7 +89,9 @@ function upsertFromLdap(db, ldapUser) {
   const roles = packRoles(ldapUser.roles);
   const groups = packGroups(ldapUser.groups);
 
-  const existing = db.prepare("SELECT * FROM users WHERE ad_login = ?").get(login);
+  // Без учёта регистра: домен его не различает, и раньше вход как «Ivanov» и
+  // как «ivanov» заводил двух разных пользователей.
+  const existing = db.prepare("SELECT * FROM users WHERE ad_login = ? COLLATE NOCASE ORDER BY id LIMIT 1").get(login);
 
   // Локальные аварийные учётки доменным входом не трогаем: иначе доменный
   // аккаунт с совпавшим логином перезаписал бы им роль и ФИО и въехал бы в
@@ -100,10 +102,10 @@ function upsertFromLdap(db, ldapUser) {
 
   if (existing) {
     db.prepare(
-      `UPDATE users SET full_name = ?, department = ?, email = ?, phone = ?,
+      `UPDATE users SET ad_login = ?, full_name = ?, department = ?, email = ?, phone = ?,
        role = ?, roles = ?, is_admin = ?, ad_groups = ?, last_domain = ?, last_login_at = datetime('now')
        WHERE id = ?`
-    ).run(fullName, department, email, phone, role, roles, isAdmin, groups, domain, existing.id);
+    ).run(login, fullName, department, email, phone, role, roles, isAdmin, groups, domain, existing.id);
     return db.prepare("SELECT * FROM users WHERE id = ?").get(existing.id);
   }
 

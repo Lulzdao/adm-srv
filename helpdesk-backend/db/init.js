@@ -109,6 +109,7 @@ function initDb() {
     migrateUserGroups(db);
     migrateMailBoxes(db);
     dropAssistantExtras(db);
+    mergeLoginCaseDuplicates(db);
     encryptStoredPasswords(db);
     db.exec("COMMIT");
     // Открытые пароли остались бы в свободных страницах файла и в журнале WAL —
@@ -313,6 +314,66 @@ function migrateMailBoxes(db) {
 // больше никто не видит и не правит. Подписанты «заместитель» и «начальник
 // ОИРиТ» тоже больше не нужны: начальник отдела ИТ берётся из справочника
 // отделов.
+/**
+ * Двойники одного человека, заведённые из-за регистра логина («Ivanov» и
+ * «ivanov»): домен регистр не различает, а платформа раньше различала. Всё,
+ * что числится за двойниками (заявки, комментарии, задачи, акты, рассылки…),
+ * переносится на самую раннюю запись, двойники удаляются, их входы
+ * сбрасываются. Ссылки на пользователей ищутся по внешним ключам схемы, так
+ * что новая таблица со ссылкой на users подхватится сама. После слияния —
+ * уникальный индекс без учёта регистра, чтобы двойники больше не появлялись.
+ */
+function mergeLoginCaseDuplicates(db) {
+  const groups = db.prepare(`
+    SELECT lower(ad_login) AS k FROM users GROUP BY lower(ad_login) HAVING COUNT(*) > 1
+  `).all();
+  const refs = [];
+  for (const { name } of db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all()) {
+    for (const fk of db.prepare(`PRAGMA foreign_key_list(${name})`).all()) {
+      if (fk.table === "users") refs.push({ table: name, column: fk.from });
+    }
+  }
+  const removed = [];
+  for (const { k } of groups) {
+    const rows = db.prepare("SELECT * FROM users WHERE lower(ad_login) = ? ORDER BY id").all(k);
+    // Аварийную локальную учётку с доменной не сливаем — это разные входы.
+    if (rows.some((r) => r.auth_type === "local")) {
+      console.warn(`[миграция] логин «${rows[0].ad_login}»: есть и локальная, и доменная запись — оставлены как есть`);
+      continue;
+    }
+    const keep = rows[0];
+    // Профиль — с самого свежего входа: ФИО, почта и отделы там актуальнее.
+    const latest = rows.slice().sort((a, b) => String(b.last_login_at || "").localeCompare(String(a.last_login_at || "")))[0];
+    for (const dup of rows.slice(1)) {
+      for (const { table, column } of refs) {
+        // OR IGNORE — для таблиц, где пара (что-то, пользователь) уникальна
+        // (исполнители задачи): там, где обе записи уже есть, лишняя удаляется.
+        db.prepare(`UPDATE OR IGNORE ${table} SET ${column} = ? WHERE ${column} = ?`).run(keep.id, dup.id);
+        db.prepare(`DELETE FROM ${table} WHERE ${column} = ?`).run(dup.id);
+      }
+      db.prepare("DELETE FROM users WHERE id = ?").run(dup.id);
+      removed.push(dup.id);
+    }
+    db.prepare(`UPDATE users SET ad_login = ?, full_name = ?, department = ?, email = ?, phone = ?, role = ?, roles = ?,
+      is_admin = ?, ad_groups = ?, last_domain = ?, last_login_at = ? WHERE id = ?`).run(
+      latest.ad_login, latest.full_name, latest.department, latest.email, latest.phone, latest.role, latest.roles,
+      latest.is_admin, latest.ad_groups, latest.last_domain, latest.last_login_at, keep.id);
+    console.log(`[миграция] логин «${latest.ad_login}»: ${rows.length} записи слиты в одну (id ${keep.id})`);
+  }
+  // Входы удалённых двойников: в сессии лежит их id — сбрасываем, человек
+  // просто войдёт заново и попадёт в объединённую запись.
+  if (removed.length) {
+    const gone = new Set(removed);
+    for (const s of db.prepare("SELECT sid, sess FROM sessions").all()) {
+      let id = null;
+      try { id = JSON.parse(s.sess).user?.id ?? null; } catch { /* битая сессия — не наша забота */ }
+      if (gone.has(id)) db.prepare("DELETE FROM sessions WHERE sid = ?").run(s.sid);
+    }
+  }
+  const left = db.prepare("SELECT COUNT(*) AS n FROM (SELECT 1 FROM users GROUP BY lower(ad_login) HAVING COUNT(*) > 1)").get().n;
+  if (!left) db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_login_nocase ON users(ad_login COLLATE NOCASE)");
+}
+
 function dropAssistantExtras(db) {
   const exists = (t) => db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(t);
   const gone = ["asst_journal", "asst_transfers", "asst_links", "asst_equipment", "asst_parts"].filter(exists);
