@@ -192,8 +192,6 @@ module.exports = function assistantRoutes(db) {
     const post = str(b.post, { field: "Должность", max: 150, required: type === "register" });
     const room = str(b.room, { field: "Кабинет", max: 20 });
     const phoneInt = str(b.phone_int, { field: "Внутренний телефон", max: 20 });
-    const phoneExt = str(b.phone_ext, { field: "Внешний телефон", max: 30 });
-    const phoneMobile = str(b.phone_mobile, { field: "Мобильный телефон", max: 30 });
     const csod = str(b.csod_forms, { field: "Формы ЦСОД", max: 1000 });
     const comment = str(b.comment, { field: "Комментарий", max: 1000 });
     const allowed = new Set(A.settings(db).programs);
@@ -205,7 +203,7 @@ module.exports = function assistantRoutes(db) {
     const kind = A.ACCESS_TYPES[type];
     const data = {
       type, typeLabel: kind.label, fio, last_name: last, first_name: first, middle_name: middle,
-      post, department, room, phone_int: phoneInt, phone_ext: phoneExt, phone_mobile: phoneMobile,
+      post, department, room, phone_int: phoneInt,
       programs, csod_forms: csod, comment,
     };
 
@@ -245,6 +243,7 @@ module.exports = function assistantRoutes(db) {
 
     const d = JSON.parse(form.data);
     const dep = A.dept(db, d.department) || {};
+    // Внешний и мобильный из анкеты убраны; у старых заявок они ещё есть — печатаем.
     const phones = [
       d.phone_int && `внутренний — ${d.phone_int}`, d.phone_ext && `внешний — ${d.phone_ext}`,
       d.phone_mobile && `мобильный — ${d.phone_mobile}`,

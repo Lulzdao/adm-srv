@@ -124,8 +124,6 @@ async function renderAccessForm(box, { onCancel } = {}) {
       <div class="form-row" style="margin-bottom:0">
         <div><div class="field-label">Кабинет</div><input class="field-input" id="acRoom" maxlength="20"></div>
         <div><div class="field-label">Внутренний тел.</div><input class="field-input" id="acInt" maxlength="20"></div>
-        <div><div class="field-label">Внешний тел.</div><input class="field-input" id="acExt" maxlength="30"></div>
-        <div><div class="field-label">Мобильный</div><input class="field-input" id="acMob" maxlength="30"></div>
       </div>
     </div>
     <div class="form-card" id="acAccessCard">
@@ -164,7 +162,7 @@ async function renderAccessForm(box, { onCancel } = {}) {
     const body = {
       type, last_name: $("acLast").value, first_name: $("acFirst").value, middle_name: $("acMiddle").value,
       post: $("acPost").value, department: $("acDept").value, room: $("acRoom").value,
-      phone_int: $("acInt").value, phone_ext: $("acExt").value, phone_mobile: $("acMob").value,
+      phone_int: $("acInt").value,
       programs: needsAccess() ? [...box.querySelectorAll("#acProgs input:checked")].map((c) => c.value) : [],
       csod_forms: needsAccess() ? $("acCsod").value : "", comment: $("acComment").value,
     };

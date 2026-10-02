@@ -3,6 +3,7 @@ const nodemailer = require("nodemailer");
 const mailer = require("./mailer");
 const { getSetting } = require("./settings");
 const secretBox = require("./secretBox");
+const { fillHtml, escapeHtml } = require("./mailHtml");
 
 // ============================================================================
 //  Очередь рассылок
@@ -88,6 +89,23 @@ function letterText(campaign, r, signature) {
   return `${head.join("\n")}\n\n${body}\n\nС уважением,\n${signature}`;
 }
 
+/**
+ * Оформленная версия письма — если текст набран с оформлением. Обращение,
+ * реквизиты и подпись — тем же шрифтом, что и основной текст по умолчанию.
+ */
+function letterHtml(campaign, r, signature) {
+  const fields = { ...(r.fields ? JSON.parse(r.fields) : {}), ОКПО: r.okpo || "", Наименование: r.name || "" };
+  let html = fillHtml(campaign.body_html, fields);
+  if (campaign.use_template) {
+    const head = ["Здравствуйте, уважаемый респондент!"];
+    if (r.okpo) head.push(`ОКПО: ${r.okpo}`);
+    if (r.name) head.push(`Наименование: ${r.name}`);
+    const lines = (list) => list.map(escapeHtml).join("<br>");
+    html = `<p>${lines(head)}</p>${html}<p>${lines(["С уважением,", ...String(signature || "").split("\n")])}</p>`;
+  }
+  return `<div style="font-family: Arial, sans-serif; font-size: 14px; line-height: 1.5; color: #1a1a1a">${html}</div>`;
+}
+
 function createQueue(db) {
   const secrets = new Map();   // id рассылки -> пароль своего ящика (только в памяти)
   const transports = new Map();
@@ -171,6 +189,7 @@ function createQueue(db) {
         replyTo: c.sender_mode === "shared" && author && author.email ? author.email : undefined,
         subject: fill(c.subject, { ...(r.fields ? JSON.parse(r.fields) : {}), ОКПО: r.okpo || "", Наименование: r.name || "" }),
         text: letterText(c, r, s.signature),
+        html: c.body_html ? letterHtml(c, r, s.signature) : undefined,
         attachments,
       });
       db.prepare("UPDATE mail_recipients SET status = 'sent', attempts = attempts + 1, error = NULL, sent_at = datetime('now') WHERE id = ?").run(r.id);
@@ -265,4 +284,4 @@ function isTemporary(err) {
 // Текст ошибки — тот же перевод, что у оповещений платформы.
 const mailerDescribe = (err) => String(mailer.describeError(err)).slice(0, 500);
 
-module.exports = { createQueue, readSettings, transportFor, fill, letterText, KEYS };
+module.exports = { createQueue, readSettings, transportFor, fill, letterText, letterHtml, KEYS };

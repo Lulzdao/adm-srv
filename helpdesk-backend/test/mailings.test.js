@@ -121,6 +121,27 @@ test("несколько адресов в ячейке — через «; »: �
   assert.deepStrictEqual([...sent.to].sort(), ["one@example.invalid", "two@example.invalid"]);
 });
 
+test("оформленный текст: письмо уходит в HTML и текстом, опасное вырезано, значения из таблицы экранированы", async (t) => {
+  const { app, smtp, U } = await стенд(t);
+  const html = `<p><b>Жирный</b> <i>курсив</i> <span style="font-size: 18px; font-family: 'Times New Roman'; color: rgb(192, 0, 0); position: fixed">крупный</span></p>`
+    + `<p onclick="x()">Для {Наименование}</p><script>alert(1)</script><img src="http://example.invalid/t.png"><a href="javascript:alert(1)">плохая</a> <a href="https://example.invalid/">хорошая</a>`;
+  const r = await form(app, U, "/api/mailings", { payload: { subject: "Тема", body: "", body_html: html, use_template: true, sender_mode: "shared", mailbox_id: 1,
+    recipients: [{ row_no: 2, okpo: "1", name: "ООО <Выдуманное>", emails: ["one@example.invalid"] }] } });
+  assert.strictEqual(r.status, 201, r.text);
+  const done = await дождаться(U, r.json.id, (x) => x.campaign.status === "done");
+  const msg = smtp.messages.find((m) => m.subject === "Тема");
+  const raw = msg.raw;
+  assert.match(raw, /Content-Type: text\/html/i, "есть оформленная часть");
+  assert.match(raw, /Content-Type: text\/plain/i, "есть и текстовая — для программ без HTML");
+  const htmlPart = done.preview_html;
+  assert.match(htmlPart, /<b>Жирный<\/b> <i>курсив<\/i> <span style="font-size: 18px; font-family: 'Times New Roman'; color: rgb\(192, 0, 0\)">крупный<\/span>/);
+  assert.match(htmlPart, /Для ООО &lt;Выдуманное&gt;/, "значение из таблицы экранировано");
+  assert.match(htmlPart, /Здравствуйте, уважаемый респондент!<br>ОКПО: 1<br>Наименование: ООО &lt;Выдуманное&gt;/);
+  for (const bad of ["<script", "onclick", "<img", "javascript:", "position"]) assert.ok(!htmlPart.includes(bad), `вырезано: ${bad}`);
+  assert.match(htmlPart, /<a href="https:\/\/example\.invalid\/" target="_blank" rel="noopener">хорошая<\/a>/);
+  assert.match(done.preview, /Жирный курсив крупный\n\nДля ООО <Выдуманное>/, "текстовая версия — без разметки");
+});
+
 test("отказ сервера по адресу — строка «не отправлено» с причиной; повтор неотправленных", async (t) => {
   const { app, smtp, U } = await стенд(t, { rejectRecipient: "two@example.invalid" });
   const recipients = [

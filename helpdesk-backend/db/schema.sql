@@ -359,7 +359,8 @@ CREATE TABLE IF NOT EXISTS mail_campaigns (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   created_by INTEGER NOT NULL REFERENCES users(id),
   subject TEXT NOT NULL,
-  body TEXT NOT NULL,
+  body TEXT NOT NULL,               -- текстовая версия письма
+  body_html TEXT,                  -- оформленная (очищенная по белому списку); NULL — письмо без оформления
   use_template INTEGER NOT NULL DEFAULT 1,
   sender_mode TEXT NOT NULL CHECK (sender_mode IN ('shared', 'own')),
   sender_address TEXT,             -- с какого адреса ушло: общий ящик или свой
