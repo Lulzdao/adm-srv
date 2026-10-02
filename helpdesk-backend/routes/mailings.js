@@ -9,6 +9,7 @@ const { readTable } = require("../services/tables");
 const { isEmail } = require("../services/mailer");
 const { userInGroup, refreshAdGroups } = require("../services/userStore");
 const { buildXlsx, XLSX_TYPE } = require("../services/xlsx");
+const { sanitizeHtml, htmlToText } = require("../services/mailHtml");
 const Q = require("../services/mailQueue");
 const secretBox = require("../services/secretBox");
 const { handle, str, int, Invalid } = require("./assistant");
@@ -284,7 +285,11 @@ module.exports = function mailingRoutes(db) {
     if (!s.host) fail("Почтовый сервер для рассылок не настроен — обратитесь к администратору");
 
     const subject = str(p.subject, { field: "Тема", max: 200, required: true });
-    const body = str(p.body, { field: "Текст", max: 20000, required: true });
+    // Текст приходит оформленным (HTML из редактора) — очищаем по белому
+    // списку; текстовая версия письма выводится из него же.
+    const bodyHtml = typeof p.body_html === "string" && p.body_html.trim() ? sanitizeHtml(p.body_html) : null;
+    if (bodyHtml && bodyHtml.length > 200000) fail("Текст письма слишком большой");
+    const body = str(bodyHtml ? htmlToText(bodyHtml) : p.body, { field: "Текст", max: 20000, required: true });
     const mode = p.sender_mode === "own" ? "own" : "shared";
     let senderAddress, senderLogin = null, password = null, mailboxId = null;
     if (mode === "shared") {
@@ -336,9 +341,9 @@ module.exports = function mailingRoutes(db) {
     const dir = () => path.join(config.uploadsDir, "mail", String(id));
     try {
       const info = db.prepare(`
-        INSERT INTO mail_campaigns (created_by, subject, body, use_template, sender_mode, sender_address, sender_login, mailbox_id, status, total)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'sending', ?)
-      `).run(req.session.user.id, subject, body, p.use_template === false ? 0 : 1, mode, senderAddress, senderLogin, mailboxId, recipients.length);
+        INSERT INTO mail_campaigns (created_by, subject, body, body_html, use_template, sender_mode, sender_address, sender_login, mailbox_id, status, total)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'sending', ?)
+      `).run(req.session.user.id, subject, body, bodyHtml, p.use_template === false ? 0 : 1, mode, senderAddress, senderLogin, mailboxId, recipients.length);
       id = Number(info.lastInsertRowid);
       const ins = db.prepare("INSERT INTO mail_recipients (campaign_id, row_no, okpo, name, emails, fields) VALUES (?, ?, ?, ?, ?, ?)");
       for (const r of recipients) ins.run(id, r.row_no, r.okpo, r.name, r.emails, r.fields);
@@ -385,6 +390,7 @@ module.exports = function mailingRoutes(db) {
     res.json({
       campaign: { ...c, author: author && author.full_name, sent: count("sent"), failed: count("failed"), pending: count("pending") },
       preview: first ? Q.letterText(c, first, s.signature) : "",
+      preview_html: first && c.body_html ? Q.letterHtml(c, first, s.signature) : null,
       recipients, attachments,
       needsPassword: c.sender_mode === "own",
     });

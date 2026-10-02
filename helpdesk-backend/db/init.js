@@ -297,6 +297,8 @@ function migrateMailBoxes(db) {
   if (!columns.includes("mailbox_id")) {
     db.exec("ALTER TABLE mail_campaigns ADD COLUMN mailbox_id INTEGER REFERENCES mail_boxes(id) ON DELETE SET NULL");
   }
+  // Оформленный текст письма (жирный, шрифты, размеры…). У старых рассылок — NULL.
+  if (!columns.includes("body_html")) db.exec("ALTER TABLE mail_campaigns ADD COLUMN body_html TEXT");
   const get = (k) => (db.prepare("SELECT value FROM settings WHERE key = ?").get(k) || {}).value || "";
   const from = get("mail_from").trim();
   if (!from) return;

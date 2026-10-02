@@ -18,6 +18,124 @@ const MAIL_STATUS = {
 };
 const MAIL_ROW_STATUS = { sent: ["отправлено", "green"], failed: ["не отправлено", "red"], pending: ["в очереди", ""] };
 
+// ---- Редактор текста письма ------------------------------------------------
+//
+// Обычное поле с кнопками, как в Word: жирный, курсив, подчёркнутый, шрифт,
+// размер, цвет, выравнивание, списки, ссылка. Внутри — contenteditable и
+// команды браузера; на сервере HTML ещё раз чистится по белому списку
+// (services/mailHtml.js), так что вставка из Word мусор в письмо не принесёт.
+// Поле — всегда белое, как лист письма: в тёмной теме чёрный текст
+// иначе было бы не разглядеть.
+
+const RTE_FONTS = ["Arial", "Times New Roman", "Calibri", "Georgia", "Verdana", "Tahoma", "Courier New"];
+const RTE_SIZES = [["12px", "Мелкий"], ["14px", "Обычный"], ["18px", "Крупный"], ["24px", "Очень крупный"], ["32px", "Заголовок"]];
+const RTE_ALIGN_ICON = (w) => `<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">${w.map(([x1, x2], i) => `<line x1="${x1}" y1="${3 + i * 3.4}" x2="${x2}" y2="${3 + i * 3.4}"/>`).join("")}</svg>`;
+
+function richEditor(box, { placeholder = "", onInput = () => {} } = {}) {
+  box.innerHTML = `
+    <div class="rte">
+      <div class="rte-bar" role="toolbar" aria-label="Оформление текста">
+        <select class="rte-font" title="Шрифт" style="width:150px"><option value="">Шрифт</option>${RTE_FONTS.map((f) => `<option value="${esc(f)}" style="font-family:'${esc(f)}'">${esc(f)}</option>`).join("")}</select>
+        <select class="rte-size" title="Размер" style="width:140px"><option value="">Размер</option>${RTE_SIZES.map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}</select>
+        <span class="rte-sep"></span>
+        <button type="button" data-cmd="bold" title="Жирный (Ctrl+B)"><b>Ж</b></button>
+        <button type="button" data-cmd="italic" title="Курсив (Ctrl+I)"><i style="font-family:Georgia,serif">К</i></button>
+        <button type="button" data-cmd="underline" title="Подчёркнутый (Ctrl+U)"><u>Ч</u></button>
+        <button type="button" data-cmd="strikeThrough" title="Зачёркнутый"><s>З</s></button>
+        <label class="rte-color" title="Цвет текста"><span class="rte-color-a">А</span><i class="rte-color-bar"></i><input type="color" value="#C00000"></label>
+        <span class="rte-sep"></span>
+        <button type="button" data-cmd="justifyLeft" title="По левому краю">${RTE_ALIGN_ICON([[2, 14], [2, 10], [2, 14], [2, 9]])}</button>
+        <button type="button" data-cmd="justifyCenter" title="По центру">${RTE_ALIGN_ICON([[2, 14], [4, 12], [2, 14], [5, 11]])}</button>
+        <button type="button" data-cmd="justifyRight" title="По правому краю">${RTE_ALIGN_ICON([[2, 14], [6, 14], [2, 14], [7, 14]])}</button>
+        <span class="rte-sep"></span>
+        <button type="button" data-cmd="insertUnorderedList" title="Маркированный список">•&#8202;≡</button>
+        <button type="button" data-cmd="insertOrderedList" title="Нумерованный список">1.≡</button>
+        <button type="button" data-act="link" title="Ссылка">${icon("link", 15)}</button>
+        <button type="button" data-act="clear" title="Убрать оформление">Aa<sub>×</sub></button>
+      </div>
+      <div class="rte-area" contenteditable="true" spellcheck="true" data-placeholder="${esc(placeholder)}"></div>
+    </div>`;
+  const area = box.querySelector(".rte-area");
+  let saved = null;   // выделение в тексте: кнопки и списки сверху его сбивают
+  const remember = () => {
+    const sel = window.getSelection();
+    if (sel.rangeCount && area.contains(sel.anchorNode)) saved = sel.getRangeAt(0).cloneRange();
+  };
+  const restore = () => {
+    area.focus();
+    if (saved) { const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(saved); }
+  };
+  const changed = () => { area.classList.toggle("empty", !area.textContent.trim() && !area.querySelector("li,br+br")); paintState(); onInput(); };
+  const exec = (cmd, value = null) => {
+    restore();
+    document.execCommand("styleWithCSS", false, true);
+    document.execCommand(cmd, false, value);
+    remember(); changed();
+  };
+  const paintState = () => {
+    box.querySelectorAll("[data-cmd]").forEach((b) => {
+      let on = false;
+      try { on = document.queryCommandState(b.dataset.cmd); } catch { /* команда не поддерживается */ }
+      b.classList.toggle("on", on && area.contains(window.getSelection().anchorNode));
+    });
+  };
+
+  // Кнопки не забирают фокус — выделение в тексте остаётся на месте.
+  box.querySelectorAll(".rte-bar button").forEach((b) => b.addEventListener("mousedown", (e) => e.preventDefault()));
+  box.querySelectorAll("[data-cmd]").forEach((b) => { b.onclick = () => exec(b.dataset.cmd); });
+  box.querySelector("[data-act=link]").onclick = () => {
+    const url = prompt("Адрес ссылки (начинается с https:// или mailto:)", "https://");
+    if (url && /^(https?:\/\/|mailto:)\S+$/i.test(url.trim())) exec("createLink", url.trim());
+    else if (url) toast("Ссылка должна начинаться с https:// или mailto:", true);
+  };
+  box.querySelector("[data-act=clear]").onclick = () => { exec("removeFormat"); exec("unlink"); };
+  const font = box.querySelector(".rte-font");
+  font.onchange = () => { if (font.value) exec("fontName", font.value); font.value = ""; };
+  const size = box.querySelector(".rte-size");
+  size.onchange = () => {
+    if (!size.value) return;
+    // Размер в браузере — только ступенями 1–7; ставим седьмую и меняем её на нужный.
+    exec("fontSize", "7");
+    area.querySelectorAll('font[size="7"], [style*="xxx-large"], [style*="-webkit-xxx-large"]').forEach((el) => {
+      el.removeAttribute("size");
+      el.style.fontSize = size.value;
+    });
+    size.value = "";
+    changed();
+  };
+  const color = box.querySelector(".rte-color input");
+  const colorBar = box.querySelector(".rte-color-bar");
+  colorBar.style.background = color.value;
+  color.addEventListener("mousedown", remember);
+  color.oninput = () => { colorBar.style.background = color.value; };
+  color.onchange = () => exec("foreColor", color.value);
+
+  area.addEventListener("input", changed);
+  area.addEventListener("keyup", remember);
+  area.addEventListener("mouseup", remember);
+  area.addEventListener("blur", remember);
+  document.addEventListener("selectionchange", () => { if (area.contains(window.getSelection().anchorNode)) { remember(); paintState(); } });
+  area.classList.add("empty");
+
+  return {
+    html: () => area.innerHTML,
+    text: () => area.innerText.replace(/\u00a0/g, " ").trim(),
+    /** Вставить текст там, где стоял курсор (подстановку из таблицы). */
+    insert(text) {
+      restore();
+      if (!saved) { const r = document.createRange(); r.selectNodeContents(area); r.collapse(false); const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r); }
+      document.execCommand("insertText", false, text);
+      remember(); changed();
+    },
+  };
+}
+
+/** Письмо в окошке предпросмотра — как лист, без скриптов и без стилей платформы. */
+function mailPreviewFrame(frame, html) {
+  frame.srcdoc = `<!doctype html><meta charset="utf-8"><style>body{margin:0;padding:14px 16px;background:#fff;word-break:break-word}</style>${html}`;
+  frame.onload = () => { try { frame.style.height = `${Math.min(frame.contentDocument.documentElement.scrollHeight + 4, 640)}px`; } catch { /* нет доступа — останется высота по умолчанию */ } };
+}
+
 function mailProgress(c) {
   const done = (c.sent || 0) + (c.failed || 0);
   const pct = c.total ? Math.round((done / c.total) * 100) : 0;
@@ -78,14 +196,15 @@ async function renderMailingNew(main) {
         <div class="field-label">Тема *</div>
         <input class="field-input" id="mSubject" maxlength="200">
         <div class="field-label">Текст *</div>
-        <textarea class="field-input" id="mBody" rows="7" style="resize:vertical;margin-bottom:6px" placeholder="Напоминаем о сроке сдачи отчёта…"></textarea>
+        <div id="mBody" style="margin-bottom:6px"></div>
         <div class="as-note" id="mFields"></div>
         <label class="as-check" style="margin:12px 0"><input type="checkbox" id="mTpl" checked><span>Обращение и реквизиты респондента: «Здравствуйте, уважаемый респондент! ОКПО… Наименование…» и подпись «${esc(settings.signature)}»</span></label>
         <div class="dropzone" id="aDrop"><span class="dropzone-icon">${icon("paperclip", 18)}</span>Вложения: нажмите, чтобы выбрать файлы, или перетащите их сюда — не больше 10 МБ вместе</div>
         <input type="file" id="aFile" multiple hidden>
         <div id="aList"></div>
         <div class="field-label" style="margin-top:6px">Так письмо увидит первый получатель</div>
-        <pre class="as-preview" id="mPreview">Загрузите список и напишите текст</pre>
+        <div class="as-preview" id="mPreviewHead">Загрузите список и напишите текст</div>
+        <iframe class="as-preview-frame" id="mPreview" sandbox="allow-same-origin" title="Предпросмотр письма" hidden></iframe>
       </div>
       <div class="form-card">
         <div class="form-card-title" style="margin-bottom:14px">3. С какого ящика</div>
@@ -127,23 +246,29 @@ async function renderMailingNew(main) {
       .map(([k, v]) => [k.trim().toLowerCase().replace(/ё/g, "е"), v]));
     return text.replace(/\{([^{}\n]{1,60})\}/g, (all, k) => { const key = k.trim().toLowerCase().replace(/ё/g, "е"); return map.has(key) ? map.get(key) : all; });
   };
+  const editor = richEditor($("mBody"), { placeholder: "Напоминаем о сроке сдачи отчёта…", onInput: () => paintPreview() });
+  const escHtml = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   const paintPreview = () => {
     const r = chosen()[0];
-    const body = $("mBody").value;
+    const body = editor.text();
     const n = chosen().length;
     $("mSend").disabled = !n || !settings.configured;
     $("mSend").textContent = n ? `Отправить ${n} ${n % 10 === 1 && n % 100 !== 11 ? "письмо" : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? "письма" : "писем"}` : "Отправить";
-    if (!r || !body.trim()) { $("mPreview").textContent = "Загрузите список и напишите текст"; return; }
-    let text = fill(body, r);
+    if (!r || !body) { $("mPreviewHead").textContent = "Загрузите список и напишите текст"; $("mPreview").hidden = true; return; }
+    // Как на сервере (services/mailQueue.js, letterHtml): значения из таблицы
+    // подставляются экранированными, обращение и подпись — вокруг текста.
+    let html = editor.html().replace(/\{([^{}<>\n]{1,60})\}/g, (all, k) => { const v = fill(`{${k}}`, r); return v === `{${k}}` ? all : escHtml(v); });
     if ($("mTpl").checked) {
       const head = ["Здравствуйте, уважаемый респондент!"];
       if (r.okpo) head.push(`ОКПО: ${r.okpo}`);
       if (r.name) head.push(`Наименование: ${r.name}`);
-      text = `${head.join("\n")}\n\n${text}\n\nС уважением,\n${settings.signature}`;
+      html = `<p>${head.map(escHtml).join("<br>")}</p>${html}<p>${["С уважением,", ...String(settings.signature).split("\n")].map(escHtml).join("<br>")}</p>`;
     }
-    $("mPreview").textContent = `Кому: ${r.emails.join("; ")}\nТема: ${fill($("mSubject").value, r)}\n\n${text}`;
+    $("mPreviewHead").innerHTML = `<b>Кому:</b> ${esc(r.emails.join("; "))}<br><b>Тема:</b> ${esc(fill($("mSubject").value, r))}`;
+    $("mPreview").hidden = false;
+    mailPreviewFrame($("mPreview"), `<div style="font-family: Arial, sans-serif; font-size: 14px; line-height: 1.5; color: #1a1a1a">${html}</div>`);
   };
-  ["mBody", "mSubject"].forEach((id) => { $(id).oninput = paintPreview; });
+  $("mSubject").oninput = paintPreview;
   $("mTpl").onchange = paintPreview;
 
   const paintParsed = () => {
@@ -168,13 +293,8 @@ async function renderMailingNew(main) {
     $("mDrop").hidden = true;
     $("mFields").innerHTML = st.columns.length ? `Подстановки (щелчок — вставить в текст): ${st.columns.map((c) => `<button type="button" class="as-chip" data-f="${esc(c)}">{${esc(c)}}</button>`).join(" ")}` : "";
     $("mFields").querySelectorAll("[data-f]").forEach((b) => {
-      b.onclick = () => {
-        const ta = $("mBody"), tag = `{${b.dataset.f}}`;
-        const p = ta.selectionStart ?? ta.value.length;
-        ta.value = ta.value.slice(0, p) + tag + ta.value.slice(ta.selectionEnd ?? p);
-        ta.focus(); ta.selectionStart = ta.selectionEnd = p + tag.length;
-        paintPreview();
-      };
+      b.addEventListener("mousedown", (e) => e.preventDefault());   // не сбивать курсор в тексте
+      b.onclick = () => editor.insert(`{${b.dataset.f}}`);
     });
     paintPreview();
   };
@@ -208,12 +328,12 @@ async function renderMailingNew(main) {
 
   $("mSend").onclick = async () => {
     const list = chosen();
-    if (!$("mSubject").value.trim() || !$("mBody").value.trim()) { toast("Заполните тему и текст письма", true); return; }
+    if (!$("mSubject").value.trim() || !editor.text()) { toast("Заполните тему и текст письма", true); return; }
     if (st.mode === "own" && (!$("mAddr").value.trim() || !$("mPass").value)) { toast("Укажите свой адрес и пароль приложения", true); return; }
     if (!confirm(`Отправить ${list.length} писем с адреса ${st.mode === "own" ? $("mAddr").value.trim() : boxOf().address}?`)) return;
     const fd = new FormData();
     fd.append("payload", JSON.stringify({
-      subject: $("mSubject").value, body: $("mBody").value, use_template: $("mTpl").checked,
+      subject: $("mSubject").value, body: editor.text(), body_html: editor.html(), use_template: $("mTpl").checked,
       sender_mode: st.mode === "own" ? "own" : "shared", mailbox_id: boxOf() ? boxOf().id : null,
       own_address: $("mAddr").value, own_password: $("mPass").value,
       recipients: list.map((r) => ({ row_no: r.row_no, okpo: r.okpo, name: r.name, emails: r.emails, fields: r.fields })),
@@ -281,12 +401,13 @@ async function renderMailing(main, id) {
         </div>
         <div>
           <div class="as-sec">Письмо</div>
-          <pre class="as-preview">${esc(data.preview)}</pre>
+          ${data.preview_html ? `<iframe class="as-preview-frame" id="mCardPreview" sandbox="allow-same-origin" title="Письмо"></iframe>` : `<pre class="as-preview">${esc(data.preview)}</pre>`}
           ${data.attachments.length ? `<div class="as-sec" style="margin-top:14px">Вложения</div>${data.attachments.map((a) => `<div class="file-chip"><span class="file-chip-name">${icon("paperclip", 14)} ${esc(a.filename)}</span><span class="as-muted">${(a.size / 1024).toFixed(0)} КБ</span></div>`).join("")}` : ""}
         </div>
       </div>
     </div>`;
   const $ = (x) => main.querySelector("#" + x);
+  if (data.preview_html) mailPreviewFrame($("mCardPreview"), data.preview_html);
   $("mBack").onclick = () => setView("asst:mail");
   $("mRep").onclick = () => asstDownload(`/mailings/${id}/report`);
   main.querySelectorAll("#mRowF .toggle-btn").forEach((b) => { b.onclick = () => { mailRowFilter = b.dataset.f; renderMailing(main, id); }; });
