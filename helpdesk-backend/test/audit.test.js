@@ -122,6 +122,10 @@ test("у каждого изменяющего маршрута админист
     const src = fs.readFileSync(path.join(routes, file), "utf8");
     for (const m of src.matchAll(re)) {
       const url = (prefix + m[2]).replace(/:id\b/g, "7").replace(/:[a-zA-Z]+/g, "x").replace(/\/$/, "");
+      // Оповещения: маршрут под охраной администратора (`it`) обязан входить в разделы журнала —
+      // иначе раздел, появившийся позже, молча в журнал не попадёт (так было с expiry-task, PR #48).
+      const guarded = file === "notifications.js" && src.includes(`router.${m[1]}("${m[2]}", it`);
+      if (guarded && !AREAS.some((a) => a.test(url))) missing.push(`${m[1].toUpperCase()} ${url} — не входит в разделы журнала`);
       if (!AREAS.some((a) => a.test(url))) continue;          // не административный раздел
       checked++;
       if (!findRule(m[1].toUpperCase(), url)) missing.push(`${m[1].toUpperCase()} ${url}`);
@@ -129,4 +133,19 @@ test("у каждого изменяющего маршрута админист
   }
   assert.ok(checked >= 20, `проверено маршрутов: ${checked} — тест перестал их находить`);
   assert.deepStrictEqual(missing, [], "добавьте правило в RULES (services/audit.js): без него запись будет вида «PUT /api/…»");
+});
+
+test("настройка задачи на перевыпуск записывается; личная отметка «прочитано» — нет", async (t) => {
+  const { Adm, U, rows } = await stand(t);
+  const r = await Adm.put("/api/notifications/expiry-task", { days: 14 });
+  assert.strictEqual(r.status, 200, r.text);
+  const [last] = await rows();
+  assert.strictEqual(last.summary, "Сроки документов: задача на перевыпуск — настройки изменены");
+  assert.deepStrictEqual(last.details, { "за сколько дней заводить": 14 });
+
+  const before = (await rows()).length;
+  await U.patch("/api/notifications/1/read", {});
+  await U.patch("/api/notifications/ticket/1/read", {});
+  await Adm.patch("/api/notifications/1/read", {});
+  assert.strictEqual((await rows()).length, before, "отметки «прочитано» — не действие администратора");
 });

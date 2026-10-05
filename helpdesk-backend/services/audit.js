@@ -25,7 +25,10 @@ const { KINDS } = require("../config/notifications");
 const AREAS = [
   /^\/api\/admin\//,
   /^\/api\/certificates\//,
-  /^\/api\/notifications\/(kinds|schedule|smtp|deliveries)\b/,
+  // Оповещения: всё, кроме личных отметок «прочитано» (/:id/read, /ticket/:id/read) — те ставит
+  // себе любой сотрудник. Раньше здесь был список разделов, и раздел, появившийся позже
+  // (expiry-task, PR #48), в журнал не попал: перечислять надо исключения, а не настройки.
+  /^\/api\/notifications\/(?!([^/]+|ticket\/[^/]+)\/read$)/,
   /^\/api\/mailings\/settings\b/,
   /^\/api\/assistant\/settings\//,
 ];
@@ -71,6 +74,9 @@ const RULES = [
   { m: "PUT", re: /^\/api\/notifications\/smtp$/, text: () => "Почта оповещений: настройки изменены",
     details: ({ body }) => ({ ...named(body, SMTP_NAMES), пароль: secret(body) }) },
   { m: "POST", re: /^\/api\/notifications\/smtp\/test$/, skip: true },
+  { m: "PUT", re: /^\/api\/notifications\/expiry-task$/, text: () => "Сроки документов: задача на перевыпуск — настройки изменены",
+    details: ({ body }) => ({ ...(body.days !== undefined ? { "за сколько дней заводить": body.days } : {}),
+      ...(Array.isArray(body.assignees) ? { "ответственных": body.assignees.length } : {}) }) },
   { m: "POST", re: /^\/api\/notifications\/deliveries\/retry$/, text: () => "Оповещения: повтор отправки неушедших писем" },
 
   { m: "PUT", re: /^\/api\/mailings\/settings$/, text: () => "Рассылки: настройки изменены",
