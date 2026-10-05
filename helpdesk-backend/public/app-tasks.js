@@ -31,17 +31,106 @@ function taskDay(iso) {
 function taskDueLabel(t) {
   const d = taskDay(t.due_date);
   if (!d) return "без срока";
+  // Период: «5–11 окт» или «28 сен – 4 окт» — задача на неделю или месяц.
+  const f = taskDay(t.due_from);
+  if (f) {
+    return f.getMonth() === d.getMonth()
+      ? `${f.getDate()}–${d.getDate()} ${TASK_MONTHS[d.getMonth()]}`
+      : `${f.getDate()} ${TASK_MONTHS[f.getMonth()]} – ${d.getDate()} ${TASK_MONTHS[d.getMonth()]}`;
+  }
   return `${d.getDate()} ${TASK_MONTHS[d.getMonth()]}${t.due_time ? `, ${t.due_time}` : ""}`;
 }
 function taskDueRel(t) {
   if (t.status === "done") return t.done_at ? `выполнено ${fmtDate(t.done_at).slice(0, 5)}` : "выполнено";
   if (t.days === null || t.days === undefined) return "";
   if (t.overdue) return t.days < 0 ? `просрочено ${-t.days} дн.` : "срок прошёл";
+  if (t.due_from) {
+    const f = taskDay(t.due_from);
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    if (f > today) return `начать с ${f.getDate()} ${TASK_MONTHS[f.getMonth()]}`;
+    return t.days === 0 ? "последний день" : `ещё ${t.days + 1} дн. в периоде`;
+  }
   if (t.days === 0) return "сегодня";
   if (t.days === 1) return "завтра";
   const d = taskDay(t.due_date);
   return t.days < 7 && d ? `${TASK_WEEKDAYS[d.getDay()]}, через ${t.days} дн.` : `через ${t.days} дн.`;
 }
+/**
+ * Срок задачи: один день (можно со временем) или период «с … по …» — для
+ * дел «в течение недели», «до конца месяца». value — { due_from, due_date,
+ * due_time }; onChange получает его целиком при каждой правке.
+ */
+function taskDueControl(box, value, onChange) {
+  let v = { due_from: value.due_from || null, due_date: value.due_date || null, due_time: value.due_time || null };
+  let period = Boolean(v.due_from);
+  const paint = () => {
+    box.innerHTML = `
+      <div class="td-due-ctl">
+        <div class="td-due-mode">
+          <button type="button" data-mode="day" class="${period ? "" : "on"}">День</button>
+          <button type="button" data-mode="period" class="${period ? "on" : ""}">Период</button>
+        </div>
+        ${period ? `
+          <span class="td-due-dates"><span class="td-due-l">с</span><input class="input td-date" type="date" data-k="from" value="${esc(v.due_from || "")}">
+          <span class="td-due-l">по</span><input class="input td-date" type="date" data-k="to" value="${esc(v.due_date || "")}"></span>
+          <div class="td-due-presets">
+            <button type="button" data-p="week">Эта неделя</button>
+            <button type="button" data-p="next">Следующая неделя</button>
+            <button type="button" data-p="month">Этот месяц</button>
+          </div>` : `
+          <input class="input td-date" type="date" data-k="to" value="${esc(v.due_date || "")}">
+          <input class="input td-time" type="time" data-k="time" value="${esc(v.due_time || "")}" ${v.due_date ? "" : "disabled"} title="Время — необязательно">`}
+      </div>`;
+    box.querySelectorAll("[data-mode]").forEach((b) => {
+      b.onclick = () => {
+        const want = b.dataset.mode === "period";
+        if (want === period) return;
+        period = want;
+        if (period) {
+          // Был день — он становится концом периода, начало — сегодня (если раньше).
+          const today = calIso(new Date());
+          v = { due_from: v.due_date && v.due_date > today ? today : null, due_date: v.due_date, due_time: null };
+          if (!v.due_from) { paint(); return; }
+        } else {
+          v = { due_from: null, due_date: v.due_date, due_time: null };
+        }
+        paint(); emit();
+      };
+    });
+    const get = (k) => box.querySelector(`[data-k="${k}"]`);
+    box.querySelectorAll("input").forEach((inp) => {
+      inp.onchange = () => {
+        if (period) {
+          let from = get("from").value || null, to = get("to").value || null;
+          if (from && to && from > to) [from, to] = [to, from];
+          v = { due_from: from, due_date: to, due_time: null };
+          if (!from || !to) return;   // период ещё не выбран целиком
+        } else {
+          v = { due_from: null, due_date: get("to").value || null, due_time: get("to").value ? get("time").value || null : null };
+        }
+        paint(); emit();
+      };
+    });
+    box.querySelectorAll("[data-p]").forEach((b) => {
+      b.onclick = () => {
+        const now = new Date();
+        const mon = calMonday(now);
+        if (b.dataset.p === "week") v = { due_from: calIso(mon), due_date: calIso(calAddDays(mon, 6)), due_time: null };
+        if (b.dataset.p === "next") v = { due_from: calIso(calAddDays(mon, 7)), due_date: calIso(calAddDays(mon, 13)), due_time: null };
+        if (b.dataset.p === "month") v = { due_from: calIso(new Date(now.getFullYear(), now.getMonth(), 1)), due_date: calIso(new Date(now.getFullYear(), now.getMonth() + 1, 0)), due_time: null };
+        paint(); emit();
+      };
+    });
+  };
+  const emit = () => onChange({ ...v, due_from: v.due_from && v.due_from < v.due_date ? v.due_from : null });
+  paint();
+  return {
+    value: () => ({ ...v, due_from: period && v.due_from && v.due_date && v.due_from < v.due_date ? v.due_from : null }),
+    /** Выбран «Период», но не оба дня. */
+    incomplete: () => period && (!v.due_from || !v.due_date),
+  };
+}
+
 function taskInitials(name) {
   const p = String(name || "").trim().split(/\s+/);
   return ((p[0] || "")[0] || "").toUpperCase() + ((p[1] || "")[0] || "").toUpperCase();
@@ -285,8 +374,7 @@ async function openTask(main, id) {
       </span>
       <span class="l">Срок</span>
       <span class="v">
-        <input class="input td-date" type="date" id="tdDate" value="${esc(task.due_date || "")}" />
-        <input class="input td-time" type="time" id="tdTime" value="${esc(task.due_time || "")}" ${task.due_date ? "" : "disabled"} />
+        <span id="tdDue"></span>
         ${task.overdue ? `<span class="td-pill red">${icon("clock", 13)} просрочено</span>` : ""}
       </span>
       <span class="l">Важность</span>
@@ -359,10 +447,7 @@ async function openTask(main, id) {
   drawer.querySelectorAll("#tdPrio button").forEach((b) => {
     b.onclick = () => { if (b.dataset.prio !== task.priority) save({ priority: b.dataset.prio }); };
   });
-  const date = drawer.querySelector("#tdDate");
-  const time = drawer.querySelector("#tdTime");
-  date.onchange = () => save({ due_date: date.value || null, due_time: date.value ? time.value || null : null }, "Срок изменён").then(refreshTaskBadge);
-  time.onchange = () => save({ due_time: time.value || null }, "Срок изменён");
+  taskDueControl(drawer.querySelector("#tdDue"), task, (due) => save(due, "Срок изменён").then(refreshTaskBadge));
   const tags = drawer.querySelector("#tdTags");
   tags.onblur = () => { if (tags.value.trim() !== task.tags.join(", ")) save({ tags: tags.value }); };
   const ticket = drawer.querySelector("#tdTicket");
@@ -428,10 +513,8 @@ function openTaskForm(main, presetDate = "") {
     <div class="td-people" id="tfPeople">
       ${people.map((x) => `<button type="button" class="td-person${x.id === me ? " on" : ""}" data-id="${x.id}">${taskAvatar(x, 20)} ${esc(x.full_name)}</button>`).join("")}
     </div>
-    <div class="td-row2">
-      <div><div class="field-label">Срок</div><input class="input" type="date" id="tfDate" value="${esc(presetDate)}" /></div>
-      <div><div class="field-label">Время</div><input class="input" type="time" id="tfTime" /></div>
-    </div>
+    <div class="field-label" style="margin-top:12px;">Срок</div>
+    <div id="tfDue"></div>
     <div class="field-label" style="margin-top:12px;">Важность</div>
     <div class="td-prio-row" id="tfPrio">
       ${PRIORITIES.map((x) => `<button type="button" class="td-prio${x.id === "medium" ? " on" : ""}" data-prio="${x.id}" style="--c:${x.color};--s:${x.soft}">${x.label}</button>`).join("")}
@@ -454,6 +537,7 @@ function openTaskForm(main, presetDate = "") {
   drawer.querySelectorAll("#tfPrio .td-prio").forEach((b) => {
     b.onclick = () => { drawer.querySelectorAll("#tfPrio .td-prio").forEach((x) => x.classList.toggle("on", x === b)); };
   });
+  const dueCtl = taskDueControl(drawer.querySelector("#tfDue"), { due_date: presetDate || null }, () => {});
   const title = drawer.querySelector("#tfTitle");
   title.focus();
   drawer.querySelector("#tfCreate").onclick = async () => {
@@ -461,12 +545,12 @@ function openTaskForm(main, presetDate = "") {
     const assignees = [...drawer.querySelectorAll(".td-person.on")].map((b) => Number(b.dataset.id));
     if (!title.value.trim()) { err.textContent = "Напишите, что сделать"; title.focus(); return; }
     if (!assignees.length) { err.textContent = "Выберите хотя бы одного ответственного"; return; }
-    const date = drawer.querySelector("#tfDate").value;
+    if (dueCtl.incomplete()) { err.textContent = "У периода выберите оба дня: с какого и по какое"; return; }
+    const due = dueCtl.value();
     const body = {
       title: title.value,
       assignees,
-      due_date: date || null,
-      due_time: date ? drawer.querySelector("#tfTime").value || null : null,
+      ...due,
       priority: drawer.querySelector("#tfPrio .td-prio.on").dataset.prio,
       description: drawer.querySelector("#tfDesc").value,
       checklist: drawer.querySelector("#tfCheck").value.split("\n").map((x) => x.trim()).filter(Boolean),
@@ -604,9 +688,12 @@ async function loadCalendar(main) {
   }
   if (!main.querySelector("#tdCal")) return;
   const byDay = new Map();
+  const put = (iso, t) => { if (!byDay.has(iso)) byDay.set(iso, []); byDay.get(iso).push(t); };
   for (const t of ranged.tasks) {
-    if (!byDay.has(t.due_date)) byDay.set(t.due_date, []);
-    byDay.get(t.due_date).push(t);
+    if (!t.due_from) { put(t.due_date, t); continue; }
+    // Период — во все свои дни на экране.
+    const last = t.due_date < calIso(end) ? taskDay(t.due_date) : end;
+    for (let d = t.due_from > calIso(start) ? taskDay(t.due_from) : new Date(start); d <= last; d = calAddDays(d, 1)) put(calIso(d), t);
   }
   calData = { byDay, undated: open.tasks.filter((t) => !t.due_date), open: open.tasks, today: ranged.today };
 
@@ -655,9 +742,9 @@ async function loadCalendar(main) {
 
 function calEventHtml(t) {
   const p = taskPriority(t.priority);
-  const cls = ["cal-ev", t.status === "done" ? "done" : "", t.overdue ? "over" : "", t.unread ? "unread" : ""].filter(Boolean).join(" ");
+  const cls = ["cal-ev", t.due_from ? "period" : "", t.status === "done" ? "done" : "", t.overdue ? "over" : "", t.unread ? "unread" : ""].filter(Boolean).join(" ");
   return `<div class="${cls}" data-id="${t.id}" ${t.status === "done" ? "" : 'draggable="true"'} style="border-left-color:${p.color}"
-    title="${esc(t.title)}${t.assignees.length ? " — " + esc(t.assignees.map((a) => a.full_name).join(", ")) : ""}">
+    title="${esc(t.title)}${t.due_from ? ` (${esc(taskDueLabel(t))})` : ""}${t.assignees.length ? " — " + esc(t.assignees.map((a) => a.full_name).join(", ")) : ""}">
     ${t.overdue ? '<span class="bang">!</span>' : ""}${t.due_time ? `<span class="tm">${esc(t.due_time)}</span>` : ""}<span class="tt">${esc(t.title)}</span>
   </div>`;
 }
@@ -672,7 +759,9 @@ const CAL_DND_TYPE = "application/x-center-task";
 function wireCalDrop(main, root) {
   main.querySelectorAll("[draggable=true][data-id]").forEach((el) => {
     el.ondragstart = (e) => {
-      e.dataTransfer.setData(CAL_DND_TYPE, el.dataset.id);
+      // С какого дня тащат: период сдвигается целиком на ту же разницу.
+      const src = el.closest(".d");
+      e.dataTransfer.setData(CAL_DND_TYPE, `${el.dataset.id}|${src ? src.dataset.date : ""}`);
       e.dataTransfer.effectAllowed = "move";
       el.classList.add("dragging");
     };
@@ -688,17 +777,23 @@ function wireCalDrop(main, root) {
     cell.ondragleave = (e) => { if (!cell.contains(e.relatedTarget)) cell.classList.remove("drop"); };
     cell.ondrop = async (e) => {
       cell.classList.remove("drop");
-      const id = Number(e.dataTransfer.getData(CAL_DND_TYPE));
+      const [rawId, srcDate] = e.dataTransfer.getData(CAL_DND_TYPE).split("|");
+      const id = Number(rawId);
       if (!id) return;
       e.preventDefault();
       const date = cell.dataset.date;
       const all = [...calData.byDay.values()].flat().concat(calData.undated);
       const t = all.find((x) => x.id === id);
-      if (t && t.due_date === date) return;
+      let body = { due_date: date };
+      if (t && t.due_from) {
+        const shift = Math.round((taskDay(date) - taskDay(srcDate || t.due_date)) / 86400000);
+        if (!shift) return;
+        body = { due_from: calIso(calAddDays(taskDay(t.due_from), shift)), due_date: calIso(calAddDays(taskDay(t.due_date), shift)) };
+      } else if (t && t.due_date === date) return;
       try {
-        await api(`/tasks/${id}`, { method: "PATCH", body: { due_date: date } });
+        await api(`/tasks/${id}`, { method: "PATCH", body });
         const d = taskDay(date);
-        toast(`Срок перенесён на ${d.getDate()} ${CAL_MONTHS_GEN[d.getMonth()]}`);
+        toast(t && t.due_from ? `Период перенесён: ${taskDueLabel({ ...t, ...body })}` : `Срок перенесён на ${d.getDate()} ${CAL_MONTHS_GEN[d.getMonth()]}`);
         calUi.selected = date;
         await loadCalendar(main);
         if (state.taskOpenId === id) openTask(main, id);
@@ -713,7 +808,8 @@ function renderCalAgenda(main) {
   if (!box) return;
   const iso = calUi.selected;
   const d = taskDay(iso);
-  const list = (calData.byDay.get(iso) || []).slice().sort((a, b) => (a.due_time || "99").localeCompare(b.due_time || "99"));
+  // Сначала дела на этот день (по времени), за ними — периоды, которые идут сейчас.
+  const list = (calData.byDay.get(iso) || []).slice().sort((a, b) => (a.due_from ? 1 : 0) - (b.due_from ? 1 : 0) || (a.due_time || "99").localeCompare(b.due_time || "99"));
   const isToday = iso === calData.today;
   const late = isToday ? calData.open.filter((t) => t.overdue && t.due_date !== iso) : [];
   const openCount = list.filter((t) => t.status !== "done").length;
@@ -739,7 +835,7 @@ function renderCalAgenda(main) {
   box.innerHTML = `
     <h4>${d ? `${CAL_WEEKDAYS_FULL[d.getDay()]}, ${d.getDate()} ${CAL_MONTHS_GEN[d.getMonth()]}` : ""}</h4>
     <div class="sub">${list.length ? `${openCount} ${openCount === 1 ? "задача" : openCount >= 2 && openCount <= 4 ? "задачи" : "задач"}${list.length > openCount ? `, выполнено ${list.length - openCount}` : ""}` : "задач на этот день нет"}${late.length ? ` · просрочено ${late.length}` : ""}</div>
-    ${list.map((t) => item(t, t.due_time || "весь день")).join("")}
+    ${list.map((t) => item(t, t.due_from ? `до ${esc(taskDueLabel({ due_date: t.due_date }))}` : t.due_time || "весь день")).join("")}
     ${late.length ? `<div class="td-sec">Срок прошёл</div>${late.map((t) => item(t, esc(taskDueLabel(t)))).join("")}` : ""}
     <button class="btn btn-ghost ag-add" data-add="${esc(iso)}">${icon("plus", 14)} Задача на этот день</button>
     ${calData.undated.length ? `
@@ -757,3 +853,83 @@ function renderCalAgenda(main) {
   wireCalDrop(main, main.querySelector("#tdCal"));
   markCalOpen(main);
 }
+
+// ====== Заметки: общая доска администраторов ======
+//
+// Один большой лист с оформлением (тот же редактор, что в рассылках) —
+// записать мысль, план, список «не забыть». Сохраняется сам через пару
+// секунд после набора и при уходе со страницы. Лист общий: если его успел
+// сохранить коллега, свой текст не затирает чужой молча — спросим.
+async function renderTaskNotes(main) {
+  clearViewPoll();
+  main.innerHTML = `
+    <div class="topbar">
+      <div class="topbar-title-row"><div class="topbar-title">Заметки</div></div>
+      <div class="td-top-actions"><span class="tn-status" id="tnStatus"></span></div>
+    </div>
+    <div class="page tn-page"><div id="tnEditor"><div class="spinner">Загрузка…</div></div></div>`;
+  let board;
+  try { board = await api("/tasks/board"); } catch (e) {
+    main.querySelector("#tnEditor").innerHTML = `<div class="empty-state">Не удалось загрузить заметки: ${esc(e.message)}</div>`;
+    return;
+  }
+  if (state.view !== "tasknotes") return;
+  const status = main.querySelector("#tnStatus");
+  let version = board.version;
+  let dirty = false;
+  let saving = null;
+  let timer = null;
+  const stamp = (b) => (b.updated_at ? `сохранено ${fmtDate(b.updated_at)}${b.updated_by ? ` · ${b.updated_by}` : ""}` : "");
+  const show = (text, cls = "") => { status.textContent = text; status.className = `tn-status ${cls}`; };
+
+  const editor = richEditor(main.querySelector("#tnEditor"), {
+    placeholder: "Пишите здесь: мысли, планы, что не забыть. Сохраняется само.",
+    fill: true,
+    onInput: () => { dirty = true; show("не сохранено…"); clearTimeout(timer); timer = setTimeout(save, 1500); },
+  });
+  editor.set(board.html);
+  show(stamp(board));
+
+  async function save() {
+    clearTimeout(timer);
+    if (!dirty || saving) return saving;
+    const html = editor.html();
+    show("сохраняю…");
+    saving = (async () => {
+      try {
+        const b = await api("/tasks/board", { method: "PUT", body: { html, version } });
+        version = b.version;
+        if (editor.html() === html) dirty = false;
+        show(stamp(b), "ok");
+      } catch (e) {
+        if (e.status === 409 && e.data) return conflict(e.data);
+        show(`не сохранено: ${e.message}`, "err");
+      } finally { saving = null; }
+      if (dirty) timer = setTimeout(save, 1500);
+    })();
+    return saving;
+  }
+
+  // Лист за это время сохранил коллега.
+  function conflict(theirs) {
+    const keepMine = confirm(`Заметки только что изменил ${theirs.updated_by || "другой администратор"}.\n\n`
+      + "ОК — сохранить ваш вариант (его изменения пропадут).\nОтмена — показать его вариант (ваши последние правки пропадут).");
+    version = theirs.version;
+    if (keepMine) { dirty = true; return save(); }
+    editor.set(theirs.html);
+    dirty = false;
+    show(stamp(theirs), "ok");
+  }
+
+  editor.area.addEventListener("blur", () => { if (dirty) save(); });
+  // Пока здесь ничего не правят — подтягиваем правки коллег.
+  viewPollHandle = setInterval(async () => {
+    if (dirty || saving || document.activeElement === editor.area) return;
+    try {
+      const b = await api("/tasks/board");
+      if (b.version !== version) { version = b.version; editor.set(b.html); show(stamp(b), "ok"); }
+    } catch { /* сеть моргнула — попробуем в следующий раз */ }
+  }, 20000);
+  editor.area.focus();
+}
+

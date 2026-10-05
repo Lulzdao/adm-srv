@@ -332,6 +332,7 @@ async function api(path, opts = {}) {
     err.status = res.status;
     err.code = data && data.code;
     err.hint = data && data.hint; // подсказка «что делать» — например, про сетевой путь для копий
+    err.data = data;              // всё тело ответа: при 409 там свежая версия (доска заметок)
     throw err;
   }
   return data;
@@ -626,7 +627,7 @@ function viewExists(view) {
   }
   // Разделы администратора — по признаку is_admin, а не по роли: роль "it"
   // теперь значит «исполнитель отдела ИТ», и прав администратора не даёт.
-  if (["dashboard", "admin", "certs", "tasks", "taskcal"].includes(view) || view.startsWith("notif:")) return Boolean(u.is_admin);
+  if (["dashboard", "admin", "certs", "tasks", "taskcal", "tasknotes"].includes(view) || view.startsWith("notif:")) return Boolean(u.is_admin);
   if (view.startsWith("module:")) {
     const [, modId, viewId] = view.split(":");
     const mod = state.modules.find((m) => m.id === modId);
@@ -912,6 +913,7 @@ function renderShell() {
     navHtml += navGroupHtml("tasks", "Задачи", "task", state.taskAttention, [
       { id: "tasks", label: "Список", icon: "list" },
       { id: "taskcal", label: "Календарь", icon: "calendar" },
+      { id: "tasknotes", label: "Заметки", icon: "pen" },
     ]);
     // Раздел оповещений — только у ИТ. Исполнителям ХОЗ и ЕГРПО он не нужен:
     // им хватает «Входящих заявок» с бейджем, который работает как работал.
@@ -1017,6 +1019,7 @@ function renderShell() {
   else if (state.view === "certs") renderCertificates(main);
   else if (state.view === "tasks") renderTasks(main);
   else if (state.view === "taskcal") renderTaskCalendar(main);
+  else if (state.view === "tasknotes") renderTaskNotes(main);
   else if (state.view.startsWith("notif:")) renderNotifications(main, state.view.slice(6));
   else if (state.view.startsWith("asst:")) renderAssistant(main, state.view.slice(5));
   else if (state.view.startsWith("module:")) {

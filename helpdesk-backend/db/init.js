@@ -110,6 +110,7 @@ function initDb() {
     migrateMailBoxes(db);
     dropAssistantExtras(db);
     mergeLoginCaseDuplicates(db);
+    migrateTaskPeriod(db);
     encryptStoredPasswords(db);
     db.exec("COMMIT");
     // Открытые пароли остались бы в свободных страницах файла и в журнале WAL —
@@ -325,6 +326,12 @@ function migrateMailBoxes(db) {
  * что новая таблица со ссылкой на users подхватится сама. После слияния —
  * уникальный индекс без учёта регистра, чтобы двойники больше не появлялись.
  */
+/** Срок задачи периодом: «с … по …». Последний день остаётся в due_date. */
+function migrateTaskPeriod(db) {
+  const cols = db.prepare("PRAGMA table_info(tasks)").all().map((c) => c.name);
+  if (cols.length && !cols.includes("due_from")) db.exec("ALTER TABLE tasks ADD COLUMN due_from TEXT");
+}
+
 function mergeLoginCaseDuplicates(db) {
   const groups = db.prepare(`
     SELECT lower(ad_login) AS k FROM users GROUP BY lower(ad_login) HAVING COUNT(*) > 1
