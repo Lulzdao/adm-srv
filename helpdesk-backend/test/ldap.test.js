@@ -53,3 +53,29 @@ test("проверка сертификата для ldaps:// не отключ�
     "иначе домен, настроенный на ldaps, принимал бы любой сертификат");
   assert.strictEqual(clientOptions("ldap://dc.example.local:389").tlsOptions, undefined);
 });
+
+test("DOMAIN_X_LDAP_ALLOW_SHA1: только у своего домена и только для ldaps — SHA-1 в подписях разрешена", () => {
+  const plain = clientOptions("ldaps://dc.example.local:636", { allowSha1: false });
+  assert.strictEqual(plain.tlsOptions.ciphers, undefined, "без флага — настройки Node по умолчанию");
+  const sha1 = clientOptions("ldaps://dc.example.local:636", { allowSha1: true });
+  assert.match(sha1.tlsOptions.ciphers, /@SECLEVEL=0/);
+  assert.strictEqual(sha1.tlsOptions.maxVersion, "TLSv1.2");
+  assert.strictEqual(typeof sha1.tlsOptions.rejectUnauthorized, "boolean", "проверка сертификата не отключается");
+  assert.strictEqual(clientOptions("ldap://dc.example.local:389", { allowSha1: true }).tlsOptions, undefined, "для ldap:// TLS не включается");
+  // Строку шифров принимает сам OpenSSL — опечатка в ней уронила бы каждый вход.
+  require("node:tls").createSecureContext({ ciphers: sha1.tlsOptions.ciphers, maxVersion: sha1.tlsOptions.maxVersion });
+});
+
+test("флаг читается из .env по домену", () => {
+  const saved = process.env.DOMAIN_B_LDAP_ALLOW_SHA1;
+  process.env.DOMAIN_B_LDAP_ALLOW_SHA1 = "true";
+  delete require.cache[require.resolve("../config/config")];
+  try {
+    const cfg = require("../config/config");
+    assert.strictEqual(cfg.domains.B.allowSha1, true);
+    assert.strictEqual(cfg.domains.A.allowSha1, false);
+  } finally {
+    if (saved === undefined) delete process.env.DOMAIN_B_LDAP_ALLOW_SHA1; else process.env.DOMAIN_B_LDAP_ALLOW_SHA1 = saved;
+    delete require.cache[require.resolve("../config/config")];
+  }
+});

@@ -57,6 +57,10 @@ function domainConfig(prefix, defaultLabel) {
     svcDn: process.env[`${prefix}_SVC_DN`],
     svcPassword: process.env[`${prefix}_SVC_PASSWORD`],
     adminGroup: process.env[`${prefix}_ADMIN_GROUP`],
+    // Сертификат контроллера подписан по SHA-1: Node 22 такие подписи по
+    // умолчанию не принимает, и контроллер рвёт рукопожатие. Временный обход
+    // до перевыпуска сертификата по SHA-256 — см. LDAP_TLS_SHA1 в ldapAuth.js.
+    allowSha1: process.env[`${prefix}_LDAP_ALLOW_SHA1`] === "true",
   };
 }
 

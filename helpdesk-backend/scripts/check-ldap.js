@@ -25,7 +25,7 @@ require("dotenv").config();
 const net = require("net");
 const tls = require("tls");
 const { Client } = require("ldapts");
-const { clientOptions } = require("../services/ldapAuth");
+const { clientOptions, LDAP_TLS_SHA1 } = require("../services/ldapAuth");
 const config = require("../config/config");
 
 const domainKey = process.argv[2];
@@ -59,9 +59,9 @@ async function testTcp(host, port, timeoutMs = 5000) {
   });
 }
 
-async function testTls(host, port, timeoutMs = 5000) {
+async function testTls(host, port, timeoutMs = 5000, extra = {}) {
   return new Promise((resolve) => {
-    const socket = tls.connect({ host, port, timeout: timeoutMs, rejectUnauthorized: false }, () => {
+    const socket = tls.connect({ host, port, servername: /^[\d.]+$/.test(host) ? undefined : host, timeout: timeoutMs, rejectUnauthorized: false, ...extra }, () => {
       const cert = socket.getPeerCertificate();
       const authorized = socket.authorized;
       const authError = socket.authorizationError;
@@ -112,7 +112,8 @@ async function main() {
   // 2. TLS (если ldaps)
   if (parsed.proto === "ldaps") {
     step(2, `TLS-рукопожатие и сертификат`);
-    const t = await testTls(parsed.host, parsed.port);
+    const t = await testTls(parsed.host, parsed.port, 5000, cfg.allowSha1 ? LDAP_TLS_SHA1 : {});
+    if (cfg.allowSha1) console.log(`  (включён DOMAIN_${domainKey}_LDAP_ALLOW_SHA1 — принимаются подписи SHA-1)`);
     if (t.ok) {
       ok(`TLS установлен, сертификат действителен до ${t.validTo}`);
       if (!t.authorized) {
@@ -133,8 +134,20 @@ async function main() {
       }
     } else {
       fail(`TLS-соединение не установилось: ${t.error}`);
-      console.log(`  Возможно, на этом порту вообще не TLS (перепутали 389 и 636),`);
-      console.log(`  либо DC требует более новую версию протокола/шифры.`);
+      // Частый случай: сертификат контроллера подписан по SHA-1. Проверяем,
+      // пройдёт ли рукопожатие, если SHA-1 разрешить.
+      const sha1 = !cfg.allowSha1 && /ECONNRESET|handshake/i.test(t.error) ? await testTls(parsed.host, parsed.port, 5000, LDAP_TLS_SHA1) : null;
+      if (sha1 && sha1.ok) {
+        console.log(`  С разрешённой подписью SHA-1 соединение ПРОХОДИТ — сертификат контроллера`);
+        console.log(`  (или его центр сертификации) подписан по SHA-1. Node 22 такие подписи по`);
+        console.log(`  умолчанию не принимает, контроллер рвёт рукопожатие (на нём — Schannel 36874).`);
+        console.log(`  Правильно: перевыпустить сертификат контроллера по SHA-256 (ЦС перевести на`);
+        console.log(`  SHA-256: certutil -setreg ca\\csp\\CNGHashAlgorithm SHA256, перезапустить certsvc).`);
+        console.log(`  Временно: DOMAIN_${domainKey}_LDAP_ALLOW_SHA1=true в .env и перезапуск службы.`);
+      } else {
+        console.log(`  Возможно, на этом порту вообще не TLS (перепутали 389 и 636),`);
+        console.log(`  либо DC требует более новую версию протокола/шифры.`);
+      }
       process.exit(1);
     }
   } else {
@@ -149,7 +162,7 @@ async function main() {
     process.exit(1);
   }
   // Те же настройки подключения, что у самой службы (см. clientOptions в ldapAuth).
-  const client = new Client(clientOptions(cfg.url));
+  const client = new Client(clientOptions(cfg.url, cfg));
   try {
     await client.bind(cfg.svcDn, cfg.svcPassword);
     ok(`Bind успешен`);

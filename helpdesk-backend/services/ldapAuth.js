@@ -10,10 +10,19 @@ const config = require("../config/config");
 // отправляли в незашифрованный порт TLS ClientHello; контроллер видел мусор
 // вместо LDAP-запроса и рвал соединение, а наружу это выходило неотличимо от
 // сетевой аварии: "read ECONNRESET" при bind.
-function clientOptions(url) {
+//
+// domain.allowSha1 (DOMAIN_X_LDAP_ALLOW_SHA1=true) — для контроллера, чей
+// сертификат подписан по SHA-1. OpenSSL 3 в Node 22 не предлагает такие
+// подписи, Schannel на контроллере не находит подходящего клиенту
+// сертификата и рвёт рукопожатие с «ни один набор шифров не поддерживается»
+// (событие 36874) — снаружи это read ECONNRESET. Уровень безопасности 0
+// возвращает SHA-1 в список подписей; действует только на этот домен.
+const LDAP_TLS_SHA1 = { ciphers: "DEFAULT:@SECLEVEL=0", maxVersion: "TLSv1.2" };
+
+function clientOptions(url, domain = {}) {
   const opts = { url, connectTimeout: 5000 };
   if (/^ldaps:/i.test(url)) {
-    opts.tlsOptions = { rejectUnauthorized: config.ldapTlsRejectUnauthorized };
+    opts.tlsOptions = { rejectUnauthorized: config.ldapTlsRejectUnauthorized, ...(domain.allowSha1 ? LDAP_TLS_SHA1 : {}) };
   }
   return opts;
 }
@@ -41,7 +50,7 @@ async function authenticate(domainKey, login, password, db) {
     throw new LdapAuthError("BAD_INPUT", "Логин и пароль обязательны");
   }
 
-  const svcClient = new Client(clientOptions(cfg.url));
+  const svcClient = new Client(clientOptions(cfg.url, cfg));
 
   let userEntry;
   try {
@@ -74,7 +83,7 @@ async function authenticate(domainKey, login, password, db) {
   }
 
   // Проверка пароля — отдельное подключение под самим пользователем.
-  const userClient = new Client(clientOptions(cfg.url));
+  const userClient = new Client(clientOptions(cfg.url, cfg));
   try {
     await userClient.bind(userEntry.dn, password);
   } catch (err) {
@@ -147,7 +156,7 @@ async function authenticate(domainKey, login, password, db) {
 async function lookupGroups(domainKey, login) {
   const cfg = config.domains[domainKey];
   if (!cfg || !cfg.url) throw new LdapAuthError("CONFIG_MISSING", `Домен "${domainKey}" не настроен`);
-  const client = new Client(clientOptions(cfg.url));
+  const client = new Client(clientOptions(cfg.url, cfg));
   try {
     try {
       await client.bind(cfg.svcDn, cfg.svcPassword);
@@ -237,4 +246,4 @@ class LdapAuthError extends Error {
   }
 }
 
-module.exports = { authenticate, lookupGroups, clientOptions, LdapAuthError, groupNames };
+module.exports = { authenticate, lookupGroups, clientOptions, LDAP_TLS_SHA1, LdapAuthError, groupNames };
