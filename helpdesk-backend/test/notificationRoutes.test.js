@@ -269,7 +269,40 @@ test("сроки сертификатов и МЧД: настройка зада
   const adminId = db.prepare("SELECT id FROM users WHERE ad_login = '!админ'").get().id;
   const execId = db.prepare("SELECT id FROM users WHERE ad_login = '!итшник'").get().id;
   const ok = await админ.put("/api/notifications/expiry-task", { days: 7, assignees: [adminId] });
-  assert.deepStrictEqual(ok.json, { days: 7, chosen: [adminId] });
+  assert.deepStrictEqual({ days: ok.json.days, chosen: ok.json.chosen }, { days: 7, chosen: [adminId] });
   assert.strictEqual((await админ.put("/api/notifications/expiry-task", { assignees: [execId] })).status, 400, "не администратор");
   assert.strictEqual((await админ.put("/api/notifications/expiry-task", { days: 99 })).status, 400);
+});
+
+test("сохранили настройку сроков — проверка идёт сразу: задача по документу появляется сегодня, а не завтра", async (t) => {
+  const { startFakeCertviewer, certificate } = require("./helpers/fakeModules");
+  const fake = await startFakeCertviewer({ certificates: [certificate({ days: 9, name: "Выдуманный В.В." })] });
+  const saved = process.env.MODULE_CERTS_URL;
+  process.env.MODULE_CERTS_URL = `http://127.0.0.1:${fake.port}`;
+  t.after(() => { fake.close(); if (saved === undefined) delete process.env.MODULE_CERTS_URL; else process.env.MODULE_CERTS_URL = saved; });
+  const { db, админ } = await stand(t);
+  // Ежедневный обход сегодня уже прошёл — сам по себе он задачу не заведёт.
+  const { setSetting } = require("../services/settings");
+  const d = new Date(); const pad = (n) => String(n).padStart(2, "0");
+  setSetting(db, "notif_ran:expiry", `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`);
+
+  const adminId = db.prepare("SELECT id FROM users WHERE ad_login = '!админ'").get().id;
+  const r = await админ.put("/api/notifications/expiry-task", { days: 10, assignees: [adminId] });
+  assert.strictEqual(r.status, 200, r.text);
+  assert.strictEqual(r.json.run.ok, true, JSON.stringify(r.json.run));
+  assert.strictEqual(r.json.run.detail["задач"], 1);
+  assert.match(db.prepare("SELECT title FROM tasks").get().title, /^Перевыпустить сертификат: Выдуманный В\.В\.$/);
+});
+
+
+test("история отправок — по страницам по 10 строк, новые сверху", async (t) => {
+  const { db, админ } = await stand(t);
+  const ev = db.prepare("INSERT INTO notification_events (kind, source, dedup_key, subject) VALUES ('expiry', 'certs', 'k-hist', 'Выдуманный документ')").run().lastInsertRowid;
+  const add = db.prepare("INSERT INTO notification_deliveries (event_id, channel, address, status) VALUES (?, 'email', ?, 'sent')");
+  for (let i = 1; i <= 23; i++) add.run(ev, `r${i}@example.test`);
+  const p1 = (await админ.get("/api/notifications/deliveries?page=1&limit=10")).json;
+  assert.deepStrictEqual({ total: p1.total, pages: p1.pages, n: p1.deliveries.length, first: p1.deliveries[0].address }, { total: 23, pages: 3, n: 10, first: "r23@example.test" });
+  const p3 = (await админ.get("/api/notifications/deliveries?page=3&limit=10")).json;
+  assert.deepStrictEqual(p3.deliveries.map((d) => d.address), ["r3@example.test", "r2@example.test", "r1@example.test"]);
+  assert.strictEqual((await админ.get("/api/notifications/deliveries?page=99")).json.page, 3, "за краем — последняя страница");
 });

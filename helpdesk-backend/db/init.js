@@ -112,6 +112,9 @@ function initDb() {
     mergeLoginCaseDuplicates(db);
     migrateTaskPeriod(db);
     migrateNotesBoard(db);
+    // Категории «Срок действия истёк» больше нет (о просрочке напоминает
+    // задача на перевыпуск) — её настройки не нужны. События в ленте остаются.
+    db.prepare("DELETE FROM notification_settings WHERE kind = 'expired'").run();
     encryptStoredPasswords(db);
     db.exec("COMMIT");
     // Открытые пароли остались бы в свободных страницах файла и в журнале WAL —

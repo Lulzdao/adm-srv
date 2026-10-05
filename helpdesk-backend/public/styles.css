@@ -1293,3 +1293,17 @@ textarea.input { font-family: inherit; resize: vertical; }
 .kb-c-brown { background: var(--note-brown); }
 .kb-c-gray { background: var(--note-gray); }
 
+/* Список с галочками в заметках: квадратик слева, отмеченное — зачёркнуто. */
+.kb-body ul[data-checklist] { list-style: none; padding-left: 2px; }
+.kb-body ul[data-checklist] > li { position: relative; padding-left: 24px; margin: 3px 0; }
+.kb-body ul[data-checklist] > li::before {
+  content: ""; position: absolute; left: 0; top: 0.2em; width: 14px; height: 14px; border-radius: 3px;
+  border: 1.5px solid var(--md-on-surface-variant); background: var(--md-surface-container-lowest); cursor: pointer;
+}
+.kb-body ul[data-checklist] > li[data-checked="1"] { text-decoration: line-through; color: var(--md-on-surface-variant); }
+.kb-body ul[data-checklist] > li[data-checked="1"]::before { background: var(--md-primary); border-color: var(--md-primary); }
+.kb-body ul[data-checklist] > li[data-checked="1"]::after {
+  content: ""; position: absolute; left: 5px; top: calc(0.2em + 2px); width: 4px; height: 8px;
+  border: solid var(--md-on-primary, var(--md-surface-container-lowest)); border-width: 0 2px 2px 0; transform: rotate(45deg); pointer-events: none;
+}
+

@@ -898,11 +898,12 @@ async function renderTaskNotes(main) {
         <span class="rte-sep"></span>
         <button data-cmd="insertUnorderedList" title="Маркированный список">•&#8202;≡</button>
         <button data-cmd="insertOrderedList" title="Нумерованный список">1.≡</button>
+        <button data-act="check" title="Список с галочками: щёлкните по квадратику, чтобы отметить">☑</button>
         <button data-act="big" title="Крупнее">A<sup>+</sup></button>
         <button data-act="small" title="Мельче">a<sup>−</sup></button>
         <button data-act="link" title="Ссылка">${icon("link", 14)}</button>
         <button data-cmd="removeFormat" title="Убрать оформление">Aa<sub>×</sub></button>
-        <span class="kb-fmt-hint">Тяните карточку за верх, размер — за правый нижний угол. Двойной щелчок по доске — новая заметка.</span>
+        <span class="kb-fmt-hint">Тяните карточку за верх, размер — за правый нижний угол. Двойной щелчок по доске — новая заметка. Галочку в списке — щелчком по квадратику.</span>
       </div>
       <div class="kb-scroll" id="kbScroll"><div class="kb-sizer" id="kbSizer"><div class="kb-board" id="kbBoard"></div></div></div>
     </div>`;
@@ -986,6 +987,24 @@ async function renderTaskNotes(main) {
     const changed = () => { rec.dirty = true; say("не сохранено…"); clearTimeout(rec.timer); rec.timer = setTimeout(() => saveContent(rec), 1000); };
     title.addEventListener("input", changed);
     body.addEventListener("input", changed);
+    // Список с галочками: щелчок по квадратику слева от пункта — отметить/снять.
+    body.addEventListener("click", (e) => {
+      const li = e.target.closest && e.target.closest("ul[data-checklist] > li");
+      if (!li || !body.contains(li)) return;
+      if (e.clientX - li.getBoundingClientRect().left > 22 * kbUi.zoom) return;
+      e.preventDefault();
+      if (li.dataset.checked === "1") delete li.dataset.checked; else li.dataset.checked = "1";
+      changed();
+    });
+    // Enter в отмеченном пункте: новый пункт браузер копирует вместе с галочкой — снимаем её.
+    body.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter") return;
+      setTimeout(() => {
+        const node = getSelection().anchorNode;
+        const li = node && (node.nodeType === 1 ? node : node.parentElement).closest("ul[data-checklist] > li");
+        if (li && li.dataset.checked === "1" && !li.textContent.trim()) { delete li.dataset.checked; changed(); }
+      }, 0);
+    });
     title.addEventListener("blur", () => rec.dirty && saveContent(rec));
     body.addEventListener("blur", () => rec.dirty && saveContent(rec));
 
@@ -1151,6 +1170,26 @@ async function renderTaskNotes(main) {
   };
   fmt.querySelectorAll("button").forEach((b) => b.addEventListener("mousedown", (e) => e.preventDefault()));
   fmt.querySelectorAll("[data-cmd]").forEach((b) => { b.onclick = () => exec(b.dataset.cmd); });
+  // Список с галочками: обычный маркированный список с пометкой data-checklist.
+  // Повторное нажатие внутри такого списка превращает его обратно в текст.
+  fmt.querySelector("[data-act=check]").onclick = () => {
+    const host = restore();
+    if (!host) { toast("Поставьте курсор в текст заметки", true); return; }
+    const at = () => { const n = getSelection().anchorNode; return n && (n.nodeType === 1 ? n : n.parentElement); };
+    const cur = at() && at().closest("ul");
+    if (cur && host.contains(cur) && cur.dataset.checklist === "1") {
+      document.execCommand("insertUnorderedList");
+    } else if (cur && host.contains(cur)) {
+      cur.dataset.checklist = "1";
+    } else {
+      // Куда браузер поставит курсор после команды, заранее не знаем — новый
+      // список находим сравнением «было/стало».
+      const before = new Set(host.querySelectorAll("ul"));
+      document.execCommand("insertUnorderedList");
+      host.querySelectorAll("ul").forEach((ul) => { if (!before.has(ul)) ul.dataset.checklist = "1"; });
+    }
+    host.dispatchEvent(new Event("input"));
+  };
   fmt.querySelector("[data-act=big]").onclick = () => exec("fontSize", "5");
   fmt.querySelector("[data-act=small]").onclick = () => exec("fontSize", "2");
   fmt.querySelector("[data-act=link]").onclick = () => {

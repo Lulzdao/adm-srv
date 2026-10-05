@@ -12,7 +12,8 @@
 // Теги, которые остаются. Значение — разрешённые атрибуты (кроме style).
 const TAGS = {
   p: [], div: [], br: [], span: [], b: [], strong: [], i: [], em: [], u: [], s: [], strike: [],
-  sub: [], sup: [], ul: [], ol: [], li: [], blockquote: [], h1: [], h2: [], h3: [], hr: [],
+  // ul[data-checklist] / li[data-checked] — список с галочками в заметках.
+  sub: [], sup: [], ul: ["data-checklist"], ol: [], li: ["data-checked"], blockquote: [], h1: [], h2: [], h3: [], hr: [],
   a: ["href"], font: ["face", "size", "color"],
 };
 const VOID = new Set(["br", "hr"]);
@@ -65,6 +66,8 @@ function cleanAttr(tag, name, value) {
   if (tag === "font" && name === "size") return /^[1-7]$/.test(v) ? v : null;
   if (tag === "font" && name === "color") return COLOR.test(v) ? v : null;
   if (tag === "font" && name === "face") return /^[\w\s"',.-]{1,120}$/.test(v) ? v : null;
+  // Флажки списка с галочками: только «1», иначе атрибута нет.
+  if ((tag === "ul" && name === "data-checklist") || (tag === "li" && name === "data-checked")) return v === "1" ? "1" : null;
   return null;
 }
 
@@ -132,6 +135,8 @@ function sanitizeHtml(html) {
 function htmlToText(html) {
   return decode(String(html || "")
     .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<li[^>]*data-checked="1"[^>]*>/gi, "☑ ")
+    .replace(/<ul[^>]*data-checklist[^>]*>([\s\S]*?)<\/ul>/gi, (all, inner) => `<ul>${inner.replace(/<li(?![^>]*data-checked)[^>]*>/gi, "☐ ")}</ul>`)
     .replace(/<li[^>]*>/gi, "• ")
     .replace(/<(ul|ol)[^>]*>/gi, "\n")
     // Абзац — с пустой строкой после, строка редактора (div) и пункт списка — без.
