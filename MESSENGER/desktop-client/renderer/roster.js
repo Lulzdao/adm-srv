@@ -431,22 +431,6 @@ function paintRangeFill(range) {
   range.style.setProperty('--fill', `${((Number(range.value) - min) / (max - min)) * 100}%`);
 }
 
-// Список контактов плавно прячется, пока открыта панель профиля — сначала гаснет (opacity), а
-// когда переход закончится, по-настоящему убирается из раскладки (display:none), иначе остаётся
-// невидимым, но занимающим место (тот же приём, что у ленты рассылок при открытом композере).
-function hideListSmoothly() {
-  const list = document.getElementById('list');
-  if (list.classList.contains('hidden')) return;
-  list.classList.add('hidden');
-  setTimeout(() => { if (list.classList.contains('hidden')) list.style.display = 'none'; }, 160);
-}
-function showListSmoothly() {
-  const list = document.getElementById('list');
-  list.style.display = 'block'; // сначала возвращаем в раскладку (ещё прозрачным)...
-  void list.offsetHeight; // ...форсируем reflow, чтобы transition не схлопнулся...
-  list.classList.remove('hidden'); // ...и только теперь плавно проявляем
-}
-
 // "Объявления" прячутся, уезжая вверх, — что при открытии профиля (вместе со списком), что при
 // активном поиске (вместе с me-bar, см. setSearchActive). Высота строки схлопывается через
 // max-height в самом CSS-переходе (см. #historyRow.hidden-up) — никакого отдельного display:none
@@ -469,16 +453,12 @@ async function openProfilePanel() {
   document.getElementById('me-bar').classList.add('open');
   document.getElementById('me-bar').title = 'Скрыть профиль и настройки';
   document.body.classList.add('settings-open'); // шапка окна: «‹ Настройки» вместо названия
-  hideListSmoothly();
-  hideHistoryRowUp();
 }
 function closeProfilePanel() {
   document.body.classList.remove('settings-open');
   document.getElementById('profilePanel').classList.remove('open');
   document.getElementById('me-bar').classList.remove('open');
   document.getElementById('me-bar').title = 'Профиль и настройки';
-  showListSmoothly();
-  showHistoryRow();
 }
 
 PP_CHECKBOX_IDS.forEach(([id, key]) => {
