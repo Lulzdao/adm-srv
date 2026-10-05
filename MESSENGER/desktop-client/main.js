@@ -367,6 +367,19 @@ function unreadStatePayload() {
 }
 function broadcastUnreadState() {
   sendToWindow(rosterWin, 'unread-state', unreadStatePayload());
+  // Список свёрнут в трей — значков в нём не видно; число непрочитанных хотя бы в подсказке значка.
+  const total = [...unreadDms.values()].reduce((a, b) => a + b, 0) + unreadBroadcastCount;
+  if (tray && !tray.isDestroyed()) tray.setToolTip(total ? `Искра — непрочитанных: ${total}` : 'Искра');
+}
+// Окно с новым сообщением не в фокусе (Windows не даёт фоновой программе выйти поверх чужого окна,
+// либо окно свёрнуто) — его кнопка на панели задач мигает, пока в окно не зайдут.
+function callAttention(win) {
+  if (!win || win.isDestroyed() || win.isFocused()) return;
+  const flash = () => { if (!win.isDestroyed() && !win.isFocused()) win.flashFrame(true); };
+  if (win.isVisible() || win.isMinimized()) flash(); else win.once('show', () => setTimeout(flash, 300));
+  if (win.attentionHooked) return;
+  win.attentionHooked = true;
+  win.on('focus', () => { if (!win.isDestroyed()) win.flashFrame(false); });
 }
 function markUnread(openPayload) {
   if (!openPayload) return;
@@ -1146,7 +1159,14 @@ ipcMain.on('notify', (event, payload) => {
   const winSize = file === 'broadcast.html' ? { width: 420, height: 520, minWidth: 360, minHeight: 400 } : undefined;
 
   if (settings.openChatOnMessage && openPayload) {
-    createWindow(key, file, openPayload, winSize); // само появление окна уже служит уведомлением и отмечает как прочитанное
+    // Окно открывается само, но «открылось» — ещё не «прочитано»: за чужим окном или свёрнутым его
+    // не видно. Раньше сообщение при этом сразу считалось прочитанным — ни значка в списке, ни
+    // уведомления, и узнать о нём можно было, только открыв чат самому. Свёрнутое окно не
+    // разворачиваем (не выдёргиваем человека из работы), а отмечаем и мигаем кнопкой.
+    const existing = namedWins.get(key);
+    const minimized = existing && !existing.isDestroyed() && existing.isMinimized();
+    const win = minimized ? existing : createWindow(key, file, openPayload, winSize);
+    if (!win.isFocused()) { markUnread(openPayload); callAttention(win); } // фокус окна снимет отметку
     return;
   }
 
@@ -1154,6 +1174,7 @@ ipcMain.on('notify', (event, payload) => {
   if (targetWin && !targetWin.isDestroyed() && targetWin.isFocused()) return; // уже читает этот чат — не дублируем, и это уже прочитано
 
   markUnread(openPayload); // не читает прямо сейчас — считается непрочитанным до открытия/фокуса окна
+  callAttention(targetWin);
   const n = new Notification({ title, body });
   n.on('click', () => {
     if (openPayload) createWindow(key, file, openPayload, winSize);
