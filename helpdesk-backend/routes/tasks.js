@@ -1,5 +1,6 @@
 const express = require("express");
 const { requireAdmin } = require("../middleware/auth");
+const { sanitizeHtml } = require("../services/mailHtml");
 const { emit, settingsFor } = require("../services/notifications");
 const T = require("../services/tasks");
 
@@ -47,6 +48,9 @@ function text(value, { max, field, required = false }) {
   return v || null;
 }
 
+// Доска заметок: потолок на размер листа (HTML с оформлением).
+const BOARD_MAX = 1000000;
+
 function dueDate(value) {
   if (value === undefined || value === null || value === "") return null;
   if (!T.parseDay(value)) fail("Срок — дата в виде ГГГГ-ММ-ДД");
@@ -57,6 +61,17 @@ function dueTime(value) {
   if (value === undefined || value === null || value === "") return null;
   if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(String(value))) fail("Время срока — в виде ЧЧ:ММ");
   return value;
+}
+
+/**
+ * Срок целиком: день (и время) или период «с … по …». У периода нет времени,
+ * а первый день не позже последнего; период в один день — это просто день.
+ */
+function dueRange(from, to, time) {
+  if (!to) return { due_from: null, due_date: null, due_time: null };
+  if (from && from > to) fail("Начало срока позже его конца");
+  if (from && from < to) return { due_from: from, due_date: to, due_time: null };
+  return { due_from: null, due_date: to, due_time: time };
 }
 
 function tags(value) {
@@ -174,12 +189,13 @@ module.exports = function tasksRouter(db) {
 
     const where = [all ? "1 = 1" : done ? "t.status = 'done'" : "t.status != 'done'"];
     const params = [];
-    if (ranged) { where.push("t.due_date BETWEEN ? AND ?"); params.push(from, to); }
+    // Период попадает в календарь, если пересекается с показанными днями.
+    if (ranged) { where.push("COALESCE(t.due_from, t.due_date) <= ? AND t.due_date >= ?"); params.push(to, from); }
     if (scope === "mine") { where.push("EXISTS (SELECT 1 FROM task_assignees x WHERE x.task_id = t.id AND x.user_id = ?)"); params.push(me); }
     if (scope === "created") { where.push("t.created_by = ?"); params.push(me); }
 
     const rows = db.prepare(`
-      SELECT t.id, t.title, t.priority, t.status, t.due_date, t.due_time, t.tags, t.done_at,
+      SELECT t.id, t.title, t.priority, t.status, t.due_date, t.due_from, t.due_time, t.tags, t.done_at,
              t.created_by, cu.full_name AS created_by_name,
              k.id AS ticket_id, k.display_id AS ticket_display_id,
              (SELECT COUNT(*) FROM task_checklist c WHERE c.task_id = t.id) AS check_total,
@@ -211,7 +227,7 @@ module.exports = function tasksRouter(db) {
     const tasks = rows
       .map((t) => ({
         id: t.id, title: t.title, priority: t.priority, status: t.status,
-        due_date: t.due_date, due_time: t.due_time, done_at: t.done_at,
+        due_date: t.due_date, due_from: t.due_from, due_time: t.due_time, done_at: t.done_at,
         tags: t.tags ? t.tags.split(",") : [],
         ticket: t.ticket_id ? { id: t.ticket_id, display_id: t.ticket_display_id } : null,
         created_by: { id: t.created_by, full_name: t.created_by_name },
@@ -233,6 +249,39 @@ module.exports = function tasksRouter(db) {
   // --------------------------------------------------------------------------
   //  Карточка
   // --------------------------------------------------------------------------
+  // --------------------------------------------------------------------------
+  //  Доска заметок: общий лист с оформлением (Задачи → Заметки)
+  //
+  //  Сохраняется сам по ходу набора. Сохранение несёт номер версии, с которой
+  //  начинали: если лист за это время сохранил кто-то другой — 409 и его
+  //  текст, а не тихая перезапись. HTML чистится тем же белым списком, что и
+  //  текст рассылок.
+  // --------------------------------------------------------------------------
+  const boardRow = () => {
+    const r = db.prepare(`
+      SELECT b.html, b.version, b.updated_at, u.full_name AS updated_by
+      FROM notes_board b LEFT JOIN users u ON u.id = b.updated_by WHERE b.id = 1
+    `).get();
+    return r ? { ...r } : { html: "", version: 0, updated_at: null, updated_by: null };
+  };
+  router.get("/board", (req, res) => res.json(boardRow()));
+  router.put("/board", handle((req, res) => {
+    const b = req.body || {};
+    if (typeof b.html !== "string") fail("Нет текста заметок");
+    if (b.html.length > BOARD_MAX) fail("Заметок слишком много для одного листа — перенесите часть в задачи");
+    const cur = boardRow();
+    if (!Number.isInteger(b.version) || b.version !== cur.version) {
+      return res.status(409).json({ error: "Заметки успели изменить", ...cur });
+    }
+    const html = sanitizeHtml(b.html);
+    db.prepare(`
+      INSERT INTO notes_board (id, html, version, updated_by, updated_at) VALUES (1, ?, 1, ?, datetime('now'))
+      ON CONFLICT(id) DO UPDATE SET html = excluded.html, version = notes_board.version + 1,
+        updated_by = excluded.updated_by, updated_at = excluded.updated_at
+    `).run(html, req.session.user.id);
+    res.json(boardRow());
+  }));
+
   router.get("/:id", handle((req, res) => {
     const id = parseId(req.params.id);
     if (id === null) return res.status(400).json({ error: "Некорректный номер задачи" });
@@ -250,7 +299,7 @@ module.exports = function tasksRouter(db) {
     res.json({
       task: {
         id: t.id, title: t.title, description: t.description, priority: t.priority, status: t.status,
-        due_date: t.due_date, due_time: t.due_time, tags: t.tags ? t.tags.split(",") : [],
+        due_date: t.due_date, due_from: t.due_from, due_time: t.due_time, tags: t.tags ? t.tags.split(",") : [],
         created_at: t.created_at, done_at: t.done_at, created_by: creator,
         ticket, assignees: T.assigneesOf(db, id), checklist, events,
         overdue: T.isOverdue(t), days: t.due_date ? T.daysUntil(t.due_date) : null,
@@ -276,9 +325,10 @@ module.exports = function tasksRouter(db) {
     const description = text(b.description, { max: DESCRIPTION_MAX, field: "Описание" });
     const priority = b.priority === undefined ? "medium" : b.priority;
     if (!PRIORITIES.has(priority)) fail("Неизвестная важность");
-    const date = dueDate(b.due_date);
     const time = dueTime(b.due_time);
-    if (time && !date) fail("Время срока без даты не имеет смысла");
+    if (time && !b.due_date) fail("Время срока без даты не имеет смысла");
+    if (b.due_from && !b.due_date) fail("У периода нужен последний день");
+    const due = dueRange(dueDate(b.due_from), dueDate(b.due_date), time);
     const tagList = tags(b.tags);
     const assignees = checkAssignees(b.assignees);
     const ticketId = ticketRef(b.ticket);
@@ -289,9 +339,9 @@ module.exports = function tasksRouter(db) {
     db.exec("BEGIN");
     try {
       const info = db.prepare(`
-        INSERT INTO tasks (title, description, priority, due_date, due_time, tags, ticket_id, created_by)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(title, description, priority, date, time, tagList.join(","), ticketId, me.id);
+        INSERT INTO tasks (title, description, priority, due_from, due_date, due_time, tags, ticket_id, created_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(title, description, priority, due.due_from, due.due_date, due.due_time, tagList.join(","), ticketId, me.id);
       taskId = Number(info.lastInsertRowid);
       const addA = db.prepare("INSERT INTO task_assignees (task_id, user_id) VALUES (?, ?)");
       for (const uid of assignees) addA.run(taskId, uid);
@@ -349,11 +399,13 @@ module.exports = function tasksRouter(db) {
         next.done_by = next.status === "done" ? me.id : null;
       }
     }
-    if (b.due_date !== undefined || b.due_time !== undefined) {
-      next.due_date = b.due_date !== undefined ? dueDate(b.due_date) : cur.due_date;
-      next.due_time = b.due_time !== undefined ? dueTime(b.due_time) : cur.due_time;
-      if (!next.due_date) next.due_time = null;
-      if (next.due_date !== cur.due_date || next.due_time !== cur.due_time) {
+    if (b.due_date !== undefined || b.due_time !== undefined || b.due_from !== undefined) {
+      Object.assign(next, dueRange(
+        b.due_from !== undefined ? dueDate(b.due_from) : cur.due_from,
+        b.due_date !== undefined ? dueDate(b.due_date) : cur.due_date,
+        b.due_time !== undefined ? dueTime(b.due_time) : cur.due_time,
+      ));
+      if (next.due_date !== cur.due_date || next.due_time !== cur.due_time || next.due_from !== cur.due_from) {
         const was = cur.due_date ? T.formatDue(cur) : "без срока";
         const now = next.due_date ? T.formatDue(next) : "без срока";
         events.push(["due", `сдвинул срок: ${was} → ${now}`]);
@@ -391,11 +443,11 @@ module.exports = function tasksRouter(db) {
     db.exec("BEGIN");
     try {
       db.prepare(`
-        UPDATE tasks SET title = ?, description = ?, priority = ?, status = ?, due_date = ?, due_time = ?,
+        UPDATE tasks SET title = ?, description = ?, priority = ?, status = ?, due_from = ?, due_date = ?, due_time = ?,
           tags = ?, ticket_id = ?, done_at = CASE WHEN ? = 'now' THEN datetime('now') ELSE ? END, done_by = ?,
           updated_at = datetime('now')
         WHERE id = ?
-      `).run(next.title, next.description, next.priority, next.status, next.due_date, next.due_time,
+      `).run(next.title, next.description, next.priority, next.status, next.due_from, next.due_date, next.due_time,
         next.tags, next.ticket_id, next.done_at, next.done_at, next.done_by, id);
       if (newAssignees) {
         db.prepare(`DELETE FROM task_assignees WHERE task_id = ? AND user_id NOT IN (${newAssignees.map(() => "?").join(",")})`)

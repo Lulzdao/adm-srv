@@ -393,12 +393,12 @@ test("все маршруты одной заявки отказывают од�
 // можно было добраться только поиском.
 test("список по страницам: каждая заявка ровно на одной странице, край — последняя страница", async (t) => {
   const { db, ids, заявитель } = await stand(t);
-  // 120 заявок с ОДИНАКОВЫМ временем изменения (вставлены в одну секунду) — ровно тот
-  // случай, когда без второго ключа сортировки строки переезжали бы между страницами.
+  // 120 заявок с ОДИНАКОВЫМ временем создания — ровно тот случай, когда без
+  // второго ключа сортировки строки переезжали бы между страницами.
   for (let i = 1; i <= 120; i++) {
     makeTicket(db, { displayId: `ИТ-${String(i + 1000)}`, title: `Заявка ${i}`, createdBy: ids.заявитель });
   }
-  db.prepare("UPDATE tickets SET updated_at = '2026-01-01 10:00:00'").run();
+  db.prepare("UPDATE tickets SET created_at = '2026-01-01 10:00:00', updated_at = '2026-01-01 10:00:00'").run();
 
   const стр = async (n) => {
     const r = await заявитель.get(`/api/tickets${n === undefined ? "" : `?page=${n}`}`);
@@ -421,12 +421,55 @@ test("список по страницам: каждая заявка ровно
   assert.ok(заКраем.tickets.length > 0);
   assert.strictEqual((await стр(undefined)).page, 1, "без номера — первая");
 
-  // Свежеизменённая заявка — первой на первой странице.
+  // Порядок — по созданию: правка заявки её не поднимает, новая — сверху.
+  const первая = всего[0];
   const последняя = всего[всего.length - 1];
   db.prepare("UPDATE tickets SET updated_at = '2026-06-01 10:00:00' WHERE id = ?").run(последняя);
-  assert.strictEqual((await стр(1)).tickets[0].id, последняя);
+  assert.strictEqual((await стр(1)).tickets[0].id, первая, "изменённая не всплыла");
+  db.prepare("UPDATE tickets SET created_at = '2026-06-01 10:00:00' WHERE id = ?").run(последняя);
+  assert.strictEqual((await стр(1)).tickets[0].id, последняя, "созданная позже — первой");
 
   for (const плохой of ["0", "-1", "abc", "1.5"]) {
     assert.strictEqual((await заявитель.get(`/api/tickets?page=${плохой}`)).status, 400, `page=${плохой}`);
   }
+});
+
+test("закрыл — стал исполнителем; отметки по заявке в колокольчике пропадают у всех, автору приходит «закрыта»", async (t) => {
+  const { db, app, ids, ticketId } = await stand(t);
+  const it2 = await makeLocalUser(db, { login: "!ит2", name: "Исполнитель Второй", role: "it" });
+  // Отметка «новая заявка» у второго исполнителя, которую он ещё не открывал.
+  const ev = db.prepare("INSERT INTO notification_events (kind, source, ticket_id, dedup_key) VALUES ('ticket_new:it', 'helpdesk', ?, 'k-test')").run(ticketId).lastInsertRowid;
+  db.prepare("INSERT INTO notification_deliveries (event_id, channel, user_id, status) VALUES (?, 'inapp', ?, 'sent')").run(ev, it2);
+
+  const админ = client(app.url); await админ.login("!ит");
+  // Назначен другой — закрывает админ: исполнителем становится он.
+  assert.strictEqual((await админ.patch(`/api/tickets/${ticketId}`, { assigned_to: it2 })).status, 200);
+  const r = await админ.patch(`/api/tickets/${ticketId}`, { status: "closed" });
+  assert.strictEqual(r.status, 200, r.text);
+  assert.strictEqual(db.prepare("SELECT assigned_to FROM tickets WHERE id = ?").get(ticketId).assigned_to, ids.админ);
+
+  const колокольчик = (uid) => db.prepare(`
+    SELECT e.kind FROM notification_deliveries d JOIN notification_events e ON e.id = d.event_id
+    WHERE d.channel = 'inapp' AND d.user_id = ? AND e.ticket_id = ?`).all(uid, ticketId).map((x) => x.kind);
+  assert.deepStrictEqual(колокольчик(it2), [], "непрочитанная «новая заявка» у второго исполнителя пропала");
+  assert.deepStrictEqual(колокольчик(ids.заявитель), ["ticket_resolved"], "автору — только «заявка закрыта»");
+  assert.ok(db.prepare("SELECT 1 FROM notification_events WHERE id = ?").get(ev), "событие в ленте осталось");
+});
+
+test("закрыли и в том же запросе явно назначили исполнителя — исполнитель тот, кого назначили", async (t) => {
+  const { db, app, ticketId } = await stand(t);
+  const it2 = await makeLocalUser(db, { login: "!ит2", name: "Исполнитель Второй", role: "it" });
+  const админ = client(app.url); await админ.login("!ит");
+  assert.strictEqual((await админ.patch(`/api/tickets/${ticketId}`, { status: "closed", assigned_to: it2 })).status, 200);
+  assert.strictEqual(db.prepare("SELECT assigned_to FROM tickets WHERE id = ?").get(ticketId).assigned_to, it2);
+});
+
+test("список — по времени создания: смена исполнителя не поднимает заявку наверх", async (t) => {
+  const { db, app, ids, заявитель, ticketId } = await stand(t);
+  db.prepare("UPDATE tickets SET created_at = datetime('now', '-1 hour') WHERE id = ?").run(ticketId);
+  const вторая = (await заявитель.post("/api/tickets", { title: "Вторая", description: "x", priority: "medium" })).json.id;
+  const админ = client(app.url); await админ.login("!ит");
+  await админ.patch(`/api/tickets/${ticketId}`, { assigned_to: ids.админ });
+  const ids_ = (await админ.get("/api/tickets?status=")).json.tickets.map((x) => x.id);
+  assert.deepStrictEqual(ids_, [вторая, ticketId], "новая — сверху, старая не всплыла");
 });

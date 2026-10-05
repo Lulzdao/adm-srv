@@ -330,7 +330,9 @@ module.exports = function ticketRoutes(db) {
       -- t.id — для однозначного порядка: у updated_at точность в секунду, и
       -- заявки с одинаковым временем могли бы переезжать между страницами —
       -- одна показалась бы дважды, другая ни разу.
-      ORDER BY t.updated_at DESC, t.id DESC
+      -- По времени создания: смена исполнителя или статуса не должна
+      -- перетаскивать заявку в начало списка.
+      ORDER BY t.created_at DESC, t.id DESC
       LIMIT @limit OFFSET @offset
     `).all({ ...params, limit: PAGE_SIZE, offset: (pageNum - 1) * PAGE_SIZE });
 
@@ -451,6 +453,23 @@ module.exports = function ticketRoutes(db) {
       // Взял заявку в работу — стал исполнителем, если ещё никто не назначен.
       if (status === "progress" && !ticket.assigned_to) {
         db.prepare("UPDATE tickets SET assigned_to = ? WHERE id = ?").run(user.id, ticket.id);
+      }
+      // Закрыл — значит, и выполнил: исполнителем становится закрывший. Кроме
+      // автора, который закрыл свою заявку сам (он не исполнитель), и случая,
+      // когда исполнителя в том же запросе назначили явно.
+      const isExecutorHere = Boolean(user.is_admin) || userDepts(user).includes(ticket.category);
+      if (DONE_STATUSES.has(status) && isExecutorHere && assigned_to === undefined) {
+        db.prepare("UPDATE tickets SET assigned_to = ? WHERE id = ?").run(user.id, ticket.id);
+      }
+      // Закрытая заявка больше ничего ни от кого не ждёт: её отметки в
+      // колокольчике (новая заявка, комментарии, смена статуса) пропадают у
+      // всех — и у тех, кто их ещё не открыл. Само событие «заявка закрыта»
+      // автору приходит ниже, уже после чистки. Лента и письма не трогаются.
+      if (DONE_STATUSES.has(status)) {
+        db.prepare(`
+          DELETE FROM notification_deliveries
+          WHERE channel = 'inapp' AND event_id IN (SELECT id FROM notification_events WHERE ticket_id = ?)
+        `).run(ticket.id);
       }
 
       const statusPayload = ticketPayload(db, ticket.id);

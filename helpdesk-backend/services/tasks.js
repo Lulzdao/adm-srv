@@ -48,10 +48,19 @@ function isOverdue(task, now = new Date()) {
   return d === 0 && Boolean(task.due_time) && task.due_time < localTime(now);
 }
 
-/** «2 окт, пт, 18:00» — как срок подписан в письмах. */
+/**
+ * «2 окт, пт, 18:00» — как срок подписан в письмах. Период — «5–11 окт» или
+ * «28 сен – 4 окт»: задача на неделю или месяц, а не на конкретный день.
+ */
 function formatDue(task) {
   const d = parseDay(task.due_date);
   if (!d) return "без срока";
+  const f = parseDay(task.due_from);
+  if (f && f < d) {
+    return f.getMonth() === d.getMonth() && f.getFullYear() === d.getFullYear()
+      ? `${f.getDate()}–${d.getDate()} ${MONTHS[d.getMonth()]}`
+      : `${f.getDate()} ${MONTHS[f.getMonth()]} – ${d.getDate()} ${MONTHS[d.getMonth()]}`;
+  }
   return `${d.getDate()} ${MONTHS[d.getMonth()]}, ${WEEKDAYS[d.getDay()]}${task.due_time ? `, ${task.due_time}` : ""}`;
 }
 

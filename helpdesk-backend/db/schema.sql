@@ -212,7 +212,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   -- Срок — день и, по желанию, время. Раздельно, а не одной отметкой: у
   -- большинства задач времени нет вовсе («до пятницы»), и хранить для них
   -- выдуманные 00:00 значило бы показывать их просроченными с самого утра.
-  due_date TEXT,        -- YYYY-MM-DD
+  due_date TEXT,        -- YYYY-MM-DD; у периода — его последний день
+  due_from TEXT,        -- YYYY-MM-DD: первый день периода («в течение недели»); NULL — срок на один день
   due_time TEXT,        -- HH:MM или NULL
   tags TEXT NOT NULL DEFAULT '',   -- метки через запятую: «Лицензии,Оборудование»
   ticket_id INTEGER REFERENCES tickets(id) ON DELETE SET NULL,
@@ -419,3 +420,15 @@ CREATE TABLE IF NOT EXISTS sessions (
   expires INTEGER NOT NULL  -- мс от эпохи; просроченные удаляются раз в час
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires);
+
+-- Доска заметок администраторов (Задачи → Заметки): один общий лист с
+-- оформлением. version растёт с каждым сохранением — по нему видно, что
+-- лист успел поменять кто-то другой, и чужой текст молча не затирается.
+CREATE TABLE IF NOT EXISTS notes_board (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  html TEXT NOT NULL DEFAULT '',
+  version INTEGER NOT NULL DEFAULT 0,
+  updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  updated_at TEXT
+);
+

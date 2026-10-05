@@ -395,3 +395,68 @@ test("старая база: таблица доставок пересобир�
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("срок периодом: «с … по …», без времени; календарь видит задачу во все дни периода; просрочка — после последнего дня", async (t) => {
+  const { db, ids, A } = await стенд(t);
+  const r = await A.post("/api/tasks", { title: "Обновить антивирус на всех ПК", assignees: [ids.a], due_from: "2030-03-02", due_date: "2030-03-08", due_time: "10:00" });
+  assert.strictEqual(r.status, 201, r.text);
+  const row = db.prepare("SELECT due_from, due_date, due_time FROM tasks WHERE id = ?").get(r.json.id);
+  assert.deepStrictEqual({ ...row }, { due_from: "2030-03-02", due_date: "2030-03-08", due_time: null }, "у периода нет времени");
+
+  // Календарь: неделя, которая только задевает период, задачу показывает.
+  const кал = async (from, to) => (await A.get(`/api/tasks?status=all&from=${from}&to=${to}`)).json.tasks.map((x) => x.id);
+  assert.deepStrictEqual(await кал("2030-03-06", "2030-03-12"), [r.json.id]);
+  assert.deepStrictEqual(await кал("2030-02-24", "2030-03-02"), [r.json.id]);
+  assert.deepStrictEqual(await кал("2030-03-09", "2030-03-15"), []);
+
+  const card = (await A.get(`/api/tasks/${r.json.id}`)).json.task;
+  assert.strictEqual(card.due_from, "2030-03-02");
+  // История: перенос периода подписан периодом.
+  await A.patch(`/api/tasks/${r.json.id}`, { due_from: "2030-03-30", due_date: "2030-04-05" });
+  const ev = db.prepare("SELECT text FROM task_events WHERE task_id = ? AND kind = 'due'").get(r.json.id).text;
+  assert.match(ev, /2–8 мар → 30 мар – 5 апр/);
+
+  assert.strictEqual((await A.post("/api/tasks", { title: "x", assignees: [ids.a], due_from: "2030-03-09", due_date: "2030-03-08" })).status, 400, "начало позже конца");
+  assert.strictEqual((await A.post("/api/tasks", { title: "x", assignees: [ids.a], due_from: "2030-03-09" })).status, 400, "без последнего дня");
+  // Период в один день — обычный день.
+  const one = await A.post("/api/tasks", { title: "y", assignees: [ids.a], due_from: "2030-03-08", due_date: "2030-03-08", due_time: "09:30" });
+  assert.deepStrictEqual({ ...db.prepare("SELECT due_from, due_time FROM tasks WHERE id = ?").get(one.json.id) }, { due_from: null, due_time: "09:30" });
+  // Снять период — остаётся последний день.
+  await A.patch(`/api/tasks/${r.json.id}`, { due_from: null });
+  assert.strictEqual(db.prepare("SELECT due_from FROM tasks WHERE id = ?").get(r.json.id).due_from, null);
+
+  const T = require("../services/tasks");
+  const now = new Date(2030, 2, 5, 12, 0);
+  assert.strictEqual(T.isOverdue({ status: "todo", due_from: "2030-03-02", due_date: "2030-03-08" }, now), false, "внутри периода — не просрочено");
+  assert.strictEqual(T.isOverdue({ status: "todo", due_from: "2030-02-01", due_date: "2030-02-28" }, now), true);
+});
+
+test("доска заметок: общий лист администраторов, чистка HTML, чужое сохранение не затирается молча", async (t) => {
+  const { app, A, B } = await стенд(t);
+  const пусто = (await A.get("/api/tasks/board")).json;
+  assert.deepStrictEqual({ html: пусто.html, version: пусто.version }, { html: "", version: 0 });
+
+  const r1 = await A.put("/api/tasks/board", { html: `<p><b>План</b> на неделю<script>alert(1)</script></p><img src=x onerror=alert(1)>`, version: 0 });
+  assert.strictEqual(r1.status, 200, r1.text);
+  assert.strictEqual(r1.json.html, "<p><b>План</b> на неделю</p>", "опасное вырезано");
+  assert.strictEqual(r1.json.version, 1);
+  assert.strictEqual(r1.json.updated_by, "Стендов Стенд Стендович");
+
+  // Второй администратор видит то же; сохраняет поверх своей версии.
+  assert.strictEqual((await B.get("/api/tasks/board")).json.html, "<p><b>План</b> на неделю</p>");
+  assert.strictEqual((await B.put("/api/tasks/board", { html: "<p>B</p>", version: 1 })).status, 200);
+  // Первый сохраняет по устаревшей версии — 409 и свежий текст, ничего не затёрто.
+  const stale = await A.put("/api/tasks/board", { html: "<p>A</p>", version: 1 });
+  assert.strictEqual(stale.status, 409);
+  assert.deepStrictEqual({ html: stale.json.html, version: stale.json.version, by: stale.json.updated_by }, { html: "<p>B</p>", version: 2, by: "Тестов Тест Тестович" });
+
+  // Лист побольше 100 КБ проходит (у доски свой предел тела запроса).
+  const big = "<p>" + "заметка ".repeat(20000) + "</p>";
+  assert.strictEqual((await A.put("/api/tasks/board", { html: big, version: 2 })).status, 200);
+
+  // Не администраторам доска закрыта, как и весь раздел.
+  const { client } = require("./helpers/httpApp");
+  const U = client(app.url); await U.login("u1");
+  assert.strictEqual((await U.get("/api/tasks/board")).status, 403);
+  assert.strictEqual((await U.put("/api/tasks/board", { html: "x", version: 3 })).status, 403);
+});

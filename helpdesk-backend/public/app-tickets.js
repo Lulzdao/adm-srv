@@ -96,7 +96,7 @@ async function renderList(main, opts = {}) {
         <div class="ticket-row-head" style="grid-template-columns:${gridCols};min-width:${gridMin}px;">
           <div>Номер</div><div>Тема</div>
           ${isPrivileged ? `<div>От кого</div><div>Кабинет</div>` : ""}
-          <div>Статус</div><div>Исполнитель</div><div>Обновлено</div>
+          <div>Статус</div><div>Исполнитель</div><div>Создано</div>
         </div>
         <div id="ticketRows"><div class="spinner">Загрузка заявок…</div></div>
       </div>
@@ -177,7 +177,7 @@ async function renderList(main, opts = {}) {
           ` : ""}
           <div><span class="badge" style="color:${sc};background:${ss};">${sLabel}</span></div>
           <div class="cell-wrap" style="color:var(--ink-soft);font-size:13px;">${esc(t.assigned_to || "—")}</div>
-          <div class="cell-ellipsis" style="color:var(--ink-soft);font-size:12px;">${fmtDate(t.updated_at)}</div>
+          <div class="cell-ellipsis" style="color:var(--ink-soft);font-size:12px;">${fmtDate(t.created_at)}</div>
         </div>`;
       }).join("");
       rowsEl.querySelectorAll(".ticket-row").forEach(row => {
