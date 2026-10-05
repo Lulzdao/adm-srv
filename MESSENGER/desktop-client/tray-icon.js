@@ -24,17 +24,20 @@ const STAR = [
 // «Падающая» искра для значка программы: верхний луч вытянут на всю высоту, сама звезда сидит ниже
 // и уже — будто летит вниз и тянет за собой след. Вершины: верх (12,1), бока на высоте 15.5, низ (12,23).
 // Опорные точки дуг лежат на отрезке «вершина → центр»: чем ближе к центру, тем тоньше луч.
-function fallingStar() {
-  const c = [12, 15.5];
-  const tips = [[12, 1], [19.5, 15.5], [12, 23], [4.5, 15.5]];
-  const pull = [0.9, 0.62, 0.62, 0.62]; // верхний луч — самый тонкий и длинный
+// wide — вариант для панели задач: бока разведены на всю ширину значка и звезда чуть выше. На ярлыке
+// (крупно) хороша узкая, а в кнопке панели задач она терялась — там значок 24–32 пикселя.
+function fallingStar(wide) {
+  const cy = wide ? 14 : 15.5; const half = wide ? 11 : 7.5;
+  const c = [12, cy];
+  const tips = [[12, 1], [12 + half, cy], [12, 23], [12 - half, cy]];
+  const pull = wide ? [0.82, 0.6, 0.6, 0.6] : [0.9, 0.62, 0.62, 0.62]; // верхний луч — самый тонкий и длинный
   const ctrl = (i) => [tips[i][0] + (c[0] - tips[i][0]) * pull[i], tips[i][1] + (c[1] - tips[i][1]) * pull[i]];
   return tips.map((tip, i) => { const j = (i + 1) % 4; return [tip, ctrl(i), ctrl(j), tips[j]]; });
 }
 
 function starPolygon(shape, steps = 14) {
   const pts = [];
-  for (const [a, b, c, d] of (shape === 'falling' ? fallingStar() : STAR)) {
+  for (const [a, b, c, d] of (shape === 'falling' ? fallingStar(false) : shape === 'falling-wide' ? fallingStar(true) : STAR)) {
     for (let i = 0; i < steps; i++) {
       const t = i / steps, u = 1 - t;
       pts.push([
@@ -81,7 +84,8 @@ const rgb = (color) => {
  * Искра цвета color (#rrggbb) на прозрачном фоне, size×size пикселей. Возвращает PNG.
  * colorBottom — второй цвет: искра заливается сверху вниз от color к нему (значок программы).
  * pad — поле вокруг искры, доля стороны (0 — во весь значок).
- * shape: 'falling' — искра с вытянутым вверх лучом (значок программы); иначе — ровная, как в шапке списка.
+ * shape: 'falling' — искра с вытянутым вверх лучом (значок программы), 'falling-wide' — она же во всю
+ * ширину (панель задач); иначе — ровная, как в шапке списка.
  */
 function starPng(color, size, { colorBottom, pad = 0, shape } = {}) {
   const top = rgb(color); const bottom = colorBottom ? rgb(colorBottom) : top;
@@ -123,6 +127,9 @@ const TRAY_SIZES = [[1, 16], [1.25, 20], [1.5, 24], [2, 32], [2.5, 40]];
 // scripts/make-icons.js (`npm run icons`); размеры — все, что Windows спрашивает у ярлыка.
 const APP_ICON = { top: '#a1bdf9', bottom: '#7aaeef', pad: 0.04, shape: 'falling' };
 const APP_ICON_SIZES = [16, 20, 24, 32, 40, 48, 64, 128, 256];
+// Значок окон на панели задач: те же цвета, широкая форма, без полей. Размеры — под масштабы экрана.
+const TASKBAR_ICON = { top: APP_ICON.top, bottom: APP_ICON.bottom, pad: 0, shape: 'falling-wide' };
+const TASKBAR_SIZES = [[1, 16], [1.25, 20], [1.5, 24], [2, 32], [2.5, 40], [3, 48], [4, 64]];
 
 /** Файл .ico из готовых PNG: [{ size, png }]. Формат — заголовок, таблица, сами PNG подряд. */
 function icoFromPngs(entries) {
@@ -139,4 +146,4 @@ function icoFromPngs(entries) {
   return Buffer.concat([head, table, ...entries.map((e) => e.png)]);
 }
 
-module.exports = { ACCENT_COLORS, TRAY_SIZES, APP_ICON, APP_ICON_SIZES, accentColor, starPng, icoFromPngs };
+module.exports = { ACCENT_COLORS, TRAY_SIZES, APP_ICON, APP_ICON_SIZES, TASKBAR_ICON, TASKBAR_SIZES, accentColor, starPng, icoFromPngs };

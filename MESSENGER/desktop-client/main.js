@@ -1,5 +1,5 @@
 // Главный процесс Electron — окна, трей, уведомления, настройки, отправка и скачивание файлов
-const { TRAY_SIZES, accentColor, starPng } = require('./tray-icon');
+const { TRAY_SIZES, TASKBAR_ICON, TASKBAR_SIZES, accentColor, starPng } = require('./tray-icon');
 const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, Notification, powerMonitor, dialog, session, clipboard, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -568,7 +568,7 @@ function createWindow(key, file, payload, size) {
     minHeight: size?.minHeight || 360,
     frame: false,
     show: false, // показываем только после ready-to-show — иначе видно, как окно дёргается/дорисовывается
-    icon: APP_ICON_PATH,
+    icon: appWindowIcon(),
     backgroundColor: settings.theme === 'light' ? '#f4f1ec' : '#121110',
     alwaysOnTop: settings.alwaysOnTop,
     webPreferences: {
@@ -615,7 +615,7 @@ function createRoster() {
     minHeight: 420,
     frame: false,
     show: false, // показываем только после ready-to-show — иначе видно, как окно дёргается/дорисовывается
-    icon: APP_ICON_PATH,
+    icon: appWindowIcon(),
     backgroundColor: settings.theme === 'light' ? '#f4f1ec' : '#121110',
     alwaysOnTop: settings.alwaysOnTop,
     webPreferences: {
@@ -668,10 +668,10 @@ function trayGuid() {
 
 // Значок трея — искра в цвете выбранного акцента, без фона (рисует tray-icon.js). Несколько
 // размеров сразу: Windows сама берёт подходящий под масштаб экрана, и значок не мылится.
-function starImage(color, sizes) {
+function starImage(color, sizes, opts) {
   try {
     const img = nativeImage.createEmpty();
-    for (const [scaleFactor, size] of sizes) img.addRepresentation({ scaleFactor, width: size, height: size, buffer: starPng(color, size) });
+    for (const [scaleFactor, size] of sizes) img.addRepresentation({ scaleFactor, width: size, height: size, buffer: starPng(color, size, opts) });
     return img;
   } catch (err) {
     logLocal('tray_icon_failed', { message: String((err && err.message) || err) }, 'WARN');
@@ -679,6 +679,18 @@ function starImage(color, sizes) {
   }
 }
 const trayImage = (accent) => starImage(accentColor(accent), TRAY_SIZES);
+
+// Значок окон на панели задач — лазурная «падающая» искра во всю ширину значка. Ярлык и Проводник
+// берут значок из build/icon.ico: там искра уже и с полями — крупно так красивее, а в кнопке панели
+// задач она выглядела мелкой. Не получилось нарисовать — значок из файла.
+let appWindowIconCache = null;
+function appWindowIcon() {
+  if (!appWindowIconCache) {
+    const img = starImage(TASKBAR_ICON.top, TASKBAR_SIZES, { colorBottom: TASKBAR_ICON.bottom, pad: TASKBAR_ICON.pad, shape: TASKBAR_ICON.shape });
+    appWindowIconCache = img.isEmpty() ? APP_ICON_PATH : img;
+  }
+  return appWindowIconCache;
+}
 
 
 function createTray() {
