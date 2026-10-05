@@ -13,7 +13,9 @@
 <body>
 
 <div class="wintitlebar">
-  <span class="title"><span class="brand-dot"></span>Искра</span>
+  <span class="title" id="wtBrand"><span class="brand-dot"></span>Искра</span>
+  <!-- Шапка экрана настроек: появляется вместо названия, пока открыта панель (body.settings-open). -->
+  <span class="title-settings" id="wtSettings"><button class="icon-btn" id="ppBack" title="Назад к списку"></button><span>Настройки</span></span>
   <div class="wctl">
     <button class="icon-btn" id="wcMin"></button>
     <button class="icon-btn" id="wcMax"></button>
@@ -27,12 +29,12 @@
   <div class="auth-subtitle">Корпоративный мессенджер Липецкстата</div>
   <div class="err" id="authErr"></div>
   <form id="authForm">
-    <input id="username" placeholder="Логин">
-    <input id="password" type="password" placeholder="Пароль">
+    <label class="auth-field"><span>Логин</span><input id="username"></label>
+    <label class="auth-field"><span>Пароль</span><input id="password" type="password"></label>
     <div class="caps-hint" id="capsHint"><span></span>Включён Caps Lock</div>
     <button class="primary" type="submit">Войти</button>
   </form>
-  <div class="switch" id="switchMode">Нет аккаунта? Зарегистрироваться</div>
+  <div class="switch" id="switchMode">Нет аккаунта? <b>Зарегистрироваться</b></div>
   <div class="conn-hint" id="connHint"></div>
 </div>
 
@@ -40,115 +42,85 @@
   <div id="topSlot">
     <div id="me-bar">
       <div class="avatar" id="meAvatar"><span class="dot active" id="meDot" title="В сети"></span></div>
-      <div class="name" id="meName"></div>
+      <div class="me-text"><div class="name" id="meName"></div><div class="sub" id="meSub"></div></div>
       <span class="insecure-badge" id="insecureBadge" title="Соединение с сервером не шифруется">без шифрования</span>
       <span class="gear"></span>
     </div>
-    <div id="searchBar"></div>
   </div>
+  <!-- Поиск виден всегда; печатать можно и не щёлкая по нему — см. обработчик keydown в roster.js. -->
+  <div id="searchBar"><span class="sb-icon" id="searchIcon"></span><input id="searchInput" placeholder="Найти сотрудника"><span class="sb-hint">начните печатать</span></div>
   <div id="profilePanel">
     <div class="inner">
-      <div class="section-title">Тема оформления</div>
-      <div class="theme-row">
-        <div class="info">
-          <div class="t">Тёмная / светлая</div>
-          <div class="d">Применяется сразу ко всем открытым окнам клиента.</div>
-        </div>
-        <div class="theme-switch">
-          <span class="ts-thumb"></span>
-          <button id="ppThemeDark" title="Тёмная"></button>
-          <button id="ppThemeLight" title="Светлая"></button>
-        </div>
-      </div>
-      <div class="theme-row">
-        <div class="info">
-          <div class="t">Акцент</div>
-          <div class="d">Цвет кнопок, отметок и герба.</div>
-        </div>
-        <div class="accent-pick" id="ppAccent">
-          <button data-accent="ember" title="Янтарь"></button>
-          <button data-accent="garnet" title="Гранат"></button>
-          <button data-accent="gold" title="Латунь"></button>
-          <button data-accent="jade" title="Малахит"></button>
-          <button data-accent="azure" title="Лазурь"></button>
-          <button data-accent="violet" title="Аметист"></button>
-        </div>
+      <div class="pp-card pp-me">
+        <div class="pp-emblem" id="ppEmblem"></div>
+        <div class="pp-me-text"><div class="t" id="ppFullName"></div><div class="d" id="ppDept"></div></div>
       </div>
 
-      <div class="section-title">Настройки приложения</div>
-      <label class="option">
-        <div class="opt-text"><div class="t">Открывать окно чата при новых сообщениях</div><div class="d">Вместо системного уведомления сразу откроется и покажется окно с новым сообщением.</div></div>
-        <span class="pp-switch"><input type="checkbox" id="ppOpenChatOnMessage"><span class="pp-switch-track"></span></span>
-      </label>
-      <label class="option">
-        <div class="opt-text"><div class="t">Запоминать размер окон</div><div class="d">Ростер и окна чатов будут открываться с тем размером, который вы задали в последний раз.</div></div>
-        <span class="pp-switch"><input type="checkbox" id="ppRememberWindowSize"><span class="pp-switch-track"></span></span>
-      </label>
-      <label class="option">
-        <div class="opt-text"><div class="t">Поверх остальных окон</div><div class="d">Окна мессенджера всегда будут отображаться над другими приложениями.</div></div>
-        <span class="pp-switch"><input type="checkbox" id="ppAlwaysOnTop"><span class="pp-switch-track"></span></span>
-      </label>
-      <label class="option">
-        <div class="opt-text"><div class="t">Скрывать имя в сообщениях</div><div class="d">Не повторять имя собеседника в каждом сообщении личного чата — только в шапке окна.</div></div>
-        <span class="pp-switch"><input type="checkbox" id="ppHideNames"><span class="pp-switch-track"></span></span>
-      </label>
-
-      <div class="theme-row" style="flex-direction:column; align-items:stretch; gap:8px;">
-        <div class="info">
-          <div class="t">Порог статуса "Отошёл"</div>
-          <div class="d">Через сколько минут без движения мыши/клавиатуры статус переключается на "Отошёл".</div>
+      <div class="section-title">Оформление</div>
+      <div class="pp-card inset">
+        <div class="pp-row">
+          <span class="t">Тема</span>
+          <div class="theme-seg">
+            <button id="ppThemeDark"><span class="i"></span>Тёмная</button>
+            <button id="ppThemeLight"><span class="i"></span>Светлая</button>
+          </div>
         </div>
-        <div style="display:flex; gap:8px; align-items:center;">
-          <input type="number" id="ppIdleThresholdMinutes" min="1" max="240" step="1">
-          <span style="color:var(--muted); font-size:11.5px;">мин.</span>
+        <div class="pp-row">
+          <span class="t">Акцент</span>
+          <div class="accent-pick" id="ppAccent">
+            <button data-accent="ember" title="Янтарь"></button>
+            <button data-accent="garnet" title="Гранат"></button>
+            <button data-accent="gold" title="Латунь"></button>
+            <button data-accent="jade" title="Малахит"></button>
+            <button data-accent="azure" title="Лазурь"></button>
+            <button data-accent="violet" title="Аметист"></button>
+          </div>
         </div>
-      </div>
-
-      <div class="theme-row" style="flex-direction:column; align-items:stretch; gap:8px;">
-        <div class="info">
-          <div class="t">Масштаб интерфейса</div>
-          <div class="d">Пропорционально увеличивает или уменьшает весь интерфейс — текст, иконки, отступы.</div>
-        </div>
-        <div style="display:flex; gap:10px; align-items:center;">
+        <div class="pp-row col" title="Пропорционально увеличивает или уменьшает весь интерфейс — текст, значки, отступы.">
+          <div class="pp-line"><span class="t">Масштаб интерфейса</span><span class="v" id="ppUiScaleLabel">100%</span></div>
           <input type="range" id="ppUiScale" min="70" max="130" step="1" value="100">
-          <span id="ppUiScaleLabel" style="color:var(--muted); font-size:11.5px; width:36px; text-align:right; flex-shrink:0;">100%</span>
         </div>
       </div>
 
-      <div class="theme-row" style="flex-direction:column; align-items:stretch; gap:8px;">
-        <div class="info">
-          <div class="t">Папка для сохранения файлов</div>
-          <div class="d">Если указана — файлы из чата будут сразу сохраняться сюда, без диалога "Сохранить как".</div>
+      <div class="section-title">Поведение</div>
+      <div class="pp-card">
+        <label class="pp-row" title="Вместо системного уведомления сразу откроется окно с новым сообщением.">
+          <span class="t">Открывать чат при новом сообщении</span>
+          <span class="pp-switch"><input type="checkbox" id="ppOpenChatOnMessage"><span class="pp-switch-track"></span></span>
+        </label>
+        <label class="pp-row" title="Список и окна чатов будут открываться с тем размером, который вы задали в последний раз.">
+          <span class="t">Запоминать размер окон</span>
+          <span class="pp-switch"><input type="checkbox" id="ppRememberWindowSize"><span class="pp-switch-track"></span></span>
+        </label>
+        <label class="pp-row" title="Окна мессенджера всегда будут отображаться над другими приложениями.">
+          <span class="t">Поверх остальных окон</span>
+          <span class="pp-switch"><input type="checkbox" id="ppAlwaysOnTop"><span class="pp-switch-track"></span></span>
+        </label>
+        <label class="pp-row" title="Не повторять имя собеседника в каждом сообщении личного чата — только в шапке окна.">
+          <span class="t">Скрывать имя в сообщениях</span>
+          <span class="pp-switch"><input type="checkbox" id="ppHideNames"><span class="pp-switch-track"></span></span>
+        </label>
+        <div class="pp-row" title="Через сколько минут без движения мыши и клавиатуры статус переключается на «Отошёл».">
+          <span class="t">«Отошёл» через</span>
+          <span class="pp-stepper"><button type="button" id="ppIdleMinus">−</button><input type="number" id="ppIdleThresholdMinutes" min="1" max="240" step="1"><span class="u">мин</span><button type="button" id="ppIdlePlus">+</button></span>
         </div>
-        <div style="display:flex; gap:8px; align-items:center;">
-          <div id="ppDownloadPathLabel"></div>
-          <button id="ppPickFolderBtn" class="icon-btn" title="Выбрать папку">Выбрать</button>
-          <button id="ppClearFolderBtn" class="icon-btn" title="Спрашивать каждый раз"></button>
+        <div class="pp-row col" title="Если папка указана — файлы из чата сохраняются сразу в неё, без окна «Сохранить как».">
+          <div class="pp-line"><span class="t">Папка для файлов</span></div>
+          <div class="pp-line"><div id="ppDownloadPathLabel"></div><button id="ppPickFolderBtn" class="pp-link">Выбрать</button><button id="ppClearFolderBtn" class="icon-btn" title="Спрашивать каждый раз"></button></div>
         </div>
       </div>
 
-      <div class="section-title">Соединение с сервером</div>
-      <div class="theme-row" style="flex-direction:column; align-items:stretch; gap:4px;">
-        <div class="info">
-          <div class="t" id="ppConnState">—</div>
-          <div class="d" id="ppConnDetail"></div>
+      <div class="section-title">Система</div>
+      <div class="pp-card">
+        <div class="pp-row sys" id="ppConnRow"><span class="sdot"></span><span class="t" id="ppConnState">—</span><span class="v" id="ppConnDetail"></span></div>
+        <div class="pp-row sys" id="ppUpdateRow"><span class="sdot upd"></span><span class="t" id="ppUpdateStatus">Проверка не выполнялась</span>
+          <button class="pp-link" id="ppCheckUpdateBtn">Проверить</button>
+          <button class="pp-link" id="ppInstallUpdateBtn" style="display:none;">Перезапустить</button>
         </div>
-      </div>
-
-      <div class="section-title">Обновление приложения</div>
-      <label class="option">
-        <div class="opt-text"><div class="t">Обновлять автоматически</div><div class="d">Новая версия скачается сама и установится при следующем выходе из приложения. Работу это не прерывает.</div></div>
-        <span class="pp-switch"><input type="checkbox" id="ppAutoUpdate"><span class="pp-switch-track"></span></span>
-      </label>
-      <div class="theme-row" style="flex-direction:column; align-items:stretch; gap:8px;">
-        <div class="info">
-          <div class="t">Состояние</div>
-          <div class="d" id="ppUpdateStatus">Проверка не выполнялась</div>
-        </div>
-        <div style="display:flex; gap:8px; align-items:center; justify-content:center; flex-wrap:wrap;">
-          <button class="pp-btn" id="ppCheckUpdateBtn">Проверить сейчас</button>
-          <button class="pp-btn" id="ppInstallUpdateBtn" style="display:none;">Перезапустить и обновить</button>
-        </div>
+        <label class="pp-row" title="Новая версия скачается сама и установится при следующем выходе из приложения. Работу это не прерывает.">
+          <span class="t">Обновлять автоматически</span>
+          <span class="pp-switch"><input type="checkbox" id="ppAutoUpdate"><span class="pp-switch-track"></span></span>
+        </label>
       </div>
 
       <div class="pp-about" id="ppAbout"></div>
@@ -156,7 +128,9 @@
     </div>
   </div>
   <div id="historyRow" class="row" title="Открыть ленту всех рассылок">
-    <div class="badge-icon" id="historyRowIcon"></div><div class="n">Объявления</div><span class="unread-badge" id="historyRowBadge"></span>
+    <div class="badge-icon" id="historyRowIcon"></div>
+    <div class="hr-text"><div class="hr-top"><span class="n">Объявления</span><span class="hr-time" id="historyRowTime"></span></div><div class="hr-preview" id="historyRowPreview"></div></div>
+    <span class="unread-badge" id="historyRowBadge"></span>
   </div>
   <div id="list"></div>
 </div>

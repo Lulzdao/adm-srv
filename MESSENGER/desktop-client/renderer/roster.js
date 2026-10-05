@@ -24,7 +24,7 @@ document.addEventListener('mousedown', refreshCapsHint);
 function toggleMode() {
   mode = mode === 'login' ? 'register' : 'login';
   document.querySelector('#auth button.primary').textContent = mode === 'login' ? 'Войти' : 'Зарегистрироваться';
-  document.getElementById('switchMode').textContent = mode === 'login' ? 'Нет аккаунта? Зарегистрироваться' : 'Уже есть аккаунт? Войти';
+  document.getElementById('switchMode').innerHTML = mode === 'login' ? 'Нет аккаунта? <b>Зарегистрироваться</b>' : 'Уже есть аккаунт? <b>Войти</b>';
 }
 
 // Расшифровка отказа связи в текст для сотрудника. Приходит из diagnoseServer (main.js):
@@ -210,6 +210,7 @@ function connectWs() {
       });
     }
     if (data.type === 'broadcast') {
+      paintBroadcastPreview({ ...data, created_at: data.created_at || Date.now() });
       desktop.notify({
         title: data.department
           ? `📢 Отдел «${data.department}» — ${data.from_user}`
@@ -269,7 +270,13 @@ desktop.onIdleState(({ state, idleSeconds }) => {
     const mins = Math.floor((idleSeconds || 0) / 60);
     dot.title = state === 'idle' ? `Отошёл (${mins} мин назад)` : 'В сети';
   }
+  paintMeSub(state);
 });
+// Вторая строка в карточке профиля: свой статус и имя этого компьютера (как его видят коллеги).
+function paintMeSub(state) {
+  const sub = document.getElementById('meSub');
+  if (sub) sub.textContent = `${state === 'idle' ? 'Отошёл' : 'В сети'} · ${desktop.hostname}`;
+}
 
 desktop.onShowAlert(({ message, title }) => uiAlert(message, title));
 // В отличие от chat.html и broadcast.html, здесь этой подписки раньше не было вовсе — все toast-
@@ -330,20 +337,26 @@ function paintUpdateState(s) {
   const text = document.getElementById('ppUpdateStatus');
   const installBtn = document.getElementById('ppInstallUpdateBtn');
   const checkBtn = document.getElementById('ppCheckUpdateBtn');
+  // В строке — короткая фраза (строка одна, справа ещё действие), подробность — в подсказке.
   const byState = {
-    idle: () => 'Проверка не выполнялась',
-    dev: () => 'Запуск из исходников — обновления не проверяются',
-    checking: () => 'Проверяем наличие обновлений…',
-    'not-available': () => 'Установлена последняя версия',
-    available: () => `Доступна версия ${s.version}. Нажмите «Проверить сейчас», чтобы скачать.`,
-    downloading: () => (s.percent != null ? `Загрузка обновления — ${s.percent}%` : 'Загрузка обновления…'),
-    downloaded: () => `Версия ${s.version} загружена. Установится при выходе из приложения — или перезапустите сейчас.`,
+    idle: () => ['Обновления не проверялись', ''],
+    dev: () => ['Запуск из исходников', 'Обновления не проверяются'],
+    checking: () => ['Проверяем обновления…', ''],
+    'not-available': () => ['Последняя версия', 'Установлена последняя версия'],
+    available: () => [`Доступна версия ${s.version}`, 'Нажмите «Скачать», чтобы загрузить обновление.'],
+    downloading: () => [s.percent != null ? `Загрузка — ${s.percent}%` : 'Загрузка обновления…', ''],
+    downloaded: () => [`Версия ${s.version} загружена`, 'Установится при выходе из приложения — или перезапустите сейчас.'],
     // message приходит уже готовой короткой фразой (см. shortUpdateError в main.js), полный текст
     // ошибки лежит в client.log — приписывать сюда что-то ещё незачем.
-    error: () => s.message || 'Не удалось проверить обновления',
+    error: () => ['Обновление не проверено', s.message || 'Не удалось проверить обновления'],
   };
-  text.textContent = (byState[s.state] || byState.idle)();
+  const [short, hint] = (byState[s.state] || byState.idle)();
+  text.textContent = short;
+  document.getElementById('ppUpdateRow').title = hint;
+  document.getElementById('ppUpdateRow').classList.toggle('ready', s.state === 'downloaded' || s.state === 'available');
   installBtn.style.display = s.state === 'downloaded' ? '' : 'none';
+  checkBtn.style.display = s.state === 'downloaded' ? 'none' : '';
+  checkBtn.textContent = s.state === 'available' ? 'Скачать' : 'Проверить';
   checkBtn.disabled = s.state === 'checking' || s.state === 'downloading';
 }
 desktop.getUpdateState().then(paintUpdateState).catch(() => {});
@@ -363,10 +376,13 @@ document.getElementById('ppInstallUpdateBtn').onclick = async () => {
 document.getElementById('historyRow').onclick = () => desktop.openBroadcast({ token, serverUrl, me: JSON.stringify(me) });
 
 // ---------- Профиль и настройки — панель под me-bar (не отдельное окно) ----------
-document.getElementById('ppThemeDark').innerHTML = uiIcon('moon');
-document.getElementById('ppThemeLight').innerHTML = uiIcon('sun');
-document.getElementById('ppPickFolderBtn').prepend(document.createRange().createContextualFragment(uiIcon('folder')));
+document.querySelector('#ppThemeDark .i').innerHTML = uiIcon('moon');
+document.querySelector('#ppThemeLight .i').innerHTML = uiIcon('sun');
 document.getElementById('ppClearFolderBtn').innerHTML = uiIcon('x');
+document.getElementById('ppBack').innerHTML = uiIcon('chevron'); // повёрнут стилем — «назад»
+document.getElementById('ppBack').onclick = () => closeProfilePanel();
+document.getElementById('searchIcon').innerHTML = uiIcon('search');
+document.getElementById('ppEmblem').innerHTML = uiIcon('emblem');
 
 const PP_CHECKBOX_IDS = [
   ['ppOpenChatOnMessage', 'openChatOnMessage'],
@@ -379,7 +395,6 @@ const PP_CHECKBOX_IDS = [
 function paintProfileTheme(theme) {
   document.getElementById('ppThemeDark').classList.toggle('active', theme !== 'light');
   document.getElementById('ppThemeLight').classList.toggle('active', theme === 'light');
-  document.querySelector('#profilePanel .theme-switch').classList.toggle('light', theme === 'light');
 }
 function paintProfileAccent(accent) {
   document.querySelectorAll('#ppAccent button').forEach((b) => b.classList.toggle('active', b.dataset.accent === (accent || 'ember')));
@@ -397,11 +412,23 @@ async function loadProfilePanel() {
   paintProfileDownloadPath(settings.downloadPath);
   document.getElementById('ppIdleThresholdMinutes').value = settings.idleThresholdMinutes || 30;
   paintProfileUiScale(settings.uiScale);
+  // Карточка «кто я»: полное имя и отделы — как записаны на сервере.
+  document.getElementById('ppFullName').textContent = displayNameOf(me);
+  const depts = Array.isArray(me.departments) ? me.departments.map((d) => d.name).filter(Boolean) : (me.department ? [me.department] : []);
+  document.getElementById('ppDept').textContent = depts.join(', ') || 'Без отдела';
 }
 function paintProfileUiScale(uiScale) {
   const pct = Math.round((uiScale || 1) * 100);
-  document.getElementById('ppUiScale').value = pct;
+  const range = document.getElementById('ppUiScale');
+  range.value = pct;
   document.getElementById('ppUiScaleLabel').textContent = pct + '%';
+  paintRangeFill(range);
+}
+// Закрашенная часть дорожки ползунка — до бегунка. У input[type=range] в Chromium её нет, рисуем
+// фоном: доля считается здесь и передаётся в стиль переменной --fill.
+function paintRangeFill(range) {
+  const min = Number(range.min), max = Number(range.max);
+  range.style.setProperty('--fill', `${((Number(range.value) - min) / (max - min)) * 100}%`);
 }
 
 // Список контактов плавно прячется, пока открыта панель профиля — сначала гаснет (opacity), а
@@ -441,10 +468,12 @@ async function openProfilePanel() {
   document.getElementById('profilePanel').classList.add('open');
   document.getElementById('me-bar').classList.add('open');
   document.getElementById('me-bar').title = 'Скрыть профиль и настройки';
+  document.body.classList.add('settings-open'); // шапка окна: «‹ Настройки» вместо названия
   hideListSmoothly();
   hideHistoryRowUp();
 }
 function closeProfilePanel() {
+  document.body.classList.remove('settings-open');
   document.getElementById('profilePanel').classList.remove('open');
   document.getElementById('me-bar').classList.remove('open');
   document.getElementById('me-bar').title = 'Профиль и настройки';
@@ -470,10 +499,21 @@ document.getElementById('ppIdleThresholdMinutes').addEventListener('change', (e)
   e.target.value = mins;
   desktop.setSettings({ idleThresholdMinutes: mins });
 });
+// Кнопки «−» и «+» у порога: шаг 5 минут (до 5 — по одной), само поле по-прежнему можно править руками.
+function stepIdleThreshold(dir) {
+  const input = document.getElementById('ppIdleThresholdMinutes');
+  const cur = Number(input.value) || 30;
+  const step = (dir < 0 ? cur <= 5 : cur < 5) ? 1 : 5;
+  input.value = cur + dir * step;
+  input.dispatchEvent(new Event('change'));
+}
+document.getElementById('ppIdleMinus').onclick = () => stepIdleThreshold(-1);
+document.getElementById('ppIdlePlus').onclick = () => stepIdleThreshold(1);
 // 'input' (не 'change') — применяем сразу, пока тащат ползунок, а не только когда его отпустят.
 document.getElementById('ppUiScale').addEventListener('input', (e) => {
   const pct = Number(e.target.value);
   document.getElementById('ppUiScaleLabel').textContent = pct + '%';
+  paintRangeFill(e.target);
   desktop.setSettings({ uiScale: pct / 100 });
 });
 document.getElementById('ppLogoutBtn').onclick = async () => {
@@ -485,7 +525,7 @@ document.getElementById('ppLogoutBtn').onclick = async () => {
 
 function deptOnlineCount(users) {
   const on = users.filter(u => { const s = (presence[u.id] || {}).state; return s === 'active' || s === 'idle'; }).length;
-  return `${on}/${users.length}`;
+  return `${on} из ${users.length}`;
 }
 
 // Разворачивает/сворачивает отдел на месте (без renderList() — тот сносит и пересоздаёт весь DOM,
@@ -557,6 +597,15 @@ function applyUnreadState(state) {
 }
 desktop.onUnreadState(applyUnreadState);
 
+// Вторая строка под именем — только у тех, кто отошёл: «Отошёл · 12 мин». У остальных её нет
+// (пустая строка скрыта стилем), и список не разбухает.
+function presenceSub(p) {
+  if (p.state !== 'idle') return '';
+  if (!p.idleSince) return 'Отошёл';
+  const mins = Math.max(1, Math.round((Date.now() - p.idleSince) / 60000));
+  return `Отошёл · ${mins < 60 ? `${mins} мин` : `${Math.floor(mins / 60)} ч`}`;
+}
+
 function makeUserRow(u) {
   const isMe = u.id === me.id;
   const p = presence[u.id] || { state: 'offline', hosts: [] };
@@ -564,7 +613,7 @@ function makeUserRow(u) {
   const row = document.createElement('div');
   row.className = 'row' + (isMe ? ' is-me' : '');
   row.dataset.uid = u.id; // нужно для точечного обновления статуса без пересборки всего списка
-  row.innerHTML = `<div class="dot ${p.state}"></div><div class="n">${escapeHtml(name)}${isMe ? ' <span class="me-tag">это вы</span>' : ''}</div><span class="unread-badge"></span>`;
+  row.innerHTML = `<div class="dot ${p.state}"></div><div class="rt"><div class="n">${escapeHtml(name)}${isMe ? ' <span class="me-tag">это вы</span>' : ''}</div><div class="sub">${escapeHtml(presenceSub(p))}</div></div><span class="unread-badge"></span>`;
   if (!isMe) setUnreadBadge(row, unreadDmCounts[u.id] || 0);
   if (isMe) {
     row.title = 'Профиль и настройки';
@@ -589,6 +638,8 @@ function updatePresenceOnly() {
     const p = presence[u.id] || { state: 'offline', hosts: [] };
     const dot = row.querySelector('.dot');
     if (dot) dot.className = 'dot ' + p.state;
+    const sub = row.querySelector('.sub');
+    if (sub) sub.textContent = presenceSub(p);
     if (u.id === me.id) row.title = 'Профиль и настройки';
     else applyReachability(row, u, p); // пересчитывает и доступность (появился/пропал реальный хост), и тултип
   });
@@ -603,7 +654,7 @@ function updatePresenceOnly() {
 function renderGroupsSection(list) {
   const header = document.createElement('div');
   header.className = 'section groups-header';
-  header.innerHTML = `<span class="stitle">ГРУППЫ</span><span class="scount">${groupsCache.length}</span><button type="button" class="group-add-btn" title="Создать группу">${uiIcon('plus')}</button>`;
+  header.innerHTML = `<span class="stitle">ГРУППЫ</span><button type="button" class="group-add-btn" title="Создать группу">${uiIcon('plus')}</button>`;
   header.querySelector('.group-add-btn').onclick = (e) => { e.stopPropagation(); openGroupModal({ mode: 'create' }); };
   list.appendChild(header);
 
@@ -619,7 +670,7 @@ function makeGroupRow(g) {
   row.className = 'row';
   row.dataset.gid = g.id;
   row.title = g.name;
-  row.innerHTML = `<div class="badge-icon">${uiIcon('group')}</div><div class="n">${escapeHtml(g.name)}</div><button type="button" class="group-manage-btn" title="Управление группой">${uiIcon('gear')}</button><span class="unread-badge"></span>`;
+  row.innerHTML = `<div class="badge-icon">${uiIcon('group')}</div><div class="n">${escapeHtml(g.name)}</div><button type="button" class="group-manage-btn" title="Управление группой">${uiIcon('gear')}</button><span class="gcount" title="Участников">${g.member_count || ''}</span><span class="unread-badge"></span>`;
   row.onclick = () => desktop.openChat({ type: 'room', id: `group:${g.id}`, label: g.name, token, serverUrl });
   row.querySelector('.group-manage-btn').onclick = (e) => { e.stopPropagation(); openGroupModal({ mode: 'manage', group: g }); };
   return row;
@@ -862,22 +913,38 @@ async function refreshMe() {
 }
 
 // ---------- Скрытый поиск: начал печатать — появилась строка поиска вместо "себя" ----------
+// Строка поиска теперь видна всегда (под карточкой профиля), но привычка «просто начать печатать»
+// сохранена: обработчик keydown ниже сам переносит набранное в поле.
 function setSearchActive(active) {
-  if (active) closeProfilePanel(); // поиск и профиль — взаимоисключающие состояния верхней части ростера
-  document.getElementById('me-bar').classList.toggle('searching', active); // кроссфейд с searchBar — см. #topSlot
+  if (active && document.getElementById('profilePanel').classList.contains('open')) closeProfilePanel(); // поиск и настройки — взаимоисключающие
   if (active) hideHistoryRowUp(); else showHistoryRow();
   const bar = document.getElementById('searchBar');
+  const input = document.getElementById('searchInput');
   bar.classList.toggle('active', active);
-  if (active && !bar.dataset.built) {
-    bar.dataset.built = '1';
-    bar.innerHTML = `${uiIcon('search')}<input id="searchInput" placeholder="Поиск по имени...">`;
-    document.getElementById('searchInput').addEventListener('input', (e) => {
-      searchQuery = e.target.value;
-      if (!searchQuery) setSearchActive(false);
-      renderList();
-    });
-  }
-  if (active) { bar.querySelector('input').value = searchQuery; bar.querySelector('input').focus(); }
+  input.value = searchQuery;
+  if (active) input.focus(); else input.blur();
+}
+document.getElementById('searchInput').addEventListener('input', (e) => {
+  searchQuery = e.target.value;
+  setSearchActive(!!searchQuery);
+  renderList();
+});
+
+// ---------- Строка «Объявления»: время и начало последнего объявления ----------
+function paintBroadcastPreview(b) {
+  const time = document.getElementById('historyRowTime');
+  const preview = document.getElementById('historyRowPreview');
+  if (!b) { time.textContent = ''; preview.textContent = ''; return; }
+  const d = new Date(b.created_at);
+  const today = new Date().toDateString() === d.toDateString();
+  time.textContent = today
+    ? d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+    : d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
+  const files = b.files || [];
+  preview.textContent = (b.text || '').replace(/\s+/g, ' ').trim() || (files.length ? `📎 ${files.length === 1 ? files[0].name : files.length + ' файла'}` : '');
+}
+async function refreshBroadcastPreview() {
+  try { const list = await api('/api/broadcasts'); paintBroadcastPreview(list[list.length - 1]); } catch { /* сервер недоступен — строка останется без подписи */ }
 }
 
 document.addEventListener('keydown', (e) => {
@@ -947,7 +1014,8 @@ async function startApp() {
   meAvatar.classList.add('emblem');
   meAvatar.insertAdjacentHTML('afterbegin', uiIcon('emblem'));
   document.getElementById('meName').textContent = displayNameOf(me);
-  document.querySelector('#me-bar .gear').innerHTML = uiIcon('gear');
+  document.querySelector('#me-bar .gear').innerHTML = uiIcon('settings');
+  paintMeSub('active');
   document.getElementById('me-bar').onclick = toggleProfilePanel;
   document.getElementById('me-bar').title = 'Профиль и настройки';
   // connectWs() — до всего остального и безусловно: если сервер лежал уже на момент запуска
@@ -961,6 +1029,7 @@ async function startApp() {
     renderList();
     applyUnreadState(await desktop.getUnreadState()); // на случай, если что-то пришло, пока ростер ещё не слушал unread-state
     await seedMissedUnread();
+    refreshBroadcastPreview();
   } catch { /* сервер недоступен уже при запуске — connectWs() выше сам занимается переподключением и покажет диалог */ }
   setInterval(refreshUsers, 20000);
 }
@@ -989,13 +1058,19 @@ function refreshConnectionIndicator() {
   const state = document.getElementById('ppConnState');
   const detail = document.getElementById('ppConnDetail');
   if (state && detail) {
-    state.textContent = secure ? 'Защищено (https)' : 'Без шифрования (http)';
+    state.textContent = secure ? 'Подключено · https' : 'Без шифрования · http';
     state.style.color = secure ? '' : 'var(--danger)';
     let text = secure
       ? `${address} — пароль, переписка и файлы шифруются по дороге до сервера.`
       : `${address} — пароль, переписка и файлы идут по сети открытым текстом. Сообщите администратору.`;
     if (connectionInfo.fromOverride) text += ` Адрес задан вручную на этом компьютере (в сборке — ${connectionInfo.builtIn}).`;
-    detail.textContent = text;
+    // В строке — только имя сервера, пояснение целиком — в подсказке (строка одна).
+    let host = address;
+    try { host = new URL(address).host; } catch { /* адрес записан не по форме — покажем как есть */ }
+    detail.textContent = host;
+    const row = document.getElementById('ppConnRow');
+    row.title = text;
+    row.classList.toggle('insecure', !secure);
   }
 }
 

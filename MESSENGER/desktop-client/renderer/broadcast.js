@@ -24,8 +24,8 @@ async function checkComposeAccess() {
 }
 
 document.getElementById('ttl').innerHTML = departmentId
-  ? `${uiIcon('group')} Отдел «${escapeHtml(departmentName)}»`
-  : `${uiIcon('megaphone')} Объявления`;
+  ? `<span class="ttl-icon">${uiIcon('group')}</span><span class="ttl-text">Отдел «${escapeHtml(departmentName)}»</span>`
+  : `<span class="ttl-icon">${uiIcon('megaphone')}</span><span class="ttl-text">Объявления</span>`;
 if (departmentId) {
   // Право "Рассылки" здесь ни при чём: оно про объявление всей организации. Написать своему отделу
   // может любой — написать каждому из них по одному он и так может, список людей открыт.
@@ -68,7 +68,7 @@ function setComposerOpen(open) {
   if (!canCompose) return;
   const btn = document.getElementById('composeBtn');
   btn.style.display = 'flex';
-  btn.querySelector('span').innerHTML = uiIcon('send');
+  btn.querySelector('span').innerHTML = uiIcon('plus');
   btn.title = departmentId ? 'Написать отделу' : 'Написать рассылку';
   btn.addEventListener('click', () => {
     if (document.getElementById('historyPanel').classList.contains('visible')) closeHistoryPanel();
@@ -236,6 +236,20 @@ function fmtSize(bytes) {
   return (bytes / (1024 * 1024)).toFixed(1) + ' МБ';
 }
 
+// Инициалы автора для кружка в карточке: первые буквы первых двух слов имени.
+function initialsOf(name) {
+  return String(name || '').trim().split(/\s+/).slice(0, 2).map((w) => w.charAt(0).toUpperCase()).join('') || '?';
+}
+// Время в карточке: сегодня — «09:15», вчера — «Вчера», раньше — «2 окт». Полная дата — в подсказке.
+function itemWhen(ts) {
+  const d = new Date(ts); const now = new Date();
+  const dayStart = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diff = Math.round((dayStart(now) - dayStart(d)) / 86400000);
+  if (diff === 0) return d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  if (diff === 1) return 'Вчера';
+  return d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', ...(d.getFullYear() === now.getFullYear() ? {} : { year: 'numeric' }) }).replace('.', '');
+}
+
 function itemHtml(b, query) {
   const time = new Date(b.created_at).toLocaleString('ru-RU');
   let filesHtml = '';
@@ -254,8 +268,9 @@ function itemHtml(b, query) {
   const txtHtml = b.text ? `<div class="txt selectable" data-raw-text="${escapeAttr(b.text)}">${highlightHtml(b.text, query)}</div>` : '';
   // В общей ленте сообщение отделу помечаем — иначе непонятно, почему коллега его не получил.
   // В окне самого отдела метка не нужна: там всё до одного адресовано этому отделу.
-  const deptHtml = (!departmentId && b.department) ? `<span class="dept-chip">${escapeHtml(b.department)}</span>` : '';
-  return `<div class="item"><span class="who">${escapeHtml(b.from_user)}</span><span class="time">${time}</span>${deptHtml}${txtHtml}${filesHtml}</div>`;
+  const to = b.department ? `Отдел «${escapeHtml(b.department)}»` : 'Всем сотрудникам';
+  const head = `<div class="ihead"><div class="ini">${escapeHtml(initialsOf(b.from_user))}</div><div class="iwho"><div class="who">${escapeHtml(b.from_user)}</div><div class="to">${to}</div></div><span class="time" title="${time}">${itemWhen(b.created_at)}</span></div>`;
+  return `<div class="item">${head}${txtHtml}${filesHtml ? `<div class="ifiles">${filesHtml}</div>` : ''}</div>`;
 }
 
 // Лента "сегодняшних" рассылок — обнуляется каждый день, как и в чате. Вся история доступна
@@ -277,7 +292,7 @@ const LAST_SEEN_KEY = departmentId ? `broadcastLastSeenId:dept:${departmentId}` 
 function getLastSeenId() { return Number(localStorage.getItem(LAST_SEEN_KEY)) || 0; }
 function setLastSeenId(id) { if (id) localStorage.setItem(LAST_SEEN_KEY, String(id)); }
 let maxKnownBroadcastId = getLastSeenId(); // растёт по мере отрисовки/получения объявлений в этой сессии
-function unreadDividerHtml() { return `<div class="unread-divider" id="unreadDivider"><span>Новые объявления</span></div>`; }
+function unreadDividerHtml() { return `<div class="unread-divider" id="unreadDivider"><span>Новые</span></div>`; }
 
 async function loadFeed() {
   const { since, until } = todayRange();
@@ -449,7 +464,8 @@ function dayRange(dayStr) {
 function monthLabel(key) {
   const [y, m] = key.split('-').map(Number);
   const label = new Date(y, m - 1, 1).toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' });
-  return label.charAt(0).toUpperCase() + label.slice(1);
+  // «октябрь 2026 г.» → «Октябрь 2026»: в узкой колонке «г.» только занимает место.
+  return (label.charAt(0).toUpperCase() + label.slice(1)).replace(/\s*г\.$/, '');
 }
 
 async function openHistoryPanel() {
@@ -461,7 +477,7 @@ async function openHistoryPanel() {
   document.getElementById('historyBtn').classList.add('active');
   document.getElementById('historyBtn').title = 'Скрыть историю';
   const row = document.getElementById('hpSearchRow');
-  row.innerHTML = `${uiIcon('search')}<input id="hpSearch" placeholder="Поиск по всей истории рассылок...">`;
+  row.innerHTML = `<div class="hp-search">${uiIcon('search')}<input id="hpSearch" placeholder="Поиск по всей истории рассылок…"></div>`;
   document.getElementById('hpSearch').addEventListener('input', debounceSearch);
   await loadDays();
   if (daysCache.length) selectDay(daysCache[0].day);
@@ -505,7 +521,7 @@ async function loadDays() {
       const btn = document.createElement('div');
       btn.className = 'dbtn';
       btn.dataset.day = d.day;
-      btn.innerHTML = `${dayLabel(d.day)}<span class="cnt">${d.count} рассыл.</span>`;
+      btn.innerHTML = `<span class="dl">${dayLabel(d.day)}</span><span class="cnt" title="Объявлений за день">${d.count}</span>`;
       btn.onclick = () => selectDay(d.day);
       list.appendChild(btn);
     });

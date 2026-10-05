@@ -292,7 +292,8 @@ const getGroup = db.prepare('SELECT * FROM groups WHERE id = ?');
 const renameGroupStmt = db.prepare('UPDATE groups SET name = ? WHERE id = ?');
 const deleteGroupStmt = db.prepare('DELETE FROM groups WHERE id = ?');
 const listGroupsForUser = db.prepare(`
-  SELECT g.id, g.name, g.created_by, g.created_at
+  SELECT g.id, g.name, g.created_by, g.created_at,
+         (SELECT COUNT(*) FROM group_members m WHERE m.group_id = g.id) AS member_count -- число у группы в списке клиента
   FROM groups g JOIN group_members gm ON gm.group_id = g.id
   WHERE gm.user_id = ?
   ORDER BY g.name

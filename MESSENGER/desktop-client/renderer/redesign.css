@@ -1,86 +1,139 @@
-/* «Искра» — редизайн «Уголь»: правки поверх roster.css / chat.css / broadcast.css.
-   Подключать ПОСЛЕДНИМ на каждой странице: <link rel="stylesheet" href="redesign.css">
-   Селекторы взяты из текущей разметки — JS менять не нужно (кроме пункта «Акцент», см. README). */
+/* «Искра» — оформление «Уголь» (макет Claude Design «Iskra Concept A v2»).
+   Подключается ПОСЛЕДНИМ на каждой странице, поверх roster.css / chat.css / broadcast.css: в тех
+   файлах остались раскладка и пояснения к поведению, здесь — внешний вид по макету.
+   Только то, что понимает Chromium 108 (Electron 22, сборка для Windows 7): без oklch(),
+   color-mix() и вложенных правил; прозрачные оттенки акцента — переменные --accent-aNN из theme.css. */
 
-/* ===================== Общие ===================== */
-.wintitlebar .title { font-family: 'Unbounded', 'Onest', sans-serif; font-weight: 500; font-size: 11.5px; letter-spacing: .6px; text-transform: uppercase; }
-/* Вместо точки — звёздочка-искра (маска spark-star.svg, разметка не меняется). */
+/* ===================== Шапка окна ===================== */
+.wintitlebar .title { font-family: 'Unbounded', 'Onest', sans-serif; font-weight: 500; font-size: 11.5px; letter-spacing: .6px; text-transform: uppercase; gap: 8px; }
+/* Вместо точки — звёздочка-искра (маска spark-star.svg). */
 .wintitlebar .title .brand-dot { width: 16px; height: 16px; border-radius: 0; background: var(--accent); box-shadow: none;
   -webkit-mask: url('spark-star.svg') center / contain no-repeat; filter: drop-shadow(0 0 4px var(--accent)); }
-#historyBtn, #composeBtn { height: 30px; border-radius: var(--radius-s); background: var(--panel-2); color: var(--text); font-weight: 500; }
-#historyBtn.active, #composeBtn.active, #historyBtn.active:hover, #composeBtn.active:hover { background: var(--accent); color: var(--accent-ink); }
-mark.hl { background: var(--accent-a35); color: var(--text); }
-.unread-divider::before, .unread-divider::after { opacity: .45; }
-.unread-divider span { letter-spacing: 1px; }
+/* Шапка экрана настроек: «‹ Настройки» вместо названия, пока панель открыта. */
+.wintitlebar .title-settings { display: none; align-items: center; gap: 6px; font-weight: 600; font-size: 13px; margin-left: -6px; flex-shrink: 0; }
+.wintitlebar .title-settings .icon-btn { -webkit-app-region: no-drag; color: var(--text); }
+.wintitlebar .title-settings .icon-btn svg { transform: rotate(90deg); width: 14px; height: 14px; }
+body.settings-open #wtBrand { display: none; }
+body.settings-open #wtSettings { display: flex; }
+/* У списка и окна входа по макету две кнопки: свернуть и закрыть. */
+body:has(#auth) #wcMax { display: none; }
 
 /* ===================== Вход ===================== */
-#auth { position: relative; }
-#auth::before { content: ''; position: absolute; left: 50%; top: -34px; width: 300px; height: 300px; margin-left: -150px; border-radius: 50%; pointer-events: none;
+#auth { position: relative; justify-content: flex-start; padding: 8px 26px 24px; gap: 0; overflow-x: hidden; }
+#auth::before { content: ''; position: absolute; left: 50%; top: -74px; width: 300px; height: 300px; margin-left: -150px; border-radius: 50%; pointer-events: none;
   background: radial-gradient(circle, var(--accent-a35) 0%, var(--accent-a12) 30%, transparent 62%); }
 #auth > * { position: relative; }
-#authLogo { fill: var(--accent); height: 92px; margin-bottom: 18px; }
-#auth h1 { font-family: 'Unbounded', sans-serif; font-weight: 700; font-size: 28px; letter-spacing: .5px; }
-#auth .auth-subtitle { margin-bottom: 26px; }
-#auth input { height: 42px; border-radius: var(--radius-m); background: var(--panel); font-family: inherit; }
+#authLogo { fill: var(--accent); height: 92px; margin: 22px auto 18px; }
+#auth h1 { font-family: 'Unbounded', sans-serif; font-weight: 700; font-size: 28px; letter-spacing: .5px; margin: 0; }
+#auth .auth-subtitle { margin: 6px 0 28px; }
+#auth .err { min-height: 0; margin-bottom: 6px; }
+#auth .err:empty { display: none; }
+#authForm { gap: 10px; }
+#auth .auth-field { display: flex; flex-direction: column; gap: 5px; }
+#auth .auth-field > span { font-size: 11px; color: var(--muted); font-weight: 500; }
+#auth input { height: 42px; padding: 0 13px; border-radius: var(--radius-m); background: var(--panel); font-family: inherit; }
 #auth input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-a20); }
-#auth button.primary { height: 44px; border-radius: var(--radius-m); background: linear-gradient(180deg, var(--accent-2), var(--accent)); color: var(--accent-ink); font-weight: 600; font-family: inherit; box-shadow: 0 8px 24px -8px var(--accent); }
+#auth button.primary { height: 44px; padding: 0; margin-top: 8px; border-radius: var(--radius-m); background: linear-gradient(180deg, var(--accent-2), var(--accent)); color: var(--accent-ink);
+  font-weight: 600; font-size: 13.5px; font-family: inherit; box-shadow: 0 8px 24px -8px var(--accent-a70); }
+#auth .switch { font-size: 12px; margin-top: 16px; }
+#auth .switch b { color: var(--text); font-weight: 500; }
 #auth .conn-hint { margin-top: auto; padding-top: 16px; }
 
-/* ===================== Ростер ===================== */
-#topSlot { padding: 2px 10px 0; }
-#me-bar, #searchBar { border: 1px solid var(--border); border-radius: var(--radius-l); background: var(--panel); padding: 12px; min-height: 60px; gap: 11px; }
+/* ===================== Список: профиль, поиск, объявления ===================== */
+#topSlot { display: block; padding: 2px 10px 0; }
+#me-bar { padding: 12px; min-height: 0; gap: 11px; border: 1px solid var(--border); border-radius: var(--radius-l); background: var(--panel); }
 #me-bar:hover, #me-bar.open { background: var(--panel-2); }
 .avatar.emblem { width: 36px; height: 36px; }
-#me-bar .name { font-size: 13px; }
-#me-bar .gear { width: 30px; height: 30px; border-radius: var(--radius-s); background: var(--panel-2); align-items: center; justify-content: center; }
-#searchBar input { font-family: inherit; }
-/* top у панели профиля = высота #topSlot (2px + 60px) */
-#profilePanel { top: 62px; border-top-width: 0; }
+.avatar.emblem .dot { right: -2px; bottom: -1px; width: 11px; height: 11px; margin: 0; box-shadow: none; border: 2px solid var(--panel); }
+#me-bar .me-text { flex: 1; min-width: 0; }
+#me-bar .name { font-size: 13px; font-weight: 600; }
+#me-bar .sub { font-size: 11px; color: var(--muted); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#me-bar .gear, #me-bar.open .gear { width: 30px; height: 30px; margin-left: 0; border-radius: var(--radius-s); background: var(--panel-2); color: var(--muted); align-items: center; justify-content: center; transform: none; }
+#me-bar:hover .gear { background: var(--panel-3); }
+#me-bar .insecure-badge { margin-left: 0; }
 
-#historyRow { margin: 10px 10px 4px; padding: 11px 12px; border-radius: var(--radius-l); border: 1px solid var(--accent-a35); max-height: 64px;
-  background: linear-gradient(135deg, var(--accent-a20), var(--panel) 70%); }
-#historyRow:hover { background: linear-gradient(135deg, var(--accent-a35), var(--panel-2) 70%); }
+#searchBar { margin: 10px 10px 0; height: 36px; min-height: 0; padding: 0 11px; gap: 8px; border: none; border-radius: 10px; background: var(--panel-2); color: var(--muted);
+  display: flex; align-items: center; flex-shrink: 0; opacity: 1; pointer-events: auto; -webkit-app-region: no-drag; }
+#searchBar .sb-icon { display: flex; flex-shrink: 0; }
+#searchBar input { flex: 1; min-width: 0; background: transparent; border: none; color: var(--text); font-size: 12.5px; font-family: inherit; }
+#searchBar input::placeholder { color: var(--muted); }
+#searchBar .sb-hint { font-size: 10px; padding: 2px 6px; border-radius: 5px; border: 1px solid var(--border); flex-shrink: 0; white-space: nowrap; }
+#searchBar input:not(:placeholder-shown) ~ .sb-hint { display: none; }
+
+#historyRow { margin: 10px 10px 4px; padding: 11px 12px; gap: 11px; border-radius: var(--radius-l); border: 1px solid var(--accent-a35); max-height: 64px; flex-shrink: 0;
+  background: linear-gradient(135deg, var(--accent-a20), transparent 70%), var(--panel); }
+#historyRow:hover { background: linear-gradient(135deg, var(--accent-a35), transparent 70%), var(--panel); }
+#historyRow.hidden-up { margin-top: 0; margin-bottom: 0; padding-top: 0; padding-bottom: 0; border-width: 0; }
 #historyRow .badge-icon { width: 34px; height: 34px; border-radius: var(--radius-m); background: var(--accent); color: var(--accent-ink); }
+#historyRow .badge-icon svg { width: 17px; height: 17px; }
+#historyRow .hr-text { flex: 1; min-width: 0; }
+#historyRow .hr-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 #historyRow .n { font-weight: 600; }
+#historyRow .hr-time { font-size: 10.5px; color: var(--muted); flex-shrink: 0; }
+#historyRow .hr-preview { font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+#historyRow .hr-preview:empty { display: none; }
 
+/* ===================== Список: отделы и люди ===================== */
 #list { padding: 4px 10px 10px; }
-.section { padding: 14px 4px 6px; }
-.section .stitle { font-size: 10.5px; letter-spacing: 1.2px; font-weight: 600; text-transform: uppercase; }
-.row { padding: 8px 8px; border-radius: var(--radius-m); gap: 10px; }
+.section { padding: 14px 4px 6px; gap: 6px; }
+.section.groups-header { padding-top: 12px; }
+.section .chev svg { width: 11px; height: 11px; }
+.section .stitle { flex: 1; min-width: 0; font-size: 10.5px; letter-spacing: 1.2px; font-weight: 600; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.section .scount { font-weight: 400; }
+.section .group-add-btn { width: 22px; height: 22px; border-radius: 7px; }
+.row { padding: 8px; border-radius: var(--radius-m); gap: 10px; }
 .row + .row { margin-top: 0; }
-.row:hover { background: var(--panel); }
+.row:hover, .row.unread { background: var(--panel); }
+.row .rt { flex: 1; min-width: 0; }
 .row .n { font-weight: 500; }
-/* Аватаров нет — только кружок статуса с ореолом */
+.row .sub { font-size: 10.5px; color: var(--muted); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row .sub:empty { display: none; }
+/* Аватаров нет — только кружок статуса с ореолом. */
 #list .dot { width: 9px; height: 9px; margin: 0 3px 0 4px; }
 #list .dot.active { box-shadow: 0 0 0 3px rgba(90, 209, 154, .2); }
 #list .dot.idle { box-shadow: 0 0 0 3px rgba(232, 180, 74, .2); }
 [data-theme="light"] #list .dot.active { box-shadow: 0 0 0 3px rgba(31, 158, 99, .18); }
 [data-theme="light"] #list .dot.idle { box-shadow: 0 0 0 3px rgba(185, 121, 11, .18); }
-.avatar .dot { margin: 0; width: 11px; height: 11px; box-shadow: none; }
-.row .unread-badge, #historyRow .unread-badge { min-width: 20px; height: 20px; border-radius: 10px; padding: 0 6px; font-size: 11px; color: var(--accent-ink); }
-.badge-icon { width: 30px; height: 30px; border-radius: 10px; color: var(--accent); }
+.row .unread-badge, #historyRow .unread-badge { min-width: 20px; height: 20px; border-radius: 10px; padding: 0 6px; margin-left: 0; font-size: 11px; color: var(--accent-ink); }
+/* Группы: плитка со значком, справа — число участников. */
+#list .row[data-gid] { padding: 7px 8px; gap: 11px; }
+.badge-icon { width: 30px; height: 30px; border-radius: 10px; background: var(--panel-2); color: var(--accent); }
+.row .gcount { font-size: 11px; color: var(--muted); flex-shrink: 0; }
+.row .gcount:empty { display: none; }
+.row:hover .gcount { display: none; }
 
-/* ===================== Профиль и настройки ===================== */
-#profilePanel .inner { padding: 6px 10px 12px; gap: 6px; }
-#profilePanel .section-title { letter-spacing: 1.2px; font-weight: 600; padding: 4px 4px 0; }
-#profilePanel .theme-row, #profilePanel .option { border-radius: var(--radius-l); padding: 10px 12px; background: var(--panel); }
-#profilePanel .theme-row .t, #profilePanel .option .t { font-weight: 500; font-size: 12.5px; }
-#profilePanel .theme-switch { border-radius: var(--radius-s); }
-#profilePanel .theme-switch .ts-thumb { border-radius: 7px; }
-#profilePanel .theme-switch button { border-radius: 7px; }
-#profilePanel .theme-switch button.active { color: var(--accent-ink); }
-#profilePanel .pp-switch { width: 34px; height: 20px; }
-#profilePanel .pp-switch-track { background: var(--panel-3); border: none; }
-#profilePanel .pp-switch-track::before { background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.35); }
-#profilePanel .pp-switch input:checked + .pp-switch-track::before { transform: translateX(14px); }
-#profilePanel input[type="range"] { background: var(--panel-3); }
-#profilePanel input[type="range"]::-webkit-slider-thumb { background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.4); }
-#profilePanel .pp-btn { border-radius: var(--radius-s); font-family: inherit; }
-#profilePanel .pp-btn:hover { border-color: var(--accent); }
-#profilePanel #ppLogoutBtn { border-radius: var(--radius-m); font-family: inherit; }
+/* ===================== Настройки ===================== */
+/* Экран настроек занимает всё окно под шапкой (в макете это отдельный экран, а не выпадающая панель). */
+#profilePanel, #profilePanel.open { top: 0; border-top: none; }
+#profilePanel .inner { padding: 4px 10px 12px; gap: 6px; }
+#profilePanel .section-title { font-size: 10.5px; letter-spacing: 1.2px; font-weight: 600; text-transform: uppercase; color: var(--muted); padding: 2px 4px 0; margin: 0; }
+#profilePanel .pp-card { border-radius: var(--radius-l); background: var(--panel); border: 1px solid var(--border); overflow: hidden; flex-shrink: 0; }
+#profilePanel .pp-me { display: flex; align-items: center; gap: 11px; padding: 10px 12px; }
+#profilePanel .pp-emblem { width: 32px; height: 33px; flex-shrink: 0; color: var(--emblem); }
+#profilePanel .pp-emblem svg { width: 100%; height: 100%; display: block; }
+#profilePanel .pp-me-text { min-width: 0; }
+#profilePanel .pp-me .t { font-weight: 600; font-size: 13px; overflow-wrap: anywhere; }
+#profilePanel .pp-me .d { font-size: 11px; color: var(--muted); margin-top: 1px; }
 
-/* Выбор акцента (новая строка в «Тема оформления», разметка — в README) */
-.accent-pick { display: flex; gap: 7px; align-self: center; flex-shrink: 0; }
+#profilePanel .pp-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; position: relative; }
+#profilePanel label.pp-row { cursor: pointer; }
+#profilePanel .pp-row + .pp-row { border-top: 1px solid var(--border); }
+/* «Оформление»: разделители с отступами от краёв карточки, как в макете. */
+#profilePanel .pp-card.inset .pp-row + .pp-row { border-top: none; }
+#profilePanel .pp-card.inset .pp-row + .pp-row::before { content: ''; position: absolute; top: 0; left: 12px; right: 12px; height: 1px; background: var(--border); }
+#profilePanel .pp-row.col { flex-direction: column; align-items: stretch; gap: 8px; }
+#profilePanel .pp-line { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+#profilePanel .pp-row .t { flex: 1; min-width: 0; font-weight: 500; font-size: 12.5px; }
+#profilePanel .pp-row .v { color: var(--muted); font-size: 12.5px; flex-shrink: 0; }
+
+#profilePanel .theme-seg { display: flex; padding: 3px; border-radius: var(--radius-s); background: var(--panel-2); gap: 2px; flex-shrink: 0; }
+#profilePanel .theme-seg button { height: 26px; padding: 0 9px; border: none; border-radius: 7px; display: flex; align-items: center; gap: 5px; font-size: 11.5px; font-family: inherit;
+  background: transparent; color: var(--muted); cursor: pointer; transition: background .15s ease, color .15s ease; }
+#profilePanel .theme-seg button .i { display: flex; }
+#profilePanel .theme-seg button svg { width: 13px; height: 13px; }
+#profilePanel .theme-seg button.active { background: var(--accent); color: var(--accent-ink); }
+
+.accent-pick { display: flex; gap: 7px; flex-shrink: 0; }
 .accent-pick button { width: 18px; height: 18px; border-radius: 50%; border: none; padding: 0; cursor: pointer; }
 .accent-pick button.active { box-shadow: 0 0 0 2px var(--panel), 0 0 0 3.5px var(--text); }
 [data-theme="dark"] .accent-pick [data-accent="ember"] { background: #f28e42; }
@@ -96,56 +149,195 @@ mark.hl { background: var(--accent-a35); color: var(--text); }
 [data-theme="dark"] .accent-pick [data-accent="violet"] { background: #b494ed; }
 [data-theme="light"] .accent-pick [data-accent="violet"] { background: #8059bb; }
 
-/* ===================== Окно чата ===================== */
-/* Только окно чата (:has есть в Chromium 105+, Electron 22 = 108) */
-body:has(#messages) .wintitlebar { height: 52px; }
-body:has(#messages) #presencePanel, body:has(#messages) #historyPanel { top: 52px; }
-body:has(#feed) #composer, body:has(#feed) #historyPanel { top: 40px; }
+/* Ползунок масштаба: закрашенная часть дорожки — до бегунка (--fill выставляет roster.js). */
+#profilePanel input[type="range"] { flex: none; width: 100%; margin: 6px 0; height: 4px; border-radius: 2px;
+  background: linear-gradient(to right, var(--accent) var(--fill, 50%), var(--panel-3) var(--fill, 50%)); }
+#profilePanel input[type="range"]::-webkit-slider-thumb { width: 16px; height: 16px; background: #fff; box-shadow: 0 1px 4px rgba(0, 0, 0, .4); }
+
+#profilePanel .pp-switch { width: 34px; height: 20px; }
+#profilePanel .pp-switch-track { background: var(--panel-3); border: none; border-radius: 10px; }
+#profilePanel .pp-switch-track::before { top: 2px; left: 2px; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, .33); }
+#profilePanel .pp-switch input:checked + .pp-switch-track { background: var(--accent); }
+#profilePanel .pp-switch input:checked + .pp-switch-track::before { transform: translateX(14px); }
+
+#profilePanel .pp-stepper { display: flex; align-items: center; border-radius: 8px; background: var(--panel-2); font-size: 12px; flex-shrink: 0; }
+#profilePanel .pp-stepper button { width: 24px; height: 26px; padding: 0; border: none; background: none; color: var(--muted); cursor: pointer; font-family: inherit; font-size: 12px; }
+#profilePanel .pp-stepper button:hover { color: var(--text); }
+#profilePanel .pp-stepper input, #profilePanel #ppIdleThresholdMinutes { width: 26px; padding: 0; border: none; border-radius: 0; background: none; color: var(--text); font: inherit; font-weight: 600; text-align: right; -moz-appearance: textfield; }
+#profilePanel .pp-stepper input:focus { outline: none; }
+#profilePanel .pp-stepper input::-webkit-inner-spin-button, #profilePanel .pp-stepper input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+#profilePanel .pp-stepper .u { font-weight: 600; padding: 4px 4px 4px 3px; }
+
+#profilePanel #ppDownloadPathLabel { border: none; border-radius: 8px; padding: 6px 9px; font-size: 11.5px; }
+#profilePanel .pp-link, #profilePanel #ppPickFolderBtn { width: auto; height: auto; padding: 0; border: none; background: none; color: var(--accent); font-family: inherit; font-weight: 600; font-size: 11.5px; cursor: pointer; flex-shrink: 0; white-space: nowrap; }
+#profilePanel .pp-link:hover { text-decoration: underline; }
+#profilePanel .pp-link:disabled { color: var(--muted); cursor: default; text-decoration: none; }
+
+/* «Система»: строки состояния с цветной точкой. */
+#profilePanel .pp-row.sys { gap: 8px; font-size: 12px; }
+#profilePanel .pp-row.sys .t { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#profilePanel .pp-row.sys .v { font-size: 11px; max-width: 45%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; user-select: text; }
+#profilePanel .pp-row.sys + .pp-row.sys { border-top: none; padding-top: 0; }
+#profilePanel .sdot { width: 8px; height: 8px; border-radius: 50%; background: var(--online); flex-shrink: 0; }
+#profilePanel .insecure .sdot { background: var(--danger); }
+#profilePanel .sdot.upd { background: var(--offline); }
+#profilePanel .ready .sdot.upd { background: var(--accent); }
+
+#profilePanel .pp-about { margin-top: 6px; }
+#profilePanel #ppLogoutBtn { border-radius: var(--radius-m); font-family: inherit; flex-shrink: 0; }
+
+/* ===================== Окно чата: шапка ===================== */
+/* body:has(#messages) — только окно чата, body:has(#feed) — только объявления (:has есть с Chromium 105). */
+body:has(#messages) .wintitlebar, body:has(#feed) .wintitlebar { height: 52px; padding: 0 8px 0 14px; gap: 10px; border-bottom-color: var(--border); }
+.wintitlebar .who { gap: 10px; }
+.wintitlebar .who .dot { width: 10px; height: 10px; margin-left: 2px; }
+.wintitlebar .who .dot.active { box-shadow: 0 0 0 3px rgba(90, 209, 154, .2), 0 0 10px var(--online); }
+.wintitlebar .who .dot.idle { box-shadow: 0 0 0 3px rgba(232, 180, 74, .2), 0 0 10px var(--afk); }
+.wintitlebar .who-text { min-width: 0; }
+.wintitlebar .who .n { font-size: 13px; }
+.wintitlebar .hsub { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wintitlebar .hsub:empty { display: none; }
+.wintitlebar .hsub.typing { color: var(--online); }
+#tbExtra { align-items: center; gap: 4px !important; }
+#historyBtn, #composeBtn { height: 30px; padding: 0 10px; border-radius: var(--radius-s); background: var(--panel-2); color: var(--text); font-size: 12px; font-weight: 500; font-family: inherit; }
+#historyBtn svg { width: 15px; height: 15px; }
+#historyBtn > span, #composeBtn > span { display: flex; }
+#historyBtn.active, #historyBtn.active:hover { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+body:has(#messages) .wctl { margin-left: 4px; }
+body:has(#messages) #presencePanel { top: 56px; border-radius: var(--radius-l); }
+/* Пока открыта история, шапка сливается с панелью: линии под ней нет. */
+body:has(#historyPanel.visible) .who .dot, body:has(#historyPanel.visible) .hsub, body:has(#historyPanel.visible) #wcMax { display: none; }
+body:has(#historyPanel.visible) .wintitlebar { border-bottom-color: transparent; }
+
+/* ===================== Окно чата: сообщения ===================== */
 #messages { padding: 16px; gap: 6px; }
-.msg { padding: 9px 12px 7px; border-radius: 16px 16px 16px 5px; background: var(--panel); border: 1px solid var(--border); }
+.day-sep { background: transparent; border: 1px solid var(--border); margin: 0 0 6px; }
+.msg { max-width: 76%; padding: 9px 12px 7px; border-radius: 16px 16px 16px 5px; background: var(--panel); border: 1px solid var(--border); }
 .msg.own { background: var(--own); border-color: var(--own-border); border-radius: 16px 16px 5px 16px; }
-.msg .txt { line-height: 1.45; }
-.msg .time { font-size: 10px; }
 .msg .who { color: var(--accent); }
+.msg .txt { line-height: 1.45; }
+/* Время — отдельной строкой под текстом, справа (в макете оно не обтекается текстом). */
+.msg .time { display: flex; float: none; justify-content: flex-end; align-items: center; gap: 3px; margin: 2px 0 0; font-size: 10px; }
+.read-tick { margin-left: 0; }
+.read-tick svg { height: 12px; }
 .read-tick.read { color: var(--accent); }
-.msg .file { padding: 8px 10px; border-radius: var(--radius-m); background: var(--hover); }
-.msg .file .fi { color: var(--accent); }
-.reply-quote { background: var(--panel-2); border-radius: var(--radius-s); }
-.reaction-pill { border-radius: 10px; padding: 2px 8px; }
+.reply-quote { gap: 8px; padding: 5px 9px; margin-bottom: 6px; border-radius: var(--radius-s); background: var(--panel-2); }
+.msg.own .reply-quote { background: var(--bg-a40); }
+.reply-quote .rq-name { font-weight: 600; }
+.reactions-bar { gap: 6px; margin-top: 6px; }
+.msg .reactions-bar .time { margin: 0 0 0 auto; padding-left: 8px; }
+.reaction-pill { gap: 4px; padding: 2px 8px; border-radius: 10px; }
 .reaction-pill.mine { color: var(--accent-ink); }
 .reaction-pill.mine .rcount { color: var(--accent-ink); }
-.day-sep { background: transparent; border: 1px solid var(--border); }
-body:has(#messages) #composer { padding: 10px 12px 12px; border-top: none; background: var(--bg); gap: 6px; }
-/* Композер — одна «таблетка»: фон и рамка на обёртке строки, кнопки внутри прозрачные */
-#textWrap { border-radius: 16px; background: var(--panel); border-color: var(--border); }
-#textWrap:focus-within { box-shadow: 0 0 0 3px var(--accent-a20); }
-#composer .round { width: 38px; height: 38px; border-radius: var(--radius-m); }
-#attach { background: var(--panel); }
-#send { background: linear-gradient(180deg, var(--accent-2), var(--accent)); color: var(--accent-ink); }
-#emojiBtn.active { color: var(--accent); }
-#emojiPanel, .quick-react-popup { border-radius: var(--radius-l); }
-.reply-banner { background: var(--bg); border-top-color: transparent; }
+mark.hl { background: var(--accent-a35); color: var(--text); padding: 0 2px; }
+.unread-divider::before, .unread-divider::after { opacity: .4; }
+.unread-divider span { letter-spacing: 1px; }
+.typing-bubble { padding: 11px 14px; }
+.typing-bubble .tdots { padding: 0; }
 
-/* ===================== История (чат и рассылки) ===================== */
-#historyPanel { border-top-width: 0; }
-#hpSearchRow { background: var(--bg); border-bottom-color: var(--border); padding: 0 12px 10px; }
-#hpSearch { border-radius: var(--radius-m); background: var(--panel); padding: 9px 12px; font-family: inherit; }
-#hpSearch:focus { box-shadow: 0 0 0 3px var(--accent-a20); }
-#hpDays { width: 160px; padding: 10px 8px; }
-#hpDays .dbtn { border-radius: var(--radius-s); }
+/* Карточка файла: плитка со стрелкой, имя, «размер · вид». Пузырь с файлом — с узкими полями. */
+.msg.has-files { padding: 6px; }
+.msg.has-files > .who, .msg.has-files > .txt { padding: 3px 6px 0; }
+.msg.has-files > .txt { padding-bottom: 6px; }
+.msg.has-files > .reply-quote { margin: 0 0 6px; }
+.msg.has-files > .reactions-bar { padding: 0 6px 2px; }
+.msg .file, .item .file { gap: 10px; padding: 8px 10px; border-radius: var(--radius-m); background: var(--bg-a40); }
+.msg .file .fi { width: 34px; height: 34px; border-radius: 10px; background: var(--accent); color: var(--accent-ink); align-items: center; justify-content: center; }
+.msg .file .fi .fi-file { display: none; }
+.msg .file .fi .fi-download { display: flex; }
+.msg .file .fi svg { width: 17px; height: 17px; }
+.msg .file.downloading .fi, .msg .file.done .fi { width: 34px; height: 34px; }
+.msg .file.downloading .fi .fi-progress .ring-bg { stroke: var(--accent-ink); opacity: .25; }
+.msg .file.downloading .fi .fi-progress .ring-bar { stroke: var(--accent-ink); }
+.msg .file.downloading .fi .fi-pct { color: var(--accent-ink); }
+.msg .file.done .fi .fi-check { background: none; color: var(--accent-ink); }
+.msg .file.file-deleted .fi { background: var(--panel-3); color: var(--muted); }
+.msg .files-time { padding: 4px 6px 0; margin: 0; font-size: 10px; }
+
+/* ===================== Окно чата: строка ввода ===================== */
+/* Одна «таблетка»: скрепка, поле, смайлик и кнопка отправки внутри общей рамки. Рамку рисует
+   ::before у #composer — разметка прежняя, кнопки просто лежат поверх неё. */
+body:has(#messages) #composer { padding: 15px 17px 17px; gap: 6px; border-top: none; background: var(--bg); }
+body:has(#messages) #composer::before { content: ''; position: absolute; top: 10px; left: 12px; right: 12px; bottom: 12px; border-radius: 16px; background: var(--panel); border: 1px solid var(--border); transition: border-color .15s ease, box-shadow .15s ease; }
+body:has(#messages) #composer:focus-within::before { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-a20); }
+body:has(#messages) #composer > * { position: relative; }
+#textWrap, #textWrap:focus-within { border: none; border-radius: 0; background: transparent; overflow: visible; align-self: center; }
+#text { padding: 8px 40px 8px 4px; }
+#composer .round { width: 36px; height: 36px; border-radius: var(--radius-m); }
+#composer .round svg { width: 18px; height: 18px; }
+#attach { background: transparent; border: none; }
+#send { background: linear-gradient(180deg, var(--accent-2), var(--accent)); color: var(--accent-ink); }
+#send svg { width: 16px; height: 16px; }
+#emojiBtn { right: 0; width: 36px; height: 36px; border-radius: var(--radius-m); }
+#emojiBtn svg { width: 18px; height: 18px; }
+body:has(#messages) #emojiPanel { position: absolute; bottom: 60px; right: 12px; }
+#emojiPanel, .quick-react-popup { border-radius: var(--radius-l); }
+.reply-banner { background: var(--bg); border-top-color: transparent; padding: 6px 14px 0; }
+
+/* ===================== История (чат и объявления) ===================== */
+body:has(#messages) #historyPanel, body:has(#feed) #historyPanel, body:has(#feed) #composer { top: 52px; }
+#historyPanel, #historyPanel.visible { border-top: none; }
+#hpSearchRow { display: block; padding: 0 12px 10px; background: var(--bg); border-bottom: 1px solid var(--border); }
+.hp-search { height: 38px; display: flex; align-items: center; gap: 8px; padding: 0 12px; border-radius: var(--radius-m); background: var(--panel); border: 1px solid var(--border); transition: border-color .15s ease, box-shadow .15s ease; }
+.hp-search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-a20); }
+#hpSearch, #hpSearch:focus { flex: 1; min-width: 0; padding: 0; border: none; border-radius: 0; background: transparent; font-size: 13px; font-family: inherit; }
+#hpCount { font-size: 11px; color: var(--muted); flex-shrink: 0; white-space: nowrap; }
+#hpDays { width: 160px; padding: 10px 8px; display: flex; flex-direction: column; gap: 2px; }
+#hpDays .mheader { padding: 8px 6px 6px; }
+#hpDays .mheader .chev { display: none; }
+#hpDays .mheader .mtitle { font-weight: 600; text-transform: none; }
+#hpDays .mheader.collapsed .mtitle { opacity: .7; }
+#hpDays .dbtn { display: flex; justify-content: space-between; align-items: center; gap: 6px; padding: 7px 9px; margin: 0; border-radius: var(--radius-s); }
+#hpDays .dbtn .dl { font-size: 12px; font-weight: 500; }
+#hpDays .dbtn .cnt { display: inline; font-size: 10px; opacity: .75; }
 #hpDays .dbtn.active { color: var(--accent-ink); }
-#hpMessages { gap: 10px; }
+#hpDays .mdays { display: flex; flex-direction: column; gap: 2px; }
+#hpDays .mdays.collapsed { display: none; }
+#hpMessages { padding: 14px; gap: 10px; }
+/* Сообщение в истории — карточка во всю ширину: «кто — когда» сверху, текст ниже. */
+.msg.hcard, .msg.hcard.own { max-width: none; align-self: stretch; padding: 10px 12px; border-radius: 13px; background: var(--panel); border-color: var(--border); }
+.msg.hcard .hhead { display: flex; justify-content: space-between; gap: 10px; font-size: 11px; margin-bottom: 4px; }
+.msg.hcard .hwho { font-weight: 600; color: var(--accent); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msg.hcard .hwho.me { color: var(--text); }
+.msg.hcard .hwhen { color: var(--muted); flex-shrink: 0; }
+.msg.hcard .txt { font-size: 12.5px; }
+.msg.hcard.has-files > .txt { padding: 0 0 6px; }
+.msg.hcard .file { background: var(--panel-2); }
+.msg.hcard .msg-toolbar, .msg.hcard.own .msg-toolbar { right: 8px; left: auto; }
 
 /* ===================== Объявления ===================== */
-body:has(#feed) #composer.open { border-top-color: transparent; }
+#ttl { gap: 10px !important; }
+#ttl .ttl-icon { width: 30px; height: 30px; border-radius: 10px; background: var(--accent); color: var(--accent-ink); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+#ttl .ttl-icon svg { width: 16px; height: 16px; }
+#ttl .ttl-text { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; }
+/* «История» здесь — кнопка-значок без подписи, «Написать» — акцентная. В шапке только «закрыть». */
+body:has(#feed) #historyBtn { width: 30px; padding: 0; justify-content: center; font-size: 0; gap: 0; color: var(--muted); }
+#composeBtn, #composeBtn:hover { gap: 5px; padding: 0 11px; background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+#composeBtn svg { width: 13px; height: 13px; }
+#composeBtn.active { box-shadow: 0 0 0 3px var(--accent-a35); }
+body:has(#feed) #wcMin, body:has(#feed) #wcMax { display: none; }
+body:has(#feed) #composer { background: var(--bg); border-top: none; border-bottom: none; }
+body:has(#feed) #composer p { font-size: 12px; margin-bottom: 10px; }
 #feed { padding: 14px; gap: 12px; }
-.item { border-radius: var(--radius-l); padding: 13px 14px; }
-.item .who { color: var(--text); font-weight: 600; font-size: 12.5px; }
-.item .dept-chip { color: var(--accent); border-color: var(--accent-a35); background: var(--accent-a12); }
-.item .txt { line-height: 1.5; }
-.item .file { border-radius: var(--radius-m); background: var(--panel-2); }
+.item { display: flex; flex-direction: column; gap: 8px; padding: 13px 14px; border-radius: var(--radius-l); }
+.item .ihead { display: flex; align-items: center; gap: 9px; }
+.item .ini { width: 28px; height: 28px; border-radius: 50%; background: var(--panel-3); display: flex; align-items: center; justify-content: center; font-size: 10.5px; font-weight: 600; flex-shrink: 0; }
+.item .iwho { flex: 1; min-width: 0; }
+.item .who { color: var(--text); font-weight: 600; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.item .to { font-size: 10.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.item .time { margin-left: 0; flex-shrink: 0; }
+.item .txt { margin-top: 0; line-height: 1.5; font-size: 12.5px; }
+.item .ifiles { display: flex; flex-direction: column; gap: 6px; }
+.item .file-row { margin-top: 0; }
+.item .file { gap: 9px; border-radius: 10px; background: var(--panel-2); }
 .item .file .fi { color: var(--accent); }
+.item .file .fmeta { flex-direction: row; align-items: center; gap: 9px; }
+.item .file .fn { flex: 1; font-size: 12px; font-weight: 500; }
+.item .file .fs { flex-shrink: 0; }
+.item .file.downloading .fi .fi-progress .ring-bar { stroke: var(--accent); }
 textarea { border-radius: var(--radius-m); font-family: inherit; }
+body:has(#feed) textarea { background: var(--panel); }
 textarea:focus { box-shadow: 0 0 0 3px var(--accent-a20); }
+#text:focus { box-shadow: none; }
 #sendBtn { border-radius: var(--radius-m); background: linear-gradient(180deg, var(--accent-2), var(--accent)); color: var(--accent-ink); font-weight: 600; font-family: inherit; }
-#attachBtn { border-radius: var(--radius-m); }
+#attachBtn { border-radius: var(--radius-m); background: var(--panel); }
