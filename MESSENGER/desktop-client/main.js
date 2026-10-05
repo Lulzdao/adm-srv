@@ -1,5 +1,5 @@
 // Главный процесс Electron — окна, трей, уведомления, настройки, отправка и скачивание файлов
-const { TRAY_SIZES, accentColor, starPng } = require('./tray-icon');
+const { TRAY_SIZES, APP_ICON_COLOR, APP_ICON_SIZES, accentColor, starPng } = require('./tray-icon');
 const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, Notification, powerMonitor, dialog, session, clipboard, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -568,7 +568,7 @@ function createWindow(key, file, payload, size) {
     minHeight: size?.minHeight || 360,
     frame: false,
     show: false, // показываем только после ready-to-show — иначе видно, как окно дёргается/дорисовывается
-    icon: APP_ICON_PATH,
+    icon: appWindowIcon(),
     backgroundColor: settings.theme === 'light' ? '#f4f1ec' : '#121110',
     alwaysOnTop: settings.alwaysOnTop,
     webPreferences: {
@@ -615,7 +615,7 @@ function createRoster() {
     minHeight: 420,
     frame: false,
     show: false, // показываем только после ready-to-show — иначе видно, как окно дёргается/дорисовывается
-    icon: APP_ICON_PATH,
+    icon: appWindowIcon(),
     backgroundColor: settings.theme === 'light' ? '#f4f1ec' : '#121110',
     alwaysOnTop: settings.alwaysOnTop,
     webPreferences: {
@@ -668,15 +668,28 @@ function trayGuid() {
 
 // Значок трея — искра в цвете выбранного акцента, без фона (рисует tray-icon.js). Несколько
 // размеров сразу: Windows сама берёт подходящий под масштаб экрана, и значок не мылится.
-function trayImage(accent) {
+function starImage(color, sizes) {
   try {
     const img = nativeImage.createEmpty();
-    for (const [scaleFactor, size] of TRAY_SIZES) img.addRepresentation({ scaleFactor, width: size, height: size, buffer: starPng(accentColor(accent), size) });
+    for (const [scaleFactor, size] of sizes) img.addRepresentation({ scaleFactor, width: size, height: size, buffer: starPng(color, size) });
     return img;
   } catch (err) {
     logLocal('tray_icon_failed', { message: String((err && err.message) || err) }, 'WARN');
     return nativeImage.createEmpty();
   }
+}
+const trayImage = (accent) => starImage(accentColor(accent), TRAY_SIZES);
+
+// Значок окон на панели задач — белая искра без фона. Значок самой программы (ярлык, список
+// установленных программ, Проводник) остаётся прежним, из build/icon.ico: белое на прозрачном там
+// пропало бы на светлом фоне.
+let appWindowIconCache = null;
+function appWindowIcon() {
+  if (!appWindowIconCache) {
+    const img = starImage(APP_ICON_COLOR, APP_ICON_SIZES);
+    appWindowIconCache = img.isEmpty() ? APP_ICON_PATH : img;
+  }
+  return appWindowIconCache;
 }
 
 function createTray() {

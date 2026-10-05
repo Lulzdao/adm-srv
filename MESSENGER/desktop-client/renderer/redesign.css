@@ -27,7 +27,7 @@ body:has(#auth) #wcMax { display: none; }
 #auth .auth-hero { position: relative; margin-top: auto; padding-top: 22px; display: flex; justify-content: center; }
 #auth .auth-glow { position: absolute; left: 50%; top: 50%; width: 300px; height: 300px; margin: -150px 0 0 -150px; border-radius: 50%; pointer-events: none;
   background: radial-gradient(circle, var(--accent-a35) 0%, var(--accent-a12) 30%, transparent 62%); }
-#authLogo { position: relative; fill: var(--accent); width: 44px; height: 92px; margin: 0 0 18px; }
+#authLogo { position: relative; fill: var(--accent); width: auto; height: 92px; margin: 0 0 18px; }
 #auth h1, #auth .auth-subtitle, #authForm, #auth .switch, #auth .err, #auth .conn-hint { position: relative; }
 #auth h1 { font-family: 'Unbounded', sans-serif; font-weight: 700; font-size: 28px; letter-spacing: .5px; margin: 0; }
 #auth .auth-subtitle { margin: 6px 0 28px; }
@@ -101,7 +101,8 @@ body:has(#auth) #wcMax { display: none; }
 #list .dot.idle { box-shadow: 0 0 0 3px rgba(232, 180, 74, .2); }
 [data-theme="light"] #list .dot.active { box-shadow: 0 0 0 3px rgba(31, 158, 99, .18); }
 [data-theme="light"] #list .dot.idle { box-shadow: 0 0 0 3px rgba(185, 121, 11, .18); }
-.row .unread-badge, #historyRow .unread-badge { min-width: 20px; height: 20px; border-radius: 10px; padding: 0 6px; margin-left: 0; font-size: 11px; color: var(--accent-ink); }
+/* «Таблетка» 32×20, как в макете (там 20px + поля по 6px считаются без box-sizing), а не кружок. */
+.row .unread-badge, #historyRow .unread-badge { min-width: 32px; height: 20px; border-radius: 10px; padding: 0 6px; margin-left: 0; font-size: 11px; color: var(--accent-ink); }
 /* Группы: плитка со значком, справа — число участников. */
 #list .row[data-gid] { padding: 7px 8px; gap: 11px; }
 .badge-icon { width: 30px; height: 30px; border-radius: 10px; background: var(--panel-2); color: var(--accent); }

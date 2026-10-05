@@ -94,4 +94,8 @@ const accentColor = (accent) => ACCENT_COLORS[accent] || ACCENT_COLORS.ember;
 // Размеры под масштабы экрана Windows: 100, 125, 150, 200 и 250 %.
 const TRAY_SIZES = [[1, 16], [1.25, 20], [1.5, 24], [2, 32], [2.5, 40]];
 
-module.exports = { ACCENT_COLORS, TRAY_SIZES, accentColor, starPng };
+// Значок окна на панели задач — белая искра без фона. Размеры: от малого значка (16) до крупного при 250 %.
+const APP_ICON_COLOR = '#ffffff';
+const APP_ICON_SIZES = [[1, 16], [1.25, 20], [1.5, 24], [2, 32], [2.5, 40], [3, 48], [4, 64]];
+
+module.exports = { ACCENT_COLORS, TRAY_SIZES, APP_ICON_COLOR, APP_ICON_SIZES, accentColor, starPng };
