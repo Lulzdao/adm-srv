@@ -108,7 +108,47 @@ function addEvent(db, taskId, userId, kind, text) {
   return Number(info.lastInsertRowid);
 }
 
+/**
+ * Задача, которую заводит сама платформа (сейчас — перевыпуск сертификата или
+ * МЧД). source_ref — ключ «что именно»: вторую задачу с тем же ключом не
+ * заводим, даже если первую уже выполнили. Ответственным сразу уходит
+ * «вам назначена задача» по каналам задач — дальше напоминания идут как у
+ * любой задачи. Возвращает id новой задачи или null, если такая уже есть.
+ */
+function createSystemTask(db, { sourceRef, title, description, dueDate, priority = "high", tags = [], assignees }) {
+  if (!assignees.length) return null;
+  if (db.prepare("SELECT 1 FROM tasks WHERE source_ref = ?").get(sourceRef)) return null;
+  const { emit } = require("./notifications");
+  db.exec("BEGIN");
+  let id;
+  try {
+    // Автор — первый ответственный: у задачи автор обязателен, а «Центр»
+    // пользователем не является. Что завела её платформа, видно в истории.
+    id = Number(db.prepare(`
+      INSERT INTO tasks (title, description, priority, due_date, tags, created_by, source_ref)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(title, description, priority, dueDate, tags.join(","), assignees[0], sourceRef).lastInsertRowid);
+    const add = db.prepare("INSERT INTO task_assignees (task_id, user_id) VALUES (?, ?)");
+    for (const uid of assignees) add.run(id, uid);
+    addEvent(db, id, null, "created", "Центр завёл задачу сам");
+    db.exec("COMMIT");
+  } catch (err) {
+    db.exec("ROLLBACK");
+    throw err;
+  }
+  const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id);
+  emit(db, {
+    kind: "task_assigned",
+    subject: task.title,
+    subjectRef: String(id),
+    dedupKey: `task_assigned:${id}:${assignees.join(",")}:system`,
+    payload: taskPayload(db, task, { кто_назначил: "Центр (сроки документов)" }),
+    userIds: assignees,
+  });
+  return id;
+}
+
 module.exports = {
   PRIORITY_LABEL, STATUS_LABEL, localDay, parseDay, daysUntil, isOverdue,
-  formatDue, relativeDue, listLink, assigneesOf, taskPayload, addEvent,
+  formatDue, relativeDue, listLink, assigneesOf, taskPayload, addEvent, createSystemTask,
 };

@@ -214,6 +214,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   -- выдуманные 00:00 значило бы показывать их просроченными с самого утра.
   due_date TEXT,        -- YYYY-MM-DD; у периода — его последний день
   due_from TEXT,        -- YYYY-MM-DD: первый день периода («в течение недели»); NULL — срок на один день
+  source_ref TEXT,      -- задачу завела платформа: «документ:срок» (перевыпуск сертификата/МЧД); NULL — завёл человек
   due_time TEXT,        -- HH:MM или NULL
   tags TEXT NOT NULL DEFAULT '',   -- метки через запятую: «Лицензии,Оборудование»
   ticket_id INTEGER REFERENCES tickets(id) ON DELETE SET NULL,
@@ -421,14 +422,25 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires);
 
--- Доска заметок администраторов (Задачи → Заметки): один общий лист с
--- оформлением. version растёт с каждым сохранением — по нему видно, что
--- лист успел поменять кто-то другой, и чужой текст молча не затирается.
-CREATE TABLE IF NOT EXISTS notes_board (
-  id INTEGER PRIMARY KEY CHECK (id = 1),
+-- Заметки администраторов (Задачи → Заметки): карточки на общей доске, как
+-- стикеры — текст с оформлением, цвет, место и размер на доске. version растёт
+-- с каждой правкой ТЕКСТА: по нему видно, что карточку успел поменять кто-то
+-- другой, и чужой текст молча не затирается. Место, размер и цвет — кто
+-- последний, тот и прав: потерять там нечего.
+CREATE TABLE IF NOT EXISTS notes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL DEFAULT '',
   html TEXT NOT NULL DEFAULT '',
-  version INTEGER NOT NULL DEFAULT 0,
+  color TEXT NOT NULL DEFAULT 'default',
+  x INTEGER NOT NULL DEFAULT 40,
+  y INTEGER NOT NULL DEFAULT 40,
+  w INTEGER NOT NULL DEFAULT 280,
+  h INTEGER NOT NULL DEFAULT 220,
+  z INTEGER NOT NULL DEFAULT 1,
+  version INTEGER NOT NULL DEFAULT 1,
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
   updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-  updated_at TEXT
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

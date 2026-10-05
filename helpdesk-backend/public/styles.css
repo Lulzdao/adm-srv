@@ -161,6 +161,19 @@
   --mail-ink: #1A1A1A;
   --mail-placeholder: #9AA3AE;
   --mail-link: #0A61AE;
+  /* Цвета карточек заметок (Задачи → Заметки) — как у стикеров; в тёмной
+     теме свой набор (themes.css). */
+  --note-default: #FFFFFF;
+  --note-red: #FAAFA8;
+  --note-orange: #F8C9A0;
+  --note-yellow: #FFF3A3;
+  --note-green: #D4F0C4;
+  --note-teal: #B6E3D8;
+  --note-blue: #CFE3F0;
+  --note-purple: #DCCBEA;
+  --note-pink: #F8D7E2;
+  --note-brown: #E6DCCB;
+  --note-gray: #E8EAED;
 }
 
 /* --- Полоса прокрутки ---
@@ -1222,12 +1235,61 @@ textarea.input { font-family: inherit; resize: vertical; }
 /* Задача-период в календаре — пунктирная полоса: видно, что это не дело на день. */
 .cal-ev.period { border-left-style: dashed; background: var(--md-surface-container-high); }
 
-/* ---- Заметки (Задачи → Заметки): лист во всё окно ---- */
-.tn-page { display: flex; flex-direction: column; }
-.tn-page #tnEditor { flex: 1; display: flex; flex-direction: column; min-height: 0; }
-.rte-fill { flex: 1; display: flex; flex-direction: column; min-height: 0; }
-.rte-fill .rte-bar { position: sticky; top: 0; z-index: 2; }
-.rte-fill .rte-area { flex: 1; min-height: calc(100vh - 230px); max-height: none; font-size: 15px; padding: 18px 22px; }
+/* ---- Заметки (Задачи → Заметки) ---- */
 .tn-status { font-size: 12.5px; color: var(--md-on-surface-variant); }
 .tn-status.err { color: var(--md-error); }
+
+/* ---- Заметки: доска с карточками ---- */
+.kb-page { display: flex; flex-direction: column; gap: 10px; padding-bottom: 0; }
+.kb-fmt { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 6px 8px; border: 1px solid var(--md-outline); border-radius: var(--md-shape-xs); background: var(--md-surface-container-low); }
+.kb-fmt button { display: inline-flex; align-items: center; justify-content: center; min-width: 32px; height: 30px; padding: 0 7px; border: 0; border-radius: var(--md-shape-xs); background: transparent; color: var(--md-on-surface); font: inherit; font-size: 14px; cursor: pointer; }
+.kb-fmt button:hover { background: var(--md-state-hover, var(--md-surface-container-highest)); }
+.kb-fmt sub, .kb-fmt sup { font-size: 9px; }
+.kb-fmt-hint { margin-left: auto; font-size: 11.5px; color: var(--md-on-surface-variant); }
+.kb-zoom { display: inline-flex; flex: none; border: 1px solid var(--md-outline); border-radius: var(--md-shape-full); overflow: hidden; }
+.kb-zoom .kb-zbtn { flex: none; }
+.kb-zbtn { border: 0; background: var(--md-surface-container-lowest); color: var(--md-on-surface); font: inherit; font-size: 14px; min-width: 32px; height: 32px; cursor: pointer; }
+.kb-zbtn.kb-zval { font-size: 12px; min-width: 52px; border-left: 1px solid var(--md-outline); border-right: 1px solid var(--md-outline); }
+.kb-zbtn:hover { background: var(--md-state-hover, var(--md-surface-container-highest)); }
+.kb-scroll { flex: 1; min-height: calc(100vh - 210px); max-height: calc(100vh - 210px); overflow: auto; border: 1px solid var(--md-outline); border-radius: var(--md-shape-m); background-color: var(--md-surface-container-low);
+  background-image: radial-gradient(var(--md-outline) 1px, transparent 1px); background-size: 24px 24px; }
+.kb-sizer { position: relative; }
+.kb-board { position: absolute; left: 0; top: 0; width: 6000px; height: 6000px; transform-origin: 0 0; }
+.kb-empty { position: absolute; left: 40px; top: 40px; font-size: 14px; color: var(--md-on-surface-variant); }
+.kb-note { position: absolute; display: flex; flex-direction: column; border-radius: 10px; border: 1px solid var(--md-outline); background: var(--note-default); color: var(--md-on-surface);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); transition: box-shadow 0.15s ease; }
+.kb-note:hover, .kb-note:focus-within { box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18); }
+.kb-note.dragging { box-shadow: 0 10px 28px rgba(0, 0, 0, 0.25); opacity: 0.94; }
+.kb-head { padding: 10px 12px 4px; cursor: grab; }
+.kb-note.dragging .kb-head { cursor: grabbing; }
+.kb-title { width: 100%; border: 0; background: transparent; color: inherit; font: inherit; font-weight: 700; font-size: 15px; outline: none; padding: 2px 0; cursor: inherit; }
+.kb-title:focus { cursor: text; }
+.kb-title::placeholder { color: var(--md-on-surface-variant); opacity: 0.6; font-weight: 600; }
+.kb-body { flex: 1; overflow: auto; padding: 2px 12px 8px; outline: none; font-size: 14px; line-height: 1.45; word-break: break-word; }
+.kb-body:empty::before { content: attr(data-placeholder); color: var(--md-on-surface-variant); opacity: 0.6; }
+.kb-body p, .kb-body div { margin: 0; }
+.kb-body ul, .kb-body ol { margin: 2px 0; padding-left: 22px; }
+.kb-foot { display: flex; align-items: center; gap: 6px; padding: 2px 8px 6px 12px; min-height: 30px; }
+.kb-meta { flex: 1; min-width: 0; font-size: 11px; color: var(--md-on-surface-variant); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kb-tools { display: inline-flex; gap: 2px; opacity: 0; transition: opacity 0.15s ease; }
+.kb-note:hover .kb-tools, .kb-note:focus-within .kb-tools { opacity: 1; }
+.kb-tool { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border: 0; border-radius: 50%; background: transparent; color: var(--md-on-surface-variant); cursor: pointer; }
+.kb-tool:hover { background: var(--md-state-hover, var(--md-surface-container-highest)); color: var(--md-on-surface); }
+.kb-resize { position: absolute; right: 0; bottom: 0; width: 16px; height: 16px; cursor: nwse-resize;
+  background: linear-gradient(135deg, transparent 50%, var(--md-outline) 50%, var(--md-outline) 60%, transparent 60%, transparent 72%, var(--md-outline) 72%, var(--md-outline) 82%, transparent 82%); border-bottom-right-radius: 10px; }
+.kb-palette { position: absolute; right: 8px; bottom: 38px; z-index: 5; display: grid; grid-template-columns: repeat(6, 26px); gap: 6px; padding: 8px; border-radius: var(--md-shape-m);
+  background: var(--md-surface-container-lowest); border: 1px solid var(--md-outline); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2); }
+.kb-dot { width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--md-outline); cursor: pointer; padding: 0; }
+.kb-dot.on { border-color: var(--md-primary); box-shadow: 0 0 0 2px var(--md-primary-container); }
+.kb-c-default { background: var(--note-default); }
+.kb-c-red { background: var(--note-red); }
+.kb-c-orange { background: var(--note-orange); }
+.kb-c-yellow { background: var(--note-yellow); }
+.kb-c-green { background: var(--note-green); }
+.kb-c-teal { background: var(--note-teal); }
+.kb-c-blue { background: var(--note-blue); }
+.kb-c-purple { background: var(--note-purple); }
+.kb-c-pink { background: var(--note-pink); }
+.kb-c-brown { background: var(--note-brown); }
+.kb-c-gray { background: var(--note-gray); }
 

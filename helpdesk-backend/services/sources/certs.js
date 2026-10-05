@@ -2,6 +2,7 @@ const crypto = require("crypto");
 const { fetchJson } = require("../moduleClient");
 const { emit, settingsFor } = require("../notifications");
 const { getSetting } = require("../settings");
+const tasks = require("../tasks");
 
 // ============================================================================
 //  Сроки действия: сертификаты и машиночитаемые доверенности
@@ -12,6 +13,25 @@ const { getSetting } = require("../settings");
 // ============================================================================
 
 const DEFAULT_THRESHOLDS = [30, 20, 10, 5];
+
+// За сколько дней до конца срока документа заводится задача «перевыпустить»
+// (Оповещения → Отправка → «Задача на перевыпуск»). С этого момента о
+// документе напоминают задачи, а письма «истекает срок» с порогами не больше
+// этого числа не отправляются. 0 — задачи не заводятся, всё как раньше.
+const DEFAULT_TASK_DAYS = 10;
+
+/** Настройка задачи на перевыпуск: за сколько дней и кому. */
+function taskSettings(db) {
+  const raw = getSetting(db, "expiry_task_days");
+  const days = raw === null || raw === "" ? DEFAULT_TASK_DAYS : Math.max(0, Math.min(60, Number(raw) || 0));
+  const chosen = String(getSetting(db, "expiry_task_assignees") || "").split(",").map(Number).filter(Boolean);
+  const admins = db.prepare("SELECT id FROM users WHERE is_admin = 1 ORDER BY id").all().map((u) => u.id);
+  // Выбранные — только из тех, кто сейчас администратор; не выбран никто — все администраторы.
+  const assignees = chosen.filter((id) => admins.includes(id));
+  return { days, chosen, assignees: assignees.length ? assignees : admins };
+}
+
+const taskRef = (doc) => `${doc.ref}:${doc.validTo}`;
 
 // Сколько дней «свежести» есть у просрочки, случившейся до первого запуска
 // службы. Смысл — отличить «истекло вчера, ещё можно спохватиться» от «истекло
@@ -114,6 +134,8 @@ async function run(db) {
   let expiring = 0;
   let expired = 0;
   let skipped = 0;
+  let tasksMade = 0;
+  const task = taskSettings(db);
 
   for (const doc of docs) {
     const left = daysLeft(doc.validTo);
@@ -128,6 +150,23 @@ async function run(db) {
     };
 
     if (left >= 0) {
+      // Осталось немного — заводим задачу; дальше о документе напоминают задачи.
+      if (task.days && left <= task.days) {
+        const isCert = doc.вид === "Сертификат";
+        const id = tasks.createSystemTask(db, {
+          sourceRef: taskRef(doc),
+          title: `Перевыпустить ${isCert ? "сертификат" : "МЧД"}: ${doc.фио}`.slice(0, 120),
+          description: `${doc.вид} на ${doc.фио} (№ ${doc.номер_документа}) действует до ${ru(doc.validTo)}. `
+            + "Задачу завёл Центр по сроку документа; выполните её, когда новый документ будет загружен в Сертвивер.",
+          dueDate: doc.validTo,
+          priority: left <= 3 ? "critical" : "high",
+          tags: [isCert ? "Сертификаты" : "МЧД"],
+          assignees: task.assignees,
+        });
+        if (id) tasksMade++;
+        // Дальше о документе напоминает задача — письма «истекает срок» не нужны.
+        continue;
+      }
       const crossed = thresholds.filter((t) => left <= t);
       if (!crossed.length) continue;
       const t = crossed[0]; // самый строгий из пройденных
@@ -143,6 +182,8 @@ async function run(db) {
     }
 
     if (skipExpired(doc, startedOn, left)) { skipped++; continue; }
+    // Есть задача на перевыпуск — о просрочке скажет она сама.
+    if (db.prepare("SELECT 1 FROM tasks WHERE source_ref = ?").get(taskRef(doc))) continue;
     const created = emit(db, {
       kind: "expired",
       subject: `${doc.вид} — ${doc.фио}, истёк ${ru(doc.validTo)}`,
@@ -153,7 +194,7 @@ async function run(db) {
     if (created) expired++;
   }
 
-  return { документов: docs.length, истекает: expiring, истекло: expired, пропущено: skipped };
+  return { документов: docs.length, истекает: expiring, истекло: expired, пропущено: skipped, задач: tasksMade };
 }
 
 /**
@@ -184,4 +225,4 @@ function skipExpired(doc, startedOn, left) {
   return false;
 }
 
-module.exports = { run, daysLeft, skipExpired, EXPIRED_GRACE_DAYS };
+module.exports = { run, daysLeft, skipExpired, taskSettings, EXPIRED_GRACE_DAYS, DEFAULT_TASK_DAYS };

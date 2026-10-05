@@ -196,3 +196,20 @@ test("двойники из-за регистра логина сливаютс�
   }
 });
 
+test("общий лист заметок становится первой карточкой, лист удаляется", () => {
+  const { freshDb, resetModuleCache } = require("./helpers/tempDb");
+  const { db, cleanup } = freshDb();
+  try {
+    db.exec("CREATE TABLE notes_board (id INTEGER PRIMARY KEY, html TEXT NOT NULL DEFAULT '', version INTEGER NOT NULL DEFAULT 0, updated_by INTEGER, updated_at TEXT)");
+    db.prepare("INSERT INTO notes_board (id, html, version) VALUES (1, '<p>Выдуманный план</p>', 3)").run();
+    db.close();
+    resetModuleCache();
+    const db2 = require("../db/init").initDb();
+    assert.ok(!db2.prepare("SELECT 1 FROM sqlite_master WHERE name = 'notes_board'").get());
+    assert.deepStrictEqual(db2.prepare("SELECT title, html FROM notes").all().map((r) => ({ ...r })), [{ title: "Заметки", html: "<p>Выдуманный план</p>" }]);
+    db2.close();
+  } finally {
+    cleanup();
+  }
+});
+

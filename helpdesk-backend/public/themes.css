@@ -198,3 +198,19 @@ html[data-theme="light"] .sidebar { border-right: 1px solid var(--md-outline); }
 /* Подсветка строки «истекает срок» под курсором (Сертвивер) — в тон теме. */
 html[data-theme="pink"] { --md-warn-edge: #E7CDB4; }
 html[data-theme="dark"] { --md-warn-edge: #6A4326; }
+
+/* Заметки в тёмной теме: приглушённые цвета карточек, текст остаётся светлым. */
+html[data-theme="dark"] {
+  --note-default: #2B2D31;
+  --note-red: #5C2B2E;
+  --note-orange: #5E3A22;
+  --note-yellow: #5A4A1A;
+  --note-green: #2C4A35;
+  --note-teal: #1F4A46;
+  --note-blue: #233F52;
+  --note-purple: #3F2F55;
+  --note-pink: #55303F;
+  --note-brown: #473C30;
+  --note-gray: #3A3C40;
+}
+

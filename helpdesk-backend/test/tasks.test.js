@@ -431,32 +431,44 @@ test("срок периодом: «с … по …», без времени; к�
   assert.strictEqual(T.isOverdue({ status: "todo", due_from: "2030-02-01", due_date: "2030-02-28" }, now), true);
 });
 
-test("доска заметок: общий лист администраторов, чистка HTML, чужое сохранение не затирается молча", async (t) => {
+test("заметки: карточки на общей доске — создать, двигать, красить, править с версией, удалить", async (t) => {
   const { app, A, B } = await стенд(t);
-  const пусто = (await A.get("/api/tasks/board")).json;
-  assert.deepStrictEqual({ html: пусто.html, version: пусто.version }, { html: "", version: 0 });
+  assert.deepStrictEqual((await A.get("/api/tasks/notes")).json.notes, []);
 
-  const r1 = await A.put("/api/tasks/board", { html: `<p><b>План</b> на неделю<script>alert(1)</script></p><img src=x onerror=alert(1)>`, version: 0 });
-  assert.strictEqual(r1.status, 200, r1.text);
-  assert.strictEqual(r1.json.html, "<p><b>План</b> на неделю</p>", "опасное вырезано");
-  assert.strictEqual(r1.json.version, 1);
-  assert.strictEqual(r1.json.updated_by, "Стендов Стенд Стендович");
+  const c = await A.post("/api/tasks/notes", { title: "План", html: `<p><b>Неделя</b><script>alert(1)</script></p><img src=x onerror=alert(1)>`, x: 100, y: 50, color: "yellow" });
+  assert.strictEqual(c.status, 201, c.text);
+  const n = c.json.note;
+  assert.deepStrictEqual({ title: n.title, html: n.html, color: n.color, x: n.x, y: n.y, version: n.version },
+    { title: "План", html: "<p><b>Неделя</b></p>", color: "yellow", x: 100, y: 50, version: 1 }, "опасное вырезано");
 
-  // Второй администратор видит то же; сохраняет поверх своей версии.
-  assert.strictEqual((await B.get("/api/tasks/board")).json.html, "<p><b>План</b> на неделю</p>");
-  assert.strictEqual((await B.put("/api/tasks/board", { html: "<p>B</p>", version: 1 })).status, 200);
-  // Первый сохраняет по устаревшей версии — 409 и свежий текст, ничего не затёрто.
-  const stale = await A.put("/api/tasks/board", { html: "<p>A</p>", version: 1 });
+  // Место, размер, цвет — без версии и не трогают её.
+  const moved = await B.patch(`/api/tasks/notes/${n.id}`, { x: 300, y: 400, w: 50, h: 9999, color: "blue" });
+  assert.deepStrictEqual({ x: moved.json.note.x, y: moved.json.note.y, w: moved.json.note.w, h: moved.json.note.h, color: moved.json.note.color, v: moved.json.note.version },
+    { x: 300, y: 400, w: 180, h: 2000, color: "blue", v: 1 }, "размеры — в допустимых пределах");
+  assert.strictEqual((await A.patch(`/api/tasks/notes/${n.id}`, { color: "фиолетовый" })).status, 400);
+
+  // Текст — с версией: второй сохраняет поверх устаревшей — 409 и свежая карточка.
+  assert.strictEqual((await B.patch(`/api/tasks/notes/${n.id}`, { html: "<p>B</p>", version: 1 })).json.note.version, 2);
+  const stale = await A.patch(`/api/tasks/notes/${n.id}`, { html: "<p>A</p>", version: 1 });
   assert.strictEqual(stale.status, 409);
-  assert.deepStrictEqual({ html: stale.json.html, version: stale.json.version, by: stale.json.updated_by }, { html: "<p>B</p>", version: 2, by: "Тестов Тест Тестович" });
+  assert.deepStrictEqual({ html: stale.json.note.html, by: stale.json.note.updated_by_name }, { html: "<p>B</p>", by: "Тестов Тест Тестович" });
 
-  // Лист побольше 100 КБ проходит (у доски свой предел тела запроса).
+  // «Наверх».
+  const second = (await A.post("/api/tasks/notes", {})).json.note;
+  assert.ok(second.z > n.z);
+  const front = await A.patch(`/api/tasks/notes/${n.id}`, { front: true });
+  assert.ok(front.json.note.z > second.z);
+
+  // Большая заметка проходит (у заметок свой предел тела запроса).
   const big = "<p>" + "заметка ".repeat(20000) + "</p>";
-  assert.strictEqual((await A.put("/api/tasks/board", { html: big, version: 2 })).status, 200);
+  assert.strictEqual((await A.patch(`/api/tasks/notes/${n.id}`, { html: big, version: 2 })).status, 200);
 
-  // Не администраторам доска закрыта, как и весь раздел.
+  assert.strictEqual((await A.delete(`/api/tasks/notes/${second.id}`)).status, 200);
+  assert.strictEqual((await A.delete(`/api/tasks/notes/${second.id}`)).status, 404);
+  assert.strictEqual((await A.get("/api/tasks/notes")).json.notes.length, 1);
+
   const { client } = require("./helpers/httpApp");
   const U = client(app.url); await U.login("u1");
-  assert.strictEqual((await U.get("/api/tasks/board")).status, 403);
-  assert.strictEqual((await U.put("/api/tasks/board", { html: "x", version: 3 })).status, 403);
+  assert.strictEqual((await U.get("/api/tasks/notes")).status, 403);
+  assert.strictEqual((await U.post("/api/tasks/notes", {})).status, 403);
 });

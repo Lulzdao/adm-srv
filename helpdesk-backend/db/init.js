@@ -111,6 +111,7 @@ function initDb() {
     dropAssistantExtras(db);
     mergeLoginCaseDuplicates(db);
     migrateTaskPeriod(db);
+    migrateNotesBoard(db);
     encryptStoredPasswords(db);
     db.exec("COMMIT");
     // Открытые пароли остались бы в свободных страницах файла и в журнале WAL —
@@ -330,6 +331,25 @@ function migrateMailBoxes(db) {
 function migrateTaskPeriod(db) {
   const cols = db.prepare("PRAGMA table_info(tasks)").all().map((c) => c.name);
   if (cols.length && !cols.includes("due_from")) db.exec("ALTER TABLE tasks ADD COLUMN due_from TEXT");
+  // Задачи, которые платформа заводит сама (перевыпуск сертификата/МЧД): по
+  // этому ключу вторая такая же не заводится.
+  if (cols.length && !cols.includes("source_ref")) db.exec("ALTER TABLE tasks ADD COLUMN source_ref TEXT");
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_source_ref ON tasks(source_ref) WHERE source_ref IS NOT NULL");
+}
+
+/**
+ * Заметки были одним общим листом (notes_board), стали карточками (notes).
+ * Написанное на листе переезжает первой карточкой, лист удаляется.
+ */
+function migrateNotesBoard(db) {
+  const has = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'notes_board'").get();
+  if (!has) return;
+  const old = db.prepare("SELECT html, updated_by, updated_at FROM notes_board WHERE id = 1").get();
+  if (old && old.html && old.html.replace(/<[^>]*>|&nbsp;|\s/g, "")) {
+    db.prepare(`INSERT INTO notes (title, html, x, y, w, h, created_by, updated_by, updated_at)
+      VALUES ('Заметки', ?, 40, 40, 520, 420, ?, ?, COALESCE(?, datetime('now')))`).run(old.html, old.updated_by, old.updated_by, old.updated_at);
+  }
+  db.exec("DROP TABLE notes_board");
 }
 
 function mergeLoginCaseDuplicates(db) {

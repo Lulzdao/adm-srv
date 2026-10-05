@@ -275,8 +275,8 @@ function templateCardHtml(k) {
 // ---- Вкладка «Отправка» ----------------------------------------------------
 
 async function renderNotifSmtp(page, kinds, iskra = { available: false, why: "" }) {
-  const [{ smtp }, { deliveries }, schedule] = await Promise.all([
-    api("/notifications/smtp"), api("/notifications/deliveries"), api("/notifications/schedule"),
+  const [{ smtp }, { deliveries }, schedule, expiryTask] = await Promise.all([
+    api("/notifications/smtp"), api("/notifications/deliveries"), api("/notifications/schedule"), api("/notifications/expiry-task"),
   ]);
 
   const withList = kinds.filter(k => k.recipients === "list");
@@ -344,6 +344,31 @@ async function renderNotifSmtp(page, kinds, iskra = { available: false, why: "" 
           Документы, просроченные более чем за месяц до этой даты, писем не порождают —
           иначе в первый же день уехала бы пачка «срочно выпустить новый» про архив.
         </div>` : ""}
+      </div>
+
+      <div class="card" style="margin-bottom:20px;" id="exCard">
+        <div class="section-label">Сроки сертификатов и МЧД</div>
+        <div style="font-size:12px;color:var(--ink-soft);margin-bottom:14px;max-width:820px;">
+          Срок документов проверяется раз в день вместе с остальными заданиями (час — выше).
+          Пока до конца срока далеко — уходят письма «Истекает срок» списку ниже. Когда остаётся
+          <b>${esc(String(expiryTask.days))} дн. или меньше</b> — платформа сама заводит задачу «Перевыпустить …»
+          со сроком в день окончания документа, и дальше напоминают уже задачи (по их каналам и порогам).
+          Выполните задачу, когда новый документ загружен в Сертвивер. Письма с порогами не больше срока задачи не отправляются.
+        </div>
+        <div style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px;">
+          <div style="width:230px;"><div class="field-label">Письма «Истекает срок» за, дней</div>
+            <input class="input" id="exThr" value="${esc(expiryTask.thresholds || "")}" placeholder="30, 20" style="width:100%;" /></div>
+          <div style="width:230px;"><div class="field-label">Задача на перевыпуск за, дней</div>
+            <input class="input" id="exDays" type="number" min="0" max="60" value="${esc(String(expiryTask.days))}" style="width:100%;" /></div>
+        </div>
+        <div class="field-label">Кому назначать задачу${expiryTask.chosen.length ? "" : " — сейчас никто не выбран, поэтому всем администраторам"}</div>
+        <div class="td-people" id="exPeople" style="margin-bottom:12px;">
+          ${expiryTask.people.map((p) => `<button type="button" class="td-person${expiryTask.chosen.includes(p.id) ? " on" : ""}" data-id="${p.id}">${esc(p.full_name)}</button>`).join("")}
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;">
+          <button class="btn btn-wire" id="exSave">Сохранить</button>
+          <span id="exMsg" style="font-size:12px;"></span>
+        </div>
       </div>
 
       <div class="card" style="margin-bottom:20px;">
@@ -428,6 +453,20 @@ async function renderNotifSmtp(page, kinds, iskra = { available: false, why: "" 
       } else {
         msg.style.color = "var(--red)"; msg.textContent = r.error;
       }
+    } catch (e) { msg.style.color = "var(--red)"; msg.textContent = e.message; }
+  };
+
+  page.querySelectorAll("#exPeople .td-person").forEach((b) => { b.onclick = () => b.classList.toggle("on"); });
+  page.querySelector("#exSave").onclick = async () => {
+    const msg = page.querySelector("#exMsg");
+    msg.style.color = "var(--ink-soft)"; msg.textContent = "Сохраняю…";
+    try {
+      await api("/notifications/kinds/expiry", { method: "PUT", body: { thresholds: page.querySelector("#exThr").value } });
+      await api("/notifications/expiry-task", { method: "PUT", body: {
+        days: Number(page.querySelector("#exDays").value),
+        assignees: [...page.querySelectorAll("#exPeople .td-person.on")].map((b) => Number(b.dataset.id)),
+      } });
+      msg.style.color = "var(--green)"; msg.textContent = "Сохранено";
     } catch (e) { msg.style.color = "var(--red)"; msg.textContent = e.message; }
   };
 

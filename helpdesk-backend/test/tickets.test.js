@@ -434,7 +434,7 @@ test("список по страницам: каждая заявка ровно
   }
 });
 
-test("закрыл — стал исполнителем; отметки по заявке в колокольчике пропадают у всех, автору приходит «закрыта»", async (t) => {
+test("закрыл без исполнителя — стал исполнителем; назначенный исполнитель при закрытии остаётся; отметки гаснут", async (t) => {
   const { db, app, ids, ticketId } = await stand(t);
   const it2 = await makeLocalUser(db, { login: "!ит2", name: "Исполнитель Второй", role: "it" });
   // Отметка «новая заявка» у второго исполнителя, которую он ещё не открывал.
@@ -442,11 +442,16 @@ test("закрыл — стал исполнителем; отметки по з
   db.prepare("INSERT INTO notification_deliveries (event_id, channel, user_id, status) VALUES (?, 'inapp', ?, 'sent')").run(ev, it2);
 
   const админ = client(app.url); await админ.login("!ит");
-  // Назначен другой — закрывает админ: исполнителем становится он.
+  // Назначен другой — закрывает админ: заявка закрыта под именем назначенного.
   assert.strictEqual((await админ.patch(`/api/tickets/${ticketId}`, { assigned_to: it2 })).status, 200);
   const r = await админ.patch(`/api/tickets/${ticketId}`, { status: "closed" });
   assert.strictEqual(r.status, 200, r.text);
-  assert.strictEqual(db.prepare("SELECT assigned_to FROM tickets WHERE id = ?").get(ticketId).assigned_to, ids.админ);
+  assert.strictEqual(db.prepare("SELECT assigned_to FROM tickets WHERE id = ?").get(ticketId).assigned_to, it2);
+  // Без исполнителя — исполнителем становится закрывший.
+  const заявитель = client(app.url); await заявитель.login("!сотрудник");
+  const вторая = (await заявитель.post("/api/tickets", { title: "Вторая", description: "x", priority: "medium" })).json.id;
+  assert.strictEqual((await админ.patch(`/api/tickets/${вторая}`, { status: "closed" })).status, 200);
+  assert.strictEqual(db.prepare("SELECT assigned_to FROM tickets WHERE id = ?").get(вторая).assigned_to, ids.админ);
 
   const колокольчик = (uid) => db.prepare(`
     SELECT e.kind FROM notification_deliveries d JOIN notification_events e ON e.id = d.event_id

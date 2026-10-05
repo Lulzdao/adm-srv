@@ -854,82 +854,342 @@ function renderCalAgenda(main) {
   markCalOpen(main);
 }
 
-// ====== Заметки: общая доска администраторов ======
+// ====== Заметки: доска с карточками, как стикеры ======
 //
-// Один большой лист с оформлением (тот же редактор, что в рассылках) —
-// записать мысль, план, список «не забыть». Сохраняется сам через пару
-// секунд после набора и при уходе со страницы. Лист общий: если его успел
-// сохранить коллега, свой текст не затирает чужой молча — спросим.
+// Общая для администраторов доска 6000×6000 точек. Карточка — заголовок и
+// текст с оформлением, цвет, место и размер. Тянуть за верх карточки —
+// переместить, за уголок — изменить размер; доску можно приближать и
+// отдалять (кнопки или Ctrl+колесо), «Разложить» выстраивает карточки
+// столбиками. Текст сохраняется сам через секунду после набора; если
+// карточку успел поменять коллега — спросим, чей вариант оставить.
+// Правки коллег подтягиваются раз в 15 секунд.
+
+const NOTE_COLORS = [
+  ["default", "Без цвета"], ["red", "Красный"], ["orange", "Оранжевый"], ["yellow", "Жёлтый"], ["green", "Зелёный"],
+  ["teal", "Бирюзовый"], ["blue", "Голубой"], ["purple", "Фиолетовый"], ["pink", "Розовый"], ["brown", "Коричневый"], ["gray", "Серый"],
+];
+const KB_SIZE = 6000;
+const KB_ZOOMS = [0.5, 0.67, 0.8, 1, 1.25, 1.5];
+const kbUi = { zoom: 1 };
+try { const z = Number(localStorage.getItem("kbZoom")); if (KB_ZOOMS.includes(z)) kbUi.zoom = z; } catch { /* хранилище недоступно */ }
+
 async function renderTaskNotes(main) {
   clearViewPoll();
   main.innerHTML = `
     <div class="topbar">
       <div class="topbar-title-row"><div class="topbar-title">Заметки</div></div>
-      <div class="td-top-actions"><span class="tn-status" id="tnStatus"></span></div>
+      <div class="td-top-actions">
+        <span class="tn-status" id="kbStatus"></span>
+        <div class="kb-zoom" title="Масштаб доски (Ctrl+колесо мыши)">
+          <button class="kb-zbtn" data-z="-1" title="Отдалить">−</button>
+          <button class="kb-zbtn kb-zval" data-z="0" title="Обычный размер"></button>
+          <button class="kb-zbtn" data-z="1" title="Приблизить">+</button>
+        </div>
+        <button class="btn btn-ghost" id="kbArrange" title="Выстроить карточки столбиками">Разложить</button>
+        <button class="btn btn-primary" id="kbNew">${icon("plus", 15)} Заметка</button>
+      </div>
     </div>
-    <div class="page tn-page"><div id="tnEditor"><div class="spinner">Загрузка…</div></div></div>`;
-  let board;
-  try { board = await api("/tasks/board"); } catch (e) {
-    main.querySelector("#tnEditor").innerHTML = `<div class="empty-state">Не удалось загрузить заметки: ${esc(e.message)}</div>`;
-    return;
+    <div class="page kb-page">
+      <div class="kb-fmt" id="kbFmt" title="Оформление текста в заметке, где стоит курсор">
+        <button data-cmd="bold" title="Жирный (Ctrl+B)"><b>Ж</b></button>
+        <button data-cmd="italic" title="Курсив (Ctrl+I)"><i style="font-family:Georgia,serif">К</i></button>
+        <button data-cmd="underline" title="Подчёркнутый (Ctrl+U)"><u>Ч</u></button>
+        <button data-cmd="strikeThrough" title="Зачёркнутый"><s>З</s></button>
+        <span class="rte-sep"></span>
+        <button data-cmd="insertUnorderedList" title="Маркированный список">•&#8202;≡</button>
+        <button data-cmd="insertOrderedList" title="Нумерованный список">1.≡</button>
+        <button data-act="big" title="Крупнее">A<sup>+</sup></button>
+        <button data-act="small" title="Мельче">a<sup>−</sup></button>
+        <button data-act="link" title="Ссылка">${icon("link", 14)}</button>
+        <button data-cmd="removeFormat" title="Убрать оформление">Aa<sub>×</sub></button>
+        <span class="kb-fmt-hint">Тяните карточку за верх, размер — за правый нижний угол. Двойной щелчок по доске — новая заметка.</span>
+      </div>
+      <div class="kb-scroll" id="kbScroll"><div class="kb-sizer" id="kbSizer"><div class="kb-board" id="kbBoard"></div></div></div>
+    </div>`;
+  const $ = (id) => main.querySelector("#" + id);
+  const board = $("kbBoard"), scroll = $("kbScroll"), status = $("kbStatus");
+  const notes = new Map();   // id -> { data, el, dirty, timer, saving }
+  const say = (t, cls = "") => { status.textContent = t; status.className = `tn-status ${cls}`; };
+
+  const applyZoom = () => {
+    board.style.transform = `scale(${kbUi.zoom})`;
+    $("kbSizer").style.width = `${KB_SIZE * kbUi.zoom}px`;
+    $("kbSizer").style.height = `${KB_SIZE * kbUi.zoom}px`;
+    main.querySelector(".kb-zval").textContent = `${Math.round(kbUi.zoom * 100)}%`;
+    try { localStorage.setItem("kbZoom", String(kbUi.zoom)); } catch { /* не страшно */ }
+  };
+  const zoomBy = (dir) => {
+    // Точка в центре видимой части остаётся на месте.
+    const cx = (scroll.scrollLeft + scroll.clientWidth / 2) / kbUi.zoom, cy = (scroll.scrollTop + scroll.clientHeight / 2) / kbUi.zoom;
+    const i = KB_ZOOMS.indexOf(kbUi.zoom);
+    kbUi.zoom = dir === 0 ? 1 : KB_ZOOMS[Math.max(0, Math.min(KB_ZOOMS.length - 1, i + dir))];
+    applyZoom();
+    scroll.scrollLeft = cx * kbUi.zoom - scroll.clientWidth / 2;
+    scroll.scrollTop = cy * kbUi.zoom - scroll.clientHeight / 2;
+  };
+  main.querySelectorAll(".kb-zbtn").forEach((b) => { b.onclick = () => zoomBy(Number(b.dataset.z)); });
+  scroll.addEventListener("wheel", (e) => { if (e.ctrlKey) { e.preventDefault(); zoomBy(e.deltaY < 0 ? 1 : -1); } }, { passive: false });
+  applyZoom();
+
+  const toBoard = (clientX, clientY) => {
+    const r = board.getBoundingClientRect();
+    return { x: (clientX - r.left) / kbUi.zoom, y: (clientY - r.top) / kbUi.zoom };
+  };
+  const patch = async (id, body) => {
+    try { return (await api(`/tasks/notes/${id}`, { method: "PATCH", body })).note; } catch (e) { toast(e.message, true); return null; }
+  };
+
+  // ---- карточка ----
+  function paintNote(n, el) {
+    el.className = `kb-note kb-c-${n.color}`;
+    Object.assign(el.style, { left: `${n.x}px`, top: `${n.y}px`, width: `${n.w}px`, height: `${n.h}px`, zIndex: n.z });
+    el.querySelector(".kb-meta").textContent = n.updated_by_name ? `${n.updated_by_name} · ${fmtDate(n.updated_at)}` : fmtDate(n.updated_at);
   }
-  if (state.view !== "tasknotes") return;
-  const status = main.querySelector("#tnStatus");
-  let version = board.version;
-  let dirty = false;
-  let saving = null;
-  let timer = null;
-  const stamp = (b) => (b.updated_at ? `сохранено ${fmtDate(b.updated_at)}${b.updated_by ? ` · ${b.updated_by}` : ""}` : "");
-  const show = (text, cls = "") => { status.textContent = text; status.className = `tn-status ${cls}`; };
+  function setContent(rec) {
+    rec.el.querySelector(".kb-title").value = rec.data.title;
+    rec.el.querySelector(".kb-body").innerHTML = rec.data.html;
+  }
+  function addNote(n) {
+    const el = document.createElement("div");
+    el.dataset.id = n.id;
+    el.innerHTML = `
+      <div class="kb-head"><input class="kb-title" maxlength="200" placeholder="Заголовок"></div>
+      <div class="kb-body" contenteditable="true" data-placeholder="Заметка…"></div>
+      <div class="kb-foot">
+        <span class="kb-meta"></span>
+        <span class="kb-tools">
+          <button class="kb-tool" data-a="color" title="Цвет">${icon("palette", 15)}</button>
+          <button class="kb-tool" data-a="copy" title="Копия">${icon("plus", 15)}</button>
+          <button class="kb-tool" data-a="del" title="Удалить">${icon("trash", 15)}</button>
+        </span>
+      </div>
+      <div class="kb-resize" title="Потяните, чтобы изменить размер"></div>`;
+    board.appendChild(el);
+    const rec = { data: n, el, dirty: false, timer: null, saving: null };
+    notes.set(n.id, rec);
+    paintNote(n, el);
+    setContent(rec);
+    wireNote(rec);
+    paintEmpty();
+    return rec;
+  }
 
-  const editor = richEditor(main.querySelector("#tnEditor"), {
-    placeholder: "Пишите здесь: мысли, планы, что не забыть. Сохраняется само.",
-    fill: true,
-    onInput: () => { dirty = true; show("не сохранено…"); clearTimeout(timer); timer = setTimeout(save, 1500); },
-  });
-  editor.set(board.html);
-  show(stamp(board));
+  function wireNote(rec) {
+    const { el } = rec;
+    const id = rec.data.id;
+    const title = el.querySelector(".kb-title"), body = el.querySelector(".kb-body");
+    // Щёлкнули по карточке — она наверх.
+    el.addEventListener("pointerdown", () => {
+      const top = Math.max(...[...notes.values()].map((r) => r.data.z));
+      if (rec.data.z < top) { rec.data.z = top + 1; el.style.zIndex = rec.data.z; patch(id, { front: true }); }
+    });
+    const changed = () => { rec.dirty = true; say("не сохранено…"); clearTimeout(rec.timer); rec.timer = setTimeout(() => saveContent(rec), 1000); };
+    title.addEventListener("input", changed);
+    body.addEventListener("input", changed);
+    title.addEventListener("blur", () => rec.dirty && saveContent(rec));
+    body.addEventListener("blur", () => rec.dirty && saveContent(rec));
 
-  async function save() {
-    clearTimeout(timer);
-    if (!dirty || saving) return saving;
-    const html = editor.html();
-    show("сохраняю…");
-    saving = (async () => {
+    // Перетаскивание за верх карточки (кроме самого поля заголовка, пока в нём курсор).
+    el.querySelector(".kb-head").addEventListener("pointerdown", (e) => {
+      if (e.target === title && document.activeElement === title) return;
+      e.preventDefault();
+      const start = toBoard(e.clientX, e.clientY), x0 = rec.data.x, y0 = rec.data.y;
+      let moved = false;
+      const move = (ev) => {
+        const p = toBoard(ev.clientX, ev.clientY);
+        const nx = Math.max(0, Math.min(KB_SIZE - rec.data.w, Math.round(x0 + p.x - start.x)));
+        const ny = Math.max(0, Math.min(KB_SIZE - 40, Math.round(y0 + p.y - start.y)));
+        if (Math.abs(nx - x0) + Math.abs(ny - y0) > 2) { moved = true; el.classList.add("dragging"); }
+        rec.data.x = nx; rec.data.y = ny; el.style.left = `${nx}px`; el.style.top = `${ny}px`;
+      };
+      const up = () => {
+        document.removeEventListener("pointermove", move); document.removeEventListener("pointerup", up);
+        el.classList.remove("dragging");
+        if (moved) patch(id, { x: rec.data.x, y: rec.data.y });
+        else title.focus();
+      };
+      document.addEventListener("pointermove", move); document.addEventListener("pointerup", up);
+    });
+
+    // Размер — за уголок.
+    el.querySelector(".kb-resize").addEventListener("pointerdown", (e) => {
+      e.preventDefault(); e.stopPropagation();
+      const start = toBoard(e.clientX, e.clientY), w0 = rec.data.w, h0 = rec.data.h;
+      const move = (ev) => {
+        const p = toBoard(ev.clientX, ev.clientY);
+        rec.data.w = Math.max(180, Math.min(2000, Math.round(w0 + p.x - start.x)));
+        rec.data.h = Math.max(120, Math.min(2000, Math.round(h0 + p.y - start.y)));
+        el.style.width = `${rec.data.w}px`; el.style.height = `${rec.data.h}px`;
+      };
+      const up = () => {
+        document.removeEventListener("pointermove", move); document.removeEventListener("pointerup", up);
+        patch(id, { w: rec.data.w, h: rec.data.h });
+      };
+      document.addEventListener("pointermove", move); document.addEventListener("pointerup", up);
+    });
+
+    el.querySelectorAll(".kb-tool").forEach((b) => {
+      b.onclick = async (e) => {
+        e.stopPropagation();
+        if (b.dataset.a === "del") {
+          if (!confirm(`Удалить заметку${rec.data.title ? ` «${rec.data.title}»` : ""}?`)) return;
+          try { await api(`/tasks/notes/${id}`, { method: "DELETE" }); el.remove(); notes.delete(id); paintEmpty(); } catch (err) { toast(err.message, true); }
+        } else if (b.dataset.a === "copy") {
+          await createNote({ title: rec.data.title, html: body.innerHTML, color: rec.data.color, x: rec.data.x + 28, y: rec.data.y + 28, w: rec.data.w, h: rec.data.h });
+        } else if (b.dataset.a === "color") {
+          showPalette(rec);
+        }
+      };
+    });
+  }
+
+  function showPalette(rec) {
+    main.querySelectorAll(".kb-palette").forEach((p) => p.remove());
+    const pop = document.createElement("div");
+    pop.className = "kb-palette";
+    pop.innerHTML = NOTE_COLORS.map(([c, l]) => `<button class="kb-dot kb-c-${c}${c === rec.data.color ? " on" : ""}" data-c="${c}" title="${l}"></button>`).join("");
+    rec.el.appendChild(pop);
+    pop.querySelectorAll(".kb-dot").forEach((d) => {
+      d.onclick = async (e) => {
+        e.stopPropagation();
+        rec.data.color = d.dataset.c; paintNote(rec.data, rec.el); pop.remove();
+        await patch(rec.data.id, { color: rec.data.color });
+      };
+    });
+    setTimeout(() => document.addEventListener("pointerdown", function off(ev) { if (!pop.contains(ev.target)) { pop.remove(); document.removeEventListener("pointerdown", off); } }), 0);
+  }
+
+  async function saveContent(rec) {
+    clearTimeout(rec.timer);
+    if (!rec.dirty || rec.saving) return;
+    const title = rec.el.querySelector(".kb-title").value, html = rec.el.querySelector(".kb-body").innerHTML;
+    say("сохраняю…");
+    rec.saving = (async () => {
       try {
-        const b = await api("/tasks/board", { method: "PUT", body: { html, version } });
-        version = b.version;
-        if (editor.html() === html) dirty = false;
-        show(stamp(b), "ok");
+        const { note } = await api(`/tasks/notes/${rec.data.id}`, { method: "PATCH", body: { title, html, version: rec.data.version } });
+        rec.data = { ...rec.data, ...note, x: rec.data.x, y: rec.data.y, w: rec.data.w, h: rec.data.h, z: rec.data.z, color: rec.data.color };
+        if (rec.el.querySelector(".kb-title").value === title && rec.el.querySelector(".kb-body").innerHTML === html) rec.dirty = false;
+        paintNote(rec.data, rec.el);
+        say("сохранено", "ok");
       } catch (e) {
-        if (e.status === 409 && e.data) return conflict(e.data);
-        show(`не сохранено: ${e.message}`, "err");
-      } finally { saving = null; }
-      if (dirty) timer = setTimeout(save, 1500);
+        if (e.status === 409 && e.data && e.data.note) {
+          const theirs = e.data.note;
+          const keepMine = confirm(`Заметку «${theirs.title || "без заголовка"}» только что изменил ${theirs.updated_by_name || "другой администратор"}.\n\n`
+            + "ОК — сохранить ваш вариант (его изменения пропадут).\nОтмена — показать его вариант (ваши последние правки пропадут).");
+          rec.data.version = theirs.version;
+          if (!keepMine) { rec.data = { ...rec.data, ...theirs }; setContent(rec); paintNote(rec.data, rec.el); rec.dirty = false; say("показан вариант коллеги", "ok"); }
+        } else say(`не сохранено: ${e.message}`, "err");
+      } finally { rec.saving = null; }
+      if (rec.dirty) rec.timer = setTimeout(() => saveContent(rec), 1000);
     })();
-    return saving;
+    return rec.saving;
   }
 
-  // Лист за это время сохранил коллега.
-  function conflict(theirs) {
-    const keepMine = confirm(`Заметки только что изменил ${theirs.updated_by || "другой администратор"}.\n\n`
-      + "ОК — сохранить ваш вариант (его изменения пропадут).\nОтмена — показать его вариант (ваши последние правки пропадут).");
-    version = theirs.version;
-    if (keepMine) { dirty = true; return save(); }
-    editor.set(theirs.html);
-    dirty = false;
-    show(stamp(theirs), "ok");
-  }
-
-  editor.area.addEventListener("blur", () => { if (dirty) save(); });
-  // Пока здесь ничего не правят — подтягиваем правки коллег.
-  viewPollHandle = setInterval(async () => {
-    if (dirty || saving || document.activeElement === editor.area) return;
+  async function createNote(body) {
     try {
-      const b = await api("/tasks/board");
-      if (b.version !== version) { version = b.version; editor.set(b.html); show(stamp(b), "ok"); }
-    } catch { /* сеть моргнула — попробуем в следующий раз */ }
-  }, 20000);
-  editor.area.focus();
-}
+      const { note } = await api("/tasks/notes", { method: "POST", body });
+      const rec = addNote(note);
+      rec.el.querySelector(".kb-body").focus();
+      return rec;
+    } catch (e) { toast(e.message, true); return null; }
+  }
+  // Новая — в середине того, что сейчас видно, с небольшим сдвигом, чтобы не ложились стопкой.
+  let cascade = 0;
+  $("kbNew").onclick = () => {
+    const x = (scroll.scrollLeft + scroll.clientWidth / 2) / kbUi.zoom - 140 + (cascade % 5) * 24;
+    const y = (scroll.scrollTop + scroll.clientHeight / 2) / kbUi.zoom - 110 + (cascade % 5) * 24;
+    cascade++;
+    createNote({ x: Math.max(0, Math.round(x)), y: Math.max(0, Math.round(y)) });
+  };
+  board.addEventListener("dblclick", (e) => {
+    if (e.target !== board) return;
+    const p = toBoard(e.clientX, e.clientY);
+    createNote({ x: Math.max(0, Math.round(p.x - 140)), y: Math.max(0, Math.round(p.y - 20)) });
+  });
 
+  // «Разложить»: столбиками шириной в видимую часть доски, без наложений.
+  $("kbArrange").onclick = async () => {
+    const list = [...notes.values()].sort((a, b) => a.data.y - b.data.y || a.data.x - b.data.x);
+    if (!list.length) return;
+    const gap = 20, colW = 300;
+    const cols = Math.max(1, Math.floor((scroll.clientWidth / kbUi.zoom - gap) / (colW + gap)));
+    const heights = Array(cols).fill(gap);
+    for (const rec of list) {
+      const c = heights.indexOf(Math.min(...heights));
+      Object.assign(rec.data, { x: gap + c * (colW + gap), y: heights[c], w: colW });
+      heights[c] += rec.data.h + gap;
+      paintNote(rec.data, rec.el);
+    }
+    scroll.scrollTo({ left: 0, top: 0, behavior: "smooth" });
+    await Promise.all(list.map((r) => patch(r.data.id, { x: r.data.x, y: r.data.y, w: r.data.w })));
+    say("разложено", "ok");
+  };
+
+  // Оформление — к той заметке, где курсор.
+  const fmt = $("kbFmt");
+  let savedRange = null;
+  document.addEventListener("selectionchange", function track() {
+    if (!fmt.isConnected) { document.removeEventListener("selectionchange", track); return; }
+    const sel = getSelection();
+    const node = sel.rangeCount ? sel.anchorNode : null;
+    const elNode = node && (node.nodeType === 1 ? node : node.parentElement);
+    if (elNode && elNode.closest(".kb-body")) savedRange = sel.getRangeAt(0).cloneRange();
+  });
+  const restore = () => {
+    if (!savedRange) return false;
+    const host = (savedRange.startContainer.nodeType === 1 ? savedRange.startContainer : savedRange.startContainer.parentElement).closest(".kb-body");
+    if (!host || !host.isConnected) return false;
+    host.focus(); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(savedRange);
+    return host;
+  };
+  const exec = (cmd, value = null) => {
+    const host = restore();
+    if (!host) { toast("Поставьте курсор в текст заметки", true); return; }
+    document.execCommand("styleWithCSS", false, true);
+    document.execCommand(cmd, false, value);
+    host.dispatchEvent(new Event("input"));
+  };
+  fmt.querySelectorAll("button").forEach((b) => b.addEventListener("mousedown", (e) => e.preventDefault()));
+  fmt.querySelectorAll("[data-cmd]").forEach((b) => { b.onclick = () => exec(b.dataset.cmd); });
+  fmt.querySelector("[data-act=big]").onclick = () => exec("fontSize", "5");
+  fmt.querySelector("[data-act=small]").onclick = () => exec("fontSize", "2");
+  fmt.querySelector("[data-act=link]").onclick = () => {
+    const url = prompt("Адрес ссылки (начинается с https:// или mailto:)", "https://");
+    if (url && /^(https?:\/\/|mailto:)\S+$/i.test(url.trim())) exec("createLink", url.trim());
+    else if (url) toast("Ссылка должна начинаться с https:// или mailto:", true);
+  };
+
+  function paintEmpty() {
+    let hint = board.querySelector(".kb-empty");
+    if (notes.size) { if (hint) hint.remove(); return; }
+    if (!hint) {
+      hint = document.createElement("div");
+      hint.className = "kb-empty";
+      hint.textContent = "Заметок пока нет. Нажмите «+ Заметка» или дважды щёлкните по доске.";
+      board.appendChild(hint);
+    }
+  }
+
+  // Первая загрузка и подтягивание правок коллег.
+  async function sync(first) {
+    let list;
+    try { ({ notes: list } = await api("/tasks/notes")); } catch (e) { if (first) say(`не загрузились: ${e.message}`, "err"); return; }
+    if (state.view !== "tasknotes" || !board.isConnected) return;
+    const seen = new Set();
+    for (const n of list) {
+      seen.add(n.id);
+      const rec = notes.get(n.id);
+      if (!rec) { addNote(n); continue; }
+      const editing = rec.dirty || rec.saving || rec.el.contains(document.activeElement) || rec.el.classList.contains("dragging");
+      if (editing) continue;
+      const contentChanged = n.version !== rec.data.version;
+      rec.data = n;
+      paintNote(n, rec.el);
+      if (contentChanged) setContent(rec);
+    }
+    for (const [id, rec] of notes) if (!seen.has(id) && !rec.dirty) { rec.el.remove(); notes.delete(id); }
+    paintEmpty();
+  }
+  await sync(true);
+  viewPollHandle = setInterval(() => sync(false), 15000);
+}
