@@ -95,15 +95,6 @@ test("документ действует последний день: оста�
   assert.deepEqual(kinds(db), ["expiry"], "в день окончания документ ещё действует");
 });
 
-test("истёк вчера — отдельная категория, один раз", async (t) => {
-  const { db, certs } = await withCertviewer(t, {
-    certificates: [certificate({ days: -1, uploadedDaysAgo: 100 })],
-  });
-  await certs.run(db);
-  await certs.run(db);
-  assert.deepEqual(kinds(db), ["expired"]);
-});
-
 test("исправленный срок начинает отсчёт порогов заново", async (t) => {
   // Доверенность перезаписывается по uuid. Если её перезалили с другой датой,
   // старый ключ заблокировал бы предупреждение по новой — поэтому дата входит
@@ -150,53 +141,6 @@ test("документ без срока пропускается, а не ро�
   assert.equal(keys(db).length, 1);
 });
 
-test("АРХИВ: документ, загруженный уже просроченным, писем не порождает", async (t) => {
-  // В реестре лежат старые бумаги как справка. Письмо «срочно выпустить новый»
-  // про них — верный способ приучить получателей не читать такие письма.
-  const { db, certs } = await withCertviewer(t, {
-    certificates: [certificate({ days: -400, uploadedDaysAgo: 10 })],
-  });
-  const r = await certs.run(db);
-  assert.equal(r["пропущено"], 1);
-  assert.equal(keys(db).length, 0);
-});
-
-test("ОТСЕЧКА: просрочка задолго до запуска службы — письма нет", async (t) => {
-  const fake = await startFakeCertviewer({
-    certificates: [certificate({ days: -200, uploadedDaysAgo: 400 })],
-  });
-  t.after(() => fake.close());
-  process.env.MODULE_CERTS_URL = `http://127.0.0.1:${fake.port}`;
-  const { db, cleanup } = freshDb();
-  t.after(cleanup);
-  const certs = require("../services/sources/certs");
-  const { setSetting } = require("../services/settings");
-  setSetting(db, "notif_started_on", inDays(0));   // службу включили сегодня
-
-  const r = await certs.run(db);
-  assert.equal(r["пропущено"], 1);
-  assert.equal(keys(db).length, 0);
-});
-
-test("ОТСЕЧКА: свежая просрочка проходит, несмотря на сегодняшний запуск", async (t) => {
-  // Запас в месяц намеренный: сертификат, истёкший вчера, — ровно тот случай,
-  // ради которого рассылка и заводится.
-  const fake = await startFakeCertviewer({
-    certificates: [certificate({ days: -2, uploadedDaysAgo: 100 })],
-  });
-  t.after(() => fake.close());
-  process.env.MODULE_CERTS_URL = `http://127.0.0.1:${fake.port}`;
-  const { db, cleanup } = freshDb();
-  t.after(cleanup);
-  const certs = require("../services/sources/certs");
-  const { setSetting } = require("../services/settings");
-  setSetting(db, "notif_started_on", inDays(0));
-
-  const r = await certs.run(db);
-  assert.equal(r["истекло"], 1);
-  assert.deepEqual(kinds(db), ["expired"]);
-});
-
 test("модуль лежит: понятная ошибка, а не тихий пропуск", async (t) => {
   const { db, certs, fake } = await withCertviewer(t, { certificates: [certificate({ days: 10 })] });
   fake.state.fail = true;
@@ -214,7 +158,7 @@ test("модуль отдал не JSON — подсказка про BEHIND_GAT
 test("пустые реестры — обход проходит и ничего не создаёт", async (t) => {
   const { db, certs } = await withCertviewer(t, { certificates: [], attorneys: [] });
   const r = await certs.run(db);
-  assert.deepEqual(r, { "документов": 0, "истекает": 0, "истекло": 0, "пропущено": 0, "задач": 0 });
+  assert.deepEqual(r, { "документов": 0, "истекает": 0, "задач": 0 });
 });
 
 // ---------------------------------------------------------------------------
@@ -270,13 +214,10 @@ test("ответственных можно выбрать; срок задач�
   assert.deepEqual(keys(ctx2.db).map((k) => k.split(":").pop()), ["5"]);
 });
 
-test("есть задача на перевыпуск — письма «истёк» не будет: о просрочке скажет задача", async (t) => {
-  const { db, certs, fake } = await withAdmins(t, { certificates: [certificate({ serial: "X1", days: 3, uploadedDaysAgo: 100 })] });
-  await certs.run(db);
-  fake.state.certificates = [certificate({ serial: "X1", days: -1, uploadedDaysAgo: 100 })];
-  // Тот же документ — с той же датой окончания, что и при заведении задачи.
-  db.prepare("UPDATE tasks SET source_ref = ?").run(db.prepare("SELECT source_ref FROM tasks").get().source_ref.replace(/:[^:]+$/, `:${inDays(-1)}`));
-  await certs.run(db);
-  assert.deepEqual(kinds(db).filter((k) => k === "expired"), []);
+test("истёкший документ — ни писем, ни задач: «Срок действия истёк» больше нет", async (t) => {
+  const { db, certs } = await withAdmins(t, { certificates: [certificate({ days: -1, uploadedDaysAgo: 100 })] });
+  const r = await certs.run(db);
+  assert.deepEqual(r, { "документов": 1, "истекает": 0, "задач": 0 });
+  assert.deepEqual(kinds(db), []);
+  assert.equal(tasksOf(db).length, 0);
 });
-

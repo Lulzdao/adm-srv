@@ -53,3 +53,9 @@ test("подстановки в HTML: значения экранируются,
   assert.equal(fillHtml("<b>{наименование}</b> {ОКПО} {нет}", { Наименование: `<i>"ООО"</i>`, ОКПО: "1" }),
     "<b>&lt;i&gt;&quot;ООО&quot;&lt;/i&gt;</b> 1 {нет}");
 });
+
+test("список с галочками (заметки): флажки сохраняются только как «1», в тексте — ☑/☐", () => {
+  const html = sanitizeHtml(`<ul data-checklist="1" onclick="x()"><li data-checked="1">купить</li><li data-checked="0">позвонить</li><li data-checked="javascript:x">ещё</li></ul><ul data-checklist="yes"><li>обычный</li></ul>`);
+  assert.equal(html, `<ul data-checklist="1"><li data-checked="1">купить</li><li>позвонить</li><li>ещё</li></ul><ul><li>обычный</li></ul>`);
+  assert.equal(htmlToText(html), "☑ купить\n☐ позвонить\n☐ ещё\n\n• обычный");
+});

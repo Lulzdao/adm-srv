@@ -275,8 +275,8 @@ function templateCardHtml(k) {
 // ---- Вкладка «Отправка» ----------------------------------------------------
 
 async function renderNotifSmtp(page, kinds, iskra = { available: false, why: "" }) {
-  const [{ smtp }, { deliveries }, schedule, expiryTask] = await Promise.all([
-    api("/notifications/smtp"), api("/notifications/deliveries"), api("/notifications/schedule"), api("/notifications/expiry-task"),
+  const [{ smtp }, schedule, expiryTask] = await Promise.all([
+    api("/notifications/smtp"), api("/notifications/schedule"), api("/notifications/expiry-task"),
   ]);
 
   const withList = kinds.filter(k => k.recipients === "list");
@@ -339,11 +339,7 @@ async function renderNotifSmtp(page, kinds, iskra = { available: false, why: "" 
         </div>
 
         ${schedule.jobs.map(jobRowHtml).join("")}
-        ${schedule.startedOn ? `<div style="font-size:11.5px;color:var(--ink-soft);margin-top:12px;">
-          Служба оповещений впервые запущена <span class="mono">${esc(schedule.startedOn)}</span>.
-          Документы, просроченные более чем за месяц до этой даты, писем не порождают —
-          иначе в первый же день уехала бы пачка «срочно выпустить новый» про архив.
-        </div>` : ""}
+
       </div>
 
       <div class="card" style="margin-bottom:20px;" id="exCard">
@@ -410,7 +406,20 @@ async function renderNotifSmtp(page, kinds, iskra = { available: false, why: "" 
           <button class="btn btn-ghost" id="smRetry">Повторить неотправленные</button>
           <span id="smRetryMsg" style="font-size:12px;"></span>
         </div>
-        ${deliveries.length ? deliveries.map(d => `
+        <div id="smHist"><div class="spinner">Загрузка…</div></div>
+        <div class="pager" id="smPager"></div>
+      </div>
+    </div>`;
+
+  // История отправок — по 10 строк на страницу.
+  let histPage = 1;
+  const loadHistory = async () => {
+    const box = page.querySelector("#smHist"), pager = page.querySelector("#smPager");
+    if (!box) return;
+    let r;
+    try { r = await api(`/notifications/deliveries?page=${histPage}&limit=10`); } catch (e) { box.innerHTML = `<div class="empty-state">${esc(e.message)}</div>`; return; }
+    histPage = r.page;
+    box.innerHTML = r.deliveries.length ? r.deliveries.map(d => `
           <div style="padding:9px 0;border-top:1px solid var(--line-soft);font-size:12.5px;">
             <div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;">
               <span style="flex-shrink:0;">${notifStatusText(d)}</span>
@@ -420,9 +429,18 @@ async function renderNotifSmtp(page, kinds, iskra = { available: false, why: "" 
               <span class="mono" style="font-size:11.5px;color:var(--ink-soft);flex-shrink:0;">${esc(d.sent_at || d.created_at || "")}</span>
             </div>
             ${d.error ? `<div style="color:var(--red);font-size:11.5px;margin-top:3px;">${esc(d.error)}</div>` : ""}
-          </div>`).join("") : `<div class="empty-state">Писем ещё не отправляли.</div>`}
-      </div>
-    </div>`;
+          </div>`).join("") : `<div class="empty-state">Писем ещё не отправляли.</div>`;
+    if (r.pages <= 1) { pager.innerHTML = ""; return; }
+    const btn = (label, target, extra = "") =>
+      `<button class="btn btn-ghost pager-btn${extra}" data-page="${target}"${target === histPage ? ' aria-current="page"' : ""}>${label}</button>`;
+    pager.innerHTML =
+      (histPage > 1 ? btn("‹", histPage - 1, " pager-step") : "") +
+      pageNumbers(histPage, r.pages).map(p => p === "…" ? `<span class="pager-gap">…</span>` : btn(String(p), p, p === histPage ? " pager-current" : "")).join("") +
+      (histPage < r.pages ? btn("›", histPage + 1, " pager-step") : "") +
+      `<span style="font-size:12px;color:var(--ink-soft);margin-left:8px;">всего ${r.total}</span>`;
+    pager.querySelectorAll(".pager-btn").forEach(b => { b.onclick = () => { histPage = Number(b.dataset.page); loadHistory(); }; });
+  };
+  loadHistory();
 
   wireTaskChannels(page.querySelector("#taskChannels"));
   const msg = page.querySelector("#smMsg");
@@ -462,11 +480,19 @@ async function renderNotifSmtp(page, kinds, iskra = { available: false, why: "" 
     msg.style.color = "var(--ink-soft)"; msg.textContent = "Сохраняю…";
     try {
       await api("/notifications/kinds/expiry", { method: "PUT", body: { thresholds: page.querySelector("#exThr").value } });
-      await api("/notifications/expiry-task", { method: "PUT", body: {
+      const r = await api("/notifications/expiry-task", { method: "PUT", body: {
         days: Number(page.querySelector("#exDays").value),
         assignees: [...page.querySelectorAll("#exPeople .td-person.on")].map((b) => Number(b.dataset.id)),
       } });
-      msg.style.color = "var(--green)"; msg.textContent = "Сохранено";
+      // Сохранение сразу проверяет сроки — показываем, что из этого вышло.
+      if (r.run && r.run.ok) {
+        const d = r.run.detail || {};
+        msg.style.color = "var(--green)";
+        msg.textContent = `Сохранено и проверено: документов ${d["документов"] ?? 0}, новых задач ${d["задач"] ?? 0}, писем ${d["истекает"] ?? 0}`;
+      } else {
+        msg.style.color = "var(--amber)";
+        msg.textContent = `Сохранено, но проверить сроки не удалось: ${(r.run && r.run.error) || "нет ответа"}`;
+      }
     } catch (e) { msg.style.color = "var(--red)"; msg.textContent = e.message; }
   };
 

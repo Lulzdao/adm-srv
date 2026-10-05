@@ -146,19 +146,6 @@ const rest = [
       "Пора готовить перевыпуск.",
   },
   {
-    kind: "expired",
-    label: "Срок действия истёк",
-    hint: "Одно письмо в день истечения. Список получателей тот же, что у «Истекает срок».",
-    source: "certs",
-    severity: "crit",
-    recipients: RECIPIENTS.BORROW,
-    borrowFrom: "expiry",
-    trigger: "daily",
-    vars: ["вид", "фио", "срок", "номер_документа"],
-    defaultSubject: "Срок истёк: {{вид}} — {{фио}}",
-    defaultBody: "{{вид}} на {{фио}} истёк {{срок}}.\n\nТребуется срочно выпустить новый.",
-  },
-  {
     kind: "minutes_monthly",
     label: "Исходящие минуты за месяц",
     hint: "Первого числа за прошлый месяц, одной цифрой по организации.",
@@ -293,4 +280,9 @@ function ticketNewKind(role) {
   return `ticket_new:${role}`;
 }
 
-module.exports = { KINDS, RECIPIENTS, TASK_CHANNELS, TICKET_LINK_LINE, byKind, ticketNewKind };
+// Категории, которых больше нет, — только подписи для старых событий в ленте.
+// «Срок действия истёк» убрана: о просрочке документа напоминает задача на
+// перевыпуск (services/sources/certs.js).
+const LEGACY_LABELS = { expired: "Срок действия истёк" };
+
+module.exports = { LEGACY_LABELS, KINDS, RECIPIENTS, TASK_CHANNELS, TICKET_LINK_LINE, byKind, ticketNewKind };

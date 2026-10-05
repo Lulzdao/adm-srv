@@ -103,17 +103,6 @@ test("resolveEmails: у автора без почты в домене — пу�
   assert.deepEqual(notifications.resolveEmails(db, "ticket_status", { authorUserId: author }), []);
 });
 
-test("resolveEmails: заимствующая категория берёт список у соседней", (t) => {
-  const { db, cleanup } = freshDb();
-  t.after(cleanup);
-  const { notifications } = load();
-
-  db.prepare("INSERT INTO notification_settings (kind, enabled, emails) VALUES ('expiry', 1, ?)")
-    .run("bezopasnik@example.test");
-  // expired объявлен как borrow -> expiry, своего списка у него нет
-  assert.deepEqual(notifications.resolveEmails(db, "expired", {}), ["bezopasnik@example.test"]);
-});
-
 test("resolveEmails: комментарий заявителя уходит списку ЕГО отдела", (t) => {
   const { db, cleanup } = freshDb();
   t.after(cleanup);

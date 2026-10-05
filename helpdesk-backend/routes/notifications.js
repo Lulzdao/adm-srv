@@ -1,6 +1,6 @@
 const express = require("express");
 const { requireAuth, requireAdmin } = require("../middleware/auth");
-const { KINDS, byKind, RECIPIENTS, TASK_CHANNELS } = require("../config/notifications");
+const { KINDS, LEGACY_LABELS, byKind, RECIPIENTS, TASK_CHANNELS } = require("../config/notifications");
 const { settingsFor, resolveEmails, render, renderBody, retryPending, backfillDeliveries } = require("../services/notifications");
 const { setSetting } = require("../services/settings");
 const mailer = require("../services/mailer");
@@ -108,7 +108,7 @@ module.exports = function notificationRoutes(db) {
       ORDER BY p.created_at DESC, p.id DESC
     `).all(...params);
 
-    const labels = Object.fromEntries(KINDS.map((k) => [k.kind, k.label]));
+    const labels = { ...LEGACY_LABELS, ...Object.fromEntries(KINDS.map((k) => [k.kind, k.label])) };
     res.json({ events: rows.map((r) => ({ ...r, label: labels[r.kind] || r.kind })) });
   });
 
@@ -296,7 +296,7 @@ module.exports = function notificationRoutes(db) {
       people: db.prepare("SELECT id, full_name FROM users WHERE is_admin = 1 ORDER BY full_name").all(),
     });
   });
-  router.put("/expiry-task", it, (req, res) => {
+  router.put("/expiry-task", it, async (req, res) => {
     const b = req.body || {};
     if (b.days !== undefined) {
       const days = Number(b.days);
@@ -311,7 +311,11 @@ module.exports = function notificationRoutes(db) {
       setSetting(db, "expiry_task_assignees", ids.join(","));
     }
     const t = certs.taskSettings(db);
-    res.json({ days: t.days, chosen: t.chosen });
+    // Сразу проверить сроки с новыми настройками: ежедневный обход сегодня
+    // уже мог пройти, и задача по документу появилась бы только завтра.
+    const job = scheduler.JOBS.find((j) => j.id === "expiry");
+    const run = await scheduler.runJob(db, job, { force: true });
+    res.json({ days: t.days, chosen: t.chosen, run });
   });
 
   router.put("/schedule", it, (req, res) => {
@@ -397,17 +401,22 @@ module.exports = function notificationRoutes(db) {
   });
 
   // Журнал отправок: последние попытки со статусом и текстом ошибки.
+  // История отправок — по страницам: ?page=N, по 10 строк (?limit= — до 100).
   router.get("/deliveries", it, (req, res) => {
+    const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit, 10) || 10));
+    const total = db.prepare("SELECT COUNT(*) AS n FROM notification_deliveries WHERE channel IN ('email', 'iskra')").get().n;
+    const pages = Math.max(1, Math.ceil(total / limit));
+    const page = Math.min(pages, Math.max(1, Number.parseInt(req.query.page, 10) || 1));
     const rows = db.prepare(`
       SELECT d.id, d.channel, d.address, d.status, d.error, d.created_at, d.sent_at,
              e.kind, e.subject
       FROM notification_deliveries d
       JOIN notification_events e ON e.id = d.event_id
       WHERE d.channel IN ('email', 'iskra')
-      ORDER BY d.id DESC LIMIT 50
-    `).all();
-    const labels = Object.fromEntries(KINDS.map((k) => [k.kind, k.label]));
-    res.json({ deliveries: rows.map((r) => ({ ...r, label: labels[r.kind] || r.kind })) });
+      ORDER BY d.id DESC LIMIT ? OFFSET ?
+    `).all(limit, (page - 1) * limit);
+    const labels = { ...LEGACY_LABELS, ...Object.fromEntries(KINDS.map((k) => [k.kind, k.label])) };
+    res.json({ deliveries: rows.map((r) => ({ ...r, label: labels[r.kind] || r.kind })), total, page, pages, limit });
   });
 
   router.post("/deliveries/retry", it, async (req, res) => {
@@ -461,7 +470,7 @@ function sampleFor(def) {
     "автор_комментария": "Тестова Проба Тестовна",
   };
   const certs = {
-    "вид": def.kind === "expired" ? "Доверенность" : "Сертификат",
+    "вид": "Сертификат",
     "фио": "Образцов Образец Образцович",
     "срок": "22.09.2026",
     "осталось_дней": "20",
