@@ -1,4 +1,5 @@
 // Главный процесс Electron — окна, трей, уведомления, настройки, отправка и скачивание файлов
+const { TRAY_SIZES, accentColor, starPng } = require('./tray-icon');
 const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, Notification, powerMonitor, dialog, session, clipboard, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -665,9 +666,24 @@ function trayGuid() {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-${variant}${h.slice(17, 20)}-${h.slice(20, 32)}`;
 }
 
+// Значок трея — искра в цвете выбранного акцента, без фона (рисует tray-icon.js). Несколько
+// размеров сразу: Windows сама берёт подходящий под масштаб экрана, и значок не мылится.
+function trayImage(accent) {
+  try {
+    const img = nativeImage.createEmpty();
+    for (const [scaleFactor, size] of TRAY_SIZES) img.addRepresentation({ scaleFactor, width: size, height: size, buffer: starPng(accentColor(accent), size) });
+    return img;
+  } catch (err) {
+    logLocal('tray_icon_failed', { message: String((err && err.message) || err) }, 'WARN');
+    return nativeImage.createEmpty();
+  }
+}
+
 function createTray() {
   const iconPath = path.join(__dirname, 'tray-icon.ico');
-  let icon = nativeImage.createFromPath(iconPath);
+  let icon = trayImage(settings.accent);
+  // Нарисовать не вышло — прежний значок из файла: с любым значком лучше, чем без него.
+  if (icon.isEmpty()) icon = nativeImage.createFromPath(iconPath);
   if (icon.isEmpty()) {
     // .ico декодируется через нативный декодер ОС — на Windows это штатно, но проверено вживую:
     // на Linux (например, при разработке не с Windows) nativeImage отдаёт пустое изображение молча,
@@ -1127,6 +1143,10 @@ ipcMain.on('set-settings', (event, partial) => {
   saveSettings();
   if ('alwaysOnTop' in partial) {
     for (const win of allWindows()) win.setAlwaysOnTop(settings.alwaysOnTop);
+  }
+  if ('accent' in partial && tray && !tray.isDestroyed()) {
+    const icon = trayImage(settings.accent);
+    if (!icon.isEmpty()) tray.setImage(icon);
   }
   if ('uiScale' in partial) {
     for (const win of allWindows()) win.webContents.setZoomFactor(settings.uiScale || 1);

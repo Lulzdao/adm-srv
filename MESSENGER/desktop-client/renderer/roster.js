@@ -381,6 +381,10 @@ document.querySelector('#ppThemeLight .i').innerHTML = uiIcon('sun');
 document.getElementById('ppClearFolderBtn').innerHTML = uiIcon('x');
 document.getElementById('ppBack').innerHTML = uiIcon('chevron'); // повёрнут стилем — «назад»
 document.getElementById('ppBack').onclick = () => closeProfilePanel();
+// Настройки открываются щелчком по своей карточке — и закрываются щелчком по ней же (в настройках она
+// стоит на том же месте): тянуться к стрелке в шапке не нужно.
+document.querySelector('#profilePanel .pp-me').onclick = () => closeProfilePanel();
+document.querySelector('#profilePanel .pp-me').title = 'Вернуться к списку';
 document.getElementById('searchIcon').innerHTML = uiIcon('search');
 document.getElementById('ppEmblem').innerHTML = uiIcon('emblem');
 
