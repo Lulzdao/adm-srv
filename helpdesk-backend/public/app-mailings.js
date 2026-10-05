@@ -31,9 +31,9 @@ const RTE_FONTS = ["Arial", "Times New Roman", "Calibri", "Georgia", "Verdana", 
 const RTE_SIZES = [["12px", "Мелкий"], ["14px", "Обычный"], ["18px", "Крупный"], ["24px", "Очень крупный"], ["32px", "Заголовок"]];
 const RTE_ALIGN_ICON = (w) => `<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">${w.map(([x1, x2], i) => `<line x1="${x1}" y1="${3 + i * 3.4}" x2="${x2}" y2="${3 + i * 3.4}"/>`).join("")}</svg>`;
 
-function richEditor(box, { placeholder = "", onInput = () => {}, fill = false } = {}) {
+function richEditor(box, { placeholder = "", onInput = () => {} } = {}) {
   box.innerHTML = `
-    <div class="rte${fill ? " rte-fill" : ""}">
+    <div class="rte">
       <div class="rte-bar" role="toolbar" aria-label="Оформление текста">
         <select class="rte-font" title="Шрифт" style="width:150px"><option value="">Шрифт</option>${RTE_FONTS.map((f) => `<option value="${esc(f)}" style="font-family:'${esc(f)}'">${esc(f)}</option>`).join("")}</select>
         <select class="rte-size" title="Размер" style="width:140px"><option value="">Размер</option>${RTE_SIZES.map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}</select>
@@ -118,10 +118,7 @@ function richEditor(box, { placeholder = "", onInput = () => {}, fill = false } 
   area.classList.add("empty");
 
   return {
-    area,
     html: () => area.innerHTML,
-    /** Заменить содержимое (свежая версия с сервера). */
-    set(html) { area.innerHTML = html || ""; saved = null; area.classList.toggle("empty", !area.textContent.trim()); paintState(); },
     text: () => area.innerText.replace(/\u00a0/g, " ").trim(),
     /** Вставить текст там, где стоял курсор (подстановку из таблицы). */
     insert(text) {

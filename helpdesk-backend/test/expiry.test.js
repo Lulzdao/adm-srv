@@ -17,7 +17,7 @@ const { startFakeCertviewer, certificate, attorney, inDays } = require("./helper
 // ============================================================================
 
 /** Поднять поддельный Сертвивер и загрузить адаптер, нацеленный на него. */
-async function withCertviewer(t, data) {
+async function withCertviewer(t, data, opts = {}) {
   const fake = await startFakeCertviewer(data);
   t.after(() => fake.close());
   process.env.MODULE_CERTS_URL = `http://127.0.0.1:${fake.port}`;
@@ -30,6 +30,12 @@ async function withCertviewer(t, data) {
   // Отсечку первого запуска уводим в прошлое: она проверяется отдельным тестом,
   // а здесь мешала бы смотреть на сами пороги.
   setSetting(db, "notif_started_on", "2000-01-01");
+  // Арифметика порогов проверяется в «чистом» виде: задачи на перевыпуск
+  // выключены, пороги — полный набор. Задачам — свои тесты в конце файла.
+  if (!opts.taskMode) {
+    setSetting(db, "expiry_task_days", "0");
+    db.prepare("INSERT INTO notification_settings (kind, thresholds) VALUES ('expiry', '30,20,10,5')").run();
+  }
   return { db, certs, fake };
 }
 
@@ -128,7 +134,7 @@ test("сертификаты и доверенности считаются по
 
 test("пороги берутся из настроек, а не зашиты", async (t) => {
   const { db, certs } = await withCertviewer(t, { certificates: [certificate({ days: 60 })] });
-  db.prepare("INSERT INTO notification_settings (kind, thresholds) VALUES ('expiry', '90,60')").run();
+  db.prepare("INSERT OR REPLACE INTO notification_settings (kind, thresholds) VALUES ('expiry', '90,60')").run();
   await certs.run(db);
   assert.deepEqual(keys(db).map((k) => k.split(":").pop()), ["60"], "самый строгий из пройденных 90 и 60");
 });
@@ -208,5 +214,69 @@ test("модуль отдал не JSON — подсказка про BEHIND_GAT
 test("пустые реестры — обход проходит и ничего не создаёт", async (t) => {
   const { db, certs } = await withCertviewer(t, { certificates: [], attorneys: [] });
   const r = await certs.run(db);
-  assert.deepEqual(r, { "документов": 0, "истекает": 0, "истекло": 0, "пропущено": 0 });
+  assert.deepEqual(r, { "документов": 0, "истекает": 0, "истекло": 0, "пропущено": 0, "задач": 0 });
 });
+
+// ---------------------------------------------------------------------------
+//  Задача на перевыпуск: осталось 10 дней или меньше
+// ---------------------------------------------------------------------------
+
+async function withAdmins(t, data) {
+  const ctx = await withCertviewer(t, data, { taskMode: true });
+  const { makeUser } = require("./helpers/tempDb");
+  const a = makeUser(ctx.db, { login: "adm-a", name: "Пробников Пробник" });
+  const b = makeUser(ctx.db, { login: "adm-b", name: "Тестов Тест" });
+  ctx.db.prepare("UPDATE users SET is_admin = 1 WHERE id IN (?, ?)").run(a, b);
+  return { ...ctx, a, b };
+}
+const tasksOf = (db) => db.prepare("SELECT id, title, due_date, priority, tags, source_ref FROM tasks ORDER BY id").all();
+
+test("осталось 10 дней или меньше — заводится задача «Перевыпустить …» со сроком в день окончания, одна", async (t) => {
+  const { db, certs, a, b } = await withAdmins(t, {
+    certificates: [certificate({ id: 1, serial: "S10", days: 10, name: "Выдуманный В.В." }), certificate({ id: 2, serial: "S11", days: 11 })],
+    attorneys: [attorney({ days: 2, name: "Придуманная П.П." })],
+  });
+  const r = await certs.run(db);
+  await certs.run(db);
+  assert.equal(r["задач"], 2);
+  const list = tasksOf(db);
+  assert.equal(list.length, 2, "повторный обход второй задачи не заводит");
+  assert.match(list[0].title, /^Перевыпустить сертификат: Выдуманный В\.В\.$/);
+  assert.equal(list[0].due_date, inDays(10));
+  assert.equal(list[0].priority, "high");
+  assert.match(list[1].title, /^Перевыпустить МЧД: Придуманная П\.П\.$/);
+  assert.equal(list[1].priority, "critical", "осталось 3 дня или меньше — критичная");
+  // Ответственные — все администраторы (никто не выбран); им ушло «назначена задача».
+  const who = db.prepare("SELECT user_id FROM task_assignees WHERE task_id = ? ORDER BY user_id").all(list[0].id).map((x) => x.user_id);
+  assert.deepEqual(who, [a, b].sort((x, y) => x - y));
+  assert.ok(db.prepare("SELECT 1 FROM notification_events WHERE kind = 'task_assigned' AND subject_ref = ?").get(String(list[0].id)));
+  // Документам с задачей писем «истекает срок» нет; у 11-дневного — письмо по порогу 20.
+  const thr = keys(db).filter((k) => k.startsWith("expiry:")).map((k) => k.split(":").pop());
+  assert.deepEqual(thr, ["20"]);
+});
+
+test("ответственных можно выбрать; срок задачи 0 — задачи не заводятся, письма как раньше", async (t) => {
+  const { db, certs, b } = await withAdmins(t, { certificates: [certificate({ days: 5 })] });
+  const { setSetting } = require("../services/settings");
+  setSetting(db, "expiry_task_assignees", String(b));
+  await certs.run(db);
+  assert.deepEqual(db.prepare("SELECT user_id FROM task_assignees").all().map((x) => x.user_id), [b]);
+
+  const ctx2 = await withAdmins(t, { certificates: [certificate({ days: 5 })] });
+  require("../services/settings").setSetting(ctx2.db, "expiry_task_days", "0");
+  ctx2.db.prepare("INSERT INTO notification_settings (kind, thresholds) VALUES ('expiry', '30,20,10,5')").run();
+  await ctx2.certs.run(ctx2.db);
+  assert.equal(tasksOf(ctx2.db).length, 0);
+  assert.deepEqual(keys(ctx2.db).map((k) => k.split(":").pop()), ["5"]);
+});
+
+test("есть задача на перевыпуск — письма «истёк» не будет: о просрочке скажет задача", async (t) => {
+  const { db, certs, fake } = await withAdmins(t, { certificates: [certificate({ serial: "X1", days: 3, uploadedDaysAgo: 100 })] });
+  await certs.run(db);
+  fake.state.certificates = [certificate({ serial: "X1", days: -1, uploadedDaysAgo: 100 })];
+  // Тот же документ — с той же датой окончания, что и при заведении задачи.
+  db.prepare("UPDATE tasks SET source_ref = ?").run(db.prepare("SELECT source_ref FROM tasks").get().source_ref.replace(/:[^:]+$/, `:${inDays(-1)}`));
+  await certs.run(db);
+  assert.deepEqual(kinds(db).filter((k) => k === "expired"), []);
+});
+

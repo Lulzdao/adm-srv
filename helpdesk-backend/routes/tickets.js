@@ -454,11 +454,12 @@ module.exports = function ticketRoutes(db) {
       if (status === "progress" && !ticket.assigned_to) {
         db.prepare("UPDATE tickets SET assigned_to = ? WHERE id = ?").run(user.id, ticket.id);
       }
-      // Закрыл — значит, и выполнил: исполнителем становится закрывший. Кроме
-      // автора, который закрыл свою заявку сам (он не исполнитель), и случая,
-      // когда исполнителя в том же запросе назначили явно.
+      // Закрыл, а исполнителя нет — исполнителем становится закрывший. Если
+      // исполнитель уже назначен, заявка закрывается под его именем, кто бы ни
+      // нажал кнопку. Автор, закрывший свою заявку сам, исполнителем не
+      // становится; явное назначение в том же запросе тоже главнее.
       const isExecutorHere = Boolean(user.is_admin) || userDepts(user).includes(ticket.category);
-      if (DONE_STATUSES.has(status) && isExecutorHere && assigned_to === undefined) {
+      if (DONE_STATUSES.has(status) && isExecutorHere && assigned_to === undefined && !ticket.assigned_to) {
         db.prepare("UPDATE tickets SET assigned_to = ? WHERE id = ?").run(user.id, ticket.id);
       }
       // Закрытая заявка больше ничего ни от кого не ждёт: её отметки в

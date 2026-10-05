@@ -48,8 +48,14 @@ function text(value, { max, field, required = false }) {
   return v || null;
 }
 
-// Доска заметок: потолок на размер листа (HTML с оформлением).
-const BOARD_MAX = 1000000;
+// Заметки (Задачи → Заметки): потолки и допустимые цвета карточек.
+const NOTES_MAX = 500;
+const NOTE_HTML_MAX = 400000;
+const NOTE_TITLE_MAX = 200;
+const NOTE_MIN_W = 180;
+const NOTE_MIN_H = 120;
+const BOARD_SIZE = 6000;   // доска — квадрат 6000×6000 точек
+const NOTE_COLORS = new Set(["default", "red", "orange", "yellow", "green", "teal", "blue", "purple", "pink", "brown", "gray"]);
 
 function dueDate(value) {
   if (value === undefined || value === null || value === "") return null;
@@ -250,36 +256,95 @@ module.exports = function tasksRouter(db) {
   //  Карточка
   // --------------------------------------------------------------------------
   // --------------------------------------------------------------------------
-  //  Доска заметок: общий лист с оформлением (Задачи → Заметки)
+  //  Заметки: карточки на общей доске (Задачи → Заметки), как стикеры.
   //
-  //  Сохраняется сам по ходу набора. Сохранение несёт номер версии, с которой
-  //  начинали: если лист за это время сохранил кто-то другой — 409 и его
-  //  текст, а не тихая перезапись. HTML чистится тем же белым списком, что и
-  //  текст рассылок.
+  //  Текст (заголовок и содержимое) правится с номером версии: если карточку
+  //  за это время сохранил кто-то другой — 409 и его текст, а не тихая
+  //  перезапись. Место, размер, цвет и «наверх» — без версии: кто последний,
+  //  тот и прав. HTML чистится тем же белым списком, что и текст рассылок.
   // --------------------------------------------------------------------------
-  const boardRow = () => {
+  const noteRow = (id) => {
     const r = db.prepare(`
-      SELECT b.html, b.version, b.updated_at, u.full_name AS updated_by
-      FROM notes_board b LEFT JOIN users u ON u.id = b.updated_by WHERE b.id = 1
-    `).get();
-    return r ? { ...r } : { html: "", version: 0, updated_at: null, updated_by: null };
+      SELECT n.*, u.full_name AS updated_by_name FROM notes n LEFT JOIN users u ON u.id = n.updated_by WHERE n.id = ?
+    `).get(id);
+    return r ? { ...r } : null;
   };
-  router.get("/board", (req, res) => res.json(boardRow()));
-  router.put("/board", handle((req, res) => {
+  const clampInt = (v, min, max, field) => {
+    const n = Number(v);
+    if (!Number.isFinite(n)) fail(`${field} — число`);
+    return Math.max(min, Math.min(max, Math.round(n)));
+  };
+  const noteColor = (v) => { if (!NOTE_COLORS.has(v)) fail("Неизвестный цвет заметки"); return v; };
+
+  router.get("/notes", (req, res) => {
+    const notes = db.prepare(`
+      SELECT n.*, u.full_name AS updated_by_name FROM notes n LEFT JOIN users u ON u.id = n.updated_by ORDER BY n.z, n.id
+    `).all().map((r) => ({ ...r }));
+    res.json({ notes });
+  });
+
+  router.post("/notes", handle((req, res) => {
     const b = req.body || {};
-    if (typeof b.html !== "string") fail("Нет текста заметок");
-    if (b.html.length > BOARD_MAX) fail("Заметок слишком много для одного листа — перенесите часть в задачи");
-    const cur = boardRow();
-    if (!Number.isInteger(b.version) || b.version !== cur.version) {
-      return res.status(409).json({ error: "Заметки успели изменить", ...cur });
+    if (db.prepare("SELECT COUNT(*) AS n FROM notes").get().n >= NOTES_MAX) fail(`Заметок уже ${NOTES_MAX} — удалите ненужные`);
+    const html = typeof b.html === "string" ? sanitizeHtml(b.html) : "";
+    if (html.length > NOTE_HTML_MAX) fail("Заметка слишком большая");
+    const z = (db.prepare("SELECT MAX(z) AS z FROM notes").get().z || 0) + 1;
+    const id = Number(db.prepare(`
+      INSERT INTO notes (title, html, color, x, y, w, h, z, created_by, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      text(b.title, { max: NOTE_TITLE_MAX, field: "Заголовок" }) || "",
+      html,
+      b.color === undefined ? "default" : noteColor(b.color),
+      b.x === undefined ? 40 : clampInt(b.x, 0, BOARD_SIZE, "x"),
+      b.y === undefined ? 40 : clampInt(b.y, 0, BOARD_SIZE, "y"),
+      b.w === undefined ? 280 : clampInt(b.w, NOTE_MIN_W, 2000, "Ширина"),
+      b.h === undefined ? 220 : clampInt(b.h, NOTE_MIN_H, 2000, "Высота"),
+      z, req.session.user.id, req.session.user.id,
+    ).lastInsertRowid);
+    res.status(201).json({ note: noteRow(id) });
+  }));
+
+  router.patch("/notes/:id", handle((req, res) => {
+    const id = parseId(req.params.id);
+    const cur = id && noteRow(id);
+    if (!cur) return res.status(404).json({ error: "Заметка не найдена" });
+    const b = req.body || {};
+    const next = {};
+    const content = b.title !== undefined || b.html !== undefined;
+    if (content) {
+      if (!Number.isInteger(b.version) || b.version !== cur.version) {
+        return res.status(409).json({ error: "Заметку успели изменить", note: cur });
+      }
+      if (b.title !== undefined) next.title = text(b.title, { max: NOTE_TITLE_MAX, field: "Заголовок" }) || "";
+      if (b.html !== undefined) {
+        if (typeof b.html !== "string") fail("Нет текста заметки");
+        next.html = sanitizeHtml(b.html);
+        if (next.html.length > NOTE_HTML_MAX) fail("Заметка слишком большая — разбейте на несколько");
+      }
     }
-    const html = sanitizeHtml(b.html);
-    db.prepare(`
-      INSERT INTO notes_board (id, html, version, updated_by, updated_at) VALUES (1, ?, 1, ?, datetime('now'))
-      ON CONFLICT(id) DO UPDATE SET html = excluded.html, version = notes_board.version + 1,
-        updated_by = excluded.updated_by, updated_at = excluded.updated_at
-    `).run(html, req.session.user.id);
-    res.json(boardRow());
+    if (b.color !== undefined) next.color = noteColor(b.color);
+    if (b.x !== undefined) next.x = clampInt(b.x, 0, BOARD_SIZE, "x");
+    if (b.y !== undefined) next.y = clampInt(b.y, 0, BOARD_SIZE, "y");
+    if (b.w !== undefined) next.w = clampInt(b.w, NOTE_MIN_W, 2000, "Ширина");
+    if (b.h !== undefined) next.h = clampInt(b.h, NOTE_MIN_H, 2000, "Высота");
+    // «Наверх» — поверх остальных карточек; уже верхняя остаётся как есть.
+    if (b.front) {
+      const top = db.prepare("SELECT MAX(z) AS z FROM notes").get().z || 0;
+      if (cur.z < top || db.prepare("SELECT COUNT(*) AS n FROM notes WHERE z = ?").get(top).n > 1) next.z = top + 1;
+    }
+    const keys = Object.keys(next);
+    if (keys.length) {
+      db.prepare(`UPDATE notes SET ${keys.map((k) => `${k} = ?`).join(", ")}${content ? ", version = version + 1, updated_by = ?, updated_at = datetime('now')" : ""} WHERE id = ?`)
+        .run(...keys.map((k) => next[k]), ...(content ? [req.session.user.id] : []), id);
+    }
+    res.json({ note: noteRow(id) });
+  }));
+
+  router.delete("/notes/:id", handle((req, res) => {
+    const id = parseId(req.params.id);
+    const info = id ? db.prepare("DELETE FROM notes WHERE id = ?").run(id) : { changes: 0 };
+    if (!info.changes) return res.status(404).json({ error: "Заметка не найдена" });
+    res.json({ ok: true });
   }));
 
   router.get("/:id", handle((req, res) => {

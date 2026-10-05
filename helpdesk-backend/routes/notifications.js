@@ -6,6 +6,7 @@ const { setSetting } = require("../services/settings");
 const mailer = require("../services/mailer");
 const scheduler = require("../services/scheduler");
 const iskra = require("../services/iskra");
+const certs = require("../services/sources/certs");
 
 module.exports = function notificationRoutes(db) {
   const router = express.Router();
@@ -282,6 +283,36 @@ module.exports = function notificationRoutes(db) {
   // ---- Планировщик ---------------------------------------------------------
 
   router.get("/schedule", it, (req, res) => res.json(scheduler.status(db)));
+
+  // --------------------------------------------------------------------------
+  //  Сроки сертификатов и МЧД: за сколько дней письма и когда — задача на
+  //  перевыпуск, кому её назначать (services/sources/certs.js).
+  // --------------------------------------------------------------------------
+  router.get("/expiry-task", it, (req, res) => {
+    const t = certs.taskSettings(db);
+    res.json({
+      days: t.days, chosen: t.chosen,
+      thresholds: settingsFor(db, "expiry").thresholds,
+      people: db.prepare("SELECT id, full_name FROM users WHERE is_admin = 1 ORDER BY full_name").all(),
+    });
+  });
+  router.put("/expiry-task", it, (req, res) => {
+    const b = req.body || {};
+    if (b.days !== undefined) {
+      const days = Number(b.days);
+      if (!Number.isInteger(days) || days < 0 || days > 60) return res.status(400).json({ error: "Задача — за 0–60 дней (0 — не заводить)" });
+      setSetting(db, "expiry_task_days", String(days));
+    }
+    if (b.assignees !== undefined) {
+      if (!Array.isArray(b.assignees)) return res.status(400).json({ error: "Ответственные — список" });
+      const admins = new Set(db.prepare("SELECT id FROM users WHERE is_admin = 1").all().map((u) => u.id));
+      const ids = [...new Set(b.assignees.map(Number))];
+      if (ids.some((id) => !admins.has(id))) return res.status(400).json({ error: "Ответственным можно назначить только администратора" });
+      setSetting(db, "expiry_task_assignees", ids.join(","));
+    }
+    const t = certs.taskSettings(db);
+    res.json({ days: t.days, chosen: t.chosen });
+  });
 
   router.put("/schedule", it, (req, res) => {
     const hour = Number((req.body || {}).hour);

@@ -256,3 +256,20 @@ test("папка резервных копий (раздел «Админист�
   assert.notStrictEqual((await админ.get("/api/admin/backup")).json.source, "panel");
   assert.ok(db);
 });
+
+test("сроки сертификатов и МЧД: настройка задачи на перевыпуск — только администратору, ответственные — только администраторы", async (t) => {
+  const { db, админ, исполнитель } = await stand(t);
+  const g = await админ.get("/api/notifications/expiry-task");
+  assert.strictEqual(g.status, 200);
+  assert.strictEqual(g.json.days, 10, "по умолчанию — за 10 дней");
+  assert.deepStrictEqual(g.json.chosen, []);
+  assert.strictEqual(g.json.thresholds, "30,20", "письма — за 30 и 20 дней");
+  assert.strictEqual((await исполнитель.get("/api/notifications/expiry-task")).status, 403);
+
+  const adminId = db.prepare("SELECT id FROM users WHERE ad_login = '!админ'").get().id;
+  const execId = db.prepare("SELECT id FROM users WHERE ad_login = '!итшник'").get().id;
+  const ok = await админ.put("/api/notifications/expiry-task", { days: 7, assignees: [adminId] });
+  assert.deepStrictEqual(ok.json, { days: 7, chosen: [adminId] });
+  assert.strictEqual((await админ.put("/api/notifications/expiry-task", { assignees: [execId] })).status, 400, "не администратор");
+  assert.strictEqual((await админ.put("/api/notifications/expiry-task", { days: 99 })).status, 400);
+});
