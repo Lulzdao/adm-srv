@@ -12,7 +12,7 @@ const path = require('node:path');
 const { APP_ICON, APP_ICON_SIZES, TRAY_SIZES, ACCENT_COLORS, starPng, icoFromPngs } = require('../tray-icon');
 
 const root = path.resolve(__dirname, '..');
-const app = (size) => starPng(APP_ICON.top, size, { colorBottom: APP_ICON.bottom, pad: APP_ICON.pad });
+const app = (size) => starPng(APP_ICON.top, size, { colorBottom: APP_ICON.bottom, pad: APP_ICON.pad, shape: APP_ICON.shape });
 
 fs.writeFileSync(path.join(root, 'build', 'icon.ico'), icoFromPngs(APP_ICON_SIZES.map((size) => ({ size, png: app(size) }))));
 fs.writeFileSync(path.join(root, 'build', 'icon.png'), app(256));

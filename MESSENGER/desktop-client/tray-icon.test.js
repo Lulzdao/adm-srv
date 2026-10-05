@@ -49,13 +49,17 @@ test('значок трея: рисунок симметричен и есть �
 });
 
 test('значок программы: заливка сверху вниз, поля, файл .ico совпадает с рисунком', () => {
-  const { px } = decode(starPng(APP_ICON.top, 64, { colorBottom: APP_ICON.bottom, pad: APP_ICON.pad }));
-  assert.deepStrictEqual(px(32, 4).slice(0, 3).map((c, i) => Math.abs(c - [0xf3, 0xae, 0x58][i]) < 6), [true, true, true], 'верх — светлый янтарь');
-  assert.deepStrictEqual(px(32, 59).slice(0, 3).map((c, i) => Math.abs(c - [0xf2, 0x8e, 0x42][i]) < 6), [true, true, true], 'низ — основной янтарь');
+  const { px } = decode(starPng(APP_ICON.top, 64, { colorBottom: APP_ICON.bottom, pad: APP_ICON.pad, shape: APP_ICON.shape }));
+  assert.deepStrictEqual(px(32, 4).slice(0, 3).map((c, i) => Math.abs(c - [0xa1, 0xbd, 0xf9][i]) < 6), [true, true, true], 'верх — светлая лазурь');
+  assert.deepStrictEqual(px(32, 59).slice(0, 3).map((c, i) => Math.abs(c - [0x7a, 0xae, 0xef][i]) < 6), [true, true, true], 'низ — основная лазурь');
+  // «Падающая» форма: бока звезды ниже середины значка, верхний луч тонкий и длинный.
+  assert.ok(px(32, 12)[3] > 0 && px(36, 12)[3] === 0, 'вверху — только тонкий луч по оси');
+  assert.ok(px(20, 41)[3] > 0 && px(43, 41)[3] > 0, 'бока звезды — в нижней половине');
+  assert.strictEqual(px(14, 22)[3], 0, 'на высоте середины луча по бокам пусто');
   assert.strictEqual(px(32, 0)[3], 0, 'сверху поле: искра не упирается в край');
   assert.strictEqual(px(0, 0)[3], 0, 'фона нет');
 
-  const entries = APP_ICON_SIZES.map((size) => ({ size, png: starPng(APP_ICON.top, size, { colorBottom: APP_ICON.bottom, pad: APP_ICON.pad }) }));
+  const entries = APP_ICON_SIZES.map((size) => ({ size, png: starPng(APP_ICON.top, size, { colorBottom: APP_ICON.bottom, pad: APP_ICON.pad, shape: APP_ICON.shape }) }));
   const ico = icoFromPngs(entries);
   assert.strictEqual(ico.readUInt16LE(2), 1, 'тип: значок'); assert.strictEqual(ico.readUInt16LE(4), entries.length);
   entries.forEach(({ size, png }, i) => {
