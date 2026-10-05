@@ -2,7 +2,9 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const zlib = require('node:zlib');
-const { starPng, accentColor, ACCENT_COLORS, TRAY_SIZES } = require('./tray-icon');
+const fs = require('node:fs');
+const path = require('node:path');
+const { starPng, accentColor, icoFromPngs, ACCENT_COLORS, TRAY_SIZES, APP_ICON, APP_ICON_SIZES } = require('./tray-icon');
 
 // Разбор PNG обратно в пиксели — чтобы проверять сам рисунок, а не только то, что «что-то вернулось».
 function decode(png) {
@@ -44,4 +46,23 @@ test('значок трея: рисунок симметричен и есть �
   for (const name of ['ember', 'garnet', 'gold', 'jade', 'azure', 'violet']) assert.match(accentColor(name), /^#[0-9a-f]{6}$/);
   assert.strictEqual(accentColor('нет-такого'), ACCENT_COLORS.ember, 'неизвестный акцент — янтарь');
   assert.strictEqual(accentColor(undefined), ACCENT_COLORS.ember);
+});
+
+test('значок программы: заливка сверху вниз, поля, файл .ico совпадает с рисунком', () => {
+  const { px } = decode(starPng(APP_ICON.top, 64, { colorBottom: APP_ICON.bottom, pad: APP_ICON.pad }));
+  assert.deepStrictEqual(px(32, 4).slice(0, 3).map((c, i) => Math.abs(c - [0xf3, 0xae, 0x58][i]) < 6), [true, true, true], 'верх — светлый янтарь');
+  assert.deepStrictEqual(px(32, 59).slice(0, 3).map((c, i) => Math.abs(c - [0xf2, 0x8e, 0x42][i]) < 6), [true, true, true], 'низ — основной янтарь');
+  assert.strictEqual(px(32, 0)[3], 0, 'сверху поле: искра не упирается в край');
+  assert.strictEqual(px(0, 0)[3], 0, 'фона нет');
+
+  const entries = APP_ICON_SIZES.map((size) => ({ size, png: starPng(APP_ICON.top, size, { colorBottom: APP_ICON.bottom, pad: APP_ICON.pad }) }));
+  const ico = icoFromPngs(entries);
+  assert.strictEqual(ico.readUInt16LE(2), 1, 'тип: значок'); assert.strictEqual(ico.readUInt16LE(4), entries.length);
+  entries.forEach(({ size, png }, i) => {
+    const o = 6 + i * 16;
+    assert.strictEqual(ico[o] || 256, size);
+    assert.ok(png.equals(ico.subarray(ico.readUInt32LE(o + 12), ico.readUInt32LE(o + 12) + ico.readUInt32LE(o + 8))), `размер ${size}: PNG лежит по своему смещению`);
+  });
+  // Файл в git — тот, что получается из рисунка: правка рисунка без `npm run icons` не останется незамеченной.
+  assert.ok(ico.equals(fs.readFileSync(path.join(__dirname, 'build', 'icon.ico'))), 'build/icon.ico устарел — выполните: npm run icons');
 });

@@ -1,5 +1,5 @@
 // Главный процесс Electron — окна, трей, уведомления, настройки, отправка и скачивание файлов
-const { TRAY_SIZES, APP_ICON_COLOR, APP_ICON_SIZES, accentColor, starPng } = require('./tray-icon');
+const { TRAY_SIZES, accentColor, starPng } = require('./tray-icon');
 const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, Notification, powerMonitor, dialog, session, clipboard, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -568,7 +568,7 @@ function createWindow(key, file, payload, size) {
     minHeight: size?.minHeight || 360,
     frame: false,
     show: false, // показываем только после ready-to-show — иначе видно, как окно дёргается/дорисовывается
-    icon: appWindowIcon(),
+    icon: APP_ICON_PATH,
     backgroundColor: settings.theme === 'light' ? '#f4f1ec' : '#121110',
     alwaysOnTop: settings.alwaysOnTop,
     webPreferences: {
@@ -615,7 +615,7 @@ function createRoster() {
     minHeight: 420,
     frame: false,
     show: false, // показываем только после ready-to-show — иначе видно, как окно дёргается/дорисовывается
-    icon: appWindowIcon(),
+    icon: APP_ICON_PATH,
     backgroundColor: settings.theme === 'light' ? '#f4f1ec' : '#121110',
     alwaysOnTop: settings.alwaysOnTop,
     webPreferences: {
@@ -680,17 +680,6 @@ function starImage(color, sizes) {
 }
 const trayImage = (accent) => starImage(accentColor(accent), TRAY_SIZES);
 
-// Значок окон на панели задач — белая искра без фона. Значок самой программы (ярлык, список
-// установленных программ, Проводник) остаётся прежним, из build/icon.ico: белое на прозрачном там
-// пропало бы на светлом фоне.
-let appWindowIconCache = null;
-function appWindowIcon() {
-  if (!appWindowIconCache) {
-    const img = starImage(APP_ICON_COLOR, APP_ICON_SIZES);
-    appWindowIconCache = img.isEmpty() ? APP_ICON_PATH : img;
-  }
-  return appWindowIconCache;
-}
 
 function createTray() {
   const iconPath = path.join(__dirname, 'tray-icon.ico');

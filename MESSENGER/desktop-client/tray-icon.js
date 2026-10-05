@@ -61,18 +61,29 @@ function chunk(type, data) {
   return Buffer.concat([len, body, crc]);
 }
 
-/** Искра цвета color (#rrggbb) на прозрачном фоне, size×size пикселей. Возвращает PNG. */
-function starPng(color, size) {
+const rgb = (color) => {
   const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(String(color));
-  const [r, g, b] = m ? [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)] : [242, 142, 66];
-  // Контур занимает в поле 24×24 квадрат 1…23; растягиваем его на весь значок без полей — в трее
-  // 16 пикселей, и каждый на счету.
-  const poly = starPolygon().map(([x, y]) => [((x - 1) / 22) * size, ((y - 1) / 22) * size]);
+  return m ? [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)] : [242, 142, 66];
+};
+
+/**
+ * Искра цвета color (#rrggbb) на прозрачном фоне, size×size пикселей. Возвращает PNG.
+ * colorBottom — второй цвет: искра заливается сверху вниз от color к нему (значок программы).
+ * pad — поле вокруг искры, доля стороны (0 — во весь значок).
+ */
+function starPng(color, size, { colorBottom, pad = 0 } = {}) {
+  const top = rgb(color); const bottom = colorBottom ? rgb(colorBottom) : top;
+  // Контур занимает в поле 24×24 квадрат 1…23; по умолчанию растягиваем его на весь значок без
+  // полей — в трее 16 пикселей, и каждый на счету.
+  const inner = size * (1 - 2 * pad); const off = size * pad;
+  const poly = starPolygon().map(([x, y]) => [off + ((x - 1) / 22) * inner, off + ((y - 1) / 22) * inner]);
   const SS = 4; // сглаживание: 4×4 пробы на пиксель
   const raw = Buffer.alloc(size * (size * 4 + 1));
   for (let y = 0; y < size; y++) {
     const row = y * (size * 4 + 1);
     raw[row] = 0; // фильтр строки: «без фильтра»
+    const k = size > 1 ? y / (size - 1) : 0;
+    const [r, g, b] = top.map((c, i) => Math.round(c + (bottom[i] - c) * k));
     for (let x = 0; x < size; x++) {
       let hits = 0;
       for (let sy = 0; sy < SS; sy++) for (let sx = 0; sx < SS; sx++) if (inside(poly, x + (sx + 0.5) / SS, y + (sy + 0.5) / SS)) hits++;
@@ -94,8 +105,26 @@ const accentColor = (accent) => ACCENT_COLORS[accent] || ACCENT_COLORS.ember;
 // Размеры под масштабы экрана Windows: 100, 125, 150, 200 и 250 %.
 const TRAY_SIZES = [[1, 16], [1.25, 20], [1.5, 24], [2, 32], [2.5, 40]];
 
-// Значок окна на панели задач — белая искра без фона. Размеры: от малого значка (16) до крупного при 250 %.
-const APP_ICON_COLOR = '#ffffff';
-const APP_ICON_SIZES = [[1, 16], [1.25, 20], [1.5, 24], [2, 32], [2.5, 40], [3, 48], [4, 64]];
+// Значок программы (ярлык, панель задач, Проводник) — янтарная искра без фона: от светлого янтаря
+// сверху к основному снизу, как кнопки в приложении. Янтарь виден и на тёмной панели задач, и на
+// белом фоне Проводника — белая искра на светлом пропадала. Файл build/icon.ico собирает
+// scripts/make-icons.js (`npm run icons`); размеры — все, что Windows спрашивает у ярлыка.
+const APP_ICON = { top: '#f3ae58', bottom: '#f28e42', pad: 0.04 };
+const APP_ICON_SIZES = [16, 20, 24, 32, 40, 48, 64, 128, 256];
 
-module.exports = { ACCENT_COLORS, TRAY_SIZES, APP_ICON_COLOR, APP_ICON_SIZES, accentColor, starPng };
+/** Файл .ico из готовых PNG: [{ size, png }]. Формат — заголовок, таблица, сами PNG подряд. */
+function icoFromPngs(entries) {
+  const head = Buffer.alloc(6); head.writeUInt16LE(1, 2); head.writeUInt16LE(entries.length, 4);
+  const table = Buffer.alloc(16 * entries.length);
+  let offset = 6 + table.length;
+  entries.forEach(({ size, png }, i) => {
+    const o = i * 16;
+    table[o] = size >= 256 ? 0 : size; table[o + 1] = size >= 256 ? 0 : size; // 0 означает 256
+    table.writeUInt16LE(1, o + 4); table.writeUInt16LE(32, o + 6);             // одна плоскость, 32 бита на точку
+    table.writeUInt32LE(png.length, o + 8); table.writeUInt32LE(offset, o + 12);
+    offset += png.length;
+  });
+  return Buffer.concat([head, table, ...entries.map((e) => e.png)]);
+}
+
+module.exports = { ACCENT_COLORS, TRAY_SIZES, APP_ICON, APP_ICON_SIZES, accentColor, starPng, icoFromPngs };
