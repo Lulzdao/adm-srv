@@ -284,6 +284,7 @@ const DEFAULT_SETTINGS = {
   alwaysOnTop: false,        // держать окна поверх остальных
   hideNameInMessages: true,  // не повторять имя собеседника в каждом сообщении личного чата (по умолчанию включено)
   theme: 'dark',             // 'dark' | 'light'
+  accent: 'ember',           // цвет кнопок, отметок и герба: 'ember' | 'garnet' | 'gold' | 'jade' | 'azure' | 'violet'
   downloadPath: null,        // папка для сохранения файлов по умолчанию (null = каждый раз спрашивать)
   idleThresholdMinutes: 30,  // сколько минут без активности мыши/клавиатуры -> статус "Отошёл"
   uiScale: 1,                // масштаб всего интерфейса (1 = 100%, текущий размер как есть) — см. applyUiScale
@@ -567,7 +568,7 @@ function createWindow(key, file, payload, size) {
     frame: false,
     show: false, // показываем только после ready-to-show — иначе видно, как окно дёргается/дорисовывается
     icon: APP_ICON_PATH,
-    backgroundColor: settings.theme === 'light' ? '#f3f4f7' : '#191b20',
+    backgroundColor: settings.theme === 'light' ? '#f4f1ec' : '#121110',
     alwaysOnTop: settings.alwaysOnTop,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -614,7 +615,7 @@ function createRoster() {
     frame: false,
     show: false, // показываем только после ready-to-show — иначе видно, как окно дёргается/дорисовывается
     icon: APP_ICON_PATH,
-    backgroundColor: settings.theme === 'light' ? '#f3f4f7' : '#191b20',
+    backgroundColor: settings.theme === 'light' ? '#f4f1ec' : '#121110',
     alwaysOnTop: settings.alwaysOnTop,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),

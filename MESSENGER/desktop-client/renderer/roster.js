@@ -381,6 +381,9 @@ function paintProfileTheme(theme) {
   document.getElementById('ppThemeLight').classList.toggle('active', theme === 'light');
   document.querySelector('#profilePanel .theme-switch').classList.toggle('light', theme === 'light');
 }
+function paintProfileAccent(accent) {
+  document.querySelectorAll('#ppAccent button').forEach((b) => b.classList.toggle('active', b.dataset.accent === (accent || 'ember')));
+}
 function paintProfileDownloadPath(p) {
   document.getElementById('ppDownloadPathLabel').textContent = p || 'Каждый раз спрашивать, куда сохранить';
   document.getElementById('ppDownloadPathLabel').title = p || '';
@@ -390,6 +393,7 @@ async function loadProfilePanel() {
   const settings = await desktop.getSettings();
   PP_CHECKBOX_IDS.forEach(([id, key]) => { document.getElementById(id).checked = !!settings[key]; });
   paintProfileTheme(settings.theme);
+  paintProfileAccent(settings.accent);
   paintProfileDownloadPath(settings.downloadPath);
   document.getElementById('ppIdleThresholdMinutes').value = settings.idleThresholdMinutes || 30;
   paintProfileUiScale(settings.uiScale);
@@ -452,6 +456,9 @@ PP_CHECKBOX_IDS.forEach(([id, key]) => {
   document.getElementById(id).addEventListener('change', (e) => desktop.setSettings({ [key]: e.target.checked }));
 });
 document.getElementById('ppThemeDark').onclick = () => { desktop.setSettings({ theme: 'dark' }); paintProfileTheme('dark'); };
+document.querySelectorAll('#ppAccent button').forEach((b) => {
+  b.onclick = () => { desktop.setSettings({ accent: b.dataset.accent }); paintProfileAccent(b.dataset.accent); };
+});
 document.getElementById('ppThemeLight').onclick = () => { desktop.setSettings({ theme: 'light' }); paintProfileTheme('light'); };
 document.getElementById('ppPickFolderBtn').onclick = async () => {
   const folder = await desktop.pickDownloadFolder();

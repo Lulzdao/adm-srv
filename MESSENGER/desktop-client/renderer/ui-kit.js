@@ -95,6 +95,8 @@
     try {
       const s = await window.desktop.getSettings();
       document.documentElement.dataset.theme = s.theme === 'light' ? 'light' : 'dark';
+      // Акцент — только из известного списка: значение попадает в атрибут, по которому theme.css выбирает цвета.
+      document.documentElement.dataset.accent = ['garnet', 'gold', 'jade', 'azure', 'violet'].includes(s.accent) ? s.accent : 'ember';
     } catch { /* игнор */ }
   }
   if (window.desktop) {
