@@ -30,7 +30,7 @@ function fallingStar(wide) {
   const cy = wide ? 14 : 15.5; const half = wide ? 11 : 7.5;
   const c = [12, cy];
   const tips = [[12, 1], [12 + half, cy], [12, 23], [12 - half, cy]];
-  const pull = wide ? [0.82, 0.6, 0.6, 0.6] : [0.9, 0.62, 0.62, 0.62]; // верхний луч — самый тонкий и длинный
+  const pull = wide ? [0.66, 0.4, 0.4, 0.4] : [0.9, 0.62, 0.62, 0.62]; // верхний луч — самый тонкий и длинный
   const ctrl = (i) => [tips[i][0] + (c[0] - tips[i][0]) * pull[i], tips[i][1] + (c[1] - tips[i][1]) * pull[i]];
   return tips.map((tip, i) => { const j = (i + 1) % 4; return [tip, ctrl(i), ctrl(j), tips[j]]; });
 }
@@ -127,9 +127,17 @@ const TRAY_SIZES = [[1, 16], [1.25, 20], [1.5, 24], [2, 32], [2.5, 40]];
 // scripts/make-icons.js (`npm run icons`); размеры — все, что Windows спрашивает у ярлыка.
 const APP_ICON = { top: '#a1bdf9', bottom: '#7aaeef', pad: 0.04, shape: 'falling' };
 const APP_ICON_SIZES = [16, 20, 24, 32, 40, 48, 64, 128, 256];
-// Значок окон на панели задач: те же цвета, широкая форма, без полей. Размеры — под масштабы экрана.
-const TASKBAR_ICON = { top: APP_ICON.top, bottom: APP_ICON.bottom, pad: 0, shape: 'falling-wide' };
-const TASKBAR_SIZES = [[1, 16], [1.25, 20], [1.5, 24], [2, 32], [2.5, 40], [3, 48], [4, 64]];
+// Панель задач Windows показывает значок ПРОГРАММЫ (тот же build/icon.ico), а не значок окна — проверено:
+// окно отдавало ей крупный значок, а в кнопке всё равно стоял рисунок из файла. Поэтому рисунок зависит от
+// размера: мелкие (их берут панель задач и списки Проводника) — искра во всю ширину без полей, иначе она
+// теряется; крупные (ярлык на рабочем столе) — узкая с полями, там она выглядит лучше.
+const APP_ICON_SMALL = { top: APP_ICON.top, bottom: APP_ICON.bottom, pad: 0, shape: 'falling-wide' };
+const APP_ICON_SMALL_UP_TO = 40;
+/** PNG значка программы нужного размера — с тем рисунком, который этому размеру положен. */
+function appIconPng(size) {
+  const v = size <= APP_ICON_SMALL_UP_TO ? APP_ICON_SMALL : APP_ICON;
+  return starPng(v.top, size, { colorBottom: v.bottom, pad: v.pad, shape: v.shape });
+}
 
 /** Файл .ico из готовых PNG: [{ size, png }]. Формат — заголовок, таблица, сами PNG подряд. */
 function icoFromPngs(entries) {
@@ -146,4 +154,4 @@ function icoFromPngs(entries) {
   return Buffer.concat([head, table, ...entries.map((e) => e.png)]);
 }
 
-module.exports = { ACCENT_COLORS, TRAY_SIZES, APP_ICON, APP_ICON_SIZES, TASKBAR_ICON, TASKBAR_SIZES, accentColor, starPng, icoFromPngs };
+module.exports = { ACCENT_COLORS, TRAY_SIZES, APP_ICON, APP_ICON_SMALL, APP_ICON_SMALL_UP_TO, APP_ICON_SIZES, accentColor, appIconPng, starPng, icoFromPngs };

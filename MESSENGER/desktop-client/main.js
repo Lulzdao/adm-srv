@@ -1,5 +1,5 @@
 // Главный процесс Electron — окна, трей, уведомления, настройки, отправка и скачивание файлов
-const { TRAY_SIZES, TASKBAR_ICON, TASKBAR_SIZES, accentColor, starPng } = require('./tray-icon');
+const { TRAY_SIZES, accentColor, starPng } = require('./tray-icon');
 const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, Notification, powerMonitor, dialog, session, clipboard, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -568,7 +568,7 @@ function createWindow(key, file, payload, size) {
     minHeight: size?.minHeight || 360,
     frame: false,
     show: false, // показываем только после ready-to-show — иначе видно, как окно дёргается/дорисовывается
-    icon: appWindowIcon(),
+    icon: APP_ICON_PATH,
     backgroundColor: settings.theme === 'light' ? '#f4f1ec' : '#121110',
     alwaysOnTop: settings.alwaysOnTop,
     webPreferences: {
@@ -615,7 +615,7 @@ function createRoster() {
     minHeight: 420,
     frame: false,
     show: false, // показываем только после ready-to-show — иначе видно, как окно дёргается/дорисовывается
-    icon: appWindowIcon(),
+    icon: APP_ICON_PATH,
     backgroundColor: settings.theme === 'light' ? '#f4f1ec' : '#121110',
     alwaysOnTop: settings.alwaysOnTop,
     webPreferences: {
@@ -679,18 +679,6 @@ function starImage(color, sizes, opts) {
   }
 }
 const trayImage = (accent) => starImage(accentColor(accent), TRAY_SIZES);
-
-// Значок окон на панели задач — лазурная «падающая» искра во всю ширину значка. Ярлык и Проводник
-// берут значок из build/icon.ico: там искра уже и с полями — крупно так красивее, а в кнопке панели
-// задач она выглядела мелкой. Не получилось нарисовать — значок из файла.
-let appWindowIconCache = null;
-function appWindowIcon() {
-  if (!appWindowIconCache) {
-    const img = starImage(TASKBAR_ICON.top, TASKBAR_SIZES, { colorBottom: TASKBAR_ICON.bottom, pad: TASKBAR_ICON.pad, shape: TASKBAR_ICON.shape });
-    appWindowIconCache = img.isEmpty() ? APP_ICON_PATH : img;
-  }
-  return appWindowIconCache;
-}
 
 
 function createTray() {

@@ -4,7 +4,7 @@ const assert = require('node:assert');
 const zlib = require('node:zlib');
 const fs = require('node:fs');
 const path = require('node:path');
-const { starPng, accentColor, icoFromPngs, ACCENT_COLORS, TRAY_SIZES, APP_ICON, APP_ICON_SIZES } = require('./tray-icon');
+const { starPng, appIconPng, accentColor, icoFromPngs, ACCENT_COLORS, TRAY_SIZES, APP_ICON, APP_ICON_SMALL_UP_TO, APP_ICON_SIZES } = require('./tray-icon');
 
 // Разбор PNG обратно в пиксели — чтобы проверять сам рисунок, а не только то, что «что-то вернулось».
 function decode(png) {
@@ -59,7 +59,7 @@ test('значок программы: заливка сверху вниз, п�
   assert.strictEqual(px(32, 0)[3], 0, 'сверху поле: искра не упирается в край');
   assert.strictEqual(px(0, 0)[3], 0, 'фона нет');
 
-  const entries = APP_ICON_SIZES.map((size) => ({ size, png: starPng(APP_ICON.top, size, { colorBottom: APP_ICON.bottom, pad: APP_ICON.pad, shape: APP_ICON.shape }) }));
+  const entries = APP_ICON_SIZES.map((size) => ({ size, png: appIconPng(size) }));
   const ico = icoFromPngs(entries);
   assert.strictEqual(ico.readUInt16LE(2), 1, 'тип: значок'); assert.strictEqual(ico.readUInt16LE(4), entries.length);
   entries.forEach(({ size, png }, i) => {
@@ -69,4 +69,16 @@ test('значок программы: заливка сверху вниз, п�
   });
   // Файл в git — тот, что получается из рисунка: правка рисунка без `npm run icons` не останется незамеченной.
   assert.ok(ico.equals(fs.readFileSync(path.join(__dirname, 'build', 'icon.ico'))), 'build/icon.ico устарел — выполните: npm run icons');
+});
+
+test('значок программы: мелкие размеры — искра во всю ширину (панель задач), крупные — узкая с полями (ярлык)', () => {
+  const painted = (size) => {
+    const { px } = decode(appIconPng(size)); let minX = size, maxX = -1;
+    for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) if (px(x, y)[3] > 8) { if (x < minX) minX = x; if (x > maxX) maxX = x; }
+    return (maxX - minX + 1) / size;
+  };
+  // Панель задач берёт 24 или 32 пикселя: там искра обязана занимать почти всю ширину, иначе выглядит мелкой.
+  for (const size of [16, 24, 32]) assert.ok(size <= APP_ICON_SMALL_UP_TO && painted(size) > 0.8, `размер ${size}: закрашено ${Math.round(painted(size) * 100)}% ширины`);
+  // Рабочий стол берёт 48 и больше: там узкая искра с вытянутым лучом.
+  for (const size of [48, 256]) assert.ok(size > APP_ICON_SMALL_UP_TO && painted(size) < 0.7, `размер ${size}: закрашено ${Math.round(painted(size) * 100)}% ширины`);
 });
