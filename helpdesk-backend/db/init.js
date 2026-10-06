@@ -96,6 +96,9 @@ function initDb() {
     // Отделы — из единого конфига, не из статичного SQL. Добавили новый
     // отдел в config/departments.js — при следующем старте сервера здесь
     // появится соответствующая строка, руками ничего создавать не нужно.
+    migrateLoginRoles(db);
+    // Группы из панели — в справочник, до посева категорий.
+    departments.sync(db);
     for (const dept of departments) {
       db.prepare("INSERT OR IGNORE INTO categories (name) VALUES (?)").run(dept.name);
     }
@@ -116,6 +119,8 @@ function initDb() {
     // задача на перевыпуск) — её настройки не нужны. События в ленте остаются.
     db.prepare("DELETE FROM notification_settings WHERE kind = 'expired'").run();
     encryptStoredPasswords(db);
+    // Списки логинов групп исполнителей могли поменяться в обход панели (копия базы, ручная правка).
+    require("../services/executorGroups").recomputeAll(db);
     db.exec("COMMIT");
     // Открытые пароли остались бы в свободных страницах файла и в журнале WAL —
     // пересобираем файл и чистим журнал (только если миграция что-то шифровала).
@@ -291,6 +296,13 @@ function migrateUserGroups(db) {
   const columns = db.prepare("PRAGMA table_info(users)").all().map((c) => c.name);
   if (columns.includes("ad_groups")) return;
   db.exec("ALTER TABLE users ADD COLUMN ad_groups TEXT NOT NULL DEFAULT ''");
+}
+
+// Отделы, выданные списком логинов группы исполнителей (см. schema.sql).
+function migrateLoginRoles(db) {
+  const columns = db.prepare("PRAGMA table_info(users)").all().map((c) => c.name);
+  if (columns.includes("login_roles")) return;
+  db.exec("ALTER TABLE users ADD COLUMN login_roles TEXT NOT NULL DEFAULT ''");
 }
 
 // Общих ящиков рассылок стало несколько (у каждого отдела свой). Рассылке
@@ -492,8 +504,9 @@ function ensureLocalAccounts(db) {
       }
       // Признак администратора — тоже из конфига, по той же причине: из
       // интерфейса он не меняется, значит источник истины здесь один.
+      // Отделы, выданные списком логинов, сверху добавит пересчёт в конце.
       if ((existing.roles || "") !== wantRoles) {
-        db.prepare("UPDATE users SET roles = ? WHERE id = ?").run(wantRoles, existing.id);
+        db.prepare("UPDATE users SET roles = ?, login_roles = '' WHERE id = ?").run(wantRoles, existing.id);
       }
       if (Number(existing.is_admin || 0) !== wantAdmin) {
         db.prepare("UPDATE users SET is_admin = ? WHERE id = ?").run(wantAdmin, existing.id);
@@ -513,6 +526,7 @@ function ensureLocalAccounts(db) {
 
     console.log(`Создан локальный аккаунт: ${acc.login} (роль: ${acc.role})`);
   }
+  require("../services/executorGroups").recomputeAll(db);
 }
 
 if (require.main === module) {

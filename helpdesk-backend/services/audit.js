@@ -30,6 +30,7 @@ const AREAS = [
   /^\/api\/assistant\/settings\//,
 ];
 
+const groupName = (role) => { const d = require("../config/departments").byRole(role); return d ? `«${d.name}»` : role; };
 const kindLabel = (kind) => (KINDS.find((k) => k.kind === kind) || {}).label || kind;
 /** Пароль в подробностях: не значение, а что с ним сделали. */
 const secret = (body, field = "password", clear = "clearPassword") =>
@@ -51,6 +52,13 @@ const RULES = [
 
   { m: "PUT", re: /^\/api\/admin\/settings$/, text: () => "Группы домена для отделов изменены",
     details: ({ body }) => ({ отделы: (body.departments || []).map((d) => named(d, { role: "отдел", groupA: "группа в домене A", groupB: "группа в домене B" })) }) },
+  { m: "POST", re: /^\/api\/admin\/groups$/, text: ({ body }) => `Создана группа исполнителей «${String(body.name || "").trim()}»`,
+    details: ({ body }) => ({ ...named(body, { prefix: "префикс", hidden: "скрыта из «Новой заявки»" }), логины: String(body.logins || "").split(/[\s,;]+/).filter(Boolean).join(", ") }) },
+  { m: "PUT", re: /^\/api\/admin\/groups\/([^/]+)$/, text: ({ p }) => `Группа исполнителей ${groupName(p[1])} изменена`,
+    details: ({ body }) => ({ ...named(body, { hidden: "скрыта из «Новой заявки»", groupA: "группа в домене A", groupB: "группа в домене B", hint: "подпись" }),
+      ...(body.logins !== undefined ? { логины: String(body.logins).split(/[\s,;]+/).filter(Boolean).join(", ") } : {}) }) },
+  { m: "DELETE", re: /^\/api\/admin\/groups\/([^/]+)$/, text: ({ p, before }) => `Удалена группа исполнителей ${before || p[1]}`,
+    before: (req, db, p) => groupName(p[1]) },
   { m: "POST", re: /^\/api\/admin\/backup\/check$/, skip: true },
   { m: "PUT", re: /^\/api\/admin\/backup$/, text: ({ body }) => `Папка резервных копий: ${String(body.dir || "").trim() || "по умолчанию"}` },
 

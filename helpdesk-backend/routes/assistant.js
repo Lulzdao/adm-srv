@@ -210,25 +210,49 @@ module.exports = function assistantRoutes(db) {
     // Тема и описание заявки — короткие (у заявки пределы 50 и 140 знаков);
     // анкета целиком — в ticket_forms и видна в карточке.
     const title = `${kind.short}: ${A.shortName(fio)}`.slice(0, tickets.TITLE_MAX);
-    let description = [department, programs.length ? `доступ: ${programs.join(", ")}` : null].filter(Boolean).join("; ");
-    if (description.length > tickets.DESCRIPTION_MAX) description = description.slice(0, tickets.DESCRIPTION_MAX - 1) + "…";
 
-    const category = A.settings(db).accessDept || departments[0].name;
+    // Программы делятся по исполнителям (Администрирование → Заявка на доступ):
+    // каждой группе — своя заявка со своими программами, остальное — в общую
+    // очередь заявок на доступ. Служебная записка одна на все, с полным списком.
+    const s = A.settings(db);
+    const queue = departments.byName(s.accessDept) || departments[0];
+    const parts = new Map(); // имя отдела -> программы его заявки
+    for (const p of programs) {
+      const dept = departments.byRole(s.programExecutors[p]) || queue;
+      if (!parts.has(dept.name)) parts.set(dept.name, []);
+      parts.get(dept.name).push(p);
+    }
+    // Общая очередь получает заявку и без программ: формы ЦСОД, блокировка,
+    // удаление — всё, что не про конкретную программу, — делает она.
+    if (!parts.size || csod) parts.set(queue.name, parts.get(queue.name) || []);
+    const order = [...parts.keys()].sort((a, b) => (a === queue.name ? -1 : b === queue.name ? 1 : 0));
+
+    const priority = type === "block" || type === "delete" ? "high" : "medium";
+    const made = [];
     db.exec("BEGIN IMMEDIATE");
-    let ticketId;
     try {
-      ticketId = tickets.createTicket(db, req.session.user, {
-        title, description, category, priority: type === "block" || type === "delete" ? "high" : "medium",
-        room, extension: phoneInt,
-      });
-      db.prepare("INSERT INTO ticket_forms (ticket_id, kind, data) VALUES (?, 'access', ?)").run(ticketId, JSON.stringify(data));
+      for (const name of order) {
+        const own = parts.get(name);
+        let description = [department, own.length ? `доступ: ${own.join(", ")}` : null, name === queue.name && csod ? "формы ЦСОД" : null].filter(Boolean).join("; ");
+        if (description.length > tickets.DESCRIPTION_MAX) description = description.slice(0, tickets.DESCRIPTION_MAX - 1) + "…";
+        const id = tickets.createTicket(db, req.session.user, { title, description, category: name, priority, room, extension: phoneInt });
+        const { display_id: displayId } = db.prepare("SELECT display_id FROM tickets WHERE id = ?").get(id);
+        made.push({ id, display_id: displayId, department: name, programs: own });
+      }
+      // Каждая заявка знает свои программы и соседние заявки — их видно в карточке.
+      const insertForm = db.prepare("INSERT INTO ticket_forms (ticket_id, kind, data) VALUES (?, 'access', ?)");
+      for (const m of made) {
+        const form = made.length > 1
+          ? { ...data, ticket_programs: m.programs, related: made.filter((r) => r.id !== m.id) }
+          : data;
+        insertForm.run(m.id, JSON.stringify(form));
+      }
       db.exec("COMMIT");
     } catch (err) {
       db.exec("ROLLBACK");
       throw err;
     }
-    const t = db.prepare("SELECT id, display_id FROM tickets WHERE id = ?").get(ticketId);
-    res.status(201).json({ ticket: t });
+    res.status(201).json({ ticket: { id: made[0].id, display_id: made[0].display_id }, tickets: made });
   }));
 
   // Служебная записка по анкете — тем, кто видит саму заявку. Адресована
@@ -276,6 +300,9 @@ module.exports = function assistantRoutes(db) {
     res.json({
       ...s,
       accessDepts: departments.map((d) => d.name),
+      // Группы исполнителей для сопоставления программ — и скрытые тоже: ради
+      // таких («АДМ» из одной учётки) сопоставление и заведено.
+      executorGroups: departments.map((d) => ({ role: d.role, name: d.name })),
       orgDepts: db.prepare("SELECT name FROM asst_depts ORDER BY sort, name").all().map((r) => r.name),
       // У начальника отдела ИТ нет ФИО «кому?» — в шапке записки будет несклонённое.
       itChiefDatMissing: !!s.itDept && !(A.dept(db, s.itDept) || {}).chief_name_dat,
@@ -303,6 +330,19 @@ module.exports = function assistantRoutes(db) {
       setSetting(db, "asst_it_dept", b.itDept || "");
     }
     if (b.programs !== undefined) A.setJson(db, "asst_programs", list(b.programs, "Программы"));
+    if (b.programExecutors !== undefined) {
+      const m = b.programExecutors;
+      if (!m || typeof m !== "object" || Array.isArray(m)) fail("«Кто выполняет» — соответствие программа → группа");
+      const known = new Set(A.settings(db).programs);
+      const clean = {};
+      for (const [prog, role] of Object.entries(m)) {
+        // Программы, которой больше нет в списке, просто не сохраняем; пусто — общая очередь.
+        if (!known.has(prog) || !role) continue;
+        if (!departments.byRole(role)) fail(`Для «${prog}» выбрана несуществующая группа исполнителей`);
+        clean[prog] = role;
+      }
+      A.setJson(db, "asst_program_executors", clean);
+    }
     if (b.posts !== undefined) A.setJson(db, "asst_posts", list(b.posts, "Должности"));
     if (b.actStart !== undefined) {
       const n = int(b.actStart, { field: "Первый номер акта", min: 1, max: 99999 });

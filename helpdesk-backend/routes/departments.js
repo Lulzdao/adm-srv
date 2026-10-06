@@ -2,7 +2,9 @@ const express = require("express");
 const { requireAuth } = require("../middleware/auth");
 const departments = require("../config/departments");
 
-module.exports = function departmentRoutes() {
+const { isHidden } = require("../services/executorGroups");
+
+module.exports = function departmentRoutes(db) {
   const router = express.Router();
   router.use(requireAuth);
 
@@ -14,6 +16,10 @@ module.exports = function departmentRoutes() {
       departments: departments.map((d) => ({
         name: d.name, role: d.role,
         hint: d.hint || "", icon: d.icon || "", color: d.color || "",
+        // Скрытую группу нет на плитках «Новой заявки» — заявки к ней приходят
+        // своими путями (например, по программам из Заявки на доступ). В
+        // фильтре списка и в карточке она остаётся.
+        hidden: Boolean(db && isHidden(db, d.role)),
       })),
     });
   });
