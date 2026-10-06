@@ -268,13 +268,10 @@ test('«печатает» в группе уходит только други�
   }
 });
 
-// Найдено при написании этих тестов (2026-10-06): внешние ключи в SQLite выключены, а удаление
-// сотрудника (DELETE /api/admin/users/:id) чистит только user_departments, но не group_members.
-// Да и сам POST /api/groups принимает в memberIds любые числа без проверки, что такой сотрудник есть.
-// Строки-призраки завышают member_count в списке групп, и группа, где из живых никого не осталось,
-// не удаляется (countGroupMembers считает призрака). Код сервера в этой задаче не меняли — тест
-// отмечен todo и станет обычным после исправления.
-test('удалённый сотрудник не числится участником группы', { todo: 'group_members не чистятся при удалении сотрудника; memberIds не проверяются' }, async () => {
+// Найдено при написании этих тестов (2026-10-06): внешние ключи в SQLite выключены, и удаление
+// сотрудника чистило только user_departments, а в группы принимались любые числа. Строки-«призраки»
+// завышали member_count, и группа, где из живых никого не осталось, не удалялась.
+test('удалённый сотрудник не числится участником группы, несуществующий не добавляется', async () => {
   const уйдёт = await makeUser(srv.url, admin.token, 'уйдёт-из-организации');
   const id = await создать('С уходящим', [уйдёт]);
   assert.equal((await api(admin, 'DELETE', `/api/admin/users/${уйдёт.id}`)).status, 200);
@@ -282,4 +279,45 @@ test('удалённый сотрудник не числится участни
 
   const сПризраком = await создать('С несуществующим', [{ id: 987654 }]);
   assert.equal((await мои(создатель)).find((g) => g.id === сПризраком).member_count, 1, 'несуществующий id не должен добавляться');
+  assert.equal((await api(создатель, 'POST', `/api/groups/${сПризраком}/members`, { userIds: [987655] })).status, 200);
+  assert.equal((await мои(создатель)).find((g) => g.id === сПризраком).member_count, 1, 'и при добавлении участников тоже');
+});
+
+// Базы, где «призраки» уже накопились до исправления, чистятся при запуске сервера. Готовим базу
+// заранее тем же openDatabase, что у сервера (схема та же): живой сотрудник id 1 и «призрак» 999.
+test('«призраки», накопленные до исправления, убираются при запуске', async () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { openDatabase } = require('../lib/db');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'iskra-ghosts-'));
+  const file = path.join(tmp, 'messenger.db');
+  const { db } = openDatabase(file, { logServer: () => {} });
+  const now = Date.now();
+  db.prepare('INSERT INTO users (id, username, password_hash, display_name, can_broadcast, can_admin, created_at) VALUES (1, ?, ?, ?, 0, 0, ?)')
+    .run('живой-сотрудник', 'x', 'живой-сотрудник', now);
+  db.prepare('INSERT INTO groups (id, name, created_by, created_at) VALUES (1, ?, 999, ?), (2, ?, 999, ?)').run('Живая', now, 'Только призраки', now);
+  db.prepare('INSERT INTO group_members (group_id, user_id, added_at) VALUES (1, 1, ?), (1, 999, ?), (2, 999, ?)').run(now, now, now);
+  db.close();
+  const old = await startServer({ files: { 'messenger.db': fs.readFileSync(file) } });
+  fs.rmSync(tmp, { recursive: true, force: true });
+  try {
+    const a = await login(old.url, ADMIN.username, ADMIN.password);
+    const members = await request(old.url, 'GET', '/api/groups/1/members', { token: a.token });
+    assert.deepEqual(members.json.map((u) => u.id), [1], 'в живой группе остался только живой сотрудник');
+    assert.equal((await request(old.url, 'PATCH', '/api/groups/2', { token: a.token, body: { name: 'x' } })).status, 404);
+    assert.equal((await request(old.url, 'PATCH', '/api/groups/1', { token: a.token, body: { name: 'Живая' } })).status, 200, 'живая группа осталась');
+    // Состав выше выбирается через JOIN с users и призрака не покажет в любом случае — само удаление
+    // строк видно по счётчикам в журнале: два призрака (по одному в каждой группе) и одна пустая группа.
+    assert.match(old.log(), /group_ghosts_removed.*"members":2.*"groups":1/);
+  } finally {
+    await old.stop();
+  }
+});
+
+test('удалили последнего участника группы — группа удаляется', async () => {
+  const один = await makeUser(srv.url, admin.token, 'единственный-в-группе');
+  const id = await создать('Один в поле', [], один);
+  assert.equal((await api(admin, 'DELETE', `/api/admin/users/${один.id}`)).status, 200);
+  assert.equal((await api(admin, 'PATCH', `/api/groups/${id}`, { name: 'Ещё есть?' })).status, 404, 'группы без участников быть не должно');
 });

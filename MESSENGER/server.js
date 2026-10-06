@@ -309,8 +309,27 @@ const addGroupMember = db.prepare('INSERT OR IGNORE INTO group_members (group_id
 const removeGroupMember = db.prepare('DELETE FROM group_members WHERE group_id = ? AND user_id = ?');
 const deleteGroupMembersStmt = db.prepare('DELETE FROM group_members WHERE group_id = ?');
 const countGroupMembers = db.prepare('SELECT COUNT(*) c FROM group_members WHERE group_id = ?');
+const listUserGroupIds = db.prepare('SELECT group_id FROM group_members WHERE user_id = ?');
+const removeUserFromGroups = db.prepare('DELETE FROM group_members WHERE user_id = ?');
 
 function groupMemberIds(groupId) { return listGroupMemberIds.all(groupId).map((r) => r.user_id); }
+// В группу — только существующие сотрудники: внешние ключи в SQLite выключены, и любое число из
+// запроса раньше оседало в group_members «призраком» — завышало число участников в списке групп и
+// не давало группе удалиться, когда живых участников в ней не осталось.
+function existingUserIds(ids) { return ids.filter((uid) => getUserById.get(uid)); }
+// Группа без единого участника никому не видна (listGroupsForUser требует членства) — удаляем саму
+// запись. Историю переписки не трогаем, как и при удалении пользователя или отдела.
+function dropGroupIfEmpty(groupId) {
+  if (countGroupMembers.get(groupId).c === 0) { deleteGroupMembersStmt.run(groupId); deleteGroupStmt.run(groupId); }
+}
+
+// «Призраки», накопившиеся до исправления (участники — удалённые сотрудники), убираются при запуске;
+// группы, где после этого никого не осталось, — тоже. Повторный запуск ничего не находит.
+{
+  const ghosts = db.prepare('DELETE FROM group_members WHERE user_id NOT IN (SELECT id FROM users)').run().changes;
+  const empty = db.prepare('DELETE FROM groups WHERE id NOT IN (SELECT group_id FROM group_members)').run().changes;
+  if (ghosts || empty) logServer('INFO', 'group_ghosts_removed', { members: ghosts, groups: empty });
+}
 // Управлять группой (переименовать, добавить/убрать участников, удалить) может тот, кто её создал,
 // или любой администратор сайта — так группа не "осиротеет" безвозвратно, если создатель уйдёт из
 // неё или уволится. Обычный участник может только написать в группу и сам из неё выйти.
@@ -934,7 +953,7 @@ app.post('/api/groups', auth, (req, res) => {
   const info = insertGroup.run(name.slice(0, 80), req.user.id, now);
   const groupId = info.lastInsertRowid;
   addGroupMember.run(groupId, req.user.id, now); // создатель — всегда участник, даже если забыли отметить себя в списке
-  for (const uid of memberIds) if (uid !== req.user.id) addGroupMember.run(groupId, uid, now);
+  for (const uid of existingUserIds(memberIds)) if (uid !== req.user.id) addGroupMember.run(groupId, uid, now);
   broadcastGroupsChanged();
   res.json({ ok: true, id: groupId });
 });
@@ -962,7 +981,7 @@ app.post('/api/groups/:id/members', auth, (req, res) => {
   if (!canManageGroup(req.user, group)) return res.status(403).json({ error: 'Недостаточно прав' });
   const userIds = Array.isArray((req.body || {}).userIds) ? req.body.userIds.map(Number).filter((n) => Number.isFinite(n)) : [];
   const now = Date.now();
-  for (const uid of userIds) addGroupMember.run(group.id, uid, now);
+  for (const uid of existingUserIds(userIds)) addGroupMember.run(group.id, uid, now);
   broadcastGroupsChanged();
   res.json({ ok: true });
 });
@@ -974,10 +993,7 @@ app.delete('/api/groups/:id/members/:userId', auth, (req, res) => {
   // Убрать ЧУЖОГО участника — только владелец/админ; выйти самому — можно всегда, без разрешения.
   if (targetId !== req.user.id && !canManageGroup(req.user, group)) return res.status(403).json({ error: 'Недостаточно прав' });
   removeGroupMember.run(group.id, targetId);
-  // Группа осталась без единого участника — писать/читать в неё уже некому, и даже администратор не
-  // увидит её в своём списке (listGroupsForUser требует членства) — удаляем саму запись о группе.
-  // Историю переписки НЕ трогаем — так же, как удаление пользователя не стирает его сообщения.
-  if (countGroupMembers.get(group.id).c === 0) { deleteGroupMembersStmt.run(group.id); deleteGroupStmt.run(group.id); }
+  dropGroupIfEmpty(group.id); // вышел последний — писать и читать в группу уже некому
   broadcastGroupsChanged();
   res.json({ ok: true });
 });
@@ -1253,14 +1269,21 @@ app.delete('/api/admin/users/:id', auth, requireCapability('can_admin'), (req, r
   if (id === systemUserId()) return res.status(400).json({ error: '«Центр» — служебная учётка платформы, её не удаляют' });
   if (id === req.user.id) return res.status(400).json({ error: 'Нельзя удалить свою же учётку' });
   // Внешние ключи в SQLite здесь не включены (PRAGMA foreign_keys), поэтому связи чистим руками —
-  // иначе строки в user_departments пережили бы самого сотрудника и всплыли бы у нового с тем же id.
-  clearUserDepartments.run(id);
-  deleteUserStmt.run(id);
+  // иначе строки в user_departments и group_members пережили бы самого сотрудника и всплыли бы у
+  // нового с тем же id. Группы, где он был последним участником, удаляются (история остаётся).
+  const groupIds = listUserGroupIds.all(id).map((r) => r.group_id);
+  transaction(() => {
+    clearUserDepartments.run(id);
+    removeUserFromGroups.run(id);
+    for (const gid of groupIds) dropGroupIfEmpty(gid);
+    deleteUserStmt.run(id);
+  })();
   // Открытые окна удалённого сотрудника отключаем сразу: HTTP-запросы с его токеном уже получают
   // 401, а уже открытый WebSocket иначе продолжал бы принимать от него сообщения.
   dropConnections(id);
   invalidateUserIdsCache();
   broadcastUsersChanged();
+  if (groupIds.length) broadcastGroupsChanged();
   res.json({ ok: true });
 });
 
