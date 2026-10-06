@@ -158,7 +158,6 @@ module.exports = function notificationRoutes(db) {
     res.json({ kinds: items, iskra: { available: iskra.configured(), why: iskra.whyDisabled() } });
   });
 
-  const KNOWN_KINDS = new Set(KINDS.map((k) => k.kind));
   const EMAILS_MAX = 4000;
   const TPL_MAX = 8000;
 
@@ -166,7 +165,7 @@ module.exports = function notificationRoutes(db) {
   // иначе через него можно записать любую строку в notification_settings.
   router.put("/kinds/:kind", it, async (req, res) => {
     const kind = req.params.kind;
-    if (!KNOWN_KINDS.has(kind)) return res.status(404).json({ error: "Неизвестная категория оповещений" });
+    if (!byKind(kind)) return res.status(404).json({ error: "Неизвестная категория оповещений" });
 
     const def = byKind(kind);
     const body = req.body || {};

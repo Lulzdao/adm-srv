@@ -3,6 +3,7 @@ const path = require("path");
 const session = require("express-session");
 const { SqliteSessionStore } = require("./services/sessionStore");
 const config = require("./config/config");
+const { unpackRoles } = require("./services/userStore");
 
 // ============================================================================
 //  Сборка приложения — отдельно от его запуска
@@ -52,6 +53,22 @@ function createApp(db, { secureCookie = false } = {}) {
     },
   }));
 
+  // Отделы пользователя — из базы на каждом запросе, а не только снимком при
+  // входе: группу исполнителей по списку логинов правят в панели, и вписанный
+  // туда человек должен увидеть её очередь сразу, без повторного входа. Запрос
+  // один и по первичному ключу. Признак администратора остаётся снимком: он из
+  // группы в .env и меняется только входом.
+  const userRoles = db.prepare("SELECT role, roles FROM users WHERE id = ?");
+  app.use((req, res, next) => {
+    const u = req.session && req.session.user;
+    const row = u && userRoles.get(u.id);
+    if (row) {
+      const roles = unpackRoles(row.roles);
+      if (roles.join() !== (u.roles || []).join() || row.role !== u.role) { u.roles = roles; u.role = row.role; }
+    }
+    next();
+  });
+
   // Журнал действий администраторов: до маршрутов, чтобы видеть ответ каждого (services/audit.js).
   app.use(require("./services/audit").middleware(db));
 
@@ -75,7 +92,7 @@ function createApp(db, { secureCookie = false } = {}) {
   app.use("/api/assistant", require("./routes/assistantActs")(db));
   app.use("/api/mailings", require("./routes/mailings")(db));
   app.use("/api/admin", require("./routes/admin")(db));
-  app.use("/api/departments", require("./routes/departments")());
+  app.use("/api/departments", require("./routes/departments")(db));
   app.use(require("./routes/modules")());
 
   app.get("/api/health", (req, res) => res.json({ ok: true }));

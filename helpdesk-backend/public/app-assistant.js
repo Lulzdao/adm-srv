@@ -175,14 +175,19 @@ async function renderAccessForm(box, { onCancel } = {}) {
     $("acHint").textContent = "После отправки скачайте служебную записку: её подписывает начальник отдела сотрудника";
     $("acSend").disabled = true;
     try {
-      const { ticket } = await api("/assistant/access", { method: "POST", body });
-      toast(`Заявка ${ticket.display_id} отправлена в ИТ`);
+      const { ticket, tickets } = await api("/assistant/access", { method: "POST", body });
+      // Программы разных исполнителей — разные заявки; записка одна, с полным списком.
+      const list = tickets && tickets.length ? tickets : [{ ...ticket, programs: [] }];
+      const many = list.length > 1;
+      toast(many ? `Отправлено заявок: ${list.length}` : `Заявка ${ticket.display_id} отправлена`);
       $("acDone").innerHTML = `
         <div class="as-done">
           <span class="as-done-ic">${icon("check", 18)}</span>
-          <div><b>Заявка ${esc(ticket.display_id)} отправлена</b><small>Распечатайте служебную записку и подпишите у начальника своего отдела</small></div>
+          <div><b>${many ? `Отправлено заявок: ${list.length}` : `Заявка ${esc(ticket.display_id)} отправлена`}</b>
+            ${many ? `<ul class="as-done-list">${list.map((t) => `<li><b>${esc(t.display_id)}</b> — ${esc(t.department)}${t.programs.length ? `: ${esc(t.programs.join(", "))}` : ""}</li>`).join("")}</ul>` : ""}
+            <small>Распечатайте служебную записку${many ? " — она одна на все заявки —" : ""} и подпишите у начальника своего отдела</small></div>
           <button class="btn btn-ghost" id="acDoc">${icon("download", 15)} Служебная записка</button>
-          <button class="btn btn-ghost" id="acOpen">Открыть заявку</button>
+          <button class="btn btn-ghost" id="acOpen">${many ? "Открыть первую" : "Открыть заявку"}</button>
         </div>`;
       $("acDoc").onclick = () => asstDownload(`/assistant/access/${ticket.id}/doc`);
       $("acOpen").onclick = async () => {
@@ -200,10 +205,16 @@ async function renderAccessForm(box, { onCancel } = {}) {
 function ticketFormCard(ticket) {
   const d = ticket.form.data || {};
   const phones = [d.phone_int && `внутр. ${d.phone_int}`, d.phone_ext && `внеш. ${d.phone_ext}`, d.phone_mobile && `моб. ${d.phone_mobile}`].filter(Boolean).join(", ");
+  // Анкета, разделённая по исполнителям: в этой заявке — свои программы,
+  // остальные ушли соседними заявками (их номера — ниже).
+  const split = Array.isArray(d.ticket_programs);
+  const related = (d.related || []).map((r) => `${r.display_id} — ${r.department}${r.programs && r.programs.length ? `: ${r.programs.join(", ")}` : ""}`).join("\n");
   const rows = [
     ["Тип", d.typeLabel], ["Сотрудник", d.fio], ["Должность", d.post], ["Отдел", d.department],
-    ["Кабинет", d.room], ["Телефоны", phones], ["Программы", (d.programs || []).join(", ")],
+    ["Кабинет", d.room], ["Телефоны", phones],
+    [split ? "Программы в этой заявке" : "Программы", (split ? d.ticket_programs : d.programs || []).join(", ")],
     ["Формы ЦСОД", d.csod_forms], ["Комментарий", d.comment],
+    ["Другие заявки по анкете", related],
   ].filter(([, v]) => v);
   return `
     <div class="card" style="margin-bottom:16px;">
@@ -243,14 +254,39 @@ async function renderAccessAdmin(box) {
       <div><div class="field-label">Должности — по одной на строку</div>
         <textarea class="field-input" id="axPosts" rows="7" style="resize:vertical">${esc(g.posts.join("\n"))}</textarea></div>
     </div>
+    <div class="field-label" style="margin-top:4px">Кто выполняет доступ к программе</div>
+    <div class="as-note" style="margin-bottom:8px;max-width:820px">Программы, отданные группе, уходят ей <b>отдельной заявкой</b> — со своим номером, уведомлениями и закрытием.
+      Остальные — одной заявкой в очередь выше. Служебная записка остаётся одна, со всеми программами.
+      Группу из нескольких учёток (например, «АДМ») заводят в Администрирование → Группы исполнителей; её можно скрыть из «Новой заявки» — здесь она всё равно есть.</div>
+    <div class="ax-map" id="axMap"></div>
     <div style="display:flex;justify-content:flex-end;margin-bottom:22px"><button class="btn btn-wire" id="axSave">Сохранить</button></div>
     <div id="axDepts"></div>`;
   const lines = (id) => box.querySelector(id).value.split("\n").map((x) => x.trim()).filter(Boolean);
+  // Соответствие рисуется по тексту поля программ — и заново при его правке,
+  // с уже выбранными значениями: дописанную программу видно сразу, до сохранения.
+  const map = { ...(g.programExecutors || {}) };
+  const queueName = () => box.querySelector("#axQueue").value;
+  const drawMap = () => {
+    const progs = lines("#axProgs");
+    box.querySelector("#axMap").innerHTML = progs.length
+      ? progs.map((p) => `
+        <div class="ax-map-row"><span class="ax-map-prog">${esc(p)}</span>
+          <select class="field-select" data-prog="${esc(p)}">
+            <option value="">— общая очередь (${esc(queueName())}) —</option>
+            ${g.executorGroups.map((e) => `<option value="${esc(e.role)}" ${map[p] === e.role ? "selected" : ""}>${esc(e.name)}</option>`).join("")}
+          </select></div>`).join("")
+      : `<div class="as-note">Список программ пуст.</div>`;
+    box.querySelectorAll("#axMap select").forEach((sel) => { sel.onchange = () => { map[sel.dataset.prog] = sel.value; }; });
+  };
+  drawMap();
+  box.querySelector("#axProgs").addEventListener("input", drawMap);
+  box.querySelector("#axQueue").addEventListener("change", drawMap);
   box.querySelector("#axSave").onclick = async () => {
     try {
       await api("/assistant/settings/general", { method: "PUT", body: {
         itDept: box.querySelector("#axIt").value, accessDept: box.querySelector("#axQueue").value,
         programs: lines("#axProgs"), posts: lines("#axPosts"),
+        programExecutors: Object.fromEntries(lines("#axProgs").filter((p) => map[p]).map((p) => [p, map[p]])),
       } });
       asstRefsCache = null;
       toast("Сохранено");

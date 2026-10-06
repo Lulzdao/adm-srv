@@ -92,10 +92,19 @@ function resolveEmails(db, kind, ctx) {
     // Своей строки настроек у заимствующей категории нет, поэтому берём
     // список напрямую у той, на которую она ссылается.
     const donor = settingsFor(db, target);
-    return donor ? mailer.parseEmails(donor.emails) : [];
+    return donor ? [...mailer.parseEmails(donor.emails), ...loginMembers(db, target)] : [];
   }
 
-  return mailer.parseEmails(s.emails);
+  return [...mailer.parseEmails(s.emails), ...loginMembers(db, kind)];
+}
+
+// Кто вписан в группу исполнителей логином (Администрирование → Группы
+// исполнителей), получает письмо о новой заявке сам, без списка адресов: ради
+// этого такие группы и заводят. Состоящих через группу домена это не касается —
+// им, как и прежде, пишут по списку категории.
+function loginMembers(db, kind) {
+  const m = /^ticket_new:(.+)$/.exec(kind || "");
+  return m ? require("./executorGroups").memberEmails(db, m[1]) : [];
 }
 
 /**

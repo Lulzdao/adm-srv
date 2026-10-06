@@ -163,24 +163,45 @@ async function renderHealth(box) {
 async function renderAdmin(main) {
   main.innerHTML = `<div class="topbar"><div class="topbar-title">Администрирование</div></div><div class="page"><div class="spinner">Загрузка…</div></div>`;
   try {
-    const [{ departments: deptSettings, adminGroups, domainLabels }, { admins, executors }, backupInfo] = await Promise.all([
-      api("/admin/settings"), api("/admin/admins"), api("/admin/backup"),
+    const [{ adminGroups, domainLabels }, { admins, executors }, backupInfo, { groups: deptSettings }] = await Promise.all([
+      api("/admin/settings"), api("/admin/admins"), api("/admin/backup"), api("/admin/groups"),
     ]);
     const ИМЯ_ДОМЕНА = domainLabels || { A: "rosstat.local", B: "in.local" };
 
     const ROLE_LABEL = Object.fromEntries(deptSettings.map(d => [d.role, d.name]));
 
     const groupRow = (id, label, value, placeholder) => `
-      <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">
-        <span style="width:104px;font-size:12px;color:var(--ink-soft);font-weight:600;white-space:nowrap;">${label}</span>
-        <input class="input" id="${id}" style="flex:1;" value="${esc(value)}" placeholder="${esc(placeholder)}">
+      <div class="grp-row">
+        <span class="grp-row-l">${label}</span>
+        <input class="input" id="${id}" style="flex:1;min-width:0;" value="${esc(value)}" placeholder="${esc(placeholder)}">
       </div>`;
 
+    // Карточка группы: кто исполнитель (группа домена и/или логины), видна ли
+    // группа плиткой в «Новой заявке». У заведённой из панели — ещё подпись
+    // плитки и удаление (пока в ней нет заявок).
     const groupCard = (dept) => `
-      <div class="card" style="margin-bottom:14px;">
-        <div class="section-label">Группа АД — исполнители отдела ${esc(dept.name)}</div>
-        ${groupRow(`group_${dept.role}_A`, esc(ИМЯ_ДОМЕНА.A), dept.groupA, "имя группы")}
-        ${groupRow(`group_${dept.role}_B`, esc(ИМЯ_ДОМЕНА.B), dept.groupB, "имя группы")}
+      <div class="card grp-card" data-role="${esc(dept.role)}">
+        <div class="grp-head">
+          <span class="grp-name">${esc(dept.name)}</span>
+          <span class="badge mono" style="color:var(--wire);background:var(--wire-soft);">${esc(dept.prefix)}-0001</span>
+          <span class="badge" style="color:var(--ink-soft);background:var(--line-soft);">${dept.custom ? "из панели" : "встроенный"}</span>
+          ${dept.hidden ? `<span class="badge" style="color:var(--ink-soft);background:var(--line-soft);">скрыта</span>` : ""}
+          <span class="grp-count">заявок: ${dept.tickets}</span>
+        </div>
+        ${dept.custom ? `<div class="field-label">Подпись плитки</div>
+          <input class="input grp-hint" style="width:100%;margin-bottom:10px;" maxlength="120" value="${esc(dept.hint)}" placeholder="например: СЭД, почта, учётные записи">` : ""}
+        <div class="field-label">Группа домена</div>
+        ${groupRow(`group_${dept.role}_A`, esc(ИМЯ_ДОМЕНА.A), dept.groupA, "имя группы — или пусто")}
+        ${groupRow(`group_${dept.role}_B`, esc(ИМЯ_ДОМЕНА.B), dept.groupB, "имя группы — или пусто")}
+        <div class="field-label">Логины домена — по одному на строку</div>
+        <textarea class="field-input mono grp-logins" rows="${Math.min(6, Math.max(2, dept.logins.length + 1))}" style="resize:vertical;width:100%;" placeholder="ivanov">${esc(dept.logins.map((l) => l.login).join("\n"))}</textarea>
+        ${dept.logins.length ? `<div class="grp-who">${dept.logins.map((l) => `<span><span class="mono">${esc(l.login)}</span> — ${l.name ? esc(l.name) : `<i>ещё не входил</i>`}</span>`).join("")}</div>` : ""}
+        <label class="grp-check"><input type="checkbox" class="grp-hidden" ${dept.hidden ? "checked" : ""}> Скрыть из «Новой заявки» — заявки приходят только по программам из Заявки на доступ</label>
+        <div class="grp-actions">
+          ${dept.custom ? `<button class="btn btn-ghost grp-del" ${dept.tickets ? `disabled title="В группе есть заявки — её можно только скрыть"` : ""}>Удалить группу</button>` : ""}
+          <span class="grp-msg"></span>
+          <button class="btn btn-wire grp-save">Сохранить</button>
+        </div>
       </div>`;
 
     const человек = (a, показатьРоль) => `
@@ -219,7 +240,7 @@ async function renderAdmin(main) {
       <div class="card" style="margin-bottom:20px;">
         <div class="section-label">Исполнители по отделам</div>
         <div style="font-size:11.5px;color:var(--ink-soft);margin-bottom:6px;">
-          Читается из членства в группах отделов на момент последнего входа. Прав администратора не даёт.
+          Из групп домена (на момент последнего входа) и списков логинов во вкладке «Группы исполнителей». Прав администратора не даёт.
         </div>
         ${executors.length ? executors.map(a => человек(a, true)).join("") : пусто("Пока никто не входил под ролью исполнителя.")}
       </div>
@@ -265,26 +286,28 @@ async function renderAdmin(main) {
       </div>
 
       <div data-pane="groups">
-      <div style="display:flex;gap:20px;align-items:flex-start;">
-        <div style="flex:1;min-width:0;">
-          <div class="card">
-            <div class="section-label">Как добавить ещё одну группу исполнителей</div>
-            <div style="font-size:12.5px;line-height:1.7;color:var(--ink);">
-              1. На сервере в папке <code class="mono" style="background:var(--line-soft);padding:1px 5px;border-radius:3px;">config</code> откройте файл
-              <code class="mono" style="background:var(--line-soft);padding:1px 5px;border-radius:3px;">departments.local.js</code>.
-              Если его ещё нет — скопируйте <code class="mono" style="background:var(--line-soft);padding:1px 5px;border-radius:3px;">departments.js</code> под этим именем.
-              Сам <code class="mono" style="background:var(--line-soft);padding:1px 5px;border-radius:3px;">departments.js</code> не правьте: обновление его перезапишет, а свой файл не тронет.<br>
-              2. Добавьте одну строку в список, например:<br>
-              <code class="mono" style="display:block;background:var(--line-soft);padding:8px 10px;border-radius:5px;margin:6px 0;font-size:11.5px;">{ name: "БУХ", prefix: "БУХ", role: "buh" }</code>
-              3. Перезапустите службу платформы (<code class="mono" style="background:var(--line-soft);padding:1px 5px;border-radius:3px;">nssm restart ITS-Platform</code>)<br>
-              4. Новый отдел появится в форме создания заявки, в фильтре списка и справа на этой странице — впишите туда название AD-группы, как для остальных отделов.
-            </div>
-          </div>
-        </div>
-        <div style="width:380px;flex-shrink:0;">
+      <div class="grp-layout">
+        <div class="grp-list">
           ${deptSettings.map(groupCard).join("")}
-          <button class="btn btn-wire" id="saveGroups" style="width:100%;justify-content:center;">Сохранить</button>
-          <div id="saveMsg" style="margin-top:8px;font-size:12px;color:var(--green);display:none;text-align:center;">Сохранено</div>
+        </div>
+        <div class="grp-side">
+          <div class="card" id="grpNew">
+            <div class="section-label">Добавить группу исполнителей</div>
+            <div class="as-note" style="margin-bottom:12px;">Группа сразу появится в заявках, правах и оповещениях — перезапуск не нужен.
+              Вписанные логинами получают её заявки в колокольчик и на почту.</div>
+            <div class="form-row" style="grid-template-columns:1fr 120px;">
+              <div><div class="field-label">Название</div><input class="input" id="gnName" maxlength="30" placeholder="АДМ" style="width:100%;"></div>
+              <div><div class="field-label">Префикс номера</div><input class="input mono" id="gnPrefix" maxlength="10" placeholder="АДМ" style="width:100%;"></div>
+            </div>
+            <div class="field-label">Подпись плитки</div>
+            <input class="input" id="gnHint" maxlength="120" placeholder="например: СЭД, почта, учётные записи" style="width:100%;margin-bottom:10px;">
+            <div class="field-label">Логины домена — по одному на строку</div>
+            <textarea class="field-input mono" id="gnLogins" rows="3" style="resize:vertical;width:100%;" placeholder="ivanov"></textarea>
+            <label class="grp-check"><input type="checkbox" id="gnHidden"> Скрыть из «Новой заявки»</label>
+            <div class="grp-actions"><span class="grp-msg" id="gnMsg"></span><button class="btn btn-wire" id="gnCreate">Добавить</button></div>
+          </div>
+          <div class="as-note" style="margin-top:12px;">Встроенные отделы (ИТ, ХОЗ…) задаются в <span class="mono">config/departments.local.js</span> на сервере;
+            здесь у них правятся группы домена, логины и видимость. Номера заявок группы: <span class="mono">ПРЕФИКС-0001</span>.</div>
         </div>
       </div>
       </div>`;
@@ -340,17 +363,57 @@ async function renderAdmin(main) {
       } catch (e) { bkShow(false, e.message, e.hint); }
     };
 
-    document.getElementById("saveGroups").onclick = async () => {
+    // ---- Группы исполнителей ----
+    // Созданная или удалённая группа меняет плитки «Новой заявки» — справочник
+    // в браузере перечитываем, чтобы не ждать перезагрузки страницы.
+    const refreshGroups = async () => {
+      try { state.departments = (await api("/departments")).departments; } catch { /* останется прежний до перезагрузки */ }
+      renderAdmin(main);
+    };
+    main.querySelectorAll(".grp-card").forEach((card) => {
+      const role = card.dataset.role;
+      const msg = card.querySelector(".grp-msg");
+      const say = (ok, text) => { msg.style.color = ok ? "var(--green)" : "var(--red)"; msg.textContent = text; };
+      card.querySelector(".grp-save").onclick = async () => {
+        const body = {
+          groupA: card.querySelector(`#group_${role}_A`).value.trim(),
+          groupB: card.querySelector(`#group_${role}_B`).value.trim(),
+          logins: card.querySelector(".grp-logins").value,
+          hidden: card.querySelector(".grp-hidden").checked,
+        };
+        const hint = card.querySelector(".grp-hint");
+        if (hint) body.hint = hint.value;
+        try {
+          await api(`/admin/groups/${encodeURIComponent(role)}`, { method: "PUT", body });
+          say(true, "Сохранено");
+          setTimeout(refreshGroups, 900);
+        } catch (e) { say(false, e.message); }
+      };
+      const del = card.querySelector(".grp-del");
+      if (del) del.onclick = async () => {
+        const name = card.querySelector(".grp-name").textContent;
+        if (!confirm(`Удалить группу «${name}»? Программы, отданные ей в Заявке на доступ, вернутся в общую очередь.`)) return;
+        try { await api(`/admin/groups/${encodeURIComponent(role)}`, { method: "DELETE" }); toast(`Группа «${name}» удалена`); refreshGroups(); }
+        catch (e) { say(false, e.message); }
+      };
+    });
+    // Префикс по умолчанию — из названия, пока его не правили руками.
+    const gnPrefix = main.querySelector("#gnPrefix");
+    main.querySelector("#gnName").addEventListener("input", (e) => {
+      if (!gnPrefix.dataset.touched) gnPrefix.value = e.target.value.replace(/[^A-Za-zА-Яа-яЁё0-9]/g, "").toUpperCase().slice(0, 10);
+    });
+    gnPrefix.addEventListener("input", () => { gnPrefix.dataset.touched = "1"; });
+    main.querySelector("#gnCreate").onclick = async () => {
+      const v = (id) => main.querySelector(id).value;
+      const gnMsg = main.querySelector("#gnMsg");
       try {
-        const payload = deptSettings.map(dept => ({
-          role: dept.role,
-          groupA: document.getElementById(`group_${dept.role}_A`).value.trim(),
-          groupB: document.getElementById(`group_${dept.role}_B`).value.trim(),
-        }));
-        await api("/admin/settings", { method: "PUT", body: { departments: payload } });
-        const msg = document.getElementById("saveMsg");
-        msg.style.display = "block"; setTimeout(() => msg.style.display = "none", 2500);
-      } catch (e) { toast(e.message, true); }
+        await api("/admin/groups", { method: "POST", body: {
+          name: v("#gnName"), prefix: v("#gnPrefix"), hint: v("#gnHint"), logins: v("#gnLogins"),
+          hidden: main.querySelector("#gnHidden").checked,
+        } });
+        toast(`Группа «${v("#gnName").trim()}» добавлена`);
+        refreshGroups();
+      } catch (e) { gnMsg.style.color = "var(--red)"; gnMsg.textContent = e.message; }
     };
   } catch (e) {
     main.querySelector(".page").innerHTML = `<div class="empty-state">Не удалось загрузить: ${esc(e.message)}</div>`;

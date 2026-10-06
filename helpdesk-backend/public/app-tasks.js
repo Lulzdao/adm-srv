@@ -71,8 +71,10 @@ function taskDueControl(box, value, onChange) {
           <button type="button" data-mode="period" class="${period ? "on" : ""}">Период</button>
         </div>
         ${period ? `
-          <span class="td-due-dates"><span class="td-due-l">с</span><input class="input td-date" type="date" data-k="from" value="${esc(v.due_from || "")}">
-          <span class="td-due-l">по</span><input class="input td-date" type="date" data-k="to" value="${esc(v.due_date || "")}"></span>
+          <span class="td-due-dates">
+            <span class="td-due-pair"><span class="td-due-l">с</span><input class="input td-date" type="date" data-k="from" value="${esc(v.due_from || "")}"></span>
+            <span class="td-due-pair"><span class="td-due-l">по</span><input class="input td-date" type="date" data-k="to" value="${esc(v.due_date || "")}"></span>
+          </span>
           <div class="td-due-presets">
             <button type="button" data-p="week">Эта неделя</button>
             <button type="button" data-p="next">Следующая неделя</button>
@@ -80,6 +82,7 @@ function taskDueControl(box, value, onChange) {
           </div>` : `
           <input class="input td-date" type="date" data-k="to" value="${esc(v.due_date || "")}">
           <input class="input td-time" type="time" data-k="time" value="${esc(v.due_time || "")}" ${v.due_date ? "" : "disabled"} title="Время — необязательно">`}
+        <div class="td-due-err" hidden></div>
       </div>`;
     box.querySelectorAll("[data-mode]").forEach((b) => {
       b.onclick = () => {
@@ -97,19 +100,23 @@ function taskDueControl(box, value, onChange) {
         paint(); emit();
       };
     });
+    // Набор даты с клавиатуры шлёт «изменение» на каждой цифре — с
+    // промежуточными значениями вроде года 0008. Поэтому ввод только
+    // запоминается, а сохраняется, когда человек ушёл из полей срока (или
+    // нажал Enter) и срок при этом осмысленный. Поля при этом не
+    // перерисовываются — курсор не выпрыгивает посреди набора.
     const get = (k) => box.querySelector(`[data-k="${k}"]`);
     box.querySelectorAll("input").forEach((inp) => {
-      inp.onchange = () => {
+      inp.oninput = inp.onchange = () => {
         if (period) {
-          let from = get("from").value || null, to = get("to").value || null;
-          if (from && to && from > to) [from, to] = [to, from];
-          v = { due_from: from, due_date: to, due_time: null };
-          if (!from || !to) return;   // период ещё не выбран целиком
+          v = { due_from: get("from").value || null, due_date: get("to").value || null, due_time: null };
         } else {
           v = { due_from: null, due_date: get("to").value || null, due_time: get("to").value ? get("time").value || null : null };
+          get("time").disabled = !v.due_date;
         }
-        paint(); emit();
+        showProblem(null);
       };
+      inp.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); commit(); } };
     });
     box.querySelectorAll("[data-p]").forEach((b) => {
       b.onclick = () => {
@@ -122,12 +129,37 @@ function taskDueControl(box, value, onChange) {
       };
     });
   };
-  const emit = () => onChange({ ...v, due_from: v.due_from && v.due_from < v.due_date ? v.due_from : null });
+  const okDate = (d) => !d || (/^\d{4}-\d{2}-\d{2}$/.test(d) && d >= "2000-01-01" && d <= "2100-12-31");
+  /** Что не так со сроком сейчас; null — всё в порядке (в том числе «без срока»). */
+  const problem = () => {
+    if (!okDate(v.due_date) || !okDate(v.due_from)) return "Дата набрана не до конца";
+    if (!period) return null;
+    if (!v.due_from || !v.due_date) return "У периода выберите оба дня: с какого и по какое";
+    if (v.due_from > v.due_date) return "Начало периода позже его конца";
+    if (v.due_from === v.due_date) return "Период в один день — выберите «День»";
+    return null;
+  };
+  const showProblem = (text) => {
+    const el = box.querySelector(".td-due-err");
+    if (!el) return;
+    el.textContent = text || "";
+    el.hidden = !text;
+  };
+  let sent = JSON.stringify({ due_from: value.due_from || null, due_date: value.due_date || null, due_time: value.due_time || null });
+  const out = () => ({ due_from: period ? v.due_from : null, due_date: v.due_date, due_time: period ? null : v.due_time });
+  const emit = () => { sent = JSON.stringify(out()); onChange(out()); };
+  // Сохранить введённое: только целый и осмысленный срок и только если он изменился.
+  const commit = () => {
+    const p = problem();
+    if (p) { showProblem(p); return; }
+    if (JSON.stringify(out()) !== sent) emit();
+  };
+  box.addEventListener("focusout", (e) => { if (!box.contains(e.relatedTarget)) commit(); });
   paint();
   return {
-    value: () => ({ ...v, due_from: period && v.due_from && v.due_date && v.due_from < v.due_date ? v.due_from : null }),
-    /** Выбран «Период», но не оба дня. */
-    incomplete: () => period && (!v.due_from || !v.due_date),
+    value: () => out(),
+    /** Что не так со сроком (для формы новой задачи); null — можно сохранять. */
+    problem,
   };
 }
 
@@ -545,7 +577,8 @@ function openTaskForm(main, presetDate = "") {
     const assignees = [...drawer.querySelectorAll(".td-person.on")].map((b) => Number(b.dataset.id));
     if (!title.value.trim()) { err.textContent = "Напишите, что сделать"; title.focus(); return; }
     if (!assignees.length) { err.textContent = "Выберите хотя бы одного ответственного"; return; }
-    if (dueCtl.incomplete()) { err.textContent = "У периода выберите оба дня: с какого и по какое"; return; }
+    const dueProblem = dueCtl.problem();
+    if (dueProblem) { err.textContent = dueProblem; return; }
     const due = dueCtl.value();
     const body = {
       title: title.value,

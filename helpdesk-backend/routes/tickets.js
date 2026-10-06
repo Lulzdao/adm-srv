@@ -18,6 +18,7 @@ const ALLOWED_MIME = new Set([
 const MAX_FILE_SIZE = 15 * 1024 * 1024; // 15 МБ
 
 const departments = require("../config/departments");
+const { isHidden } = require("../services/executorGroups");
 
 const TITLE_MAX = 50;
 const DESCRIPTION_MAX = 140;
@@ -52,12 +53,14 @@ function optionalShortText(value) {
 
 // Карты выводятся из config/departments.js — добавили туда новый отдел,
 // здесь ничего трогать не нужно.
-const DEPT_PREFIX = Object.fromEntries(departments.map((d) => [d.name, d.prefix]));
-const DEPT_ROLE = Object.fromEntries(departments.map((d) => [d.name, d.role]));
-const ROLE_DEPT = Object.fromEntries(departments.map((d) => [d.role, d.name]));
-// Роль отдела по умолчанию — для строк без категории (наследие ранних версий).
-const DEFAULT_DEPT_ROLE = departments[0].role;
-const DEFAULT_DEPARTMENT = departments[0].name;
+// Справочник живой: группу, заведённую из панели, он получает сразу, поэтому
+// здесь не карты, снятые при загрузке, а поиск в нём на каждый вызов.
+const prefixOfDept = (name) => (departments.byName(name) || {}).prefix;
+const roleOfDept = (name) => (departments.byName(name) || {}).role;
+const deptOfRole = (role) => (departments.byRole(role) || {}).name;
+// Отдел по умолчанию — для строк без категории (наследие ранних версий).
+const defaultDeptRole = () => departments[0].role;
+const defaultDepartment = () => departments[0].name;
 
 // --- Оповещения по заявке ---------------------------------------------------
 //
@@ -118,7 +121,7 @@ const deptUserIds = (db, role, exceptId) =>
 /** Названия отделов, в которых человек исполнитель. Пусто — он не исполнитель. */
 function userDepts(user) {
   const roles = user.roles && user.roles.length ? user.roles : (user.role ? [user.role] : []);
-  return roles.map((r) => ROLE_DEPT[r]).filter(Boolean);
+  return roles.map((r) => deptOfRole(r)).filter(Boolean);
 }
 
 // Единое правило видимости конкретной заявки, используется во всех местах,
@@ -365,6 +368,12 @@ module.exports = function ticketRoutes(db) {
       return res.status(400).json({ error: `Кабинет и добавочный не могут быть длиннее ${SHORT_FIELD_MAX} символов` });
     }
     const user = req.session.user;
+    // Скрытая из «Новой заявки» группа принимает заявки только по своим путям
+    // (например, Заявка на доступ). Свои исполнители и администратор — могут.
+    const target = typeof category === "string" ? departments.byName(category) : null;
+    if (target && isHidden(db, target.role) && !user.is_admin && !userDepts(user).includes(target.name)) {
+      return res.status(400).json({ error: `Группа «${target.name}» не принимает заявки напрямую — выберите другую` });
+    }
     const ticketId = createTicket(db, user, {
       title: title.trim(), description: description || null, category, priority,
       room: roomValue, extension: extensionValue,
@@ -397,7 +406,7 @@ module.exports = function ticketRoutes(db) {
   router.get("/:id/assignees", (req, res) => {
     const ticket = ticketFromParams(req, res);
     if (!ticket) return;
-    const deptRole = DEPT_ROLE[ticket.category] || DEFAULT_DEPT_ROLE;
+    const deptRole = roleOfDept(ticket.category) || defaultDeptRole();
     const rows = db.prepare(
       "SELECT id, full_name, role FROM users WHERE roles LIKE ? ORDER BY full_name"
     ).all(roleLike(deptRole));
@@ -434,7 +443,7 @@ module.exports = function ticketRoutes(db) {
     let assignee;
     if (assigned_to !== undefined && assigned_to !== null && assigned_to !== "") {
       const assigneeId = parseTicketId(assigned_to);
-      const deptRole = DEPT_ROLE[ticket.category] || DEFAULT_DEPT_ROLE;
+      const deptRole = roleOfDept(ticket.category) || defaultDeptRole();
       assignee = assigneeId === null ? null : db.prepare(
         "SELECT id FROM users WHERE id = ? AND roles LIKE ?"
       ).get(assigneeId, roleLike(deptRole));
@@ -481,7 +490,7 @@ module.exports = function ticketRoutes(db) {
         ticketId: ticket.id,
         dedupKey: `ticket_status:${ticket.id}:${hist.lastInsertRowid}`,
         payload: statusPayload,
-        department: DEPT_ROLE[ticket.category] || "it",
+        department: roleOfDept(ticket.category) || "it",
         // Автор закрыл собственную заявку — писать ему об этом незачем. Событие
         // в ленте при этом остаётся: история не должна зависеть от того, кто
         // нажал кнопку.
@@ -540,7 +549,7 @@ module.exports = function ticketRoutes(db) {
       // Теперь правило без исключений: написал автор — уходит тем, кто получил
       // саму заявку; написал кто угодно другой — уходит автору.
       const fromAuthor = user.id === ticket.created_by;
-      const deptRole = DEPT_ROLE[ticket.category] || "it";
+      const deptRole = roleOfDept(ticket.category) || "it";
       const payload = ticketPayload(db, ticket.id);
       payload["текст"] = text.trim();
       payload["автор_комментария"] = user.full_name || user.ad_login;
@@ -633,7 +642,7 @@ function createTicket(db, user, { title, description = null, category, priority,
   let cat = typeof category === "string" && category
     ? db.prepare("SELECT id, name FROM categories WHERE name = ?").get(category)
     : null;
-  if (!cat) cat = db.prepare("SELECT id, name FROM categories WHERE name = ?").get(DEFAULT_DEPARTMENT);
+  if (!cat) cat = db.prepare("SELECT id, name FROM categories WHERE name = ?").get(defaultDepartment());
 
   const displayId = nextDisplayId(db, cat.name);
   const info = db.prepare(`
@@ -642,7 +651,7 @@ function createTicket(db, user, { title, description = null, category, priority,
   `).run(displayId, title, description, cat.id, priority || "medium", room, extension, user.id);
   const ticketId = Number(info.lastInsertRowid);
 
-  const deptRole = DEPT_ROLE[cat.name] || "it";
+  const deptRole = roleOfDept(cat.name) || "it";
   const newPayload = ticketPayload(db, ticketId);
   emit(db, {
     kind: ticketNewKind(deptRole),
@@ -715,7 +724,7 @@ function getTicketDetail(db, id, viewer) {
 // substr в SQLite считает СИМВОЛЫ, а не байты, поэтому кириллический префикс
 // длиной в буквах даёт верное смещение: «ИТ-0007» -> позиция 4.
 function nextDisplayId(db, deptName) {
-  const prefix = DEPT_PREFIX[deptName] || "ЗАЯВ";
+  const prefix = prefixOfDept(deptName) || "ЗАЯВ";
   const row = db.prepare(`
     SELECT MAX(CAST(substr(display_id, ?) AS INTEGER)) AS n
     FROM tickets WHERE display_id LIKE ?

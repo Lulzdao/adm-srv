@@ -1109,10 +1109,16 @@ textarea.input { font-family: inherit; resize: vertical; }
 .as-done > div { flex: 1; min-width: 200px; }
 .as-done b { display: block; }
 .as-done small { color: var(--md-on-surface-variant); }
+.ax-map { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 6px 18px; margin-bottom: 14px; max-width: 900px; }
+.ax-map-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.ax-map-prog { flex: 1; min-width: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ax-map-row .select-wrap { width: 210px; flex-shrink: 0; }
+.as-done-list { margin: 6px 0; padding-left: 18px; font-size: 13px; }
+.as-done-list b { display: inline; }
 .as-done-ic { width: 34px; height: 34px; border-radius: 50%; background: var(--md-on-success-container); color: var(--md-on-primary); display: flex; align-items: center; justify-content: center; }
 .as-kv { display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 8px 14px; font-size: 13.5px; }
 .as-kv .k { color: var(--md-on-surface-variant); font-size: 12.5px; }
-.as-kv .v { font-weight: 500; word-break: break-word; }
+.as-kv .v { font-weight: 500; word-break: break-word; white-space: pre-line; }
 .as-cols { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 24px; align-items: start; }
 @media (max-width: 1100px) { .as-cols { grid-template-columns: minmax(0, 1fr); } }
 
@@ -1224,8 +1230,14 @@ textarea.input { font-family: inherit; resize: vertical; }
 .td-due-mode button { border: 0; background: transparent; color: var(--md-on-surface-variant); font: inherit; font-size: 12.5px; padding: 6px 12px; cursor: pointer; }
 .td-due-mode button.on { background: var(--md-primary-container); color: var(--md-on-primary-container); font-weight: 600; }
 .td-due-l { font-size: 12.5px; color: var(--md-on-surface-variant); }
-.td-due-dates { display: inline-flex; align-items: center; gap: 6px; flex-wrap: nowrap; }
+/* Пары «с …» и «по …» не разрываются, но друг под друга переносятся, если
+   места мало (карточка задачи уже формы). */
+.td-due-dates { display: inline-flex; align-items: center; gap: 6px 10px; flex-wrap: wrap; min-width: 0; }
+.td-due-pair { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .td-due-dates .td-date { width: 138px; }
+.td-due-ctl { min-width: 0; max-width: 100%; }
+.td-due-err { width: 100%; font-size: 12px; color: var(--md-error); }
+.td-f .v { min-width: 0; }
 .td-due-presets { display: flex; flex-wrap: wrap; gap: 6px; width: 100%; }
 .td-due-presets button {
   border: 1px solid var(--md-outline); background: var(--md-surface-container-lowest); color: var(--md-primary);
@@ -1307,3 +1319,23 @@ textarea.input { font-family: inherit; resize: vertical; }
   border: solid var(--md-on-primary, var(--md-surface-container-lowest)); border-width: 0 2px 2px 0; transform: rotate(45deg); pointer-events: none;
 }
 
+
+/* ---- Администрирование → Группы исполнителей ---- */
+.grp-layout { display: flex; gap: 20px; align-items: flex-start; }
+.grp-list { flex: 1; min-width: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 14px; align-items: start; }
+.grp-side { width: 360px; flex-shrink: 0; }
+.grp-card .field-label { margin-top: 2px; }
+.grp-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.grp-name { font-size: 15px; font-weight: 600; }
+.grp-count { margin-left: auto; font-size: 11.5px; color: var(--ink-soft); }
+.grp-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+.grp-row-l { width: 104px; font-size: 12px; color: var(--ink-soft); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.grp-who { display: flex; flex-direction: column; gap: 2px; font-size: 11.5px; color: var(--ink-soft); margin: 4px 0 6px; }
+.grp-check { display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; margin: 10px 0 4px; cursor: pointer; }
+.grp-check input { margin-top: 2px; }
+.grp-actions { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.grp-msg { flex: 1; font-size: 12px; }
+@media (max-width: 1100px) {
+  .grp-layout { flex-direction: column-reverse; }
+  .grp-side { width: 100%; }
+}

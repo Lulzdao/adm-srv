@@ -49,7 +49,7 @@ const TICKET_LINK_LINE = "Открыть заявку: {{ссылка}}";
 
 // Категории «новая заявка» — по одной на отдел-исполнитель. Не перечисляем
 // руками: справочник отделов один, и он лежит в departments.js.
-const ticketNew = departments.map((dept) => ({
+const ticketNewOf = (dept) => ({
   kind: `ticket_new:${dept.role}`,
   label: `Новая заявка — ${dept.name}`,
   hint: `Заявка поступила в очередь отдела «${dept.name}».`,
@@ -67,7 +67,7 @@ const ticketNew = departments.map((dept) => ({
     "Кабинет:   {{кабинет}}\n" +
     "Важность:  {{важность}}\n\n" +
     "{{описание}}\n\n" + TICKET_LINK_LINE,
-}));
+});
 
 const rest = [
   {
@@ -265,8 +265,18 @@ const platform = [
   },
 ];
 
-const KINDS = [...ticketNew, ...rest, ...tasks, ...platform];
-const BY_KIND = new Map(KINDS.map((k) => [k.kind, k]));
+// Список и карта — одни и те же объекты на всё время работы: группа
+// исполнителей, заведённая из панели, получает свою категорию сразу (см.
+// departments.sync), а держащие ссылку на KINDS видят её без перезагрузки.
+const KINDS = [];
+const BY_KIND = new Map();
+function rebuild() {
+  KINDS.splice(0, KINDS.length, ...departments.map(ticketNewOf), ...rest, ...tasks, ...platform);
+  BY_KIND.clear();
+  for (const k of KINDS) BY_KIND.set(k.kind, k);
+}
+rebuild();
+departments.onChange(rebuild);
 
 function byKind(kind) {
   return BY_KIND.get(kind) || null;
