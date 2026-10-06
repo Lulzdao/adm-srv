@@ -280,6 +280,7 @@ if (machinePolicy.serverUrl) {
 const SETTINGS_PATH = path.join(app.getPath('userData'), 'settings.json');
 
 const DEFAULT_SETTINGS = {
+  notifications: true,       // всплывающие уведомления Windows о сообщениях и объявлениях (выкл. — только мигание кнопки и счётчик)
   openChatOnMessage: false, // открывать окно чата при новом сообщении (вместо/вместе с уведомлением)
   rememberWindowSize: false, // запоминать размер окон между запусками
   alwaysOnTop: false,        // держать окна поверх остальных
@@ -1198,6 +1199,8 @@ ipcMain.on('notify', (event, payload) => {
 
   markUnread(openPayload); // не читает прямо сейчас — считается непрочитанным до открытия/фокуса окна
   callAttention(targetWin);
+  // Уведомления выключены в настройках — остаются отметка непрочитанного, мигание кнопки и счётчик в трее.
+  if (!settings.notifications) return;
   const n = new Notification({ title, body });
   n.on('click', () => {
     if (openPayload) createWindow(key, file, openPayload, winSize);
@@ -1278,6 +1281,12 @@ function watchWindowHangs(win, name) {
     }, 'INFO');
   });
 }
+
+// Имя программы для Windows (AppUserModelID) — то же, что appId сборки (build-config/base.js): им
+// установщик помечает ярлык, и по этой паре Windows подписывает уведомления «Искра» с её значком.
+// Без вызова Electron называется electron.app.<имя>, ярлыка с таким ID нет — и в уведомлении
+// вместо названия программы стояло «electron.app.Electron».
+if (process.platform === 'win32') app.setAppUserModelId('ru.lipetskstat.iskra');
 
 app.whenReady().then(() => {
   createRoster();
