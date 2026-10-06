@@ -389,6 +389,7 @@ document.getElementById('searchIcon').innerHTML = uiIcon('search');
 document.getElementById('ppEmblem').innerHTML = uiIcon('emblem');
 
 const PP_CHECKBOX_IDS = [
+  ['ppNotifications', 'notifications'],
   ['ppOpenChatOnMessage', 'openChatOnMessage'],
   ['ppRememberWindowSize', 'rememberWindowSize'],
   ['ppAlwaysOnTop', 'alwaysOnTop'],

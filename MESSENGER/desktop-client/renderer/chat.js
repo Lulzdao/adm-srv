@@ -173,6 +173,14 @@ function readTickHtml(m) {
 
 // card: true — вид для панели истории: карточка во всю ширину с шапкой «кто — когда» вместо
 // пузыря слева/справа (в истории важнее быстро пробежать глазами, чем видеть, чья реплика с какой стороны).
+// «Петров Игорь Николаевич» → «Петров И. Н.» — в карточках истории, как в макете; полное ФИО — в
+// подсказке. Имя не из трёх слов (логин, «Центр», «admin») остаётся как есть.
+function shortFio(name) {
+  const parts = String(name || '').trim().split(/\s+/);
+  if (parts.length !== 3) return String(name || '');
+  return `${parts[0]} ${parts[1].charAt(0)}. ${parts[2].charAt(0)}.`;
+}
+
 function bubbleHtml(m, { withDate, query, card } = {}) {
   const own = m.from_id === me.id;
   const d = new Date(m.created_at);
@@ -189,7 +197,7 @@ function bubbleHtml(m, { withDate, query, card } = {}) {
   const reactions = m.reactions || [];
   const inlineTime = reactions.length ? '' : timeEl;
   const head = card
-    ? `<div class="hhead"><span class="hwho${own ? ' me' : ''}">${own ? 'Вы' : escapeHtml(m.from_user)}</span><span class="hwhen">${stamp}</span></div>`
+    ? `<div class="hhead"><span class="hwho${own ? ' me' : ''}" title="${own ? '' : escapeHtml(m.from_user)}">${own ? 'Вы' : escapeHtml(shortFio(m.from_user))}</span><span class="hwhen">${stamp}</span></div>`
     : `<div class="who">${escapeHtml(m.from_user)}</div>`;
 
   let body = '';
@@ -776,7 +784,7 @@ function dayLabel(dayStr) {
   const diff = Math.round((today - day) / 86400000);
   if (diff === 0) return 'Сегодня';
   if (diff === 1) return 'Вчера';
-  return day.toLocaleDateString('ru-RU', { day: '2-digit', month: 'long' });
+  return day.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' }); // «4 октября», без нуля — как в макете
 }
 function dayRange(dayStr) {
   const [y, m, d] = dayStr.split('-').map(Number);

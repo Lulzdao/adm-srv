@@ -14,6 +14,9 @@
 .wintitlebar .title-settings .icon-btn { -webkit-app-region: no-drag; color: var(--text); }
 .wintitlebar .title-settings .icon-btn svg { transform: rotate(90deg); width: 14px; height: 14px; }
 body.settings-open #wtBrand { display: none; }
+/* На экране входа название не повторяем — оно крупно посередине; в шапке по макету только кнопки.
+   visibility, а не display: кнопки «свернуть/закрыть» остаются на своём месте справа. */
+body:has(#app:not(.active)) #wtBrand { visibility: hidden; }
 body.settings-open #wtSettings { display: flex; }
 /* У списка и окна входа по макету две кнопки: свернуть и закрыть. */
 body:has(#auth) #wcMax { display: none; }
