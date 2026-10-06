@@ -40,6 +40,20 @@ function statusTitle(state, idleSince, since) {
 }
 document.getElementById('statusDot').title = statusTitle('offline');
 
+// Вторая строка шапки (под именем): «печатает…», пока собеседник набирает, иначе его статус.
+// В комнате и группе статуса нет — там строка появляется только на время «печатает».
+let headerState = 'offline', headerIdleSince = null, headerTyping = '';
+function paintHeaderSub() {
+  const el = document.getElementById('labelSub');
+  if (headerTyping) { el.textContent = headerTyping; el.className = 'hsub typing'; return; }
+  el.className = 'hsub';
+  if (type !== 'dm') { el.textContent = ''; return; }
+  if (headerState === 'active') el.textContent = 'В сети';
+  else if (headerState === 'idle') el.textContent = headerIdleSince ? `Отошёл · ${formatIdleDuration(headerIdleSince).replace(' назад', '')}` : 'Отошёл';
+  else el.textContent = 'Не в сети';
+}
+paintHeaderSub();
+
 // Всплывающая карточка по клику на имя — то же самое, что тултип у точки статуса (см. statusTitle
 // выше), плюс имена ПК: если у собеседника несколько одновременных подключений под одним аккаунтом
 // (сидит с двух компов), сервер уже присылает их все в presence.hosts (см. presenceSnapshot в
@@ -127,6 +141,19 @@ function highlightHtml(text, query) {
   return emojiHtml(html); // emoji-символы в тексте — картинками (см. ui-kit.js), не системным шрифтом
 }
 
+// Вид файла по расширению — вторая половина подписи в карточке: «284 КБ · Excel».
+const FILE_KINDS = {
+  Excel: ['xls', 'xlsx', 'xlsm', 'csv'], Word: ['doc', 'docx', 'rtf', 'odt'], PDF: ['pdf'], PowerPoint: ['ppt', 'pptx'],
+  'Изображение': ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'tif', 'tiff'], 'Архив': ['zip', 'rar', '7z', 'gz', 'tar'],
+  'Текст': ['txt', 'log', 'md'], 'Видео': ['mp4', 'avi', 'mkv', 'mov'], 'Звук': ['mp3', 'wav', 'ogg'], 'Сертификат': ['cer', 'crt', 'pfx', 'p12', 'sig'],
+};
+function fileKind(name) {
+  const ext = String(name || '').split('.').pop().toLowerCase();
+  if (!ext || ext === String(name || '').toLowerCase()) return '';
+  for (const [kind, exts] of Object.entries(FILE_KINDS)) if (exts.includes(ext)) return kind;
+  return ext.length <= 5 ? ext.toUpperCase() : '';
+}
+
 function fmtSize(bytes) {
   if (!bytes) return '';
   if (bytes < 1024) return bytes + ' Б';
@@ -144,19 +171,26 @@ function readTickHtml(m) {
   return `<span class="read-tick${m.read_at ? ' read' : ''}" title="${m.read_at ? 'Прочитано' : 'Отправлено'}">${uiIcon(m.read_at ? 'checkDouble' : 'check')}</span>`;
 }
 
-function bubbleHtml(m, { withDate, query } = {}) {
+// card: true — вид для панели истории: карточка во всю ширину с шапкой «кто — когда» вместо
+// пузыря слева/справа (в истории важнее быстро пробежать глазами, чем видеть, чья реплика с какой стороны).
+function bubbleHtml(m, { withDate, query, card } = {}) {
   const own = m.from_id === me.id;
   const d = new Date(m.created_at);
   const time = d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-  const stamp = withDate ? d.toLocaleDateString('ru-RU') + ' ' + time : time;
+  const stamp = withDate
+    ? (card ? d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }).replace('.', '') + ', ' + time : d.toLocaleDateString('ru-RU') + ' ' + time)
+    : time;
   const files = m.files || [];
   const tick = readTickHtml(m);
 
   // Время сообщения — один и тот же узел, который живёт либо рядом с текстом/файлами, либо в
   // строке реакций, если она есть (см. placeTime и ".msg .reactions-bar .time" в стилях).
-  const timeEl = `<span class="time">${stamp}${tick}</span>`;
+  const timeEl = card ? '' : `<span class="time">${stamp}${tick}</span>`;
   const reactions = m.reactions || [];
   const inlineTime = reactions.length ? '' : timeEl;
+  const head = card
+    ? `<div class="hhead"><span class="hwho${own ? ' me' : ''}">${own ? 'Вы' : escapeHtml(m.from_user)}</span><span class="hwhen">${stamp}</span></div>`
+    : `<div class="who">${escapeHtml(m.from_user)}</div>`;
 
   let body = '';
   if (m.text) body += `<div class="txt selectable" data-raw-text="${escapeAttr(m.text)}">${highlightHtml(m.text, query)}${files.length ? '' : inlineTime}</div>`;
@@ -173,12 +207,14 @@ function bubbleHtml(m, { withDate, query } = {}) {
       // Без токена в href — короткоживущий токен на скачивание запрашивается прямо перед кликом
       // (см. wireFileClicks/wireMessageContextMenu), а не подставляется здесь заранее: ссылка может
       // провисеть в DOM часами, и токен на момент клика уже истёк бы.
-      return `<a class="file" href="#" data-url="${escapeAttr(f.url)}" data-name="${escapeAttr(f.name || 'файл')}"><span class="fi"><span class="fi-file">${uiIcon('file')}</span><span class="fi-download">${uiIcon('download')}</span><span class="fi-progress"><svg viewBox="0 0 24 24"><circle class="ring-bg" cx="12" cy="12" r="10"></circle><circle class="ring-bar" cx="12" cy="12" r="10"></circle></svg><span class="fi-pct"></span></span><span class="fi-check">${uiIcon('check')}</span></span><span class="fmeta"><span class="fn">${escapeHtml(f.name || 'файл')}</span><span class="fs">${fmtSize(f.size)}</span></span></a>`;
+      return `<a class="file" href="#" data-url="${escapeAttr(f.url)}" data-name="${escapeAttr(f.name || 'файл')}"><span class="fi"><span class="fi-file">${uiIcon('file')}</span><span class="fi-download">${uiIcon('download')}</span><span class="fi-progress"><svg viewBox="0 0 24 24"><circle class="ring-bg" cx="12" cy="12" r="10"></circle><circle class="ring-bar" cx="12" cy="12" r="10"></circle></svg><span class="fi-pct"></span></span><span class="fi-check">${uiIcon('check')}</span></span><span class="fmeta"><span class="fn">${escapeHtml(f.name || 'файл')}</span><span class="fs">${[fmtSize(f.size), fileKind(f.name)].filter(Boolean).join(' · ')}</span></span></a>`;
     }).join('');
     body += `<div class="files-block">${cards}</div><div class="files-time">${inlineTime}</div>`;
   }
   const toolbar = `<div class="msg-toolbar"><button type="button" class="mt-btn mt-react" data-mid="${m.id}" title="Реакция">${uiIcon('emoji')}</button><button type="button" class="mt-btn mt-reply" data-mid="${m.id}" title="Ответить">${uiIcon('reply')}</button></div>`;
-  return `<div class="msg${own ? ' own' : ''}" data-ts="${m.created_at}" data-id="${m.id}">${toolbar}${replyQuoteHtml(m)}<div class="who">${escapeHtml(m.from_user)}</div>${body}${reactionsMarkup(m.id, reactions, timeEl)}</div>`;
+  // has-files — пузырь с карточками файлов: у него свои поля (карточка почти вплотную к краям).
+  const cls = `msg${own ? ' own' : ''}${card ? ' hcard' : ''}${files.length ? ' has-files' : ''}`;
+  return `<div class="${cls}" data-ts="${m.created_at}" data-id="${m.id}">${toolbar}${card ? head : ''}${replyQuoteHtml(m)}${card ? '' : head}${body}${reactionsMarkup(m.id, reactions, timeEl)}</div>`;
 }
 
 // Цитата сообщения, на которое отвечают — снимок автора/текста сделан на сервере в момент отправки
@@ -280,6 +316,11 @@ function addMessage(m) {
     box.insertAdjacentHTML('beforeend', unreadDividerHtml());
     hasUnreadDivider = true;
   }
+  // В ленте окна — только сегодняшние сообщения (остальное — в «Истории»); плашка сверху говорит об этом прямо.
+  if (!box.querySelector('.day-sep')) {
+    const today = new Date().toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
+    box.insertAdjacentHTML('afterbegin', `<div class="day-sep">Сегодня, ${today}</div>`);
+  }
   const div = document.createElement('div');
   div.innerHTML = bubbleHtml(m);
   box.appendChild(div.firstElementChild);
@@ -374,6 +415,7 @@ function connectWs() {
       const state = p ? p.state : 'offline';
       document.getElementById('statusDot').className = 'dot ' + state;
       document.getElementById('statusDot').title = statusTitle(state, p?.idleSince, p?.since);
+      headerState = state; headerIdleSince = p?.idleSince || null; paintHeaderSub();
       updateComposerReachability(p?.hosts);
       lastPresence = p;
       if (presencePanel.classList.contains('open')) renderPresencePanel(); // если карточка уже открыта — обновляем вживую
@@ -448,12 +490,14 @@ function showTypingIndicator(name) {
   who.textContent = type === 'room' ? name : '';
   who.style.display = type === 'room' ? '' : 'none';
   if (follow) { programmaticScroll = true; box.scrollTop = box.scrollHeight; }
+  headerTyping = type === 'room' ? `${name} печатает…` : 'печатает…'; paintHeaderSub();
   clearTimeout(typingHideTimer);
   typingHideTimer = setTimeout(hideTypingIndicator, TYPING_TIMEOUT_MS);
 }
 function hideTypingIndicator() {
   clearTimeout(typingHideTimer);
   typingHideTimer = null;
+  headerTyping = ''; paintHeaderSub();
   const el = document.getElementById('typingBubble');
   if (el) el.remove();
 }
@@ -742,7 +786,8 @@ function dayRange(dayStr) {
 function monthLabel(key) { // key = 'YYYY-MM'
   const [y, m] = key.split('-').map(Number);
   const label = new Date(y, m - 1, 1).toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' });
-  return label.charAt(0).toUpperCase() + label.slice(1);
+  // «октябрь 2026 г.» → «Октябрь 2026»: в узкой колонке «г.» только занимает место.
+  return (label.charAt(0).toUpperCase() + label.slice(1)).replace(/\s*г\.$/, '');
 }
 
 // Сообщения и строка ввода плавно гаснут и сдвигаются вниз, пока не закончится transition — и только
@@ -788,7 +833,7 @@ async function openHistoryPanel() {
   document.getElementById('historyBtn').classList.add('active');
   document.getElementById('historyBtn').title = 'Скрыть историю переписки';
   const row = document.getElementById('hpSearchRow');
-  row.innerHTML = `${uiIcon('search')}<input id="hpSearch" placeholder="Поиск по всей истории переписки...">`;
+  row.innerHTML = `<div class="hp-search">${uiIcon('search')}<input id="hpSearch" placeholder="Поиск по всей истории переписки…"><span id="hpCount"></span></div>`;
   document.getElementById('hpSearch').addEventListener('input', debounceSearch);
   await loadDays();
   if (daysCache.length) selectDay(daysCache[0].day);
@@ -839,7 +884,7 @@ async function loadDays() {
       const btn = document.createElement('div');
       btn.className = 'dbtn';
       btn.dataset.day = d.day;
-      btn.innerHTML = `${dayLabel(d.day)}<span class="cnt">${d.count} сообщ.</span>`;
+      btn.innerHTML = `<span class="dl">${dayLabel(d.day)}</span><span class="cnt" title="Сообщений за день">${d.count}</span>`;
       btn.onclick = () => selectDay(d.day);
       list.appendChild(btn);
     });
@@ -864,7 +909,17 @@ async function selectDay(day) {
   const { since, until } = dayRange(day);
   const q = `since=${since}&until=${until}`;
   const items = type === 'room' ? await api(`/api/history/room/${id}?${q}`) : await api(`/api/history/dm/${id}?${q}`);
+  paintSearchCount(null);
   renderHistoryMessages(items, false);
+}
+// «4 совпадения» справа в строке поиска. null — поиск не идёт, надпись убрать.
+function paintSearchCount(n, more) {
+  const el = document.getElementById('hpCount');
+  if (!el) return;
+  if (n == null) { el.textContent = ''; return; }
+  const mod10 = n % 10, mod100 = n % 100;
+  const word = mod10 === 1 && mod100 !== 11 ? 'совпадение' : (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14) ? 'совпадения' : 'совпадений');
+  el.textContent = n ? `${more ? 'более ' : ''}${n} ${word}` : 'нет совпадений';
 }
 
 let searchDebounce;
@@ -881,6 +936,7 @@ async function runSearch(text) {
     ? await api(`/api/history/room/${id}?q=${encodeURIComponent(text)}`)
     : await api(`/api/history/dm/${id}?q=${encodeURIComponent(text)}`);
   applySearchPage(items);
+  paintSearchCount(items.length, hpState.hasMore);
   renderHistoryMessages(items, true, text);
 }
 function applySearchPage(items) {
@@ -891,7 +947,7 @@ function applySearchPage(items) {
 function renderHistoryMessages(items, withDate, query) {
   const box = document.getElementById('hpMessages');
   if (!items.length) { box.innerHTML = '<div id="hpEmpty">Ничего не найдено</div>'; return; }
-  box.innerHTML = items.map(m => bubbleHtml(m, { withDate, query })).join('');
+  box.innerHTML = items.map(m => bubbleHtml(m, { withDate, query, card: true })).join('');
   box.scrollTop = box.scrollHeight; // сразу к самым свежим сообщениям за день, а не к началу
 }
 
@@ -910,7 +966,7 @@ document.getElementById('hpMessages').addEventListener('scroll', async (e) => {
   applySearchPage(items);
   if (items.length) {
     const frag = document.createElement('div');
-    frag.innerHTML = items.map(m => bubbleHtml(m, { withDate: true, query: state.query })).join('');
+    frag.innerHTML = items.map(m => bubbleHtml(m, { withDate: true, query: state.query, card: true })).join('');
     while (frag.firstChild) box.insertBefore(frag.firstChild, box.firstChild);
     box.scrollTop = box.scrollHeight - prevHeight + box.scrollTop;
   }

@@ -206,23 +206,6 @@
   /* Версия и трек сборки — мелким шрифтом над кнопкой выхода. Нужно не пользователю, а поддержке:
      "продиктуйте нижнюю строку в настройках" вместо выяснения, что за версия у человека стоит. */
   #profilePanel .pp-about { font-size: 10.5px; color: var(--muted); text-align: center; margin-top: 10px; user-select: text; }
-  #profilePanel .theme-row + .section-title { margin-top: 10px; }
-  #profilePanel .theme-row { display: flex; gap: 8px; padding: 10px; border-radius: 9px; background: var(--panel); border: 1px solid var(--border); }
-  #profilePanel .theme-row .info { flex: 1; }
-  #profilePanel .theme-row .t { font-weight: 600; font-size: 12px; }
-  #profilePanel .theme-row .d { color: var(--muted); font-size: 11px; margin-top: 2px; line-height: 1.35; }
-  #profilePanel .theme-switch { position: relative; display: flex; align-items: center; gap: 4px; background: var(--panel-2); border-radius: 20px; padding: 3px; flex-shrink: 0; align-self: center; }
-  /* Плавный слайдер: кружок-подложка едет между кнопками (transform), а не мгновенно перекрашивается
-     то одна, то другая кнопка — сами кнопки поверх него прозрачные, меняется только цвет иконки. */
-  #profilePanel .theme-switch .ts-thumb { position: absolute; top: 3px; left: 3px; width: 28px; height: 28px; border-radius: 50%; background: var(--accent); transition: transform .22s cubic-bezier(.4,0,.2,1); }
-  #profilePanel .theme-switch.light .ts-thumb { transform: translateX(32px); }
-  #profilePanel .theme-switch button { position: relative; z-index: 1; width: 28px; height: 28px; border-radius: 50%; border: none; background: transparent; color: var(--muted); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: color .22s ease; }
-  #profilePanel .theme-switch button.active { color: #fff; }
-  #profilePanel .option { display: flex; align-items: center; gap: 10px; padding: 10px; border-radius: 9px; background: var(--panel); border: 1px solid var(--border); cursor: pointer; }
-  #profilePanel .option:hover { background: var(--panel-2); }
-  #profilePanel .option .opt-text { flex: 1; min-width: 0; }
-  #profilePanel .option .t { font-weight: 600; font-size: 12px; }
-  #profilePanel .option .d { color: var(--muted); font-size: 11px; margin-top: 2px; line-height: 1.35; }
   /* Слайдер вкл/выкл справа (вместо чекбокса слева) — сам input остаётся в разметке ради
      доступности/семантики и обработчиков change, но визуально скрыт: видимый вид рисуют
      .pp-switch-track и её ::before через соседний селектор input:checked +. */
@@ -234,8 +217,6 @@
   #profilePanel .pp-switch input:checked + .pp-switch-track::before { transform: translateX(16px); background: #fff; }
   #profilePanel .pp-switch input:focus-visible + .pp-switch-track { outline: 2px solid var(--accent); outline-offset: 2px; }
   #profilePanel #ppDownloadPathLabel { flex: 1; min-width: 0; font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 7px 9px; }
-  #profilePanel #ppPickFolderBtn { width: auto; padding: 0 10px; gap: 6px; display: flex; }
-  #profilePanel #ppIdleThresholdMinutes { width: 70px; padding: 7px 9px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-size: 12.5px; }
   /* Стандартный range-input сбрасываем полностью (-webkit-appearance:none) и рисуем свою дорожку/
      бегунок — иначе на Windows слайдер выглядел бы стандартным системным виджетом не в цвет темы. */
   #profilePanel input[type="range"] { flex: 1; -webkit-appearance: none; appearance: none; height: 4px; border-radius: 2px; background: var(--panel-2); outline: none; cursor: pointer; }

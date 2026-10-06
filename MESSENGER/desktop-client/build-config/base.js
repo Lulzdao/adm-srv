@@ -74,6 +74,8 @@ module.exports = {
     'diagnose.js',
     // Разбор машинной политики C:\ProgramData\Iskra\config.json (require из main.js) — то же самое.
     'policy.js',
+    // Значок трея в цвете акцента (require из main.js) — то же самое.
+    'tray-icon.js',
     'renderer/**/*',
     'tray-icon.ico',
     'tray-icon-fallback.png', // запасной вариант, если .ico не декодируется — см. createTray в main.js
