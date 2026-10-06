@@ -454,7 +454,7 @@ function dayLabel(dayStr) {
   const diff = Math.round((today - day) / 86400000);
   if (diff === 0) return 'Сегодня';
   if (diff === 1) return 'Вчера';
-  return day.toLocaleDateString('ru-RU', { day: '2-digit', month: 'long' });
+  return day.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' }); // «4 октября», без нуля — как в истории чата
 }
 function dayRange(dayStr) {
   const [y, m, d] = dayStr.split('-').map(Number);
