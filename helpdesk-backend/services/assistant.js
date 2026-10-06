@@ -77,6 +77,9 @@ function settings(db) {
     itDept: getSetting(db, "asst_it_dept") || "",
     programs: getJson(db, "asst_programs", DEFAULT_PROGRAMS),
     posts: getJson(db, "asst_posts", DEFAULT_POSTS),
+    // Кто выполняет доступ к программе: { "СЭД": "grp1" } — роль группы
+    // исполнителей. Программы без строки идут в очередь accessDept.
+    programExecutors: getJson(db, "asst_program_executors", {}),
   };
 }
 

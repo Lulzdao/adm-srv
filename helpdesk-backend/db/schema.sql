@@ -25,6 +25,11 @@ CREATE TABLE IF NOT EXISTS users (
   -- Отдельная таблица связей была бы правильнее по форме, но на трёх отделах
   -- и двух сотнях сотрудников она даёт только лишние соединения.
   roles TEXT NOT NULL DEFAULT '',
+  -- Те из roles, что выданы ТОЛЬКО списком логинов группы исполнителей
+  -- (Администрирование → Группы исполнителей), а не группой домена. Нужны,
+  -- чтобы при правке списка снять ровно выданное им и не тронуть отдел,
+  -- который человеку даёт группа в домене.
+  login_roles TEXT NOT NULL DEFAULT '',
   -- Все группы AD по имени, строчными: ",группа1,группа2,". Снимок на момент
   -- последнего входа — по нему, например, решается, кому доступен общий ящик
   -- рассылок Ассистента.
@@ -33,6 +38,20 @@ CREATE TABLE IF NOT EXISTS users (
   local_password_hash TEXT,
   last_domain TEXT,
   last_login_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Группы исполнителей, заведённые из панели (Администрирование → Группы
+-- исполнителей). Встроенные отделы — в config/departments.js, эти добавляются
+-- к ним при запуске и сразу после создания (см. sync там же). Состав группы —
+-- список логинов в настройке <role>_logins, «скрыть из Новой заявки» —
+-- <role>_hidden: так же, как у встроенных отделов.
+CREATE TABLE IF NOT EXISTS executor_groups (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  role TEXT NOT NULL UNIQUE,      -- grp<id>, латиницей: так роль хранится в users.roles
+  name TEXT NOT NULL UNIQUE,
+  prefix TEXT NOT NULL UNIQUE,    -- перед номером заявки: АДМ-0001
+  hint TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

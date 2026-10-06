@@ -66,4 +66,33 @@ function load() {
   return list;
 }
 
-module.exports = load();
+// Группы из панели (Администрирование → Группы исполнителей) живут в базе,
+// таблица executor_groups, и добавляются в конец списка. Список — один и тот же
+// массив на всё время работы: sync() меняет его на месте, поэтому новая группа
+// видна сразу везде, где справочник читается (маршруты, права, оповещения), —
+// без перезапуска службы. Кому нужно пересчитать своё при изменении, тот
+// подписывается через onChange().
+const BUILTIN = load().map((d) => ({ ...d, custom: false }));
+const departments = [...BUILTIN];
+const listeners = [];
+
+// Значок и цвет плитки у группы из панели — по кругу из фирменной палитры.
+const CUSTOM_COLORS = ["#C25A18", "#E7004B", "#5A5A5A", "#0A61AE", "#663AB5", "#008F9F"];
+
+function sync(db) {
+  const rows = db.prepare("SELECT id, role, name, prefix, hint FROM executor_groups ORDER BY id").all();
+  const taken = (r) => BUILTIN.some((b) => b.role === r.role || b.name === r.name || b.prefix === r.prefix);
+  const custom = rows.filter((r) => !taken(r)).map((r) => ({
+    name: r.name, prefix: r.prefix, role: r.role, hint: r.hint || "",
+    icon: "users", color: CUSTOM_COLORS[(r.id - 1) % CUSTOM_COLORS.length], custom: true,
+  }));
+  departments.splice(0, departments.length, ...BUILTIN, ...custom);
+  for (const fn of listeners) fn();
+}
+
+Object.defineProperty(departments, "sync", { value: sync });
+Object.defineProperty(departments, "onChange", { value: (fn) => listeners.push(fn) });
+Object.defineProperty(departments, "byRole", { value: (role) => departments.find((d) => d.role === role) || null });
+Object.defineProperty(departments, "byName", { value: (name) => departments.find((d) => d.name === name) || null });
+
+module.exports = departments;

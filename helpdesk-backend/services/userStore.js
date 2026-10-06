@@ -79,14 +79,16 @@ function upsertFromLdap(db, ldapUser) {
   const department = toBindable(ldapUser.department);
   const email = toBindable(ldapUser.email);
   const phone = toBindable(ldapUser.phone);
-  const role = toBindable(ldapUser.role);
   const domain = toBindable(ldapUser.domain);
   // Признак администратора пересчитывается при КАЖДОМ входе: вышел человек из
   // группы в домене — на следующем входе признак снимется сам.
   const isAdmin = ldapUser.isAdmin ? 1 : 0;
   // Отделов может быть несколько; role хранит первый по порядку — для подписи
   // и для тех мест, где нужен «основной» отдел.
-  const roles = packRoles(ldapUser.roles);
+  // К отделам из групп домена — те, куда логин вписан списком (Администрирование
+  // → Группы исполнителей); require здесь, а не наверху: тот модуль сам берёт
+  // отсюда packRoles.
+  const { roles, login_roles: loginRoles, role } = require("./executorGroups").combine(db, login, (ldapUser.roles || []).filter(Boolean));
   const groups = packGroups(ldapUser.groups);
 
   // Без учёта регистра: домен его не различает, и раньше вход как «Ivanov» и
@@ -103,16 +105,16 @@ function upsertFromLdap(db, ldapUser) {
   if (existing) {
     db.prepare(
       `UPDATE users SET ad_login = ?, full_name = ?, department = ?, email = ?, phone = ?,
-       role = ?, roles = ?, is_admin = ?, ad_groups = ?, last_domain = ?, last_login_at = datetime('now')
+       role = ?, roles = ?, login_roles = ?, is_admin = ?, ad_groups = ?, last_domain = ?, last_login_at = datetime('now')
        WHERE id = ?`
-    ).run(login, fullName, department, email, phone, role, roles, isAdmin, groups, domain, existing.id);
+    ).run(login, fullName, department, email, phone, role, roles, loginRoles, isAdmin, groups, domain, existing.id);
     return db.prepare("SELECT * FROM users WHERE id = ?").get(existing.id);
   }
 
   const info = db.prepare(
-    `INSERT INTO users (ad_login, full_name, department, email, phone, role, roles, is_admin, ad_groups, auth_type, last_domain, last_login_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ad', ?, datetime('now'))`
-  ).run(login, fullName, department, email, phone, role, roles, isAdmin, groups, domain);
+    `INSERT INTO users (ad_login, full_name, department, email, phone, role, roles, login_roles, is_admin, ad_groups, auth_type, last_domain, last_login_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ad', ?, datetime('now'))`
+  ).run(login, fullName, department, email, phone, role, roles, loginRoles, isAdmin, groups, domain);
   return db.prepare("SELECT * FROM users WHERE id = ?").get(info.lastInsertRowid);
 }
 

@@ -5,6 +5,7 @@ const { unpackRoles } = require("../services/userStore");
 const config = require("../config/config");
 const departments = require("../config/departments");
 const backup = require("../services/backup");
+const groups = require("../services/executorGroups");
 
 module.exports = function adminRoutes(db) {
   const router = express.Router();
@@ -42,7 +43,6 @@ module.exports = function adminRoutes(db) {
   // Роль в ключе настройки берём только из справочника отделов, а не из тела
   // запроса: иначе через это поле можно было записать любой ключ в settings
   // (в т.ч. перетереть чужую настройку) — ключ подставлялся в строку как есть.
-  const KNOWN_ROLES = new Set(departments.map((d) => d.role));
   const GROUP_NAME_MAX = 256;
 
   router.put("/settings", (req, res) => {
@@ -50,7 +50,7 @@ module.exports = function adminRoutes(db) {
     if (!Array.isArray(incoming)) return res.status(400).json({ error: "Ожидался список отделов" });
 
     for (const dept of incoming) {
-      if (!dept || !KNOWN_ROLES.has(dept.role)) continue;
+      if (!dept || !departments.byRole(dept.role)) continue;
       for (const [field, domain] of [["groupA", "A"], ["groupB", "B"]]) {
         const value = dept[field];
         if (value === undefined) continue;
@@ -62,6 +62,54 @@ module.exports = function adminRoutes(db) {
     }
     res.json({ ok: true });
   });
+
+  // ---- Группы исполнителей: состав по логинам, скрытие, новые группы --------
+  //
+  // Всё про группы — в services/executorGroups.js; здесь только проверка ввода
+  // и ответ. Справочник живой: созданная группа сразу появляется в заявках,
+  // правах и оповещениях, перезапуск службы не нужен.
+
+  const groupsOut = () => ({
+    groups: groups.list(db),
+    domainLabels: { A: config.domains.A.label, B: config.domains.B.label },
+  });
+  const groupsHandle = (fn) => (req, res) => {
+    try {
+      const out = fn(req);
+      res.status(req.method === "POST" ? 201 : 200).json({ ok: true, ...out, ...groupsOut() });
+    } catch (err) {
+      if (err instanceof groups.GroupError) return res.status(400).json({ error: err.message });
+      throw err;
+    }
+  };
+
+  router.get("/groups", (req, res) => res.json(groupsOut()));
+
+  router.post("/groups", groupsHandle((req) => {
+    const b = req.body || {};
+    return { role: groups.create(db, { name: b.name, prefix: b.prefix, hint: b.hint ?? "", logins: b.logins ?? "", hidden: Boolean(b.hidden) }) };
+  }));
+
+  router.put("/groups/:role", groupsHandle((req) => {
+    const b = req.body || {};
+    const role = req.params.role;
+    if (!departments.byRole(role)) throw new groups.GroupError("Такой группы исполнителей нет");
+    for (const [field, domain] of [["groupA", "A"], ["groupB", "B"]]) {
+      if (b[field] === undefined) continue;
+      if (typeof b[field] !== "string" || b[field].length > GROUP_NAME_MAX) throw new groups.GroupError("Имя группы домена — строка до 256 символов");
+      setSetting(db, `${role}_group_${domain}`, b[field].trim());
+    }
+    groups.update(db, role, {
+      logins: b.logins, hint: b.hint,
+      hidden: b.hidden === undefined ? undefined : Boolean(b.hidden),
+    });
+    return {};
+  }));
+
+  router.delete("/groups/:role", groupsHandle((req) => {
+    groups.remove(db, req.params.role);
+    return {};
+  }));
 
   // Список тех, у кого сейчас есть повышенная роль (любая, кроме 'user') —
   // это отражение членства в соответствующей группе на момент последнего
