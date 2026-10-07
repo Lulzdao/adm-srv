@@ -12,8 +12,8 @@ const listMemory = {};
 // Экран перерисовывается целиком (setView), поэтому прежний экран перед перерисовкой снимается
 // копией (snapshotMain) и на время движения кладётся поверх или под новым — так нет ни пустого
 // белого кадра, ни плашки другого цвета:
-//   открытие — новый экран проступает через «окно», которое раскрывается из строки, по которой
-//   щёлкнули; вокруг окна ещё виден гаснущий список;
+//   открытие — копия строки вырастает в карточку заявки (см. playTicketOpen), вокруг проявляется
+//   экран заявки, список под ним гаснет;
 //   закрытие / возврат в работу — копия самой карточки сжимается и уходит в кнопку «Закрытые» или
 //   «Открытые», экран заявки под ней растворяется в список.
 // Web Animations API — есть и в Chrome 109 (Windows 7). Кто отключил анимацию в системе
@@ -45,29 +45,52 @@ function mountSnapshot(snap, zIndex) {
   return el;
 }
 
-// fromRect — строка списка, по которой щёлкнули; snap — копия списка. Оба сняты до перерисовки.
-function playTicketOpen(fromRect, snap) {
+// row — копия строки, по которой щёлкнули, и её место ({ node, rect }); snap — копия списка. Сняты до
+// перерисовки. Копия строки вырастает до места карточки заявки; по дороге её содержимое сменяется
+// копией самой карточки, так что в конце «призрак» неотличим от настоящей карточки и подмены не
+// видно. Остальной экран заявки проявляется вокруг, список под ним гаснет.
+function playTicketOpen(row, snap) {
   const area = document.getElementById("mainArea");
-  if (!motionAllowed() || !fromRect || !snap || !area) return;
-  const a = area.getBoundingClientRect();
+  const card = document.querySelector(".detail-main .card");
+  if (!motionAllowed() || !row || !snap || !area || !card) return;
+  const from = row.rect, to = card.getBoundingClientRect();
   const old = mountSnapshot(snap, 1);
-  // Новый экран — над копией списка, но виден только внутри окна (clip-path).
-  const keep = { position: area.style.position, zIndex: area.style.zIndex };
-  area.style.position = "relative";
-  area.style.zIndex = "2";
-  const t = Math.max(0, fromRect.top - a.top), l = Math.max(0, fromRect.left - a.left);
-  const r = Math.max(0, a.right - fromRect.right), b = Math.max(0, a.bottom - fromRect.bottom);
-  const endRadius = getComputedStyle(area).borderTopLeftRadius || "0px";
-  const ease = "cubic-bezier(0.2, 0.8, 0.2, 1)";
-  const win = area.animate([
-    { clipPath: `inset(${t}px ${r}px ${b}px ${l}px round 12px)` },
-    { clipPath: `inset(0px 0px 0px 0px round ${endRadius})` },
-  ], { duration: 420, easing: ease });
-  [...old.children].forEach((c) => c.animate([{ opacity: 1 }, { opacity: 0.2 }], { duration: 420, easing: "ease-out", fill: "forwards" }));
-  // Из строки сначала растёт чистый лист (фон области), содержимое заявки проявляется на нём ближе
-  // к концу — иначе в узком окне мелькал бы случайный кусок новой страницы.
-  [...area.children].forEach((c) => c.animate([{ opacity: 0 }, { opacity: 0, offset: 0.35 }, { opacity: 1 }], { duration: 420, easing: "ease-out" }));
-  win.onfinish = win.oncancel = () => { old.remove(); area.style.position = keep.position; area.style.zIndex = keep.zIndex; };
+  // Сама строка в копии списка прячется — будто это она вылетает из списка, а не её двойник.
+  const src = old.querySelector(`.ticket-row[data-id="${row.node.dataset.id}"]`);
+  if (src) src.style.visibility = "hidden";
+  // Новый экран — над копией списка, без своего фона (иначе список пропал бы сразу), и проявляется.
+  const keep = { position: area.style.position, zIndex: area.style.zIndex, background: area.style.background };
+  Object.assign(area.style, { position: "relative", zIndex: "2", background: "transparent" });
+  card.style.visibility = "hidden";
+
+  const g = document.createElement("div");
+  g.className = "fly-ghost fly-grow";
+  const rowLayer = row.node, cardLayer = cloneWithoutIds(card);
+  rowLayer.classList.add("fly-layer");
+  cardLayer.classList.add("fly-layer");
+  Object.assign(rowLayer.style, { width: from.width + "px", height: from.height + "px", transform: "none" });
+  Object.assign(cardLayer.style, { width: to.width + "px", height: to.height + "px", visibility: "visible" });
+  g.append(rowLayer, cardLayer);
+  Object.assign(g.style, { left: from.left + "px", top: from.top + "px", width: from.width + "px", height: from.height + "px" });
+  document.body.appendChild(g);
+
+  const D = 460, ease = "cubic-bezier(0.2, 0, 0, 1)";
+  const radius = (el) => getComputedStyle(el).borderTopLeftRadius || "12px";
+  const grow = g.animate([
+    { left: from.left + "px", top: from.top + "px", width: from.width + "px", height: from.height + "px", borderRadius: radius(row.node), boxShadow: "0 2px 6px rgba(0, 0, 0, 0.06)" },
+    { left: to.left + "px", top: to.top + "px", width: to.width + "px", height: to.height + "px", borderRadius: radius(card), boxShadow: "0 0 0 rgba(0, 0, 0, 0)" },
+  ], { duration: D, easing: ease, fill: "forwards" });
+  rowLayer.animate([{ opacity: 1 }, { opacity: 0, offset: 0.35 }, { opacity: 0 }], { duration: D, fill: "forwards" });
+  cardLayer.animate([{ opacity: 0 }, { opacity: 0, offset: 0.3 }, { opacity: 1, offset: 0.8 }, { opacity: 1 }], { duration: D, fill: "forwards" });
+  // Список гаснет в первой трети, экран заявки проявляется со второй половины — чтобы тексты двух экранов
+  // не накладывались друг на друга полупрозрачными.
+  [...old.children].forEach((c) => c.animate([{ opacity: 1 }, { opacity: 0 }], { duration: D * 0.35, easing: "ease-out", fill: "forwards" }));
+  [...area.children].forEach((c) => c.animate([{ opacity: 0 }, { opacity: 0, offset: 0.5 }, { opacity: 1 }], { duration: D, easing: "ease-out" }));
+  grow.onfinish = grow.oncancel = () => {
+    card.style.visibility = "";
+    g.remove(); old.remove();
+    Object.assign(area.style, keep);
+  };
 }
 
 // card — карточка заявки (её копия и улетает), snap — копия экрана заявки; target — кнопка списка.
@@ -280,10 +303,10 @@ async function renderList(main, opts = {}) {
             api(`/notifications/ticket/${row.dataset.id}/read`, { method: "PATCH" })
               .then(refreshNotifications).then(updateBadgeDom).catch(() => {});
             // До перерисовки: после неё ни строки, ни списка уже не будет.
-            const fromRect = row.getBoundingClientRect();
+            const rowSnap = motionAllowed() ? { node: cloneWithoutIds(row), rect: row.getBoundingClientRect() } : null;
             const snap = snapshotMain();
             setView("detail", ticket);
-            playTicketOpen(fromRect, snap);
+            playTicketOpen(rowSnap, snap);
           } catch (e) { toast(e.message, true); }
         };
       });

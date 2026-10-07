@@ -612,6 +612,10 @@ textarea.input { font-family: inherit; resize: vertical; }
   position: fixed; z-index: 2000; margin: 0 !important; pointer-events: none; box-sizing: border-box; overflow: hidden;
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.14); transform-origin: center center; will-change: transform, opacity;
 }
+/* Открытие: «призрак» растёт из строки в карточку — фон как у обеих (они одного цвета), внутри два слоя
+   своего размера, прижатые к левому верхнему углу: копия строки гаснет, копия карточки проявляется. */
+.fly-grow { background: var(--md-surface-container-low); box-shadow: none; padding: 0 !important; will-change: left, top, width, height; }
+.fly-grow .fly-layer { position: absolute; left: 0; top: 0; margin: 0 !important; box-sizing: border-box; }
 .form-row { display: flex; gap: 16px; margin-bottom: 18px; }
 .form-row > div { flex: 1; }
 .dropzone {
