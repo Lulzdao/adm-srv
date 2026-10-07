@@ -441,3 +441,6 @@
   #deptPicker label { display:flex; align-items:center; gap:10px; padding:9px 10px; border-radius:var(--md-shape-xs); cursor:pointer; font-size:13px; }
   #deptPicker label:hover { background:var(--md-state-hover); }
   #deptPicker .empty { color:var(--md-on-surface-variant); font-size:12.5px; padding:8px 10px; }
+
+/* Версия клиента, собранная на сервере и готовая к выкладке (раздел «Клиенты»). */
+.ready-release { padding: 12px 14px; margin-bottom: 14px; border-radius: 10px; background: var(--md-success-container); }

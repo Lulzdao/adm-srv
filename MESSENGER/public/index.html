@@ -208,8 +208,10 @@
 
       <div class="panel">
         <h3>Выложить новую версию</h3>
+        <div id="releaseReady"></div>
         <p style="color:var(--muted); font-size:12px; margin:0 0 10px;">
-          Выберите файлы из папки <code>release/&lt;версия&gt;</code>, которую собрала команда
+          Собранное на этом сервере (<code>deploy\build-iskra-client.cmd</code>) появляется выше само —
+          выбирать файлы не нужно. Собранное в другом месте: выберите файлы из папки <code>release/&lt;версия&gt;</code>, которую собрала команда
           <code>npm run release</code>: установщик <code>.exe</code>, его <code>.exe.blockmap</code>
           и <code>latest-….yml</code> — для одной сборки или сразу для обеих. Сервер сверит
           контрольную сумму установщика с записанной сборщиком и только после этого объявит версию

@@ -975,6 +975,60 @@ function renderReleases(data) {
   }
   document.getElementById('releasesBody').innerHTML = rows.join('')
     || '<tr><td colspan="5" style="color:var(--muted)">Версий на сервере пока нет</td></tr>';
+  renderReadyRelease(data);
+}
+
+// Версия, собранная на самом сервере скриптом deploy\build-iskra-client.cmd: файлы уже лежат на
+// месте, остаётся подтвердить выкладку паролем. Показываем самую новую; сборки — какие есть.
+function renderReadyRelease(data) {
+  const box = document.getElementById('releaseReady');
+  if (!box) return;
+  const byVersion = new Map();
+  for (const track of ['win10', 'win7']) {
+    for (const r of (data[track] && data[track].ready) || []) {
+      if (!byVersion.has(r.version)) byVersion.set(r.version, []);
+      byVersion.get(r.version).push({ track, ...r });
+    }
+  }
+  const versions = [...byVersion.keys()].sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+  if (!versions.length) { box.innerHTML = ''; return; }
+  const version = versions[0];
+  const builds = byVersion.get(version);
+  const built = new Date(builds[0].built).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' });
+  const missing = ['win10', 'win7'].filter((t) => !builds.some((b) => b.track === t));
+  box.innerHTML = `
+    <div class="ready-release">
+      <div><b>Собрана на сервере версия ${escapeHtml(version)}</b> <span style="color:var(--muted)">· ${built}</span></div>
+      <div style="font-size:12.5px; margin:4px 0 10px;">${builds.map((b) => `${TRACK_LABEL[b.track]} ✓ ${fmtSize(b.size)}`).join(' &nbsp;·&nbsp; ')}
+        ${missing.length ? `<span style="color:var(--warn)"> · нет сборки ${missing.map((t) => TRACK_LABEL[t]).join(', ')}</span>` : ''}</div>
+      <div class="row-flex" style="align-items:center;">
+        <input type="password" id="readyPassword" placeholder="Ваш пароль" autocomplete="current-password" style="max-width:220px;">
+        <button class="action" data-version="${escapeHtml(version)}" onclick="publishReadyRelease(this)">Выложить ${escapeHtml(version)}</button>
+        <span id="readyProgress" style="color:var(--muted); font-size:12px;"></span>
+      </div>
+    </div>`;
+}
+
+async function publishReadyRelease(btn) {
+  const version = btn.dataset.version;
+  const pw = document.getElementById('readyPassword');
+  const progress = document.getElementById('readyProgress');
+  if (!pw.value) { pw.focus(); alert('Введите свой пароль — выкладка подтверждается им'); return; }
+  if (!confirm(`Выложить версию ${version}? Клиенты начнут обновляться сами: при следующем запуске и по «Проверить сейчас».`)) return;
+  btn.disabled = true;
+  progress.textContent = 'Сервер проверяет контрольные суммы и выкладывает…';
+  try {
+    await api('api/admin/releases/publish-ready', { method: 'POST', body: JSON.stringify({ version, password: pw.value }) });
+    pw.value = '';
+    progress.textContent = '';
+    await loadPublishedVersions();
+    await loadClients();
+  } catch (e) {
+    progress.textContent = '';
+    btn.disabled = false;
+    alert(e.message);
+    await loadReleases();
+  }
 }
 
 // Установщик отдаётся без входа (клиентам при обновлении нечем предъявить токен) — обычная ссылка.
