@@ -186,3 +186,44 @@ test('версия, выложенная руками (старый способ
   assert.equal(back.status, 200, back.text);
   assert.match(fs.readFileSync(path.join(dir, 'latest.yml'), 'utf8'), /^version: 2\.0\.0/);
 });
+
+test('собранное на сервере (build-iskra-client): видно в панели без выбора файлов и выкладывается одним паролем', async () => {
+  // Так раскладывает скрипт сборки: установщик, карта блоков и latest.yml сборщика.
+  const builds = ['win10', 'win7'].map((t) => build(t, '7.0.0'));
+  for (const b of builds) {
+    const dir = path.join(srv.dir, 'updates-staging', b.track);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, b.name), b.bytes);
+    fs.writeFileSync(path.join(dir, `${b.name}.blockmap`), b.blockmap);
+    fs.writeFileSync(path.join(dir, `latest-${b.version}.yml`), b.yml);
+  }
+  const before = await list();
+  for (const t of ['win10', 'win7']) assert.deepEqual(before[t].ready.map((r) => r.version), ['7.0.0'], `${t}: готова к выкладке`);
+  assert.equal((await get('/updates/win10/latest.yml')).text.includes('7.0.0'), false, 'до выкладки клиенты её не видят');
+
+  const ready = (body, token = admin.token) => request(srv.url, 'POST', '/api/admin/releases/publish-ready', { token, body });
+  assert.equal((await ready({ version: '7.0.0', password: 'x' }, сотрудник.token)).status, 403, 'не администратор');
+  assert.equal((await ready({ version: '7.0.0', password: 'неверный' })).status, 403, 'неверный пароль');
+  assert.equal((await ready({ version: '7.0.1', password: ADMIN.password })).status, 404, 'такой не собирали');
+
+  const ok = await ready({ version: '7.0.0', password: ADMIN.password });
+  assert.equal(ok.status, 200, JSON.stringify(ok.json));
+  assert.deepEqual(ok.json.published, ['win7', 'win10']);
+  for (const t of ['win10', 'win7']) {
+    assert.match((await get(`/updates/${t}/latest.yml`)).text, /version: 7\.0\.0/);
+    assert.deepEqual(ok.json[t].ready, [], `${t}: больше не «готова» — выложена`);
+    assert.equal(fs.existsSync(path.join(srv.dir, 'updates-staging', t, 'latest-7.0.0.yml')), false);
+  }
+});
+
+test('собранное на сервере с испорченным установщиком не выкладывается', async () => {
+  const b = build('win10', '7.1.0');
+  const dir = path.join(srv.dir, 'updates-staging', b.track);
+  fs.writeFileSync(path.join(dir, b.name), Buffer.concat([b.bytes, Buffer.from('x')]));
+  fs.writeFileSync(path.join(dir, `${b.name}.blockmap`), b.blockmap);
+  fs.writeFileSync(path.join(dir, `latest-${b.version}.yml`), b.yml);
+  const r = await request(srv.url, 'POST', '/api/admin/releases/publish-ready', { token: admin.token, body: { version: '7.1.0', password: ADMIN.password } });
+  assert.equal(r.status, 400);
+  assert.match(r.json.error, /Размер установщика/);
+  assert.match((await get('/updates/win10/latest.yml')).text, /version: 7\.0\.0/, 'текущая осталась прежней');
+});

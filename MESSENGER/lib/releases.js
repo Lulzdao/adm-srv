@@ -16,6 +16,11 @@ const crypto = require('crypto');
 //    updates/<сборка>/latest-<версия>.yml копия latest.yml этой версии — по ней
 //                                         версию можно снова сделать текущей
 //    updates-staging/<сборка>/…           загруженное, но ещё не выложенное.
+//    updates-staging/<сборка>/latest-<версия>.yml — собрано на самом сервере
+//                                         (deploy\build-iskra-client.cmd): скрипт
+//                                         кладёт сюда установщик, карту блоков и
+//                                         latest.yml, а панель показывает версию
+//                                         готовой к выкладке — без выбора файлов.
 //                                         РЯДОМ с updates, а не внутри: всё, что
 //                                         внутри, раздаётся клиентам без входа.
 //                                         (Папку с точкой в имени express.static
@@ -39,6 +44,8 @@ const TRACKS = ['win7', 'win10'];
 const MAX_INSTALLER_BYTES = 600 * 1024 * 1024;
 const MAX_BLOCKMAP_BYTES = 5 * 1024 * 1024;
 const STAGING_TTL_MS = 24 * 60 * 60 * 1000;
+// Собранное на сервере ждёт выкладки дольше: его собирают заранее, а выкладывают, когда удобно.
+const READY_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const VERSION_RE = /^\d+\.\d+\.\d+$/;
 
 const exeName = (track, version) => `iskra-setup-${track}-${version}.exe`;
@@ -95,11 +102,40 @@ function createReleases({ updatesDir, logServer }) {
     for (const track of TRACKS) {
       let names = [];
       try { names = fs.readdirSync(stagingDir(track)); } catch { continue; }
+      // Версии, собранные на сервере (рядом лежит их latest-<версия>.yml), живут дольше.
+      const ready = new Set(names.map((n) => (/^latest-(\d+\.\d+\.\d+)\.yml$/.exec(n) || [])[1]).filter(Boolean));
       for (const n of names) {
         const f = path.join(stagingDir(track), n);
-        try { if (Date.now() - fs.statSync(f).mtimeMs > STAGING_TTL_MS) fs.unlinkSync(f); } catch { /* занят — в другой раз */ }
+        const version = (parseExeName(n) || {}).version || (/^latest-(\d+\.\d+\.\d+)\.yml$/.exec(n) || [])[1];
+        const ttl = version && ready.has(version) ? READY_TTL_MS : STAGING_TTL_MS;
+        try { if (Date.now() - fs.statSync(f).mtimeMs > ttl) fs.unlinkSync(f); } catch { /* занят — в другой раз */ }
       }
     }
+  }
+
+  /**
+   * Версии, собранные на сервере и готовые к выкладке: в updates-staging/<сборка> лежат
+   * latest-<версия>.yml, установщик и карта блоков, и версия новее текущей. Контрольную сумму
+   * здесь не считаем (сотни мегабайт на каждое открытие панели) — её сверяет сама выкладка.
+   */
+  function readyOf(track) {
+    let names = [];
+    try { names = fs.readdirSync(stagingDir(track)); } catch { return []; }
+    const cur = currentOf(track);
+    const out = [];
+    for (const n of names) {
+      const m = /^latest-(\d+\.\d+\.\d+)\.yml$/.exec(n);
+      if (!m) continue;
+      const y = readYml(path.join(stagingDir(track), n));
+      if (!y || y.version !== m[1] || y.path !== exeName(track, m[1])) continue;
+      if (fs.existsSync(path.join(trackDir(track), y.path))) continue; // уже выложена
+      if (cur && VERSION_RE.test(cur.version) && compareVersions(y.version, cur.version) <= 0) continue;
+      const exe = path.join(stagingDir(track), y.path);
+      if (!fs.existsSync(exe) || !fs.existsSync(`${exe}.blockmap`)) continue;
+      const st = fs.statSync(exe);
+      out.push({ version: y.version, size: st.size, built: st.mtime.toISOString() });
+    }
+    return out.sort((a, b) => compareVersions(b.version, a.version));
   }
 
   function describe(track) {
@@ -123,7 +159,65 @@ function createReleases({ updatesDir, logServer }) {
     versions.sort((a, b) => compareVersions(b.version, a.version));
     let staged = [];
     try { staged = fs.readdirSync(stagingDir(track)).filter((n) => parseExeName(n)); } catch { /* пусто */ }
-    return { current: cur ? { version: cur.version, file: cur.path, releaseDate: cur.releaseDate } : null, versions, staged };
+    return { current: cur ? { version: cur.version, file: cur.path, releaseDate: cur.releaseDate } : null, versions, staged, ready: readyOf(track) };
+  }
+
+  /**
+   * Выложить версию сборки track по её latest.yml: установщик и карта блоков уже лежат в
+   * updates-staging/<сборка>. Сверяет имя, номер, размер и sha512 и объявляет версию текущей.
+   * Возвращает { ok } или { status, error }. Пароль проверяет вызывающий.
+   */
+  async function publish(track, ymlText, req) {
+    const fail = (status, error) => ({ status, error });
+    const y = parseLatestYml(ymlText);
+    if (!y.version || !y.path || !y.sha512 || !VERSION_RE.test(y.version)) {
+      return fail(400, 'Это не latest.yml от сборщика: в нём должны быть version, path и sha512');
+    }
+    const named = parseExeName(y.path);
+    if (!named || named.blockmap || named.track !== track || named.version !== y.version) {
+      return fail(400, `latest.yml описывает «${y.path}» — это не установщик сборки ${track} версии ${y.version}. Возьмите latest.yml из папки dist/${track}`);
+    }
+    const cur = currentOf(track);
+    if (fs.existsSync(path.join(trackDir(track), y.path))) {
+      return fail(409, `Версия ${y.version} уже выложена. Клиенты сравнивают номер версии — исправление выпускают под новым номером`);
+    }
+    if (cur && VERSION_RE.test(cur.version) && compareVersions(y.version, cur.version) < 0) {
+      return fail(409, `Версия ${y.version} старше текущей ${cur.version}: клиенты назад не обновляются. Чтобы остановить раздачу текущей, сделайте текущей одну из прежних версий в списке`);
+    }
+
+    const stagedExe = path.join(stagingDir(track), y.path);
+    const stagedMap = `${stagedExe}.blockmap`;
+    if (!fs.existsSync(stagedExe)) return fail(400, `Сначала загрузите установщик ${y.path}`);
+    if (!fs.existsSync(stagedMap)) {
+      return fail(400, `Нужен и файл ${y.path}.blockmap: без него каждый клиент скачает установщик целиком вместо изменившихся кусков`);
+    }
+    const size = fs.statSync(stagedExe).size;
+    if (y.size && y.size !== size) return fail(400, `Размер установщика ${size} не совпал с latest.yml (${y.size}) — файл загрузился не полностью или это другая сборка`);
+    let sum;
+    try { sum = await sha512File(stagedExe); } catch (err) { return fail(500, `Не удалось прочитать установщик: ${err.message}`); }
+    if (sum !== y.sha512) {
+      return fail(400, 'Контрольная сумма установщика не совпала с latest.yml: файл повреждён или взят из другой сборки. Загрузите все три файла из одной папки dist');
+    }
+
+    try {
+      fs.mkdirSync(trackDir(track), { recursive: true });
+      rememberCurrent(track);
+      fs.renameSync(stagedExe, path.join(trackDir(track), y.path));
+      fs.renameSync(stagedMap, path.join(trackDir(track), `${y.path}.blockmap`));
+      fs.writeFileSync(path.join(trackDir(track), `latest-${y.version}.yml`), ymlText);
+      // latest.yml — последним и через переименование: клиент не увидит ни полфайла, ни версию
+      // без установщика.
+      const tmp = path.join(trackDir(track), `latest.yml.${crypto.randomBytes(4).toString('hex')}.tmp`);
+      fs.writeFileSync(tmp, ymlText);
+      fs.renameSync(tmp, path.join(trackDir(track), 'latest.yml'));
+    } catch (err) {
+      logServer('ERROR', 'release_publish_failed', { adminId: req.user.id, track, version: y.version, message: err.message });
+      return fail(500, `Не удалось выложить: ${err.message}`);
+    }
+    logServer('INFO', 'release_published', { adminId: req.user.id, admin: req.user.username, track, version: y.version, previous: cur ? cur.version : null, size, ip: req.ip });
+    // Свой latest-<версия>.yml собранного на сервере больше не нужен: версия выложена.
+    fs.rmSync(path.join(stagingDir(track), `latest-${y.version}.yml`), { force: true });
+    return { ok: true };
   }
 
   function registerRoutes(app, { auth, requireCapability, confirmPassword }) {
@@ -189,54 +283,33 @@ function createReleases({ updatesDir, logServer }) {
       const denied = confirmPassword(req, (req.body || {}).password);
       if (denied) return res.status(denied.status).json({ error: denied.error });
 
-      const ymlText = String((req.body || {}).yml || '');
-      const y = parseLatestYml(ymlText);
-      if (!y.version || !y.path || !y.sha512 || !VERSION_RE.test(y.version)) {
-        return res.status(400).json({ error: 'Это не latest.yml от сборщика: в нём должны быть version, path и sha512' });
-      }
-      const named = parseExeName(y.path);
-      if (!named || named.blockmap || named.track !== track || named.version !== y.version) {
-        return res.status(400).json({ error: `latest.yml описывает «${y.path}» — это не установщик сборки ${track} версии ${y.version}. Возьмите latest.yml из папки dist/${track}` });
-      }
-      const cur = currentOf(track);
-      if (fs.existsSync(path.join(trackDir(track), y.path))) {
-        return res.status(409).json({ error: `Версия ${y.version} уже выложена. Клиенты сравнивают номер версии — исправление выпускают под новым номером` });
-      }
-      if (cur && VERSION_RE.test(cur.version) && compareVersions(y.version, cur.version) < 0) {
-        return res.status(409).json({ error: `Версия ${y.version} старше текущей ${cur.version}: клиенты назад не обновляются. Чтобы остановить раздачу текущей, сделайте текущей одну из прежних версий в списке` });
-      }
-
-      const stagedExe = path.join(stagingDir(track), y.path);
-      const stagedMap = `${stagedExe}.blockmap`;
-      if (!fs.existsSync(stagedExe)) return res.status(400).json({ error: `Сначала загрузите установщик ${y.path}` });
-      if (!fs.existsSync(stagedMap)) {
-        return res.status(400).json({ error: `Нужен и файл ${y.path}.blockmap: без него каждый клиент скачает установщик целиком вместо изменившихся кусков` });
-      }
-      const size = fs.statSync(stagedExe).size;
-      if (y.size && y.size !== size) return res.status(400).json({ error: `Размер установщика ${size} не совпал с latest.yml (${y.size}) — файл загрузился не полностью или это другая сборка` });
-      let sum;
-      try { sum = await sha512File(stagedExe); } catch (err) { return res.status(500).json({ error: `Не удалось прочитать установщик: ${err.message}` }); }
-      if (sum !== y.sha512) {
-        return res.status(400).json({ error: 'Контрольная сумма установщика не совпала с latest.yml: файл повреждён или взят из другой сборки. Загрузите все три файла из одной папки dist' });
-      }
-
-      try {
-        fs.mkdirSync(trackDir(track), { recursive: true });
-        rememberCurrent(track);
-        fs.renameSync(stagedExe, path.join(trackDir(track), y.path));
-        fs.renameSync(stagedMap, path.join(trackDir(track), `${y.path}.blockmap`));
-        fs.writeFileSync(path.join(trackDir(track), `latest-${y.version}.yml`), ymlText);
-        // latest.yml — последним и через переименование: клиент не увидит ни полфайла, ни версию
-        // без установщика.
-        const tmp = path.join(trackDir(track), `latest.yml.${crypto.randomBytes(4).toString('hex')}.tmp`);
-        fs.writeFileSync(tmp, ymlText);
-        fs.renameSync(tmp, path.join(trackDir(track), 'latest.yml'));
-      } catch (err) {
-        logServer('ERROR', 'release_publish_failed', { adminId: req.user.id, track, version: y.version, message: err.message });
-        return res.status(500).json({ error: `Не удалось выложить: ${err.message}` });
-      }
-      logServer('INFO', 'release_published', { adminId: req.user.id, admin: req.user.username, track, version: y.version, previous: cur ? cur.version : null, size, ip: req.ip });
+      const result = await publish(track, String((req.body || {}).yml || ''), req);
+      if (result.error) return res.status(result.status).json({ error: result.error });
       res.json({ ok: true, ...describe(track) });
+    });
+
+    // Выложить версию, собранную на самом сервере (deploy\build-iskra-client.cmd): все её сборки
+    // разом, одним паролем. latest.yml берётся из updates-staging — его туда положил скрипт сборки
+    // из папки electron-builder; проверки те же, что у загрузки из панели (имя, размер, sha512).
+    app.post('/api/admin/releases/publish-ready', ...admin, async (req, res) => {
+      const version = String((req.body || {}).version || '');
+      if (!VERSION_RE.test(version)) return res.status(400).json({ error: 'Не указана версия' });
+      const tracks = TRACKS.filter((t) => readyOf(t).some((r) => r.version === version));
+      if (!tracks.length) return res.status(404).json({ error: `Собранной на сервере версии ${version} нет — запустите сборку (deploy\\build-iskra-client.cmd)` });
+      const denied = confirmPassword(req, (req.body || {}).password);
+      if (denied) return res.status(denied.status).json({ error: denied.error });
+
+      const done = [];
+      for (const track of tracks) {
+        const ymlText = fs.readFileSync(path.join(stagingDir(track), `latest-${version}.yml`), 'utf8');
+        const result = await publish(track, ymlText, req);
+        if (result.error) {
+          const prefix = done.length ? `Выложено: ${done.join(', ')}. ` : '';
+          return res.status(result.status).json({ error: `${prefix}Сборка ${track}: ${result.error}`, published: done });
+        }
+        done.push(track);
+      }
+      res.json({ ok: true, published: done, ...Object.fromEntries(TRACKS.map((t) => [t, describe(t)])) });
     });
 
     // Сделать текущей уже выложенную версию (остановить раздачу неудачной).

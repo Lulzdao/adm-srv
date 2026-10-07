@@ -13,10 +13,16 @@
     3. Настраивает прокси для npm и сборщика (как update.ps1: из update.config.psd1 или
        системный) и доверие к корням Windows — если прокси подменяет HTTPS-сертификаты.
     4. npm ci, затем сборка обеих версий (Windows 7/8.1 и Windows 10+).
-    5. Открывает папку с шестью готовыми файлами и говорит, что делать дальше.
+    5. Кладёт собранное на сервер «Искры» (MESSENGER\updates-staging): в панели
+       «Клиенты» сразу появляется «Собрана на сервере версия …» с кнопкой «Выложить» —
+       файлы выбирать не нужно.
 
-  Выкладывает сотрудникам по-прежнему человек — в панели «Искры», с паролем
-  администратора: это запуск программы на всех компьютерах сразу.
+  Выкладывает сотрудникам по-прежнему человек — кнопкой в панели «Искры», с паролем
+  администратора: это запуск программы на всех компьютерах сразу. Не выложенное ждёт
+  в панели неделю.
+
+  Если эта версия уже собрана (MESSENGER\desktop-client\release\<версия>), повторно
+  не собирает — только снова кладёт на сервер. Пересобрать — -Force.
 
   Первая сборка качает около 500 МБ (Electron двух версий и инструменты установщика) и
   идёт 5–15 минут. Скачанное остаётся в кэше (%LOCALAPPDATA%\electron\Cache и
@@ -30,10 +36,11 @@
   поднятый здесь, живёт только на сервере, и следующее обновление вернёт в исходники
   прежний — тогда следующая сборка повторит уже выложенный номер.
 .PARAMETER Force
-  Собрать, даже если эта версия уже выложена (например, проверить, что сборка проходит).
-  Выложить её повторно сервер «Искры» не даст.
+  Собрать заново: даже если эта версия уже собрана или выложена (например, проверить,
+  что сборка проходит). Выложенную повторно сервер «Искры» выложить не даст.
 .PARAMETER NoOpen
-  Не открывать папку с результатом в Проводнике.
+  Не открывать папку с результатом в Проводнике (по умолчанию она открывается, только если
+  положить сборку на сервер «Искры» не вышло).
 
 .EXAMPLE
   .\build-iskra-client.ps1
@@ -184,6 +191,12 @@ try {
     return
   }
 
+  $releaseDir = Join-Path $Client "release\$version"
+  $alreadyBuilt = ($how -eq 'same') -and -not $Force -and (@(Get-ChildItem -LiteralPath $releaseDir -File -ErrorAction SilentlyContinue).Count -eq 6)
+  if ($alreadyBuilt) {
+    Say "   версия $version уже собрана ($releaseDir) — собирать заново не нужно, только положить на сервер" 'DarkGray'
+  } else {
+
   Step 'Проверка'
   $node = Get-Command node.exe -ErrorAction SilentlyContinue
   $script:Npm = (Get-Command npm.cmd -ErrorAction SilentlyContinue)
@@ -231,20 +244,56 @@ try {
     Invoke-Npm @('run', 'release', '--', $how) 'Сборка'
   } finally { Pop-Location }
 
+  }   # конец сборки (пропускается, если версия уже собрана)
+
   $built = Get-PackageVersion $pkg
   $out = Join-Path $Client "release\$built"
   $files = @(Get-ChildItem -LiteralPath $out -File -ErrorAction SilentlyContinue)
   if ($files.Count -ne 6) { Fail "Сборка закончилась, но в $out не шесть файлов, а $($files.Count). Журнал: $script:Log" }
+  foreach ($f in $files) { Say ("   {0,-40} {1,6:N1} МБ" -f $f.Name, ($f.Length / 1MB)) }
+
+  # На сервер «Искры» — в папку ожидания выкладки, рядом с updates (НЕ внутрь: всё, что в updates,
+  # раздаётся клиентам). Раскладка — как у загрузки из панели, плюс latest.yml сборщика под именем
+  # latest-<версия>.yml: по нему панель покажет версию готовой, а выкладка сверит контрольную сумму.
+  Step 'На сервер «Искры»'
+  $staged = $false
+  try {
+    foreach ($track in 'win7', 'win10') {
+      $dir = Join-Path $Messenger "updates-staging\$track"
+      New-Item -ItemType Directory -Force -Path $dir | Out-Null
+      $exe = "iskra-setup-$track-$built.exe"
+      $items = @(
+        @{ From = (Join-Path $out $exe); To = (Join-Path $dir $exe) },
+        @{ From = (Join-Path $out "$exe.blockmap"); To = (Join-Path $dir "$exe.blockmap") },
+        # latest.yml — последним: панель считает версию готовой, когда он на месте.
+        @{ From = (Join-Path $out "latest-$track.yml"); To = (Join-Path $dir "latest-$built.yml") }
+      )
+      foreach ($it in $items) {
+        Copy-Item -LiteralPath $it.From -Destination $it.To -Force
+        # Срок ожидания на сервере считается от времени файла; копия сохранила бы время сборки.
+        (Get-Item -LiteralPath $it.To).LastWriteTime = Get-Date
+      }
+      Say "   $track — $exe"
+    }
+    $staged = $true
+  } catch {
+    Say "   не удалось: $($_.Exception.Message)" 'Yellow'
+    Say "   нет прав на запись в $Messenger\updates-staging? Запустите окно от администратора или выложите файлы из папки вручную." 'Yellow'
+  }
 
   Step 'Готово'
-  foreach ($f in $files) { Say ("   {0,-40} {1,6:N1} МБ" -f $f.Name, ($f.Length / 1MB)) }
-  Say ''
-  Say "Версия $built собрана: $out" 'Green'
-  Say 'Дальше: панель «Искры» → «Клиенты» → «Выложить новую версию» → выбрать все шесть файлов из этой папки,' 'Green'
-  Say 'ввести свой пароль, «Выложить». Сотрудники получат обновление при следующем запуске клиента.' 'Green'
+  if ($staged) {
+    Say "Версия $built собрана и лежит на сервере «Искры»." 'Green'
+    Say 'Дальше: панель «Искры» → «Клиенты» → «Собрана на сервере версия …» → свой пароль → «Выложить».' 'Green'
+    Say 'Сотрудники получат обновление при следующем запуске клиента. Не выложенное ждёт в панели неделю.' 'Green'
+  } else {
+    Say "Версия $built собрана: $out" 'Green'
+    Say 'Дальше: панель «Искры» → «Клиенты» → «Выложить новую версию» → выбрать все шесть файлов из этой папки,' 'Green'
+    Say 'ввести свой пароль, «Выложить».' 'Green'
+  }
   if ($built -ne $version) { Say "Номер $built поднят только на сервере — поднимите его и в репозитории." 'Yellow' }
   Say "Журнал сборки: $script:Log" 'DarkGray'
-  if (-not $NoOpen) { Start-Process explorer.exe $out }
+  if (-not $staged -and -not $NoOpen) { Start-Process explorer.exe $out }
 }
 catch {
   Say ''
