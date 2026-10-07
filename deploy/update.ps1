@@ -695,8 +695,11 @@ function Invoke-Update {
       if ($npmProxy) { $env:HTTP_PROXY = $npmProxy; $env:HTTPS_PROXY = $npmProxy; Say "   npm через прокси $npmProxy" }
       Push-Location $p.Staged
       try {
-        $out = & $npm.Source ci --omit=dev --no-audit --no-fund 2>&1
-        if ($LASTEXITCODE -ne 0) { Fail "npm ci в $($p.Dir) не удался (сервер не дотянулся до npm через прокси?):`n$($out | Select-Object -Last 15 | Out-String)" }
+        # Continue на время npm: в Windows PowerShell 5.1 его предупреждения в stderr при Stop и 2>&1
+        # обрывали бы обновление, хотя npm ci проходит.
+        $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+        try { $out = & $npm.Source ci --omit=dev --no-audit --no-fund 2>&1; $npmCode = $LASTEXITCODE } finally { $ErrorActionPreference = $eap }
+        if ($npmCode -ne 0) { Fail "npm ci в $($p.Dir) не удался (сервер не дотянулся до npm через прокси?):`n$($out | Select-Object -Last 15 | Out-String)" }
       } finally {
         Pop-Location
         $env:HTTP_PROXY = $saved.HTTP_PROXY; $env:HTTPS_PROXY = $saved.HTTPS_PROXY
