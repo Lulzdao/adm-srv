@@ -697,12 +697,18 @@ function updateBadgeDom() {
   setNavBadge('.nav-group[data-group="tasks"] > .nav-group-header', state.taskAttention);
   const total = state.notifications.filter(n => !n.is_read).length;
   setNavBadge('.nav-btn[data-view="inbox"]', total);
-  setNavBadge('.nav-group-header[data-group="tickets"]', total); // для админа бейдж висит на заголовке группы "Заявки"
+  setNavBadge('.nav-group[data-group="tickets"] > .nav-group-header', total); // для админа бейдж висит на заголовке группы "Заявки" (data-group — у самой группы, не у заголовка)
 }
 
+// Прошлые числа на значках: «подпрыгивает» только выросшее. Меню пересобирается целиком при каждой
+// смене экрана, и без этого значок дёргался бы на каждом переходе, а не когда пришло новое. Первое
+// число после загрузки страницы тоже не анимируется — это не «новое», а то, что уже было.
+const navBadgeSeen = new Map();
 function setNavBadge(selector, count) {
   const el = document.querySelector(selector);
   if (!el) return;
+  const before = navBadgeSeen.get(selector);
+  navBadgeSeen.set(selector, count);
   let badge = el.querySelector(".nav-badge");
   if (count > 0) {
     if (!badge) {
@@ -712,6 +718,7 @@ function setNavBadge(selector, count) {
       if (chevron) el.insertBefore(badge, chevron); else el.appendChild(badge);
     }
     badge.textContent = count;
+    if (before !== undefined && count > before) popBadge(badge, el.querySelector(".nav-icon"));
   } else if (badge) {
     badge.remove();
   }

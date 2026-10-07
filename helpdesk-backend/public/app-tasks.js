@@ -296,7 +296,15 @@ async function loadTaskList(main) {
       try {
         await api(`/tasks/${row.dataset.id}`, { method: "PATCH", body: { status: done ? "done" : "todo" } });
         toast(done ? "Задача выполнена" : "Задача возвращена в работу");
+        // Галочка прорисовывается, затем строка «втягивается» в «Выполненные» (вернули — в «Открытые»).
+        if (done) {
+          cb.classList.add("done"); cb.innerHTML = icon("check", 12); checkDraw(cb);
+          row.querySelector(".td-t").classList.add("done");
+          await motionPause(280);
+        }
+        const item = snapshotEl(row);
         await loadTaskList(main);
+        flyInto(item, main.querySelector(`.toggle-btn[data-done="${done ? 1 : 0}"]`));
         if (state.taskOpenId === Number(row.dataset.id)) openTask(main, state.taskOpenId);
         refreshTaskBadge();
       } catch (err) { toast(err.message, true); }
@@ -357,6 +365,7 @@ function closeTaskDrawer(main) {
 
 function showDrawer(main) {
   const drawer = main.querySelector("#tdDrawer");
+  if (drawer.hidden) slideInRight(drawer); // открылась, а не перерисовалась уже открытая
   drawer.hidden = false;
   const agenda = main.querySelector("#tdAgenda");
   if (agenda) agenda.hidden = true;
@@ -496,12 +505,17 @@ async function openTask(main, id) {
     b.onclick = () => save({ assignees: task.assignees.map((a) => a.id).filter((x) => x !== Number(b.dataset.remove)) }, "Ответственный снят");
   });
 
-  const reload = async () => { await reloadTasksView(main); openTask(main, id); };
+  // Ждём и саму карточку: анимации после перерисовки (галочка, комментарий) — уже на новых элементах.
+  const reload = async () => { await reloadTasksView(main); await openTask(main, id); };
   drawer.querySelectorAll(".td-ck").forEach((row) => {
     const itemId = row.dataset.item;
     row.querySelector(".td-cb").onclick = async () => {
-      try { await api(`/tasks/${id}/checklist/${itemId}`, { method: "PATCH", body: { done: !row.classList.contains("done") } }); reload(); }
-      catch (e) { toast(e.message, true); }
+      const nowDone = !row.classList.contains("done");
+      try {
+        await api(`/tasks/${id}/checklist/${itemId}`, { method: "PATCH", body: { done: nowDone } });
+        await reload();
+        if (nowDone) checkDraw(main.querySelector(`#tdDrawer .td-ck[data-item="${itemId}"] .td-cb`));
+      } catch (e) { toast(e.message, true); }
     };
     row.querySelector(".td-ck-x").onclick = async () => {
       try { await api(`/tasks/${id}/checklist/${itemId}`, { method: "DELETE" }); reload(); }
@@ -517,12 +531,12 @@ async function openTask(main, id) {
   drawer.querySelector("#tdCommentSend").onclick = async () => {
     const box = drawer.querySelector("#tdComment");
     if (!box.value.trim()) { box.focus(); return; }
-    try { await api(`/tasks/${id}/comments`, { method: "POST", body: { text: box.value } }); toast("Комментарий добавлен"); reload(); }
+    try { await api(`/tasks/${id}/comments`, { method: "POST", body: { text: box.value } }); toast("Комментарий добавлен"); await reload(); enterFromBelow(main.querySelector("#tdDrawer .td-feed .cmt")); } // новые события — сверху
     catch (e) { toast(e.message, true); }
   };
   const del = drawer.querySelector("#tdDelete");
   if (del) del.onclick = async () => {
-    if (!confirm(`Удалить задачу «${task.title}» вместе с историей? Это не отменить.`)) return;
+    if (!(await uiConfirm(`Удалить задачу «${task.title}» вместе с историей? Это не отменить.`, { ok: "Удалить", danger: true }))) return;
     try { await api(`/tasks/${id}`, { method: "DELETE" }); toast("Задача удалена"); closeTaskDrawer(main); reloadTasksView(main); refreshTaskBadge(); }
     catch (e) { toast(e.message, true); }
   };
@@ -1084,8 +1098,8 @@ async function renderTaskNotes(main) {
       b.onclick = async (e) => {
         e.stopPropagation();
         if (b.dataset.a === "del") {
-          if (!confirm(`Удалить заметку${rec.data.title ? ` «${rec.data.title}»` : ""}?`)) return;
-          try { await api(`/tasks/notes/${id}`, { method: "DELETE" }); el.remove(); notes.delete(id); paintEmpty(); } catch (err) { toast(err.message, true); }
+          if (!(await uiConfirm(`Удалить заметку${rec.data.title ? ` «${rec.data.title}»` : ""}?`, { ok: "Удалить", danger: true }))) return;
+          try { await api(`/tasks/notes/${id}`, { method: "DELETE" }); notes.delete(id); shrinkOut(el, () => { el.remove(); paintEmpty(); }); } catch (err) { toast(err.message, true); }
         } else if (b.dataset.a === "copy") {
           await createNote({ title: rec.data.title, html: body.innerHTML, color: rec.data.color, x: rec.data.x + 28, y: rec.data.y + 28, w: rec.data.w, h: rec.data.h });
         } else if (b.dataset.a === "color") {
@@ -1127,8 +1141,10 @@ async function renderTaskNotes(main) {
       } catch (e) {
         if (e.status === 409 && e.data && e.data.note) {
           const theirs = e.data.note;
-          const keepMine = confirm(`Заметку «${theirs.title || "без заголовка"}» только что изменил ${theirs.updated_by_name || "другой администратор"}.\n\n`
-            + "ОК — сохранить ваш вариант (его изменения пропадут).\nОтмена — показать его вариант (ваши последние правки пропадут).");
+          // Оба ответа что-то делают — окно закрывается только кнопками.
+          const keepMine = await uiConfirm(`Заметку «${theirs.title || "без заголовка"}» только что изменил ${theirs.updated_by_name || "другой администратор"}.\n\n`
+            + "Сохранить ваш вариант — его изменения пропадут. Показать его вариант — пропадут ваши последние правки.",
+            { title: "Заметку изменили одновременно", ok: "Сохранить мой вариант", cancel: "Показать вариант коллеги", dismissable: false });
           rec.data.version = theirs.version;
           if (!keepMine) { rec.data = { ...rec.data, ...theirs }; setContent(rec); paintNote(rec.data, rec.el); rec.dirty = false; say("показан вариант коллеги", "ok"); }
         } else say(`не сохранено: ${e.message}`, "err");
@@ -1142,6 +1158,7 @@ async function renderTaskNotes(main) {
     try {
       const { note } = await api("/tasks/notes", { method: "POST", body });
       const rec = addNote(note);
+      growIn(rec.el);
       rec.el.querySelector(".kb-body").focus();
       return rec;
     } catch (e) { toast(e.message, true); return null; }
@@ -1226,8 +1243,10 @@ async function renderTaskNotes(main) {
   };
   fmt.querySelector("[data-act=big]").onclick = () => exec("fontSize", "5");
   fmt.querySelector("[data-act=small]").onclick = () => exec("fontSize", "2");
-  fmt.querySelector("[data-act=link]").onclick = () => {
-    const url = prompt("Адрес ссылки (начинается с https:// или mailto:)", "https://");
+  fmt.querySelector("[data-act=link]").onclick = async () => {
+    const sel = saveSelection();
+    const url = await uiPrompt("Адрес ссылки (начинается с https:// или mailto:)", "https://", { ok: "Вставить ссылку" });
+    restoreSelection(sel);
     if (url && /^(https?:\/\/|mailto:)\S+$/i.test(url.trim())) exec("createLink", url.trim());
     else if (url) toast("Ссылка должна начинаться с https:// или mailto:", true);
   };

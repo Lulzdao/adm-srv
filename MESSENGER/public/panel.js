@@ -74,6 +74,41 @@
   new MutationObserver(enhanceAll).observe(document.documentElement, { childList: true, subtree: true });
 })();
 
+/* --- Выбор файла ---
+   Кнопку голого <input type="file"> («Выберите файл») рисует браузер, и в палитру она не
+   попадает. В разметке input лежит внутри <label class="file-pick"> невидимым, рядом —
+   своя кнопка и имя выбранного файла (стили — .file-pick в panel.css). Здесь только имя.
+   Код панели сбрасывает выбор присваиванием input.value = '' (после выкладки версии или
+   загрузки сертификата), а события change при этом нет — поэтому у каждого такого input
+   перехвачено присваивание value: после него подпись тоже обновляется. */
+(function () {
+  const valueProp = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+  const plural = (n) => (n % 10 === 1 && n % 100 !== 11 ? 'файл'
+    : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? 'файла' : 'файлов');
+
+  function sync(input) {
+    const pick = input.closest('.file-pick');
+    const label = pick && pick.querySelector('.file-pick-name');
+    if (!label) return;
+    const names = Array.from(input.files || []).map((f) => f.name);
+    pick.classList.toggle('has-file', names.length > 0);
+    label.textContent = !names.length ? (label.dataset.empty || 'Файл не выбран')
+      : names.length === 1 ? names[0]
+      : `${names.length} ${plural(names.length)}: ${names.join(', ')}`;
+    label.title = names.join('\n');
+  }
+
+  document.querySelectorAll('.file-pick input[type="file"]').forEach((input) => {
+    input.addEventListener('change', () => sync(input));
+    Object.defineProperty(input, 'value', {
+      configurable: true,
+      get() { return valueProp.get.call(this); },
+      set(v) { valueProp.set.call(this, v); sync(this); },
+    });
+    sync(input);
+  });
+})();
+
 let token = localStorage.getItem('admin_token');
 let me = JSON.parse(localStorage.getItem('admin_me') || 'null');
 let usersCache = [], deptsCache = [];
@@ -90,6 +125,13 @@ async function api(path, opts) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || 'Ошибка запроса');
   return data;
+}
+
+// Окна и уведомления — свои (ui-dialog.js), не браузерные alert/confirm/prompt. Правило одно на всю
+// панель: что не получилось или что нужно обязательно прочесть — окном с кнопкой «Понятно»
+// (uiAlert); «готово, отправлено» — коротким уведомлением внизу, которое исчезает само (uiToast).
+function showError(e) {
+  return uiAlert(e instanceof Error ? e.message : String(e), { title: 'Не получилось' });
 }
 
 async function doLogin() {
@@ -311,18 +353,39 @@ function userRowHtml(u, blockName) {
       ${caps.length ? `<div class="user-caps">${caps.map(c => `<span class="cap-chip">${c}</span>`).join('')}</div>` : ''}
       ${other.length ? `<div style="margin-top:${caps.length ? 4 : 0}px;">ещё в: ${escapeHtml(other.join(', '))}</div>` : ''}
     </div>
-      <button class="user-menu-btn" title="Действия" onclick="openUserMenu(${u.id}, this)">···</button>
+      <button class="user-menu-btn${menuOpenFor === u.id ? ' open' : ''}" type="button"
+        title="Действия: права, отделы, пароль, удаление" aria-label="Действия с пользователем ${escapeHtml(u.username)}"
+        aria-haspopup="menu" aria-expanded="${menuOpenFor === u.id}" onclick="openUserMenu(${u.id}, this)">${MENU_DOTS}</button>
     </div>`;
+}
+
+// Три крупные точки рисунком, а не символами «···»: текстовые точки были мелкими и серыми,
+// и кнопку меню в строке почти не замечали.
+const MENU_DOTS = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">'
+  + '<circle cx="5" cy="12" r="2.1"/><circle cx="12" cy="12" r="2.1"/><circle cx="19" cy="12" r="2.1"/></svg>';
+// Для кого открыто меню: строки перерисовываются каждые 15 секунд (опрос присутствия), и
+// подсветка кнопки открытого меню иначе пропадала бы при каждой перерисовке.
+let menuOpenFor = null;
+
+function markMenuButtons() {
+  document.querySelectorAll('.user-menu-btn').forEach((b) => {
+    const open = menuOpenFor !== null && b.getAttribute('onclick') === `openUserMenu(${menuOpenFor}, this)`;
+    b.classList.toggle('open', open);
+    b.setAttribute('aria-expanded', String(open));
+  });
 }
 
 function closeUserMenu() {
   const m = document.getElementById('userMenu');
   if (m) m.remove();
+  menuOpenFor = null;
+  markMenuButtons();
 }
 document.addEventListener('click', (e) => {
   const m = document.getElementById('userMenu');
-  if (m && !m.contains(e.target) && !e.target.classList.contains('user-menu-btn')) closeUserMenu();
+  if (m && !m.contains(e.target) && !e.target.closest('.user-menu-btn')) closeUserMenu();
 });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && document.getElementById('userMenu')) closeUserMenu(); });
 
 // Всё, что можно сделать с человеком, — здесь. В строке этих действий больше
 // нет: они занимали пять колонок и мешали читать сам список.
@@ -346,6 +409,8 @@ function openUserMenu(id, anchor) {
     <button data-act="password">Сбросить пароль</button>
     <button data-act="delete" class="danger">Удалить</button>`;
   document.body.appendChild(menu);
+  menuOpenFor = id;
+  markMenuButtons();
 
   const r = anchor.getBoundingClientRect();
   menu.style.left = Math.min(r.right - menu.offsetWidth, window.innerWidth - menu.offsetWidth - 8) + 'px';
@@ -376,7 +441,11 @@ function applyUserVersion(id, version) { const u = usersCache.find(x => x.id ===
 async function renameUser(id) {
   const u = usersCache.find(x => x.id === id);
   if (!u) return;
-  const фио = (prompt('ФИО (оно же логин для входа):', u.display_name || u.username) || '').trim();
+  const entered = await uiPrompt('ФИО (оно же логин для входа):', u.display_name || u.username, {
+    title: 'Переименовать сотрудника', ok: 'Переименовать',
+    validate: (v) => (v.trim() ? '' : 'Введите ФИО'),
+  });
+  const фио = (entered || '').trim();
   if (!фио || (фио === u.display_name && фио === u.username)) return;
 
   try {
@@ -385,7 +454,7 @@ async function renameUser(id) {
       body: JSON.stringify({ display_name: фио, username: фио, version: userVersion(id) }),
     });
     refreshAll();
-  } catch (e) { alert(e.message); refreshAll(); }
+  } catch (e) { await showError(e); refreshAll(); }
 }
 
 async function toggleUserCap(id, cap, checked) {
@@ -397,7 +466,7 @@ async function toggleUserCap(id, cap, checked) {
     const u = usersCache.find(x => x.id === id);
     if (u) u[cap] = checked;
     renderUsers();
-  } catch (e) { alert(e.message); refreshAll(); }
+  } catch (e) { await showError(e); refreshAll(); }
 }
 
 // Порядок отделов задаётся перетаскиванием строк. Раньше здесь были стрелки
@@ -515,16 +584,19 @@ async function applyDeptOrder(from, to, keepFocus) {
     deptsCache = previous;
     renderDepts();
     renderUsers();
-    alert('Не удалось сохранить порядок отделов: ' + e.message);
+    showError('Не удалось сохранить порядок отделов: ' + e.message);
   }
 }
 // Текущее имя берём из кэша по id, а не подставляем строкой в сам onclick: подстановка ломалась
 // на любой кавычке в названии отдела (и открывала бы вставку разметки, если бы имя туда попало).
 async function renameDept(id) {
   const currentName = deptsCache.find(d => d.id === id)?.name || '';
-  const name = prompt('Новое название отдела:', currentName);
+  const name = await uiPrompt('Новое название отдела:', currentName, {
+    title: 'Переименовать отдел', ok: 'Переименовать',
+    validate: (v) => (v.trim() ? '' : 'Введите название'),
+  });
   if (!name || !name.trim() || name.trim() === currentName) return;
-  try { await api(`api/admin/departments/${id}`, { method: 'PATCH', body: JSON.stringify({ name: name.trim() }) }); refreshAll(); } catch (e) { alert(e.message); }
+  try { await api(`api/admin/departments/${id}`, { method: 'PATCH', body: JSON.stringify({ name: name.trim() }) }); refreshAll(); } catch (e) { showError(e); }
 }
 async function loadRegistration() {
   try {
@@ -547,8 +619,17 @@ async function refreshAll() {
   renderUsers();
   renderDepts();
   const opts = usersCache.map(u => `<option value="${u.id}">${escapeHtml(u.display_name)}</option>`).join('');
-  document.getElementById('histUser1').innerHTML = opts;
-  document.getElementById('histUser2').innerHTML = opts;
+  // Список перечитывается раз в 30 секунд: выбранных сотрудников сохраняем (раньше выбор
+  // сбрасывался на первого в списке), а событие change обновляет видимую подпись списка —
+  // без него «Выпадающий список» показывал пустые поля.
+  ['histUser1', 'histUser2'].forEach((elId, i) => {
+    const sel = document.getElementById(elId);
+    const keep = sel.value;
+    sel.innerHTML = opts;
+    if (keep && usersCache.some(u => String(u.id) === keep)) sel.value = keep;
+    else if (i === 1 && sel.options.length > 1) sel.selectedIndex = 1; // второй — не тот же человек
+    sel.dispatchEvent(new Event('change'));
+  });
   loadStats();
   loadRegistration();
 }
@@ -559,7 +640,7 @@ async function createUser() {
   const department_ids = [...newUserDepartments];
   const can_broadcast = document.getElementById('newUserBroadcast').checked;
   const can_admin = document.getElementById('newUserAdmin').checked;
-  if (!username || !password) return alert('Укажите логин и пароль');
+  if (!username || !password) return uiAlert('Укажите логин и пароль');
   try {
     await api('api/admin/users', { method: 'POST', body: JSON.stringify({ username, password, department_ids, can_broadcast, can_admin }) });
     document.getElementById('newUsername').value = '';
@@ -569,7 +650,7 @@ async function createUser() {
     document.getElementById('newUserBroadcast').checked = false;
     document.getElementById('newUserAdmin').checked = false;
     refreshAll();
-  } catch (e) { alert(e.message); }
+  } catch (e) { showError(e); }
 }
 // ---------- Выбор отделов ----------
 // Один всплывающий список на всю страницу, а не свой у каждой строки: строк может быть двести.
@@ -621,10 +702,15 @@ function pickUserDepartments(id, anchor) {
       // а отделов обычно отмечают сразу несколько.
       user.departments = ids.map(i => deptsCache.find(d => d.id === i)).filter(Boolean).map(d => ({ id: d.id, name: d.name }));
       const names = user.departments.map(d => d.name).join(', ');
-      anchor.textContent = names || 'Без отдела';
-      anchor.title = names || 'Без отдела';
-      anchor.classList.toggle('empty', !names);
-    } catch (e) { alert(e.message); refreshAll(); }
+      // Список открыт из меню «три точки» — его кнопку не переписываем (раньше на ней
+      // вместо точек появлялись названия отделов), а перерисовываем строки: человек
+      // переезжает в блок своего отдела. Сам список галочек при этом остаётся открытым.
+      if (anchor.classList.contains('dept-btn')) {
+        anchor.textContent = names || 'Без отдела';
+        anchor.title = names || 'Без отдела';
+        anchor.classList.toggle('empty', !names);
+      } else renderUsers();
+    } catch (e) { await showError(e); refreshAll(); }
   });
 }
 
@@ -646,29 +732,37 @@ function pickNewUserDepartments(anchor) {
 }
 async function resetPassword(id) {
   const u = usersCache.find(x => x.id === id);
-  const val = prompt(`Новый пароль для ${u ? u.username : 'пользователя'} (минимум 4 символа):`, '');
+  // Поле — для пароля (точками): браузерный prompt() показывал набранное открытым текстом.
+  // Короткий пароль окно не пропускает и пишет почему, не закрываясь.
+  const val = await uiPrompt(`Новый пароль для ${u ? u.username : 'пользователя'} (минимум 4 символа):`, '', {
+    title: 'Сбросить пароль', ok: 'Сменить пароль', password: true,
+    validate: (v) => (!v ? 'Введите новый пароль' : v.length < 4 ? 'Пароль короче четырёх символов сервер не примет' : ''),
+  });
   if (!val) return;
-  if (val.length < 4) return alert('Пароль короче четырёх символов сервер не примет');
-  try { await api(`api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify({ password: val, version: userVersion(id) }) }); alert('Пароль обновлён'); refreshAll(); } catch (e) { alert(e.message); refreshAll(); }
+  if (val.length < 4) return;
+  try { await api(`api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify({ password: val, version: userVersion(id) }) }); uiToast('Пароль обновлён'); refreshAll(); } catch (e) { await showError(e); refreshAll(); }
 }
 async function deleteUser(id) {
-  if (!confirm('Удалить пользователя без возможности восстановления?')) return;
-  try { await api(`api/admin/users/${id}`, { method: 'DELETE' }); refreshAll(); } catch (e) { alert(e.message); }
+  const u = usersCache.find(x => x.id === id);
+  const who = u ? ` «${u.display_name || u.username}»` : '';
+  if (!(await uiConfirm(`Удалить пользователя${who} без возможности восстановления?`, { title: 'Удалить пользователя', ok: 'Удалить', danger: true }))) return;
+  try { await api(`api/admin/users/${id}`, { method: 'DELETE' }); refreshAll(); } catch (e) { showError(e); }
 }
 async function createDept() {
   const name = document.getElementById('newDeptName').value.trim();
   if (!name) return;
-  try { await api('api/admin/departments', { method: 'POST', body: JSON.stringify({ name }) }); document.getElementById('newDeptName').value = ''; refreshAll(); } catch (e) { alert(e.message); }
+  try { await api('api/admin/departments', { method: 'POST', body: JSON.stringify({ name }) }); document.getElementById('newDeptName').value = ''; refreshAll(); } catch (e) { showError(e); }
 }
 async function deleteDept(id) {
-  if (!confirm('Удалить отдел? Сотрудники останутся без отдела.')) return;
-  try { await api(`api/admin/departments/${id}`, { method: 'DELETE' }); refreshAll(); } catch (e) { alert(e.message); }
+  const d = deptsCache.find(x => x.id === id);
+  const what = d ? ` «${d.name}»` : '';
+  if (!(await uiConfirm(`Удалить отдел${what}? Сотрудники останутся без отдела.`, { title: 'Удалить отдел', ok: 'Удалить', danger: true }))) return;
+  try { await api(`api/admin/departments/${id}`, { method: 'DELETE' }); refreshAll(); } catch (e) { showError(e); }
 }
 
 document.getElementById('histType').onchange = (e) => {
   const isDm = e.target.value === 'dm';
-  document.getElementById('histUser1').style.display = isDm ? 'inline-block' : 'none';
-  document.getElementById('histUser2').style.display = isDm ? 'inline-block' : 'none';
+  document.getElementById('histDm').hidden = !isDm;
 };
 
 // Экранируем И кавычки тоже: без них значение, попавшее в атрибут (например value="..." в списке
@@ -729,14 +823,14 @@ async function loadMoreHistory() {
       box.scrollTop = box.scrollHeight - prevHeight + prevTop; // не сбрасываем позицию просмотра вставкой сверху
     }
     document.getElementById('histMoreRow').style.display = lastHistory.hasMore ? 'flex' : 'none';
-  } catch (e) { alert(e.message); } finally {
+  } catch (e) { showError(e); } finally {
     btn.disabled = false;
     btn.textContent = 'Показать более ранние';
   }
 }
 
 function exportHistory() {
-  if (!lastHistory.items.length) { alert('Сначала откройте переписку'); return; }
+  if (!lastHistory.items.length) { uiAlert('Сначала откройте переписку'); return; }
   const lines = lastHistory.items.map(m => `[${new Date(m.created_at).toLocaleString('ru-RU')}] ${m.from_user}: ${m.text}`);
   const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' });
   const a = document.createElement('a');
@@ -796,8 +890,8 @@ async function loadFiles() {
   } catch (e) { body.innerHTML = `<tr><td colspan="6">Ошибка: ${escapeHtml(e.message)}</td></tr>`; }
 }
 async function deleteFile(diskName) {
-  if (!confirm('Удалить файл с сервера без возможности восстановления?')) return;
-  try { await api(`api/admin/files/${encodeURIComponent(diskName)}`, { method: 'DELETE' }); loadFiles(); } catch (e) { alert(e.message); }
+  if (!(await uiConfirm('Удалить файл с сервера без возможности восстановления?', { title: 'Удалить файл', ok: 'Удалить', danger: true }))) return;
+  try { await api(`api/admin/files/${encodeURIComponent(diskName)}`, { method: 'DELETE' }); loadFiles(); } catch (e) { showError(e); }
 }
 
 function todayStr() {
@@ -841,8 +935,15 @@ function tlsCertRows(cert) {
 }
 
 function tlsWarnBox(text) {
-  return `<div style="margin-top:10px; padding:8px 10px; border:1px solid var(--warn); border-radius:8px; color:var(--warn); font-size:12.5px;">${text}</div>`;
+  return `<div class="warn-box">${text}</div>`;
 }
+
+// Значки строки состояния — рисунком (цвет берут от строки), а не эмодзи 🔒 и ⚠: те
+// система рисует своими цветами, и в палитру панели они не попадали.
+const TLS_ICON_ON = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+  + '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>';
+const TLS_ICON_OFF = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+  + '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>';
 
 async function loadTls() {
   const box = document.getElementById('tlsState');
@@ -852,8 +953,8 @@ async function loadTls() {
     document.getElementById('tlsInsecureWarn').style.display = s.requestSecure ? 'none' : '';
 
     let html = s.enabled
-      ? `<div style="font-size:15px; color:var(--online)">🔒 Шифрование включено — соединения идут по https</div>`
-      : `<div style="font-size:15px; color:var(--danger)">⚠ Шифрования нет — всё идёт открытым текстом</div>`;
+      ? `<div class="tls-status on">${TLS_ICON_ON}Шифрование включено — соединения идут по https</div>`
+      : `<div class="tls-status off">${TLS_ICON_OFF}Шифрования нет — всё идёт открытым текстом</div>`;
     if (s.source) html += `<div style="color:var(--muted); font-size:12px; margin-top:4px;">Сертификат ${escapeHtml(TLS_SOURCE_LABEL[s.source] || s.source)}</div>`;
 
     html += tlsCertRows(s.certificate);
@@ -895,7 +996,7 @@ async function uploadTls() {
   const file = input.files && input.files[0];
   if (!file) { result.innerHTML = '<span style="color:var(--warn)">Выберите файл</span>'; return; }
   if (file.size > 200 * 1024) { result.innerHTML = '<span style="color:var(--danger)">Это слишком большой файл для сертификата — похоже, выбран не тот</span>'; return; }
-  if (!confirm(`Заменить действующий сертификат на «${file.name}»?`)) return;
+  if (!(await uiConfirm(`Заменить действующий сертификат на «${file.name}»?`, { title: 'Заменить сертификат', ok: 'Заменить' }))) return;
 
   result.textContent = 'Проверяем файл…';
   try {
@@ -918,22 +1019,24 @@ async function uploadTls() {
 }
 
 async function removeTls() {
-  if (!confirm('Удалить сертификат из хранилища сервера?')) return;
+  if (!(await uiConfirm('Удалить сертификат из хранилища сервера?', { title: 'Удалить сертификат', ok: 'Удалить', danger: true }))) return;
   try {
     const r = await api('api/admin/tls', { method: 'DELETE' });
     // Сказать "удалено" мало: если сертификат задан ещё и переменной окружения, после перезапуска
     // сервер поднимется по https с тем же сертификатом — и выглядит это так, будто удаление не
     // сработало. Сервер сразу считает, что реально будет дальше, а мы это показываем.
+    // Окном, а не исчезающим уведомлением: это надо дочитать. Раздел под окном уже обновляется.
     if (r.nextSource) {
-      alert('Файл из хранилища удалён, но шифрование НЕ отключится: сертификат задан ещё и '
+      uiAlert('Файл из хранилища удалён, но шифрование НЕ отключится: сертификат задан ещё и '
         + (TLS_SOURCE_SHORT[r.nextSource] || r.nextSource)
         + '. После перезапуска сервер возьмёт его оттуда — ' + (r.nextWhere || '')
-        + '.\n\nЧтобы сервер работал без шифрования, уберите эту переменную из скрипта запуска (службы) и перезапустите его.');
+        + '.\n\nЧтобы сервер работал без шифрования, уберите эту переменную из скрипта запуска (службы) и перезапустите его.',
+        { title: 'Шифрование не отключится' });
     } else {
-      alert('Сертификат удалён. После перезапуска сервер будет работать без шифрования — трафик пойдёт открытым текстом.');
+      uiAlert('После перезапуска сервер будет работать без шифрования — трафик пойдёт открытым текстом.', { title: 'Сертификат удалён' });
     }
     loadTls();
-  } catch (e) { alert(e.message); }
+  } catch (e) { showError(e); }
 }
 
 async function loadLogs() {
@@ -1046,8 +1149,8 @@ async function publishReadyRelease(btn) {
   const version = btn.dataset.version;
   const pw = document.getElementById('readyPassword');
   const progress = document.getElementById('readyProgress');
-  if (!pw.value) { pw.focus(); alert('Введите свой пароль — выкладка подтверждается им'); return; }
-  if (!confirm(`Выложить версию ${version}? Клиенты начнут обновляться сами: при следующем запуске и по «Проверить сейчас».`)) return;
+  if (!pw.value) { pw.focus(); uiAlert('Введите свой пароль — выкладка подтверждается им'); return; }
+  if (!(await uiConfirm(`Выложить версию ${version}? Клиенты начнут обновляться сами: при следующем запуске и по «Проверить сейчас».`, { title: 'Выложить обновление', ok: 'Выложить' }))) return;
   btn.disabled = true;
   progress.textContent = 'Сервер проверяет контрольные суммы и выкладывает…';
   try {
@@ -1059,7 +1162,7 @@ async function publishReadyRelease(btn) {
   } catch (e) {
     progress.textContent = '';
     btn.disabled = false;
-    alert(e.message);
+    showError(e);
     await loadReleases();
   }
 }
@@ -1086,20 +1189,21 @@ function releasePassword() {
 }
 
 async function makeReleaseCurrent(track, version) {
+  let password;
+  try { password = releasePassword(); } catch (e) { uiAlert(e.message); return; } // пусто — подсказка, а не «ошибка»
   try {
-    const password = releasePassword();
-    if (!confirm(`Сделать ${version} текущей версией для ${TRACK_LABEL[track]}? Клиентам, которые ещё не обновились, будет предлагаться она.`)) return;
+    if (!(await uiConfirm(`Сделать ${version} текущей версией для ${TRACK_LABEL[track]}? Клиентам, которые ещё не обновились, будет предлагаться она.`, { title: 'Сменить текущую версию', ok: 'Сделать текущей' }))) return;
     await api(`api/admin/releases/${track}/current`, { method: 'POST', body: JSON.stringify({ version, password }) });
     await loadPublishedVersions();
-  } catch (e) { alert(e.message); }
+  } catch (e) { showError(e); }
 }
 
 async function deleteRelease(track, version) {
-  if (!confirm(`Удалить с сервера версию ${version} (${TRACK_LABEL[track]})? Клиенты, у которых стоит она, следующую версию скачают целиком.`)) return;
+  if (!(await uiConfirm(`Удалить с сервера версию ${version} (${TRACK_LABEL[track]})? Клиенты, у которых стоит она, следующую версию скачают целиком.`, { title: 'Удалить версию', ok: 'Удалить', danger: true }))) return;
   try {
     await api(`api/admin/releases/${track}/${encodeURIComponent(version)}`, { method: 'DELETE' });
     await loadReleases();
-  } catch (e) { alert(e.message); }
+  } catch (e) { showError(e); }
 }
 
 // Что выбрано для выкладки: по latest-….yml (сборку и версию берём из его содержимого, а не из
@@ -1151,9 +1255,9 @@ async function publishRelease() {
   const btn = document.getElementById('releasePublishBtn');
   const progress = document.getElementById('releaseProgress');
   let password;
-  try { password = releasePassword(); } catch (e) { alert(e.message); return; }
+  try { password = releasePassword(); } catch (e) { uiAlert(e.message); return; }
   const what = releasePlan.map((r) => `${TRACK_LABEL[r.track]} ${r.version}`).join(', ');
-  if (!confirm(`Выложить ${what}? Клиенты начнут обновляться сами: при следующем запуске и по «Проверить сейчас».`)) return;
+  if (!(await uiConfirm(`Выложить ${what}? Клиенты начнут обновляться сами: при следующем запуске и по «Проверить сейчас».`, { title: 'Выложить обновление', ok: 'Выложить' }))) return;
   btn.disabled = true;
   try {
     // Пароль — до загрузки: опечатка не должна стоить сотен мегабайт трафика.
@@ -1175,7 +1279,7 @@ async function publishRelease() {
     await loadClients();
   } catch (e) {
     progress.textContent = '';
-    alert(e.message);
+    showError(e);
     btn.disabled = !releasePlan.length;
     await loadReleases();
   }
@@ -1215,11 +1319,11 @@ async function loadClients() {
 }
 
 async function forceUpdate(userId, host) {
-  if (!confirm(`Запустить обновление на «${host}»? Приложение у сотрудника перезапустится через 15 секунд после загрузки.`)) return;
+  if (!(await uiConfirm(`Запустить обновление на «${host}»? Приложение у сотрудника перезапустится через 15 секунд после загрузки.`, { title: 'Обновить клиент', ok: 'Обновить' }))) return;
   try {
     await api('api/admin/force-update', { method: 'POST', body: JSON.stringify({ userId: Number(userId), host }) });
-    alert('Команда отправлена. Обновление займёт некоторое время — список можно обновить позже.');
-  } catch (e) { alert(e.message); }
+    uiToast('Команда отправлена. Обновление займёт некоторое время — список можно обновить позже.', { duration: 5000 });
+  } catch (e) { showError(e); }
 }
 
 async function requestClientLog(userId, host) {
@@ -1260,7 +1364,7 @@ async function sendBroadcast() {
   const el = document.getElementById('bcText');
   const text = el.value.trim();
   if (!text) return;
-  try { await api('api/broadcast', { method: 'POST', body: JSON.stringify({ text }) }); el.value = ''; loadBroadcastFeed(); } catch (e) { alert(e.message); }
+  try { await api('api/broadcast', { method: 'POST', body: JSON.stringify({ text }) }); el.value = ''; loadBroadcastFeed(); } catch (e) { showError(e); }
 }
 
 // Отметка присутствия по HTTP — чтобы администратор, сидящий в панели, числился в сети и у

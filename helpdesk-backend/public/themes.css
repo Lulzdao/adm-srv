@@ -152,6 +152,7 @@ html[data-theme="dark"] {
   --md-outline: #3B4049;
   --md-outline-variant: #343840;
   --md-error: #FF5A67;                   /* розовый */
+  --md-on-error: #2A0A0E;                /* светлый розовый — тёмный текст на нём читается лучше белого */
   --md-error-container: #4A1F2A;
   --md-on-error-container: #FEAFBF;
   --md-warn-container: #4A2F1C;

@@ -230,8 +230,8 @@ async function renderAdmin(main) {
         <div class="section-label">Администраторы платформы</div>
         <div style="font-size:11.5px;color:var(--ink-soft);margin-bottom:6px;">
           Права даёт членство в группе, указанной в <code class="mono">.env</code> на сервере:
-          <span class="mono">${esc(adminGroups.A || "— не задана —")}</span> (${esc(ИМЯ_ДОМЕНА.A)}),
-          <span class="mono">${esc(adminGroups.B || "— не задана —")}</span> (${esc(ИМЯ_ДОМЕНА.B)}).
+          ${adminGroups.A ? `<span class="mono">${esc(adminGroups.A)}</span>` : "<i>не задана</i>"} (${esc(ИМЯ_ДОМЕНА.A)}),
+          ${adminGroups.B ? `<span class="mono">${esc(adminGroups.B)}</span>` : "<i>не задана</i>"} (${esc(ИМЯ_ДОМЕНА.B)}).
           Отсюда список не редактируется и группами отделов ниже не расширяется.
         </div>
         ${admins.length ? admins.map(a => человек(a, false)).join("") : пусто("Ни один администратор ещё не входил.")}
@@ -392,7 +392,7 @@ async function renderAdmin(main) {
       const del = card.querySelector(".grp-del");
       if (del) del.onclick = async () => {
         const name = card.querySelector(".grp-name").textContent;
-        if (!confirm(`Удалить группу «${name}»? Программы, отданные ей в Заявке на доступ, вернутся в общую очередь.`)) return;
+        if (!(await uiConfirm(`Удалить группу «${name}»? Программы, отданные ей в Заявке на доступ, вернутся в общую очередь.`, { ok: "Удалить", danger: true }))) return;
         try { await api(`/admin/groups/${encodeURIComponent(role)}`, { method: "DELETE" }); toast(`Группа «${name}» удалена`); refreshGroups(); }
         catch (e) { say(false, e.message); }
       };
@@ -615,7 +615,8 @@ async function renderCertificates(main) {
               <div class="form-row" style="margin-bottom:12px;">
                 <div>
                   <div class="field-label">Файл</div>
-                  <input class="field-input" id="certFile" type="file" accept=".pfx,.p12" style="margin-bottom:0;padding:10px 12px;">
+                  <div class="dropzone dz-inline" id="certDrop" title="PFX-файл сертификата"><span class="dropzone-icon">${icon("upload", 16)}</span><span id="certDropText">Выберите PFX — нажмите или перетащите сюда</span></div>
+                  <input id="certFile" type="file" accept=".pfx,.p12" hidden>
                 </div>
                 <div>
                   <div class="field-label">Пароль к файлу</div>
@@ -636,8 +637,6 @@ async function renderCertificates(main) {
             ${mods.modules.map(modRow).join("")}
           </div>
         </div>
-
-      </div>
 
       <details class="card" style="margin-top:20px;">
         <summary style="cursor:pointer;font-size:13px;font-weight:600;color:var(--ink-soft);">
@@ -667,7 +666,29 @@ async function renderCertificates(main) {
             <div id="rootMsg" style="margin-top:8px;font-size:12px;text-align:center;"></div>
           </div>
         </div>
-      </details>`;
+      </details>
+      </div>`;
+
+    // Голый <input type="file"> («Выберите файл / Файл не выбран») выбивался из стиля —
+    // вместо него пунктирная рамка, как у вложений заявки и рассылок; имя выбранного файла — в ней.
+    const certDrop = document.getElementById("certDrop");
+    if (certDrop) {
+      const input = document.getElementById("certFile");
+      const show = () => {
+        const f = input.files && input.files[0];
+        certDrop.classList.toggle("has-file", Boolean(f));
+        document.getElementById("certDropText").textContent = f ? f.name : "Выберите PFX — нажмите или перетащите сюда";
+        certDrop.title = f ? f.name : "PFX-файл сертификата";
+      };
+      certDrop.onclick = () => input.click();
+      input.onchange = show;
+      certDrop.ondragover = (e) => { e.preventDefault(); certDrop.classList.add("over"); };
+      certDrop.ondragleave = () => certDrop.classList.remove("over");
+      certDrop.ondrop = (e) => {
+        e.preventDefault(); certDrop.classList.remove("over");
+        if (e.dataTransfer.files.length) { input.files = e.dataTransfer.files; show(); }
+      };
+    }
 
     const uploadBtn = document.getElementById("certUpload");
     if (uploadBtn) uploadBtn.onclick = async () => {
@@ -713,7 +734,7 @@ async function renderCertificates(main) {
 
     main.querySelectorAll(".del-root").forEach(btn => {
       btn.onclick = async () => {
-        if (!confirm(`Удалить ${btn.dataset.file} из доверенных?`)) return;
+        if (!(await uiConfirm(`Удалить ${btn.dataset.file} из доверенных?`, { ok: "Удалить", danger: true }))) return;
         try {
           await api(`/certificates/trusted/${encodeURIComponent(btn.dataset.file)}`, { method: "DELETE" });
           renderCertificates(main);

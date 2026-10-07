@@ -83,8 +83,10 @@ function richEditor(box, { placeholder = "", onInput = () => {} } = {}) {
   // Кнопки не забирают фокус — выделение в тексте остаётся на месте.
   box.querySelectorAll(".rte-bar button").forEach((b) => b.addEventListener("mousedown", (e) => e.preventDefault()));
   box.querySelectorAll("[data-cmd]").forEach((b) => { b.onclick = () => exec(b.dataset.cmd); });
-  box.querySelector("[data-act=link]").onclick = () => {
-    const url = prompt("Адрес ссылки (начинается с https:// или mailto:)", "https://");
+  box.querySelector("[data-act=link]").onclick = async () => {
+    const sel = saveSelection();
+    const url = await uiPrompt("Адрес ссылки (начинается с https:// или mailto:)", "https://", { ok: "Вставить ссылку" });
+    restoreSelection(sel);
     if (url && /^(https?:\/\/|mailto:)\S+$/i.test(url.trim())) exec("createLink", url.trim());
     else if (url) toast("Ссылка должна начинаться с https:// или mailto:", true);
   };
@@ -183,7 +185,7 @@ async function renderMailingNew(main) {
   main.innerHTML = `
     <div class="topbar"><div class="topbar-title-row"><button class="icon-btn" id="mBack" title="Назад">${icon("chevron", 18)}</button><div class="topbar-title">Новая рассылка</div></div></div>
     <div class="page"><div class="form-narrow">
-      ${settings.configured ? "" : `<div class="warn-box">Почтовый сервер для рассылок не настроен — ${state.user.is_admin ? `задайте его в <a href="#asst:settings">настройках</a> («Почта рассылок»)` : "обратитесь к администратору"}.</div>`}
+      ${settings.configured ? "" : `<div class="warn-box"><div>Почтовый сервер для рассылок не настроен — ${state.user.is_admin ? `задайте его в <a href="#asst:settings">настройках</a> («Почта рассылок»)` : "обратитесь к администратору"}.</div></div>`}
       <div class="form-card">
         <div class="form-card-title">1. Кому</div>
         <div class="form-card-sub">CSV или Excel: колонки «ОКПО», «Наименование», «Почта» (названия — примерно такие; в ячейке с почтой может быть несколько адресов через точку с запятой: a@example.ru; b@example.ru)</div>
@@ -330,7 +332,7 @@ async function renderMailingNew(main) {
     const list = chosen();
     if (!$("mSubject").value.trim() || !editor.text()) { toast("Заполните тему и текст письма", true); return; }
     if (st.mode === "own" && (!$("mAddr").value.trim() || !$("mPass").value)) { toast("Укажите свой адрес и пароль приложения", true); return; }
-    if (!confirm(`Отправить ${list.length} писем с адреса ${st.mode === "own" ? $("mAddr").value.trim() : boxOf().address}?`)) return;
+    if (!(await uiConfirm(`Отправить ${list.length} писем с адреса ${st.mode === "own" ? $("mAddr").value.trim() : boxOf().address}?`, { ok: "Отправить" }))) return;
     const fd = new FormData();
     fd.append("payload", JSON.stringify({
       subject: $("mSubject").value, body: editor.text(), body_html: editor.html(), use_template: $("mTpl").checked,
@@ -413,13 +415,13 @@ async function renderMailing(main, id) {
   main.querySelectorAll("#mRowF .toggle-btn").forEach((b) => { b.onclick = () => { mailRowFilter = b.dataset.f; renderMailing(main, id); }; });
   const del = $("mDel");
   if (del) del.onclick = async () => {
-    if (!confirm("Удалить рассылку вместе с отчётом и вложениями?")) return;
+    if (!(await uiConfirm("Удалить рассылку вместе с отчётом и вложениями?", { ok: "Удалить", danger: true }))) return;
     try { await api(`/mailings/${id}`, { method: "DELETE" }); setView("asst:mail"); } catch (e) { toast(e.message, true); }
   };
   main.querySelectorAll("[data-act]").forEach((b) => {
     b.onclick = async () => {
       const act = b.dataset.act;
-      if (act === "cancel" && !confirm("Отменить рассылку? Неотправленные письма не уйдут.")) return;
+      if (act === "cancel" && !(await uiConfirm("Отменить рассылку? Неотправленные письма не уйдут.", { ok: "Отменить рассылку", cancel: "Не отменять", danger: true }))) return;
       const body = {};
       if (needPass && (act === "resume" || act === "retry")) {
         const pass = await askMailPassword(c);
@@ -510,7 +512,7 @@ async function mailSettingsTab(box) {
   box.querySelectorAll("[data-rm]").forEach((b) => {
     b.onclick = async () => {
       const mb = s.allMailboxes.find((x) => x.id === Number(b.dataset.rm));
-      if (!confirm(`Удалить ящик ${mb.address}? Идущие с него рассылки встанут на паузу.`)) return;
+      if (!(await uiConfirm(`Удалить ящик ${mb.address}? Идущие с него рассылки встанут на паузу.`, { ok: "Удалить", danger: true }))) return;
       try { await api(`/mailings/settings/mailboxes/${mb.id}`, { method: "DELETE" }); reload(); } catch (e) { toast(e.message, true); }
     };
   });

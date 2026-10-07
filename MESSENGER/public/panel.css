@@ -74,7 +74,18 @@
     --md-warn-container: #FFE7D6;
     --md-on-warn-container: #C25A18;
 
+    --md-on-error: #FFFFFF;             /* текст на заливке --md-error */
+
     --md-state-hover: #EDF1F8;
+    /* Те же имена и значения, что в styles.css платформы: темы «Центра» (themes.css)
+       переопределяют именно их, поэтому панель берёт тёмную и цветные темы без своих правил. */
+    --md-primary-strong: #08528F;                  /* залитая кнопка под курсором */
+    --md-primary-tint: rgba(10, 97, 174, 0.08);    /* лёгкая подсветка наведения */
+    --md-primary-ring: rgba(10, 97, 174, 0.12);    /* кольцо фокуса у полей */
+    --md-disabled: #DCE4EF;
+    --md-on-disabled: #9AA3AF;
+    --green: #008F9F;                   /* «всё в порядке»; в тёмной теме светлее */
+    --amber: #C25A18;                   /* «внимание»; в тёмной теме светлее */
     /* --- Форма (5.1): фиксированная лесенка скруглений --- */
     --md-shape-xs: 4px;
     --md-shape-s: 6px;
@@ -100,10 +111,14 @@
     --accent-2: var(--md-on-primary-container);
     --text: var(--md-on-surface);
     --muted: var(--md-on-surface-variant);
-    --online: #008F9F;                  /* изумрудный — «в сети» */
+    /* Через --green/--amber, а не hex: прежние #008F9F и #C25A18 в тёмной теме «Центра»
+       оставались тёмными и на тёмном фоне почти не читались. */
+    --online: var(--green);             /* изумрудный — «в сети» */
     --danger: var(--md-error);
-    --warn: #C25A18;
+    --warn: var(--amber);
+    --offline-dot: #BFBFBF;             /* светло-серый из палитры (3.2) — «не в сети» */
   }
+  [hidden] { display: none !important; }
 
   /* Кернинг выключен намеренно, и это не вкусовщина. В PT Root UI есть
      кернинговая пара «пробел + длинное тире», которая стягивает пробелы вокруг
@@ -226,11 +241,14 @@
   h2 { margin:0 0 20px; font-size:24px; font-weight:700; letter-spacing:0; }
 
   .cards { display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-bottom:22px; }
-  .card { background:var(--md-surface-container); border:none; border-radius:var(--md-shape-l); padding:20px 24px; }
+  /* Плашки — тоном --md-surface-container-low, как .card платформы. Прежний
+     --md-surface-container в тёмной теме «Центра» совпадал с фоном страницы, и
+     карточки, панели и строки пользователей сливались в одно поле. */
+  .card { background:var(--md-surface-container-low); border:none; border-radius:var(--md-shape-l); padding:20px 24px; }
   .card .v { font-size:32px; font-weight:600; letter-spacing:-.5px; color:var(--md-on-surface); }
   .card .l { color:var(--md-on-surface-variant); font-size:12.5px; margin-top:5px; }
 
-  .panel { background:var(--md-surface-container); border:none; border-radius:var(--md-shape-l); padding:24px; margin-bottom:18px; }
+  .panel { background:var(--md-surface-container-low); border:none; border-radius:var(--md-shape-l); padding:24px; margin-bottom:18px; }
   .panel h3 { margin:0 0 14px; font-size:11.5px; color:var(--md-on-surface-variant); text-transform:uppercase; letter-spacing:.5px; font-weight:600; }
   .row-flex { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
 
@@ -238,9 +256,11 @@
   th {
     text-align:left; color:var(--md-on-surface-variant); font-size:11.5px; text-transform:uppercase;
     letter-spacing:.5px; padding:12px 10px; border-bottom:1px solid var(--md-outline-variant); font-weight:600;
-    background:var(--md-surface-container);
+    background:transparent;
   }
-  td { padding:12px 10px; border-bottom:1px solid var(--md-surface-container-high); vertical-align:middle; }
+  /* Разделитель строк — --md-outline-variant: прежний --md-surface-container-high в
+     тёмной теме совпадал с фоном панели, и строки таблиц не разделялись. */
+  td { padding:12px 10px; border-bottom:1px solid var(--md-outline-variant); vertical-align:middle; }
   tbody tr:hover td { background:var(--md-state-hover); }
 
   select, input, textarea {
@@ -248,10 +268,16 @@
     border-radius:var(--md-shape-xs); padding:11px 14px; font-size:13.5px; font-family:inherit; outline:none;
     transition:border-color .12s ease, box-shadow .12s ease;
   }
-  select:focus, input:focus, textarea:focus { border-color:var(--md-primary); box-shadow:inset 0 0 0 1px var(--md-primary); }
-  input[type="checkbox"] { width:auto; padding:0; accent-color:var(--md-primary); }
-  input[type="date"] { color-scheme:light; }
-  input[type="file"] { border:none; padding:0; background:transparent; }
+  select:focus, input:focus, textarea:focus { border-color:var(--md-primary); box-shadow:0 0 0 3px var(--md-primary-ring); }
+  input::placeholder, textarea::placeholder { color:var(--md-on-surface-variant); opacity:1; }
+  input[type="checkbox"] { width:16px; height:16px; margin:0; padding:0; accent-color:var(--md-primary); cursor:pointer; }
+  input[type="checkbox"]:focus { box-shadow:none; }
+  input[type="checkbox"]:focus-visible { outline:2px solid var(--md-primary); outline-offset:2px; }
+  /* Схему цвета (значок календаря) берём от темы: «Тёмная» ставит color-scheme:dark на
+     html. Прежнее жёсткое light рисовало в тёмной теме тёмный значок на тёмном поле. */
+  input[type="date"] { color-scheme:inherit; }
+  /* Голый input[type=file] не показывается: его кнопку «Выберите файл» рисует браузер,
+     и в палитру она не попадает. Вместо неё — .file-pick ниже. */
 
   /* ---- Список пользователей ----
      Раньше это была таблица, где каждое действие занимало свою колонку: поле
@@ -287,7 +313,7 @@
   .user-dot { width:9px; height:9px; border-radius:50%; flex-shrink:0; margin-top:5px; }
   .user-dot.active { background:var(--online); }
   .user-dot.idle { background:var(--warn); }
-  .user-dot.offline { background:#BFBFBF; }   /* светло-серый из палитры (3.2) */
+  .user-dot.offline { background:var(--offline-dot); }
   .user-login { font-weight:600; font-size:13.5px; }
   .user-sub { font-size:11.5px; color:var(--md-on-surface-variant); margin-top:2px; }
   .user-cell { min-width:0; font-size:12.5px; color:var(--md-on-surface-variant); }
@@ -297,12 +323,24 @@
     font-size:11px; font-weight:700; padding:4px 10px; border-radius:var(--md-shape-xs);
     background:var(--md-secondary-container); color:var(--md-on-secondary-container); white-space:nowrap;
   }
+  /* Кнопка меню действий с человеком (права, отделы, пароль, удаление). Прежняя —
+     серые «···» текстом на прозрачном фоне — почти не читалась как кнопка: её не
+     замечали. Теперь это кнопка с рамкой и крупными точками, под курсором и при
+     открытом меню подсвечивается фирменным цветом, с клавиатуры — кольцом фокуса.
+     Рисунок точек — SVG; pointer-events:none, чтобы щелчок попадал в саму кнопку
+     (по ней панель отличает «открыть меню» от «щелчка мимо»). */
   .user-menu-btn {
-    width:32px; height:32px; margin-top:-4px; border:none; border-radius:50%; background:transparent; cursor:pointer;
-    color:var(--md-on-surface-variant); font-size:17px; line-height:1; letter-spacing:1px;
-    transition:background .13s ease;
+    display:inline-flex; align-items:center; justify-content:center;
+    width:36px; height:36px; margin-top:-7px; padding:0; cursor:pointer;
+    border:1px solid var(--md-outline); border-radius:var(--md-shape-m);
+    background:var(--md-surface-container-lowest); color:var(--md-on-surface);
+    transition:background .13s ease, border-color .13s ease, color .13s ease;
   }
-  .user-menu-btn:hover { background:var(--md-state-hover); color:var(--md-on-surface); }
+  .user-menu-btn svg { pointer-events:none; }
+  .user-menu-btn:hover, .user-menu-btn.open {
+    background:var(--md-primary-container); border-color:var(--md-primary); color:var(--md-on-primary-container);
+  }
+  .user-menu-btn:focus-visible { outline:2px solid var(--md-primary); outline-offset:2px; }
   #userMenu {
     position:fixed; z-index:60; min-width:210px; padding:6px;
     background:var(--md-surface-container-lowest); border:1px solid var(--md-outline-variant);
@@ -343,8 +381,11 @@
   /* Действия отдела — в одну строку. Общий .row-flex переносит содержимое, и в
      колонке фиксированной ширины две кнопки вставали друг под друга, раздувая
      строку вдвое; перетаскивать такую строку неудобно, да и читается хуже. */
-  .dept-actions { display:flex; gap:8px; align-items:center; flex-wrap:nowrap; justify-content:flex-end; }
+  /* Ячейка остаётся ячейкой таблицы (без display:flex): с flex она выпадала из строки
+     таблицы, и черта под кнопками вставала на другой высоте, чем под названием. */
+  .dept-actions { text-align:right; white-space:nowrap; }
   .dept-actions .action { white-space:nowrap; }
+  .dept-actions .action + .action { margin-left:8px; }
   .dept-row td { vertical-align:middle; }
   .dept-row.dragging { opacity:.45; }
   .dept-row.drop-before td { box-shadow: inset 0 2px 0 var(--md-primary); }
@@ -401,21 +442,33 @@
      экран. Цвет остаётся тем же и читается однозначно, а вес — по делу.
      Под курсором кнопка заливается: подтверждение, что действие опасное. */
   button.action.danger { background:var(--md-error-container); color:var(--md-error); }
-  button.action.danger:hover { background:var(--md-error); color:var(--md-on-primary); filter:none; }
+  button.action.danger:hover { background:var(--md-error); color:var(--md-on-error); filter:none; }
   button.action.ghost { background:var(--md-secondary-container); color:var(--md-on-secondary-container); }
   button.action.ghost:hover { filter:brightness(0.96); box-shadow:none; }
-  button.action:disabled { background:var(--md-surface-container-high); color:var(--md-on-disabled, rgba(40,42,46,0.38)); cursor:not-allowed; box-shadow:none; filter:none; }
+  /* --md-disabled, как у платформы: прежний --md-surface-container-high в тёмной теме
+     совпадал с фоном панели, и у неактивной кнопки пропадал контур. */
+  button.action:disabled, button.action:disabled:hover { background:var(--md-disabled); color:var(--md-on-disabled); cursor:not-allowed; box-shadow:none; filter:none; }
+  /* Кольцо фокуса с клавиатуры — у всех кнопок панели одно. */
+  button.action:focus-visible, .mm-logout:focus-visible, .select-btn:focus-visible, .dept-btn:focus-visible,
+  #userMenu button:focus-visible, #authBox button:focus-visible { outline:2px solid var(--md-primary); outline-offset:2px; }
+  /* Кнопки действий в ячейке таблицы («Скачать», «Обновить», «Журнал»). Класс .row-flex
+     делал ячейку flex-блоком, она выпадала из строки таблицы, и черта под ней вставала
+     ниже соседних. Ячейка остаётся ячейкой, кнопки идут в строку. */
+  td.row-flex { display:table-cell; white-space:nowrap; }
+  td.row-flex > .action + .action { margin-left:6px; }
 
   #histMessages {
     display:flex; flex-direction:column; gap:8px; max-height:440px; overflow-y:auto;
-    margin-top:14px; padding:16px; background:var(--md-surface-container); border-radius:var(--md-shape-m);
+    margin-top:14px; padding:16px; background:var(--md-surface-container-lowest); border-radius:var(--md-shape-m);
+    /* Без сообщений здесь только подпись («Сообщений пока нет», «Загрузка…») — вторичным цветом. */
+    color:var(--md-on-surface-variant); font-size:13px;
   }
-  #histMessages .m { font-size:13.5px; line-height:1.5; }
+  #histMessages .m { font-size:13.5px; line-height:1.5; color:var(--md-on-surface); }
   #histMessages .m b { color:var(--md-primary); }
   #histMessages .m .t { color:var(--md-on-surface-variant); font-size:11px; margin-left:8px; }
 
   #bcFeed { display:flex; flex-direction:column; gap:12px; }
-  .bc-item { background:var(--md-surface-container); border:none; border-radius:var(--md-shape-m); padding:14px 16px; }
+  .bc-item { background:var(--md-surface-container-lowest); border:none; border-radius:var(--md-shape-m); padding:14px 16px; }
   .bc-item .who { color:var(--md-primary); font-weight:600; font-size:13px; }
   .bc-item .time { color:var(--md-on-surface-variant); font-size:11px; margin-left:8px; }
   .bc-item .txt { margin-top:6px; white-space:pre-wrap; line-height:1.5; }
@@ -427,7 +480,7 @@
      и всплывающий список галочек. */
   .dept-btn {
     background:var(--md-surface-container-lowest); border:1px solid var(--md-outline); color:var(--md-on-surface);
-    border-radius:var(--md-shape-xs); padding:10px 13px; font-size:12.5px; font-family:inherit; cursor:pointer;
+    border-radius:var(--md-shape-xs); padding:11px 14px; font-size:13.5px; font-family:inherit; cursor:pointer;
     text-align:left; min-width:150px; max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
     transition:border-color .12s ease;
   }
@@ -443,7 +496,7 @@
   #deptPicker .empty { color:var(--md-on-surface-variant); font-size:12.5px; padding:8px 10px; }
 
 /* Версия клиента, собранная на сервере и готовая к выкладке (раздел «Клиенты»). */
-.ready-release { padding: 12px 14px; margin-bottom: 14px; border-radius: 10px; background: var(--md-success-container); }
+.ready-release { padding: 12px 14px; margin-bottom: 14px; border-radius: var(--md-shape-l); background: var(--md-success-container); }
 
 /* Внутри «Центра» разделы переключаются из его меню (см. EMBEDDED в panel.js) — свои вкладки
    не нужны; остаётся строка с именем и «Выйти». */
@@ -451,3 +504,103 @@ html.embedded #tabGroup { display: none; }
 html.embedded #tabs { justify-content: flex-end; padding: 8px 20px; }
 /* Название раздела уже стоит в шапке «Центра» («Искра — Пользователи») — второе не нужно. */
 html.embedded .view > h2:first-child { display: none; }
+
+/* ============================================================================
+   Выбор файла, предупреждения, состояние шифрования — в стиле платформы.
+   ========================================================================= */
+
+/* Выбор файла (разделы «Клиенты» и «Сертификат»). Настоящий input[type=file] остаётся
+   в разметке — его читает весь код, — но невидимый, поверх него подпись-кнопка и имя
+   выбранного файла. Невидимый, а не display:none: так он остаётся в порядке Tab и
+   открывается с клавиатуры. Имя файла подставляет скрипт «Выбор файла» в panel.js. */
+/* Два списка сотрудников в «Переписках» — по ширине имени, а не по пустой стрелке. */
+#histDm .select-wrap { min-width: 240px; }
+
+.file-pick { position: relative; display: inline-flex; align-items: center; gap: 12px; max-width: 100%; cursor: pointer; }
+.file-pick input[type="file"] {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0;
+  opacity: 0; overflow: hidden; clip: rect(0 0 0 0);
+}
+.file-pick-btn {
+  display: inline-flex; align-items: center; gap: 8px; flex-shrink: 0;
+  padding: 11px 18px; border-radius: var(--md-shape-full);
+  background: var(--md-secondary-container); color: var(--md-on-secondary-container);
+  font-size: 13px; font-weight: 600; letter-spacing: .1px; white-space: nowrap;
+  transition: filter .15s;
+}
+.file-pick:hover .file-pick-btn { filter: brightness(0.96); }
+.file-pick input[type="file"]:focus-visible + .file-pick-btn { outline: 2px solid var(--md-primary); outline-offset: 2px; }
+.file-pick-name {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 13px; color: var(--md-on-surface-variant);
+}
+.file-pick.has-file .file-pick-name { color: var(--md-on-surface); font-weight: 500; }
+
+/* Предупреждение — как .warn-box платформы: тональная плашка, а не оранжевая рамка
+   с оранжевым текстом целого абзаца (в тёмной теме такой текст читался плохо). */
+.warn-box {
+  margin: 10px 0 0; padding: 10px 14px; border-radius: var(--md-shape-s);
+  background: var(--md-warn-container); color: var(--md-on-warn-container);
+  font-size: 12.5px; line-height: 1.5;
+}
+
+/* Строка «шифрование включено / выключено» в разделе «Сертификат»: значок SVG вместо
+   цветных эмодзи 🔒 и ⚠ — те рисовались системой и выбивались из палитры. */
+.tls-status { display: inline-flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 600; }
+.tls-status svg { flex-shrink: 0; }
+.tls-status.on { color: var(--online); }
+.tls-status.off { color: var(--danger); }
+
+/* ============================================================================
+   Свои окна и уведомления (ui-dialog.js) вместо браузерных alert()/confirm()/prompt().
+   Браузерные окна выглядели чужими, писали «ОК» вместо «Удалить» и показывали
+   вводимый пароль открытым текстом. Окно — по образцу платформы (.ui-dialog в
+   helpdesk-backend/public/styles.css), цвета только из переменных панели и тем
+   «Центра» (/themes.css): в тёмной теме окно тоже тёмное. Затемнения и текста на
+   красной кнопке в голубой теме панели нет — для них запас со значениями платформы.
+   ========================================================================= */
+.ui-dialog-back {
+  position: fixed; inset: 0; z-index: 3000; display: flex; align-items: center; justify-content: center;
+  padding: 16px; background: var(--md-scrim, rgba(20, 30, 45, .38));
+}
+.ui-dialog {
+  width: 440px; max-width: 100%; max-height: calc(100vh - 32px); overflow-y: auto; padding: 24px 24px 18px;
+  background: var(--md-surface-container-lowest); color: var(--md-on-surface);
+  border: 1px solid var(--md-outline-variant); border-radius: var(--md-shape-xl); box-shadow: var(--md-elev-3);
+}
+.ui-dialog-title { font-size: 17px; font-weight: 700; margin-bottom: 8px; }
+/* pre-line: длинные пояснения (удаление сертификата) приходят с переносами строк. */
+.ui-dialog-text { font-size: 14px; line-height: 1.55; white-space: pre-line; overflow-wrap: anywhere; }
+.ui-dialog-input { display: block; width: 100%; margin-top: 14px; }
+.ui-dialog-input.invalid, .ui-dialog-input.invalid:focus { border-color: var(--md-error); box-shadow: inset 0 0 0 1px var(--md-error); }
+.ui-dialog-error { min-height: 18px; margin-top: 6px; font-size: 12.5px; color: var(--md-error); }
+.ui-dialog-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
+.ui-dialog-btn {
+  padding: 11px 20px; border: none; border-radius: var(--md-shape-full); cursor: pointer;
+  font: inherit; font-size: 13px; font-weight: 600; letter-spacing: .1px;
+  transition: filter .15s, background .15s;
+}
+.ui-dialog-btn:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 2px; }
+.ui-dialog-btn-ok { background: var(--md-primary); color: var(--md-on-primary); }
+.ui-dialog-btn-ok:hover { filter: brightness(1.06); }
+/* Необратимое — залитой красной: в окне она одна, и вес здесь по делу (ср. тональные
+   «Удалить» в таблицах). Фокус при открытии стоит на «Отмене». */
+.ui-dialog-btn-danger { background: var(--md-error); color: var(--md-on-error, var(--md-on-primary)); }
+.ui-dialog-btn-danger:hover { filter: brightness(0.92); }
+.ui-dialog-btn-cancel { background: var(--md-surface-container-high); color: var(--md-on-surface); }
+.ui-dialog-btn-cancel:hover { background: var(--md-surface-container-highest); }
+
+/* Короткие уведомления «готово / отправлено»: внизу по центру, исчезают сами.
+   Цвета обращены (тёмная плашка на светлой теме, светлая на тёмной) — так
+   уведомление заметно поверх любого содержимого. */
+#uiToastStack {
+  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); z-index: 3100;
+  display: flex; flex-direction: column; align-items: center; gap: 8px; pointer-events: none;
+  max-width: calc(100vw - 32px);
+}
+.ui-toast {
+  padding: 13px 22px; border-radius: var(--md-shape-s); box-shadow: var(--md-elev-3);
+  background: var(--md-on-surface); color: var(--md-surface-container-lowest);
+  font-size: 13.5px; line-height: 1.45; text-align: center;
+}
+.ui-toast.error { background: var(--md-error); color: var(--md-on-error, var(--md-on-primary)); }

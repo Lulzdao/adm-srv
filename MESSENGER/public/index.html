@@ -6,8 +6,14 @@
 <title>Искра — панель администратора</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="stylesheet" href="panel.css">
-<!-- Тема «Центра»: файлы платформы. Открыт напрямую — их нет, остаётся голубая. -->
-<script src="/theme.js"></script><link rel="stylesheet" href="/themes.css">
+<!-- Тема «Центра»: файлы платформы. Есть только у «Центра» (адрес /modules/messenger/…);
+     открытая напрямую по адресу «Искры» панель их не просит — иначе два ответа 404 в журнале
+     и консоли — и остаётся голубой. document.write, а не вставка элемента: файлы должны
+     подключиться синхронно, ДО отрисовки, иначе страница мигнёт голубой темой. -->
+<script>
+  if (location.pathname.indexOf('/modules/') === 0)
+    document.write('<script src="/theme.js"><\/script><link rel="stylesheet" href="/themes.css">');
+</script>
 </head>
 <body>
 
@@ -127,8 +133,13 @@
             <option value="room">Общая комната</option>
             <option value="dm">Личная переписка</option>
           </select>
-          <select id="histUser1" style="display:none"></select>
-          <select id="histUser2" style="display:none"></select>
+          <!-- Выбор двух сотрудников — только для личной переписки. Прячется вся обёртка:
+               видимую часть списка рисует скрипт «Выпадающий список» рядом с select, и
+               display:none на самом select её не прятал — висели два пустых списка. -->
+          <span id="histDm" class="row-flex" hidden>
+            <select id="histUser1"></select>
+            <select id="histUser2"></select>
+          </span>
           <button class="action" onclick="loadHistory()">Показать</button>
           <button class="action ghost" onclick="exportHistory()">Экспорт в .txt</button>
         </div>
@@ -219,7 +230,11 @@
           эту версию на все компьютеры.
         </p>
         <div class="row-flex" style="margin-bottom:10px; align-items:center;">
-          <input type="file" id="releaseFiles" multiple accept=".exe,.blockmap,.yml" onchange="planRelease()">
+          <label class="file-pick">
+            <input type="file" id="releaseFiles" multiple accept=".exe,.blockmap,.yml" onchange="planRelease()">
+            <span class="file-pick-btn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V4"/><polyline points="7 9 12 4 17 9"/><path d="M5 15v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3"/></svg>Выбрать файлы…</span>
+            <span class="file-pick-name" data-empty="Файлы не выбраны">Файлы не выбраны</span>
+          </label>
         </div>
         <div id="releasePlan" style="font-size:12.5px; margin-bottom:10px;"></div>
         <div class="row-flex" style="align-items:center;">
@@ -273,13 +288,22 @@
           и только потом заменяет действующий: испортить работающий сервер загрузкой не того файла
           нельзя.
         </p>
-        <div id="tlsInsecureWarn" style="display:none; margin:0 0 10px; padding:8px 10px; border:1px solid var(--warn); border-radius:8px; color:var(--warn); font-size:12px;">
+        <p style="color:var(--muted); font-size:12px; margin:0 0 12px;">
+          Если «Искра» стоит на одном сервере с «Центром», сертификат у них <b>общий</b> (папка
+          <code>certs/</code> «Искры»): его же показывает и меняет раздел «Сертификаты» платформы
+          (кнопка со щитом). Заменять можно в любом из двух мест — обе службы подхватят файл сами.
+        </p>
+        <div id="tlsInsecureWarn" class="warn-box" style="display:none; margin:0 0 12px;">
           Эта страница открыта по <b>http</b>. Закрытый ключ уйдёт на сервер незашифрованным — его
           сможет перехватить любой, кто слушает сеть. Для самой первой установки это допустимо
           (иначе её не сделать), дальше — открывайте панель по https.
         </div>
         <div class="row-flex" style="flex-wrap:wrap; gap:10px;">
-          <input type="file" id="tlsFile" accept=".pfx,.p12">
+          <label class="file-pick">
+            <input type="file" id="tlsFile" accept=".pfx,.p12">
+            <span class="file-pick-btn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V4"/><polyline points="7 9 12 4 17 9"/><path d="M5 15v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3"/></svg>Выбрать файл .pfx…</span>
+            <span class="file-pick-name" data-empty="Файл не выбран">Файл не выбран</span>
+          </label>
           <input type="password" id="tlsPassword" placeholder="Пароль к файлу" style="width:200px;">
           <button class="action" onclick="uploadTls()">Загрузить и применить</button>
         </div>
@@ -295,7 +319,7 @@
           возьмёт его оттуда и останется на https. Тогда шифрование выключается не здесь, а
           удалением этой переменной. Что именно действует сейчас — написано выше.
         </p>
-        <button class="action ghost" onclick="removeTls()">Удалить из хранилища</button>
+        <button class="action danger" onclick="removeTls()">Удалить из хранилища</button>
       </div>
     </div>
 
@@ -344,6 +368,7 @@
   </div>
 </div>
 
+<script src="ui-dialog.js"></script>
 <script src="panel.js"></script>
 </body>
 </html>

@@ -60,7 +60,10 @@ function badgeCell(row) {
   if (row.direction === 'internal') return '<span class="badge internal">Внутренний</span>';
   return '<span class="badge unknown">?</span>';
 }
+var EMPTY_ROW = '<tr class="empty-row"><td class="empty-state" colspan="8">'
+  + 'Звонков не найдено. Измените фильтры или нажмите «Сброс».</td></tr>';
 function renderRows(rows) {
+  if (!rows.length) return EMPTY_ROW;   // тот же текст, что в _rows.ejs
   return rows.map(function(row) {
     return '<tr>' +
       '<td>' + cell(row.call_date) + '</td>' +
@@ -266,9 +269,15 @@ document.getElementById('exportGo').addEventListener('click', function () {
 });
 
 // Число строк на кнопке выгрузки — то же, что показывает счётчик страниц.
+// Пустая выборка — выгружать нечего: кнопка неактивна, а не «Выгрузить 0 строк», которая
+// открывала окно выгрузки и отдавала пустой файл.
 function syncExportLabel(total) {
-  document.getElementById('exportLabel').textContent =
-    'Выгрузить ' + formatRows(total) + ' ' + plural(total, 'строку', 'строки', 'строк');
+  var btn = document.getElementById('exportBtn');
+  btn.disabled = !total;
+  btn.title = total ? '' : 'По выбранным фильтрам звонков нет — измените фильтры';
+  document.getElementById('exportLabel').textContent = total
+    ? 'Выгрузить ' + formatRows(total) + ' ' + plural(total, 'строку', 'строки', 'строк')
+    : 'Нечего выгружать';
 }
 syncExportLabel(<%= filteredTotal %>);
 </script>

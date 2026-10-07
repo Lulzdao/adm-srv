@@ -68,7 +68,7 @@ async function renderNotifFeed(page, filters = {}) {
       <div class="card" style="margin-bottom:16px;display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;">
         <div style="flex:1;min-width:200px;">
           <div class="field-label">Поиск по теме</div>
-          <input class="input" id="nfQ" placeholder="номер заявки, ФИО…" value="${esc(filters.q || "")}" />
+          <input class="input" id="nfQ" style="width:100%;" placeholder="номер заявки, ФИО…" value="${esc(filters.q || "")}" />
         </div>
         <div style="min-width:200px;">
           <div class="field-label">Категория</div>
