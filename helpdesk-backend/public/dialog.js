@@ -39,7 +39,14 @@ function uiDialog({ title = "", text = "", ok = "ОК", cancel = "Отмена",
     const cancelValue = field ? null : false;
     function onKey(e) {
       if (e.key === "Escape" && dismissable) { e.preventDefault(); e.stopPropagation(); close(cancelValue); }
-      else if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); e.stopPropagation(); close(okValue()); }
+      else if (e.key === "Enter" && !e.shiftKey) {
+        // Enter нажимает ту кнопку, на которой фокус: на удалении фокус стоит на «Отмене», и случайный
+        // Enter не должен удалять. Из поля ввода — главная кнопка.
+        e.preventDefault(); e.stopPropagation();
+        const focused = document.activeElement;
+        if (focused && focused.dataset && focused.dataset.r === "cancel") close(cancelValue);
+        else close(okValue());
+      }
       else if (e.key === "Tab") {
         // Фокус не уходит из окна за его пределы — страница под затемнением недоступна.
         const f = [...box.querySelectorAll("input, button")];

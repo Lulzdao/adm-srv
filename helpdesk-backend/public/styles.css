@@ -223,6 +223,9 @@ body {
 }
 #root { height: 100%; }
 button, input, select, textarea { font-family: inherit; font-size: inherit; }
+/* Галочки и переключатели — в цвет темы, а не серые браузерные (у части разделов было
+   своё правило, у остальных — нет, и одна и та же галочка выглядела по-разному). */
+input[type=checkbox], input[type=radio] { accent-color: var(--md-primary); }
 a { color: var(--md-primary); }
 
 /* --- Login --- */
@@ -454,8 +457,12 @@ a { color: var(--md-primary); }
 .ui-dialog-input { width: 100%; box-sizing: border-box; margin-top: 14px; }
 .ui-dialog-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 10px; margin-top: 22px; }
 .btn-wire:hover { background: var(--md-primary-strong); }
-.btn-ghost { background: var(--md-surface-container-high); color: var(--md-on-surface); }
-.btn-ghost:hover { background: var(--md-surface-container-highest); }
+/* Вторичная кнопка. Подложка — на ступень темнее карточки: прежняя (--md-surface-container-high)
+   во всех темах совпадала с фоном .card, и кнопки внутри карточек («Проверить снова»,
+   «Загрузить свой», «Предпросмотр»…) выглядели просто жирным текстом. */
+.btn-ghost { background: var(--md-surface-container-highest); color: var(--md-on-surface); }
+.btn-ghost:hover { background: var(--md-state-hover-strong); }
+.btn-ghost:disabled, .btn-ghost:disabled:hover { background: var(--md-disabled); color: var(--md-on-disabled); cursor: not-allowed; }
 
 /* Переключатель страниц списка заявок: 1 … 4 5 [6] 7 8 … 20 */
 .pager { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 6px; margin: 18px 0 6px; }
@@ -1196,6 +1203,10 @@ textarea.input { font-family: inherit; resize: vertical; }
 .as-mhead { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .dropzone.over { border-color: var(--md-primary); background: var(--md-primary-container); }
 .dropzone[hidden] { display: none; }
+/* Выбор одного файла в строке формы (сертификат): та же пунктирная рамка, но высотой с поле
+   рядом, текст слева; выбранный файл — имя вместо подсказки. */
+.dropzone.dz-inline { margin-bottom: 0; padding: 15px 16px; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dropzone.dz-inline.has-file { border-style: solid; color: var(--md-on-surface); }
 .as-table-wrap { overflow-x: auto; }
 .as-table .mono, .as-table .as-sub.mono { white-space: nowrap; }
 .as-note-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 2px; }
@@ -1224,7 +1235,7 @@ textarea.input { font-family: inherit; resize: vertical; }
    Панель кнопок — в цветах темы; само поле — белый лист, как письмо у
    получателя: подобранный цвет текста виден и в тёмной теме. */
 .rte { border: 1px solid var(--md-outline); border-radius: var(--md-shape-xs); overflow: visible; background: var(--md-surface-container-lowest); }
-.rte:focus-within { border-color: var(--md-primary); box-shadow: 0 0 0 3px rgba(10, 97, 174, 0.12); }
+.rte:focus-within { border-color: var(--md-primary); box-shadow: 0 0 0 3px var(--md-primary-ring); }
 .rte-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 6px 8px; border-bottom: 1px solid var(--md-outline); background: var(--md-surface-container-low); border-radius: var(--md-shape-xs) var(--md-shape-xs) 0 0; }
 .rte-bar .select-btn { padding: 6px 10px; font-size: 12.5px; }
 .rte-bar button, .rte-color {

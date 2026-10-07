@@ -185,7 +185,7 @@ async function renderMailingNew(main) {
   main.innerHTML = `
     <div class="topbar"><div class="topbar-title-row"><button class="icon-btn" id="mBack" title="Назад">${icon("chevron", 18)}</button><div class="topbar-title">Новая рассылка</div></div></div>
     <div class="page"><div class="form-narrow">
-      ${settings.configured ? "" : `<div class="warn-box">Почтовый сервер для рассылок не настроен — ${state.user.is_admin ? `задайте его в <a href="#asst:settings">настройках</a> («Почта рассылок»)` : "обратитесь к администратору"}.</div>`}
+      ${settings.configured ? "" : `<div class="warn-box"><div>Почтовый сервер для рассылок не настроен — ${state.user.is_admin ? `задайте его в <a href="#asst:settings">настройках</a> («Почта рассылок»)` : "обратитесь к администратору"}.</div></div>`}
       <div class="form-card">
         <div class="form-card-title">1. Кому</div>
         <div class="form-card-sub">CSV или Excel: колонки «ОКПО», «Наименование», «Почта» (названия — примерно такие; в ячейке с почтой может быть несколько адресов через точку с запятой: a@example.ru; b@example.ru)</div>
