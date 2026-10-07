@@ -8,6 +8,59 @@
 // естественно.
 const listMemory = {};
 
+// ====== Анимация: заявка раскрывается из строки, закрытая «втягивается» в «Закрытые» ======
+// Экран перерисовывается целиком (setView), поэтому движение рисуем «призраком» — плашкой с номером
+// и темой поверх страницы: на открытии она вырастает со строки до карточки, на закрытии сжимается в
+// кнопку «Закрытые». Web Animations API — есть и в Chrome 109 (Windows 7). Кто отключил анимацию в
+// системе (prefers-reduced-motion), видит переходы как раньше, без движения.
+function motionAllowed() {
+  return typeof Element.prototype.animate === "function"
+    && !(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches);
+}
+function ticketGhost(rect, ticket) {
+  const g = document.createElement("div");
+  g.className = "fly-ghost";
+  g.innerHTML = `<div class="mono fly-ghost-id">${esc(ticket.display_id || "")}</div><div class="fly-ghost-title">${esc(ticket.title || "")}</div>`;
+  Object.assign(g.style, { left: rect.left + "px", top: rect.top + "px", width: rect.width + "px", height: rect.height + "px" });
+  document.body.appendChild(g);
+  return g;
+}
+const rectBox = (r) => ({ left: r.left + "px", top: r.top + "px", width: r.width + "px", height: r.height + "px" });
+
+// fromRect — строка списка, по которой щёлкнули (снята до перерисовки экрана).
+function playTicketOpen(fromRect, ticket) {
+  const card = document.querySelector(".detail-main .card");
+  const page = document.querySelector("#mainArea .page") || card;
+  if (!motionAllowed() || !fromRect || !card) return;
+  const to = card.getBoundingClientRect();
+  const g = ticketGhost(fromRect, ticket);
+  const grow = g.animate([rectBox(fromRect), rectBox(to)], { duration: 340, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)", fill: "forwards" });
+  page.animate([{ opacity: 0 }, { opacity: 0, offset: 0.55 }, { opacity: 1 }], { duration: 440, easing: "ease-out" });
+  grow.onfinish = () => g.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 140, fill: "forwards" }).onfinish = () => g.remove();
+}
+
+// fromRect — карточка закрытой заявки (снята до перехода к списку).
+function playTicketClose(fromRect, ticket) {
+  const btn = document.querySelector('.toggle-btn[data-closed="1"]');
+  if (!motionAllowed() || !fromRect || !btn) return;
+  const to = btn.getBoundingClientRect();
+  const dx = (to.left + to.width / 2) - (fromRect.left + fromRect.width / 2);
+  const dy = (to.top + to.height / 2) - (fromRect.top + fromRect.height / 2);
+  const end = Math.max(0.02, Math.min(to.width / fromRect.width, to.height / fromRect.height) * 0.5);
+  const g = ticketGhost(fromRect, ticket);
+  // Сначала карточка чуть приподнимается и сжимается, потом с ускорением уходит в кнопку — «втягивается».
+  const suck = g.animate([
+    { transform: "translate(0, 0) scale(1)", opacity: 1, borderRadius: "16px" },
+    { transform: `translate(${dx * 0.15}px, ${dy * 0.15 - 18}px) scale(0.62)`, opacity: 1, borderRadius: "20px", offset: 0.32 },
+    { transform: `translate(${dx}px, ${dy}px) scale(${end})`, opacity: 0.25, borderRadius: "999px" },
+  ], { duration: 560, easing: "cubic-bezier(0.55, 0, 0.8, 0.3)", fill: "forwards" });
+  suck.onfinish = () => {
+    g.remove();
+    btn.animate([{ transform: "scale(1)" }, { transform: "scale(1.16)" }, { transform: "scale(0.96)" }, { transform: "scale(1)" }],
+      { duration: 320, easing: "ease-out" });
+  };
+}
+
 // Номера страниц для переключателя: первая, последняя и соседи текущей, между ними —
 // многоточие. 1 … 4 5 [6] 7 8 … 20 — а не двадцать кнопок в ряд.
 function pageNumbers(current, pages) {
@@ -186,7 +239,9 @@ async function renderList(main, opts = {}) {
             const { ticket } = await api("/tickets/" + row.dataset.id);
             api(`/notifications/ticket/${row.dataset.id}/read`, { method: "PATCH" })
               .then(refreshNotifications).then(updateBadgeDom).catch(() => {});
+            const fromRect = row.getBoundingClientRect(); // до перерисовки: строки после неё уже не будет
             setView("detail", ticket);
+            playTicketOpen(fromRect, ticket);
           } catch (e) { toast(e.message, true); }
         };
       });
@@ -656,7 +711,10 @@ function renderDetail(main, ticket) {
           const m = listMemory.inbox || (listMemory.inbox = { page: 1, closed: false, q: "", dept: "" });
           m.closed = false;
           toast(`Заявка ${ticket.display_id} закрыта`);
+          const card = document.querySelector(".detail-main .card");
+          const fromRect = card && card.getBoundingClientRect();
           setView("inbox");
+          playTicketClose(fromRect, ticket);
           return;
         }
         const fresh = await reloadTicket(ticket.id);

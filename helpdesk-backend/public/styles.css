@@ -605,6 +605,17 @@ textarea.input { font-family: inherit; resize: vertical; }
 /* --- Create screen --- */
 /* Карточка — светлая плитка без рамки и тени: глубина делается тоном. */
 .card { background: var(--md-surface-container-low); border: none; border-radius: var(--md-shape-l); padding: 22px 24px; }
+/* «Призрак» заявки для анимации открытия и закрытия (playTicketOpen/playTicketClose в app-tickets.js):
+   плашка с номером и темой поверх страницы, мышь не перехватывает. */
+.fly-ghost {
+  position: fixed; z-index: 2000; pointer-events: none; box-sizing: border-box; overflow: hidden;
+  display: flex; flex-direction: column; gap: 4px; padding: 14px 18px;
+  background: var(--md-surface-container-low); border-radius: var(--md-shape-l);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.18), 0 2px 6px rgba(0, 0, 0, 0.08);
+  transform-origin: center center; will-change: transform, opacity;
+}
+.fly-ghost-id { color: var(--wire); font-size: 13px; font-weight: 600; }
+.fly-ghost-title { font-size: 15px; font-weight: 700; color: var(--md-on-surface); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .form-row { display: flex; gap: 16px; margin-bottom: 18px; }
 .form-row > div { flex: 1; }
 .dropzone {
