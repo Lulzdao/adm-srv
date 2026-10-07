@@ -982,28 +982,16 @@ ipcMain.on('open-broadcast', (event, payload) => {
   createWindow('broadcast', 'broadcast.html', payload, { width: 420, height: 520, minWidth: 360, minHeight: 400 });
 });
 
-// ПКМ по отделу в списке контактов. Окно то же самое, что у объявлений (broadcast.html) — оно уже
-// умеет файлы, перетаскивание и поиск по дням; отличается только круг адресатов, см. departmentId.
-// Ключ окна свой на каждый отдел, чтобы окна разных отделов и общие объявления не подменяли друг друга.
-ipcMain.on('show-department-menu', (event, payload) => {
-  const win = BrowserWindow.fromWebContents(event.sender);
-  const menu = Menu.buildFromTemplate([
-    {
-      label: `Сообщение всему отделу «${payload.departmentName}»`,
-      click: () => createWindow(`broadcast:dept:${payload.departmentId}`, 'broadcast.html', payload, { width: 420, height: 520, minWidth: 360, minHeight: 400 }),
-    },
-  ]);
-  menu.popup({ window: win });
+// ПКМ по отделу в списке контактов → «Сообщение всему отделу». Окно то же самое, что у объявлений
+// (broadcast.html) — оно уже умеет файлы, перетаскивание и поиск по дням; отличается только круг
+// адресатов, см. departmentId. Ключ окна свой на каждый отдел, чтобы окна разных отделов и общие
+// объявления не подменяли друг друга. Само меню рисует окно (uiContextMenu в ui-kit.js).
+ipcMain.on('open-department-broadcast', (event, payload) => {
+  createWindow(`broadcast:dept:${payload.departmentId}`, 'broadcast.html', payload, { width: 420, height: 520, minWidth: 360, minHeight: 400 });
 });
 
-ipcMain.on('show-user-menu', (event, payload) => {
-  const win = BrowserWindow.fromWebContents(event.sender);
-  const menu = Menu.buildFromTemplate([
-    { label: `Написать: ${payload.label}`, click: () => createWindow(`${payload.type}:${payload.id}`, 'chat.html', payload) },
-    { label: 'Отправить файл…', click: () => handleSendFile(payload) },
-  ]);
-  menu.popup({ window: win });
-});
+// ПКМ по сотруднику → «Отправить файл…».
+ipcMain.on('send-file-to', (event, payload) => { handleSendFile(payload); });
 
 // Одноразовое переопределение пути сохранения — см. will-download в app.whenReady() ниже.
 let pendingSaveAsPath = null;
@@ -1021,23 +1009,15 @@ async function handleSaveFileAs(url, suggestedName, win) {
 
 // ПКМ по сообщению в чате/рассылках: копировать текст или сохранить файл в выбранное место
 // (не то же самое, что настройка "папка по умолчанию" — тут именно разовый выбор).
-ipcMain.on('show-message-menu', (event, payload) => {
+ipcMain.on('copy-text', (event, text) => {
+  if (typeof text !== 'string' || !text) return;
+  clipboard.writeText(text);
+  sendToWindow(BrowserWindow.fromWebContents(event.sender), 'toast', { message: 'Скопировано в буфер обмена' });
+});
+ipcMain.on('save-file-as', (event, payload) => {
   const win = BrowserWindow.fromWebContents(event.sender);
-  const items = [];
-  if (payload.kind === 'text' && payload.text) {
-    items.push({
-      label: 'Копировать текст',
-      click: () => {
-        clipboard.writeText(payload.text);
-        sendToWindow(win, 'toast', { message: 'Скопировано в буфер обмена' });
-      },
-    });
-  }
-  if (payload.kind === 'file' && payload.url) {
-    items.push({ label: `Сохранить «${payload.name}» как…`, click: () => handleSaveFileAs(payload.url, payload.name, win) });
-  }
-  if (!items.length) return;
-  Menu.buildFromTemplate(items).popup({ window: win });
+  if (!win || !payload || typeof payload.url !== 'string' || !payload.url) return;
+  handleSaveFileAs(payload.url, String(payload.name || 'файл'), win);
 });
 
 ipcMain.on('window-action', (event, action) => {

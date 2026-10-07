@@ -425,20 +425,26 @@ function wireFeedInteractions(container) {
       uiToast('Не удалось начать скачивание — проверьте подключение.', { error: true });
     }
   });
-  container.addEventListener('contextmenu', async (e) => {
+  // ПКМ — меню в оформлении клиента (uiContextMenu), как в окне чата.
+  container.addEventListener('contextmenu', (e) => {
     const fileLink = e.target.closest('a.file');
     if (fileLink) {
       e.preventDefault();
-      try {
-        const url = await getDownloadUrl(fileLink.dataset.url, fileLink.dataset.name);
-        desktop.showMessageMenu({ kind: 'file', url, name: fileLink.dataset.name });
-      } catch {
-        uiToast('Не удалось подготовить файл — проверьте подключение.', { error: true });
-      }
+      const name = fileLink.dataset.name;
+      uiContextMenu(e.clientX, e.clientY, [{
+        label: `Сохранить «${name}» как…`, icon: 'download',
+        onClick: async () => {
+          try { desktop.saveFileAs({ url: await getDownloadUrl(fileLink.dataset.url, name), name }); }
+          catch { uiToast('Не удалось подготовить файл — проверьте подключение.', { error: true }); }
+        },
+      }]);
       return;
     }
     const txtEl = e.target.closest('.txt');
-    if (txtEl) { e.preventDefault(); desktop.showMessageMenu({ kind: 'text', text: txtEl.dataset.rawText || '' }); }
+    if (txtEl) {
+      e.preventDefault();
+      uiContextMenu(e.clientX, e.clientY, [{ label: 'Копировать текст', icon: 'copy', onClick: () => desktop.copyText(txtEl.dataset.rawText || '') }]);
+    }
   });
 }
 wireFeedInteractions(document.getElementById('feed'));

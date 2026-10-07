@@ -651,6 +651,14 @@ function renderDetail(main, ticket) {
     document.getElementById("statusSelect").onchange = async (e) => {
       try {
         await api(`/tickets/${ticket.id}`, { method: "PATCH", body: { status: e.target.value } });
+        // Закрыли — работа с заявкой окончена: назад к открытым входящим, за следующей.
+        if (e.target.value === "closed") {
+          const m = listMemory.inbox || (listMemory.inbox = { page: 1, closed: false, q: "", dept: "" });
+          m.closed = false;
+          toast(`Заявка ${ticket.display_id} закрыта`);
+          setView("inbox");
+          return;
+        }
         const fresh = await reloadTicket(ticket.id);
         renderDetail(main, fresh);
         toast("Статус обновлён");

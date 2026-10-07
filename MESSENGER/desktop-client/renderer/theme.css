@@ -135,6 +135,13 @@ body {
 .wintitlebar .wctl button.close:hover { background: var(--danger); color: #fff; }
 .icon-btn svg { display: block; }
 
+/* Контекстное меню (ПКМ) — uiContextMenu в ui-kit.js, вместо системного меню Windows. */
+.ui-ctx { position: fixed; z-index: 1000; min-width: 170px; max-width: calc(100vw - 12px); padding: 5px; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-m); box-shadow: var(--shadow); -webkit-app-region: no-drag; animation: ui-fade .1s ease-out; }
+.ui-ctx-item { display: flex; align-items: center; gap: 9px; width: 100%; padding: 8px 10px; border: none; border-radius: var(--radius-s); background: transparent; color: var(--text); font: inherit; font-size: 12.5px; text-align: left; cursor: pointer; }
+.ui-ctx-item:hover, .ui-ctx-item:focus-visible { background: var(--hover); outline: none; }
+.ui-ctx-item:focus:not(:focus-visible) { outline: none; }
+.ui-ctx-ic { display: flex; color: var(--accent); flex-shrink: 0; }
+.ui-ctx-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ui-modal-overlay { position: fixed; inset: 0; background: var(--overlay); display: flex; align-items: center; justify-content: center; z-index: 999; -webkit-app-region: no-drag; animation: ui-fade .12s ease-out; }
 @keyframes ui-fade { from { opacity: 0; } to { opacity: 1; } }
 .ui-modal-box { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-l); padding: 18px; width: min(300px, 86%); box-shadow: var(--shadow); }
