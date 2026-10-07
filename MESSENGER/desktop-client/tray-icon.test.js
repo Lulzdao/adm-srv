@@ -44,8 +44,8 @@ test('значок трея: рисунок симметричен и есть �
     }
   }
   for (const name of ['ember', 'garnet', 'gold', 'jade', 'azure', 'violet']) assert.match(accentColor(name), /^#[0-9a-f]{6}$/);
-  assert.strictEqual(accentColor('нет-такого'), ACCENT_COLORS.ember, 'неизвестный акцент — янтарь');
-  assert.strictEqual(accentColor(undefined), ACCENT_COLORS.ember);
+  assert.strictEqual(accentColor('нет-такого'), ACCENT_COLORS.azure, 'неизвестный акцент — лазурь, как по умолчанию');
+  assert.strictEqual(accentColor(undefined), ACCENT_COLORS.azure);
 });
 
 test('значок программы: заливка сверху вниз, поля, файл .ico совпадает с рисунком', () => {

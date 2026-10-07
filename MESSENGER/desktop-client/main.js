@@ -281,14 +281,16 @@ const SETTINGS_PATH = path.join(app.getPath('userData'), 'settings.json');
 
 const DEFAULT_SETTINGS = {
   notifications: true,       // всплывающие уведомления Windows о сообщениях и объявлениях (выкл. — только мигание кнопки и счётчик)
-  openChatOnMessage: false, // открывать окно чата при новом сообщении (вместо/вместе с уведомлением)
-  rememberWindowSize: false, // запоминать размер окон между запусками
-  alwaysOnTop: false,        // держать окна поверх остальных
+  // Значения по умолчанию — то, что сотрудник видит при первой установке. Уже сохранённые
+  // настройки они не меняют: settings.json хранит все значения целиком.
+  openChatOnMessage: true,   // открывать окно чата при новом сообщении (вместо/вместе с уведомлением)
+  rememberWindowSize: true,  // запоминать размер окон между запусками
+  alwaysOnTop: true,         // держать окна поверх остальных
   hideNameInMessages: true,  // не повторять имя собеседника в каждом сообщении личного чата (по умолчанию включено)
-  theme: 'dark',             // 'dark' | 'light'
-  accent: 'ember',           // цвет кнопок, отметок и герба: 'ember' | 'garnet' | 'gold' | 'jade' | 'azure' | 'violet'
+  theme: 'light',            // 'dark' | 'light'
+  accent: 'azure',           // цвет кнопок, отметок и герба: 'ember' | 'garnet' | 'gold' | 'jade' | 'azure' | 'violet'
   downloadPath: null,        // папка для сохранения файлов по умолчанию (null = каждый раз спрашивать)
-  idleThresholdMinutes: 30,  // сколько минут без активности мыши/клавиатуры -> статус "Отошёл"
+  idleThresholdMinutes: 15,  // сколько минут без активности мыши/клавиатуры -> статус "Отошёл"
   uiScale: 1,                // масштаб всего интерфейса (1 = 100%, текущий размер как есть) — см. applyUiScale
   rosterSize: null,
   chatSize: null,
@@ -727,7 +729,7 @@ function createTray() {
 // работает корректно. Текущее время простоя показывается во всплывающей подсказке над своим статусом.
 function currentIdleState() {
   const idleSeconds = powerMonitor.getSystemIdleTime();
-  const thresholdSeconds = (Number(settings.idleThresholdMinutes) || 30) * 60;
+  const thresholdSeconds = (Number(settings.idleThresholdMinutes) || 15) * 60;
   return { state: idleSeconds >= thresholdSeconds ? 'idle' : 'active', idleSeconds };
 }
 

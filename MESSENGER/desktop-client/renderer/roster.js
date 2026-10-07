@@ -402,7 +402,7 @@ function paintProfileTheme(theme) {
   document.getElementById('ppThemeLight').classList.toggle('active', theme === 'light');
 }
 function paintProfileAccent(accent) {
-  document.querySelectorAll('#ppAccent button').forEach((b) => b.classList.toggle('active', b.dataset.accent === (accent || 'ember')));
+  document.querySelectorAll('#ppAccent button').forEach((b) => b.classList.toggle('active', b.dataset.accent === (accent || 'azure')));
 }
 function paintProfileDownloadPath(p) {
   document.getElementById('ppDownloadPathLabel').textContent = p || 'Каждый раз спрашивать, куда сохранить';
@@ -415,7 +415,7 @@ async function loadProfilePanel() {
   paintProfileTheme(settings.theme);
   paintProfileAccent(settings.accent);
   paintProfileDownloadPath(settings.downloadPath);
-  document.getElementById('ppIdleThresholdMinutes').value = settings.idleThresholdMinutes || 30;
+  document.getElementById('ppIdleThresholdMinutes').value = settings.idleThresholdMinutes || 15;
   paintProfileUiScale(settings.uiScale);
   // Карточка «кто я»: полное имя и отделы — как записаны на сервере.
   document.getElementById('ppFullName').textContent = displayNameOf(me);
@@ -480,14 +480,14 @@ document.getElementById('ppPickFolderBtn').onclick = async () => {
 };
 document.getElementById('ppClearFolderBtn').onclick = () => { desktop.setSettings({ downloadPath: null }); paintProfileDownloadPath(null); };
 document.getElementById('ppIdleThresholdMinutes').addEventListener('change', (e) => {
-  const mins = Math.min(240, Math.max(1, Number(e.target.value) || 30));
+  const mins = Math.min(240, Math.max(1, Number(e.target.value) || 15));
   e.target.value = mins;
   desktop.setSettings({ idleThresholdMinutes: mins });
 });
 // Кнопки «−» и «+» у порога: шаг 5 минут (до 5 — по одной), само поле по-прежнему можно править руками.
 function stepIdleThreshold(dir) {
   const input = document.getElementById('ppIdleThresholdMinutes');
-  const cur = Number(input.value) || 30;
+  const cur = Number(input.value) || 15;
   const step = (dir < 0 ? cur <= 5 : cur < 5) ? 1 : 5;
   input.value = cur + dir * step;
   input.dispatchEvent(new Event('change'));

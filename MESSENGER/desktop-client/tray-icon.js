@@ -116,7 +116,7 @@ function starPng(color, size, { colorBottom, pad = 0, shape } = {}) {
   ]);
 }
 
-const accentColor = (accent) => ACCENT_COLORS[accent] || ACCENT_COLORS.ember;
+const accentColor = (accent) => ACCENT_COLORS[accent] || ACCENT_COLORS.azure;
 
 // Размеры под масштабы экрана Windows: 100, 125, 150, 200 и 250 %.
 const TRAY_SIZES = [[1, 16], [1.25, 20], [1.5, 24], [2, 32], [2.5, 40]];
