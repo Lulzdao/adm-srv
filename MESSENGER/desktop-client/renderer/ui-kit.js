@@ -33,7 +33,9 @@
     minimize: '<svg viewBox="0 0 16 16" width="14" height="14"><rect x="3" y="7.25" width="10" height="1.5" rx="0.75" fill="currentColor"/></svg>',
     close: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M3.5 3.5l9 9m0-9l-9 9"/></svg>',
     attach: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.2l-8.4 8.4a4.9 4.9 0 01-7-7l8.9-8.9a3.4 3.4 0 014.9 4.9l-8.4 8.4a1.9 1.9 0 01-2.7-2.7l7.8-7.8"/></svg>',
-    settings: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 6h11M19 6h1M4 12h6M14 12h6M4 18h13M21 18h0"/><circle cx="17" cy="6" r="2.1" fill="currentColor" stroke="none"/><circle cx="10" cy="12" r="2.1" fill="currentColor" stroke="none"/><circle cx="17" cy="18" r="2.1" fill="currentColor" stroke="none"/></svg>',
+    // Ползунки — заливкой, а не тонкой обводкой: линии 1.8 в сетке 24, ужатые до 16 пикселей,
+    // выходили в 1.2 пикселя и размывались сглаживанием (особенно при масштабе Windows 125%).
+    settings: '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><rect x="1" y="3" width="14" height="1.5" rx=".75"/><rect x="1" y="7.25" width="14" height="1.5" rx=".75"/><rect x="1" y="11.5" width="14" height="1.5" rx=".75"/><circle cx="10.5" cy="3.75" r="2.25"/><circle cx="5.5" cy="8" r="2.25"/><circle cx="11" cy="12.25" r="2.25"/></svg>',
     megaphone: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10v4a1 1 0 001 1h2l7 4V5l-7 4H4a1 1 0 00-1 1z"/><path d="M16 9.5a4 4 0 010 5"/><path d="M19 7a8 8 0 010 10"/></svg>',
     person: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.4"/><path d="M4.5 20a7.5 7.5 0 0115 0"/></svg>',
     send: '<svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M3 11l17-8-6 17-3.3-6.4L3 11z"/></svg>',
@@ -152,9 +154,9 @@
     if (!window.desktop) return;
     try {
       const s = await window.desktop.getSettings();
-      document.documentElement.dataset.theme = s.theme === 'light' ? 'light' : 'dark';
+      document.documentElement.dataset.theme = s.theme === 'dark' ? 'dark' : 'light';
       // Акцент — только из известного списка: значение попадает в атрибут, по которому theme.css выбирает цвета.
-      document.documentElement.dataset.accent = ['garnet', 'gold', 'jade', 'azure', 'violet'].includes(s.accent) ? s.accent : 'ember';
+      document.documentElement.dataset.accent = ['ember', 'garnet', 'gold', 'jade', 'violet'].includes(s.accent) ? s.accent : 'azure';
     } catch { /* игнор */ }
   }
   if (window.desktop) {
