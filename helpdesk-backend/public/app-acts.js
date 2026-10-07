@@ -60,7 +60,7 @@ async function renderAsstActs(main) {
     $("aList").querySelectorAll("[data-dl]").forEach((b) => { b.onclick = () => asstDownload(`/assistant/acts/${b.dataset.dl}/download`); });
     $("aList").querySelectorAll("[data-rm]").forEach((b) => {
       b.onclick = async () => {
-        if (!confirm("Удалить акт из реестра?")) return;
+        if (!(await uiConfirm("Удалить акт из реестра?", { ok: "Удалить", danger: true }))) return;
         try { await api(`/assistant/acts/${b.dataset.rm}`, { method: "DELETE" }); selected.delete(Number(b.dataset.rm)); paintSel(); load(); } catch (e) { toast(e.message, true); }
       };
     });

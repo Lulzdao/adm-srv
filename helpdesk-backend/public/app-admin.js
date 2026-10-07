@@ -392,7 +392,7 @@ async function renderAdmin(main) {
       const del = card.querySelector(".grp-del");
       if (del) del.onclick = async () => {
         const name = card.querySelector(".grp-name").textContent;
-        if (!confirm(`Удалить группу «${name}»? Программы, отданные ей в Заявке на доступ, вернутся в общую очередь.`)) return;
+        if (!(await uiConfirm(`Удалить группу «${name}»? Программы, отданные ей в Заявке на доступ, вернутся в общую очередь.`, { ok: "Удалить", danger: true }))) return;
         try { await api(`/admin/groups/${encodeURIComponent(role)}`, { method: "DELETE" }); toast(`Группа «${name}» удалена`); refreshGroups(); }
         catch (e) { say(false, e.message); }
       };
@@ -713,7 +713,7 @@ async function renderCertificates(main) {
 
     main.querySelectorAll(".del-root").forEach(btn => {
       btn.onclick = async () => {
-        if (!confirm(`Удалить ${btn.dataset.file} из доверенных?`)) return;
+        if (!(await uiConfirm(`Удалить ${btn.dataset.file} из доверенных?`, { ok: "Удалить", danger: true }))) return;
         try {
           await api(`/certificates/trusted/${encodeURIComponent(btn.dataset.file)}`, { method: "DELETE" });
           renderCertificates(main);

@@ -421,7 +421,7 @@ async function asstDictEditor(box, dictId, general, onChange) {
   });
   box.querySelectorAll("[data-rm]").forEach((b) => {
     b.onclick = async () => {
-      if (!confirm("Удалить запись?")) return;
+      if (!(await uiConfirm("Удалить запись?", { ok: "Удалить", danger: true }))) return;
       try { await api(`/assistant/settings/dict/${dictId}/${b.dataset.rm}`, { method: "DELETE" }); asstRefsCache = null; reload(); } catch (e) { toast(e.message, true); }
     };
   });
@@ -498,7 +498,7 @@ async function asstSettingsTemplates(box) {
   };
   box.querySelectorAll("[data-reset]").forEach((b) => {
     b.onclick = async () => {
-      if (!confirm("Вернуть встроенный шаблон? Загруженный будет удалён.")) return;
+      if (!(await uiConfirm("Вернуть встроенный шаблон? Загруженный будет удалён.", { ok: "Вернуть встроенный", danger: true }))) return;
       try { await api(`/assistant/settings/templates/${b.dataset.reset}`, { method: "DELETE" }); asstSettingsTemplates(box); } catch (e) { toast(e.message, true); }
     };
   });

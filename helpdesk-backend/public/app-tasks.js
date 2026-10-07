@@ -536,7 +536,7 @@ async function openTask(main, id) {
   };
   const del = drawer.querySelector("#tdDelete");
   if (del) del.onclick = async () => {
-    if (!confirm(`Удалить задачу «${task.title}» вместе с историей? Это не отменить.`)) return;
+    if (!(await uiConfirm(`Удалить задачу «${task.title}» вместе с историей? Это не отменить.`, { ok: "Удалить", danger: true }))) return;
     try { await api(`/tasks/${id}`, { method: "DELETE" }); toast("Задача удалена"); closeTaskDrawer(main); reloadTasksView(main); refreshTaskBadge(); }
     catch (e) { toast(e.message, true); }
   };
@@ -1098,7 +1098,7 @@ async function renderTaskNotes(main) {
       b.onclick = async (e) => {
         e.stopPropagation();
         if (b.dataset.a === "del") {
-          if (!confirm(`Удалить заметку${rec.data.title ? ` «${rec.data.title}»` : ""}?`)) return;
+          if (!(await uiConfirm(`Удалить заметку${rec.data.title ? ` «${rec.data.title}»` : ""}?`, { ok: "Удалить", danger: true }))) return;
           try { await api(`/tasks/notes/${id}`, { method: "DELETE" }); notes.delete(id); shrinkOut(el, () => { el.remove(); paintEmpty(); }); } catch (err) { toast(err.message, true); }
         } else if (b.dataset.a === "copy") {
           await createNote({ title: rec.data.title, html: body.innerHTML, color: rec.data.color, x: rec.data.x + 28, y: rec.data.y + 28, w: rec.data.w, h: rec.data.h });
@@ -1141,8 +1141,10 @@ async function renderTaskNotes(main) {
       } catch (e) {
         if (e.status === 409 && e.data && e.data.note) {
           const theirs = e.data.note;
-          const keepMine = confirm(`Заметку «${theirs.title || "без заголовка"}» только что изменил ${theirs.updated_by_name || "другой администратор"}.\n\n`
-            + "ОК — сохранить ваш вариант (его изменения пропадут).\nОтмена — показать его вариант (ваши последние правки пропадут).");
+          // Оба ответа что-то делают — окно закрывается только кнопками.
+          const keepMine = await uiConfirm(`Заметку «${theirs.title || "без заголовка"}» только что изменил ${theirs.updated_by_name || "другой администратор"}.\n\n`
+            + "Сохранить ваш вариант — его изменения пропадут. Показать его вариант — пропадут ваши последние правки.",
+            { title: "Заметку изменили одновременно", ok: "Сохранить мой вариант", cancel: "Показать вариант коллеги", dismissable: false });
           rec.data.version = theirs.version;
           if (!keepMine) { rec.data = { ...rec.data, ...theirs }; setContent(rec); paintNote(rec.data, rec.el); rec.dirty = false; say("показан вариант коллеги", "ok"); }
         } else say(`не сохранено: ${e.message}`, "err");
@@ -1241,8 +1243,10 @@ async function renderTaskNotes(main) {
   };
   fmt.querySelector("[data-act=big]").onclick = () => exec("fontSize", "5");
   fmt.querySelector("[data-act=small]").onclick = () => exec("fontSize", "2");
-  fmt.querySelector("[data-act=link]").onclick = () => {
-    const url = prompt("Адрес ссылки (начинается с https:// или mailto:)", "https://");
+  fmt.querySelector("[data-act=link]").onclick = async () => {
+    const sel = saveSelection();
+    const url = await uiPrompt("Адрес ссылки (начинается с https:// или mailto:)", "https://", { ok: "Вставить ссылку" });
+    restoreSelection(sel);
     if (url && /^(https?:\/\/|mailto:)\S+$/i.test(url.trim())) exec("createLink", url.trim());
     else if (url) toast("Ссылка должна начинаться с https:// или mailto:", true);
   };

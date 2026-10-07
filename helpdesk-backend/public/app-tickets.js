@@ -60,6 +60,55 @@ function playTicketOpen(row, snap) {
   };
 }
 
+// «Назад» из карточки — обратное открытию: копия карточки сжимается и садится в свою строку списка,
+// по дороге превращаясь в неё; экран заявки над списком растворяется. Строки списка приходят с
+// сервера не сразу — ждём свою до 1,2 с, а пока копия экрана заявки закрывает недогруженный список.
+// Строки нет (другая страница, поиск) — карточка просто сжимается и гаснет.
+function playTicketBack(card, snap, ticketId) {
+  if (!motionAllowed() || !card || !snap) return;
+  const old = mountSnapshot(snap, 1999);
+  const oldCard = old.querySelector(".detail-main .card");
+  if (oldCard) oldCard.style.visibility = "hidden";
+  const g = document.createElement("div");
+  g.className = "fly-ghost fly-grow";
+  const from = card.rect;
+  card.node.classList.add("fly-layer");
+  Object.assign(card.node.style, { width: from.width + "px", height: from.height + "px" });
+  g.appendChild(card.node);
+  Object.assign(g.style, { left: from.left + "px", top: from.top + "px", width: from.width + "px", height: from.height + "px" });
+  document.body.appendChild(g);
+  const D = 420, ease = "cubic-bezier(0.3, 0, 0, 1)";
+  const finish = (row) => { if (row) row.style.visibility = ""; g.remove(); old.remove(); };
+
+  const started = Date.now();
+  const tryLand = () => {
+    const row = document.querySelector(`#mainArea .ticket-row[data-id="${ticketId}"]`);
+    if (!row && Date.now() - started < 1200) { requestAnimationFrame(tryLand); return; }
+    old.animate([{ opacity: 1 }, { opacity: 0 }], { duration: D * 0.3, easing: "ease-out", fill: "forwards" }); // быстро — не накладывается на список
+    if (!row) {
+      g.animate([{ transform: "scale(1)", opacity: 1 }, { transform: "scale(0.85)", opacity: 0 }], { duration: 260, easing: "ease-in", fill: "forwards" })
+        .onfinish = () => finish(null);
+      return;
+    }
+    row.scrollIntoView({ block: "nearest" });
+    const to = row.getBoundingClientRect();
+    const rowLayer = cloneWithoutIds(row);
+    rowLayer.classList.add("fly-layer");
+    Object.assign(rowLayer.style, { width: to.width + "px", height: to.height + "px", transform: "none", opacity: "0" });
+    g.appendChild(rowLayer);
+    row.style.visibility = "hidden";
+    const radius = (el) => getComputedStyle(el).borderTopLeftRadius || "12px";
+    const land = g.animate([
+      { left: from.left + "px", top: from.top + "px", width: from.width + "px", height: from.height + "px", borderRadius: radius(card.node) },
+      { left: to.left + "px", top: to.top + "px", width: to.width + "px", height: to.height + "px", borderRadius: radius(row) },
+    ], { duration: D, easing: ease, fill: "forwards" });
+    card.node.animate([{ opacity: 1 }, { opacity: 0, offset: 0.5 }, { opacity: 0 }], { duration: D, fill: "forwards" });
+    rowLayer.animate([{ opacity: 0 }, { opacity: 0, offset: 0.35 }, { opacity: 1, offset: 0.85 }, { opacity: 1 }], { duration: D, fill: "forwards" });
+    land.onfinish = land.oncancel = () => finish(row);
+  };
+  requestAnimationFrame(tryLand);
+}
+
 // Номера страниц для переключателя: первая, последняя и соседи текущей, между ними —
 // многоточие. 1 … 4 5 [6] 7 8 … 20 — а не двадцать кнопок в ряд.
 function pageNumbers(current, pages) {
@@ -741,7 +790,11 @@ function renderDetail(main, ticket) {
     };
   }
 
-  document.getElementById("backBtn").onclick = () => setView(state.previousView || "inbox");
+  document.getElementById("backBtn").onclick = () => {
+    const card = snapshotEl(document.querySelector(".detail-main .card")), snap = snapshotMain();
+    setView(state.previousView || "inbox");
+    playTicketBack(card, snap, ticket.id);
+  };
 
   // Открыли заявку — гасим счётчик уведомлений по ней.
   api(`/notifications/ticket/${ticket.id}/read`, { method: "PATCH" })
