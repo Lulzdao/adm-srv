@@ -25,7 +25,7 @@ module.exports = function () {
   router.get("/api/modules", requireAuth, (req, res) => {
     const visible = modules
       .filter((m) => allowed(req.session.user, m))
-      .map((m) => ({ id: m.id, label: m.label, path: m.path, views: m.views }));
+      .map((m) => ({ id: m.id, label: m.label, path: m.path, views: m.views, authGated: Boolean(m.authGated) }));
     res.json({ modules: visible });
   });
 

@@ -112,14 +112,47 @@ async function doLogin() {
 function logout() {
   localStorage.removeItem('admin_token');
   localStorage.removeItem('admin_me');
+  tellPlatform({ type: 'auth', loggedIn: false });
   location.reload();
 }
+
+// ---------- Панель внутри «Центра» ----------
+// Платформа показывает панель во фрейме со своего же адреса (/modules/messenger/).
+// Тогда разделы переключаются из меню платформы: свои вкладки панель прячет, а
+// платформе сообщает о входе и выходе — по входу пункт «Искра» в меню становится
+// группой с разделами. Раздел приходит сообщением {type:'open'} или якорем при
+// загрузке (#users). Сообщения — только с этого же адреса и только от родителя.
+const EMBEDDED = (() => {
+  try { return window.parent !== window && window.parent.location.origin === location.origin; } catch { return false; }
+})();
+if (EMBEDDED) document.documentElement.classList.add('embedded');
+
+function tellPlatform(msg) {
+  if (EMBEDDED) window.parent.postMessage({ from: 'module', ...msg }, location.origin);
+}
+
+const VIEW_NAMES = [...document.querySelectorAll('.nav-item')].map((i) => i.dataset.view);
+let pendingView = null;
+function viewFromHash() {
+  const v = decodeURIComponent(location.hash.replace(/^#/, ''));
+  return VIEW_NAMES.includes(v) ? v : null;
+}
+
+window.addEventListener('message', (e) => {
+  if (!EMBEDDED || e.origin !== location.origin || e.source !== window.parent || !e.data || e.data.to !== 'module') return;
+  if (e.data.type === 'open' && VIEW_NAMES.includes(e.data.view)) {
+    // До входа раздел запоминаем — откроется сразу после него.
+    if (document.getElementById('dash').classList.contains('active')) activateView(e.data.view);
+    else pendingView = e.data.view;
+  }
+});
 
 // Открытие раздела. Вынесено из обработчика клика, потому что раздел
 // открывается не только кликом: он же активен при первой загрузке панели.
 // Пока это жило внутри onclick, опрос присутствия при загрузке не запускался
 // вовсе — статусы появлялись, только если уйти на другую вкладку и вернуться.
 function activateView(name) {
+  tellPlatform({ type: 'view', view: name });
   document.querySelectorAll('.nav-item').forEach(i => i.classList.toggle('active', i.dataset.view === name));
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === 'view-' + name));
 
@@ -1245,6 +1278,11 @@ function startPresenceHeartbeat() {
 }
 
 function connectPresenceWs() {
+  // Через «Центр» (/modules/messenger/) WebSocket «Искры» не проксируется: соединение шло на
+  // сам «Центр», не открывалось и повторялось каждые 3 секунды, пока открыта панель. Присутствие
+  // и так держит сердцебиение по HTTP (startPresenceHeartbeat), а «Сейчас в сети» обновляет
+  // refreshAll раз в 30 секунд — без сокета панель теряет только мгновенность этой цифры.
+  if (location.pathname.startsWith('/modules/')) return;
   const wsUrl = location.origin.replace(/^http/, 'ws');
   const ws = new WebSocket(`${wsUrl}?token=${token}&host=${encodeURIComponent('Веб-панель администратора')}`);
   ws.onmessage = (e) => {
@@ -1282,8 +1320,10 @@ async function startDash() {
   // Открываем раздел, отмеченный активным в разметке, через ту же функцию, что
   // и клик. Иначе всё, что раздел включает при открытии (опрос присутствия),
   // при загрузке панели не запускается.
-  activateView(document.querySelector('.nav-item.active')?.dataset.view || 'overview');
+  tellPlatform({ type: 'auth', loggedIn: true });
+  activateView(pendingView || viewFromHash() || document.querySelector('.nav-item.active')?.dataset.view || 'overview');
   setInterval(refreshAll, 30000);
 }
 
 if (token && me) startDash();
+else tellPlatform({ type: 'auth', loggedIn: false });

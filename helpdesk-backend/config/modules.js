@@ -61,6 +61,21 @@ module.exports = [
     id: "messenger", label: "Искра", path: "/modules/messenger",
     target: process.env.MODULE_MESSENGER_URL || "https://p48-srv-adm01.rosstat.local:3103",
     roles: [],
-    views: [{ id: "root", label: "Искра", sub: "" }],
+    // Разделы веб-панели «Искры». У неё свой вход, поэтому в меню платформы они
+    // появляются только после него (authGated): до входа «Искра» — одна кнопка,
+    // открывающая экран входа панели. Панель внутри платформы прячет свои вкладки
+    // и сообщает о входе и выходе сама (см. EMBEDDED в MESSENGER/public/panel.js);
+    // sub не используется — раздел передаётся панели сообщением, без перезагрузки.
+    authGated: true,
+    views: [
+      { id: "overview", label: "Обзор", sub: "" },
+      { id: "users", label: "Пользователи", sub: "" },
+      { id: "history", label: "Переписки", sub: "" },
+      { id: "broadcast", label: "Рассылка", sub: "" },
+      { id: "files", label: "Файлы", sub: "" },
+      { id: "updates", label: "Клиенты", sub: "" },
+      { id: "tls", label: "Сертификат", sub: "" },
+      { id: "logs", label: "Логи", sub: "" },
+    ],
   },
 ];
