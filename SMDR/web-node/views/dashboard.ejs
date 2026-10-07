@@ -60,7 +60,10 @@ function badgeCell(row) {
   if (row.direction === 'internal') return '<span class="badge internal">Внутренний</span>';
   return '<span class="badge unknown">?</span>';
 }
+var EMPTY_ROW = '<tr class="empty-row"><td class="empty-state" colspan="8">'
+  + 'Звонков не найдено. Измените фильтры или нажмите «Сброс».</td></tr>';
 function renderRows(rows) {
+  if (!rows.length) return EMPTY_ROW;   // тот же текст, что в _rows.ejs
   return rows.map(function(row) {
     return '<tr>' +
       '<td>' + cell(row.call_date) + '</td>' +

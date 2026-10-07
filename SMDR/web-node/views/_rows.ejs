@@ -1,3 +1,8 @@
+<%# Пустая выборка — пояснение вместо пустого поля под шапкой. Тот же текст
+    дорисовывает автообновление в dashboard.ejs (renderRows). %>
+<% if (!rows.length) { %>
+<tr class="empty-row"><td class="empty-state" colspan="8">Звонков не найдено. Измените фильтры или нажмите «Сброс».</td></tr>
+<% } %>
 <% rows.forEach(row => { %>
 <tr>
   <td><%= row.call_date || '—' %></td>

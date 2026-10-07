@@ -4,6 +4,7 @@
 <meta charset="UTF-8" />
 <title>Реестр машиночитаемых доверенностей</title>
 <link rel="stylesheet" href="app.css">
+<script src="dialog.js"></script>
 <!-- Тема «Центра»: файлы платформы. Открыт напрямую — их нет, остаётся голубая. -->
 <script src="/theme.js"></script><link rel="stylesheet" href="/themes.css">
 </head>
@@ -29,7 +30,7 @@
           <th class="sortable" data-key="full_name">ФИО представителя</th>
           <th class="sortable" data-key="reg_number">Номер доверенности</th>
           <th class="sortable" data-key="valid_from">Действует с</th>
-          <th class="sortable" data-key="valid_to">Действует до</th>
+          <th class="sortable sort-asc" data-key="valid_to">Действует до</th>
           <th class="sortable" data-key="days">Осталось дней</th>
           <th></th>
         </tr>
@@ -128,7 +129,9 @@ function render() {
     let cls = '';
     if (left !== null && left < 0) cls = 'expired';
     else if (left !== null && left <= 30) cls = 'soon';
-    const leftText = left === null ? '—' : left < 0 ? `истекла ${-left} дн. назад` : `${left}`;
+    // Подписи — как у сертификатов на соседней странице: «N дн.», «истекает сегодня».
+    const leftText = left === null ? '—' : left < 0 ? `истекла ${-left} дн. назад`
+      : left === 0 ? 'истекает сегодня' : `${left} дн.`;
     return `<tr class="${cls}">
       <td>${escapeHtml(r.full_name)}</td>
       <td class="ext-cell">${escapeHtml(r.reg_number)}</td>
@@ -138,10 +141,20 @@ function render() {
       <td><button class="del-btn" data-id="${r.id}">Удалить</button></td>
     </tr>`;
   }).join('');
+  // Пустая таблица — пояснение вместо пустого поля под шапкой.
+  if (!list.length) {
+    el('tableBody').innerHTML = '<tr class="empty-row"><td class="empty-state" colspan="6">' + (rows.length
+      ? 'Ничего не найдено. Проверьте написание ФИО или номера доверенности.'
+      : 'Доверенностей пока нет. Нажмите «Загрузить архив из ЕИС» или перетащите архив .zip на страницу.') + '</td></tr>';
+  }
 
   el('tableBody').querySelectorAll('.del-btn').forEach((b) => {
     b.onclick = async () => {
-      if (!confirm('Удалить доверенность из реестра?')) return;
+      const name = (rows.find((x) => String(x.id) === b.dataset.id) || {}).full_name;
+      const ok = await uiConfirm(name ? `Удалить доверенность на имя «${name}» из реестра? Это действие необратимо.`
+        : 'Удалить доверенность из реестра? Это действие необратимо.',
+        { title: 'Удалить доверенность?', ok: 'Удалить', danger: true });
+      if (!ok) return;
       const r = await fetch('api/mchd/' + b.dataset.id, { method: 'DELETE' });
       if (r.ok) { status('Удалено', 'ok'); load(); }
       else status('Не удалось удалить', 'error');

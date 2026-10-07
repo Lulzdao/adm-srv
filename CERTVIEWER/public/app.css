@@ -56,6 +56,15 @@
     --md-on-success-container: #008F9F;
 
     --md-state-hover: #EDF1F8;
+    /* Ниже — значения платформы (helpdesk-backend/public/styles.css), на
+       которые ссылаются правила этого файла. Их здесь не было: всплывающее
+       сообщение брало запасной коричневый цвет из старой тёплой палитры, а
+       окну подтверждения не хватало цвета кнопки «Удалить» и затемнения. */
+    --md-on-error: #FFFFFF;
+    --md-primary-strong: #08528F;
+    --md-inverse-surface: #282A2E;
+    --md-inverse-on-surface: #FFFFFF;
+    --md-scrim: rgba(20, 30, 45, .38);
     --md-shape-xs: 4px;
     --md-shape-m: 8px;
     --md-shape-l: 10px;
@@ -219,4 +228,50 @@ html { font-kerning: none; }
     border: 4px dashed var(--md-primary-container); box-sizing: border-box;
   }
   #dropOverlay.active { display: flex; }
-</style>
+
+  /* Стрелка сортировки на странице МЧД: там заголовок помечается классом
+     sort-asc / sort-desc, а не вложенным .sort-arrow, как у сертификатов.
+     Правил для этих классов не было — столбец сортировался, но по какому
+     именно, было не видно. Вид стрелки тот же, что у .sort-arrow. */
+  th.sortable.sort-asc::after,
+  th.sortable.sort-desc::after { font-size: 10px; opacity: 0.8; margin-left: 5px; color: var(--md-primary); }
+  th.sortable.sort-asc::after { content: '▲'; }
+  th.sortable.sort-desc::after { content: '▼'; }
+
+  /* Пустая таблица: без строки-пояснения под шапкой оставалось пустое поле,
+     и непонятно было — ничего нет, ничего не нашлось или список не загрузился.
+     Вид — как .empty-state платформы. */
+  td.empty-state {
+    padding: 56px 16px; text-align: center; font-size: 13.5px;
+    color: var(--md-on-surface-variant); border-bottom: none;
+  }
+  tr.empty-row:hover { background: transparent !important; }
+
+  /* --- Окно подтверждения (dialog.js) вместо браузерного confirm() ---
+     Кнопки и окно — один в один с платформой (.btn, .btn-ghost, .btn-danger,
+     .ui-dialog в helpdesk-backend/public/styles.css). */
+  .btn {
+    padding: 11px 22px; border: none; border-radius: var(--md-shape-full); font-family: inherit;
+    font-size: 13.5px; font-weight: 600; letter-spacing: 0.1px; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 8px;
+    transition: box-shadow 0.15s ease, filter 0.15s ease, background 0.15s ease;
+  }
+  .btn-wire { background: var(--md-primary); color: var(--md-on-primary); }
+  .btn-wire:hover { background: var(--md-primary-strong); }
+  .btn-danger { background: var(--md-error); color: var(--md-on-error); }
+  .btn-danger:hover { filter: brightness(0.92); }
+  .btn-ghost { background: var(--md-surface-container-high); color: var(--md-on-surface); }
+  .btn-ghost:hover { background: var(--md-surface-container-highest); }
+  .btn:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 2px; }
+  .ui-dialog-back {
+    position: fixed; inset: 0; z-index: 3000; display: flex; align-items: center; justify-content: center;
+    padding: 16px; background: var(--md-scrim);
+  }
+  .ui-dialog {
+    width: 440px; max-width: 100%; box-sizing: border-box; padding: 24px 24px 18px;
+    background: var(--md-surface-container-lowest); color: var(--md-on-surface);
+    border-radius: var(--md-shape-xl); box-shadow: 0 24px 60px rgba(0, 0, 0, 0.25);
+  }
+  .ui-dialog-title { font-size: 17px; font-weight: 700; margin-bottom: 8px; }
+  .ui-dialog-text { font-size: 14px; line-height: 1.55; white-space: pre-line; word-break: break-word; }
+  .ui-dialog-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 10px; margin-top: 22px; }

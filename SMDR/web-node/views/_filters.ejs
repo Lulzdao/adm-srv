@@ -5,11 +5,13 @@
 // Остальное — в раскрывающемся ряду, но так, чтобы включённые в нём фильтры
 // были видны и в свёрнутом виде: иначе человек смотрит на неполную выборку и
 // не понимает почему. Отсюда счётчик рядом с «Ещё фильтры».
+// Цвет точки — переменная из style.css (--dir-…): в тёмной теме у неё свой,
+// светлый тон, а прямой hex оставался тёмным на тёмном.
 const НАПРАВЛЕНИЯ = [
-  { id: 'outgoing', label: 'Исходящие', color: '#0A61AE' },
-  { id: 'incoming', label: 'Входящие', color: '#008F9F' },
-  { id: 'internal', label: 'Внутренние', color: '#663AB5' },
-  { id: 'missed', label: 'Пропущенные', color: '#E7004B' },
+  { id: 'outgoing', label: 'Исходящие', color: 'var(--dir-outgoing)' },
+  { id: 'incoming', label: 'Входящие', color: 'var(--dir-incoming)' },
+  { id: 'internal', label: 'Внутренние', color: 'var(--dir-internal)' },
+  { id: 'missed', label: 'Пропущенные', color: 'var(--dir-missed)' },
 ];
 const КОЛОНКИ = [
   { id: 'ext', label: 'Внутренний' },

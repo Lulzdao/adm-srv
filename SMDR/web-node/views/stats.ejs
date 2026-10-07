@@ -23,7 +23,7 @@
 <form class="filters" id="tableFilterForm">
   <div><label>Дата от</label><input type="date" name="date_from"></div>
   <div><label>Дата до</label><input type="date" name="date_to"></div>
-  <div><button type="submit">Фильтр</button></div>
+  <div><button type="submit">Применить</button></div>
   <div><a href="#" class="btn-reset" id="tableReset">Сброс</a></div>
 </form>
 <table>
@@ -52,11 +52,20 @@ function escHtml(value) {
 }
 // Подписи и сетка графиков — в цветах темы «Центра» (переменные из themes.css платформы): иначе в
 // тёмной теме серые подписи Chart.js почти не видны. Открыто напрямую, без темы, — прежние цвета.
+// Цвета столбцов — те же, что у точек на чипах «Направление» в журнале (--dir-… в style.css):
+// фирменные голубой, изумрудный и сиреневый, в тёмной теме — их светлые тона.
+const DIR_COLORS = {};
 function applyChartTheme() {
   const css = getComputedStyle(document.documentElement);
   const v = (name, fallback) => (css.getPropertyValue(name) || '').trim() || fallback;
   Chart.defaults.color = v('--md-on-surface-variant', '#666');
   Chart.defaults.borderColor = v('--md-outline', 'rgba(0, 0, 0, 0.1)');
+  DIR_COLORS.outgoing = v('--dir-outgoing', '#0A61AE');
+  DIR_COLORS.incoming = v('--dir-incoming', '#008F9F');
+  DIR_COLORS.internal = v('--dir-internal', '#663AB5');
+  Object.values(Chart.instances).forEach(function (c) {
+    c.data.datasets.forEach(function (ds) { if (ds.dir) ds.backgroundColor = DIR_COLORS[ds.dir]; });
+  });
 }
 applyChartTheme();
 // Тему сменили в «Центре» — theme.js (подключён выше) уже переставил атрибут; перерисовываем графики.
@@ -71,11 +80,11 @@ window.addEventListener('storage', function (e) {
 fetch('api/stats/daily').then(r => r.json()).then(data => {
   const days = [...new Set(data.map(d => d.day))].sort();
   const dirs = ['outgoing', 'incoming', 'internal'];
-  const colors = { outgoing: '#2563eb', incoming: '#16a34a', internal: '#9333ea' };
   const datasets = dirs.map(dir => ({
     label: dir === 'outgoing' ? 'Исходящие' : dir === 'incoming' ? 'Входящие' : 'Внутренние',
     data: days.map(day => (data.find(d => d.day === day && d.direction === dir) || {}).cnt || 0),
-    backgroundColor: colors[dir]
+    dir: dir,
+    backgroundColor: DIR_COLORS[dir]
   }));
   new Chart(document.getElementById('dailyChart'), {
     type: 'bar',
@@ -89,11 +98,11 @@ fetch('api/stats/daily').then(r => r.json()).then(data => {
 fetch('api/stats/daily-minutes').then(r => r.json()).then(data => {
   const days = [...new Set(data.map(d => d.day))].sort();
   const dirs = ['outgoing', 'incoming'];
-  const colors = { outgoing: '#2563eb', incoming: '#16a34a' };
   const datasets = dirs.map(dir => ({
     label: dir === 'outgoing' ? 'Исходящие' : 'Входящие',
     data: days.map(day => (data.find(d => d.day === day && d.direction === dir) || {}).minutes || 0),
-    backgroundColor: colors[dir]
+    dir: dir,
+    backgroundColor: DIR_COLORS[dir]
   }));
   new Chart(document.getElementById('minutesChart'), {
     type: 'bar',
@@ -125,7 +134,10 @@ function renderSummary() {
     return sortDir === 'asc' ? av - bv : bv - av;
   });
 
-  document.getElementById('summaryBody').innerHTML = sorted.map(row => `
+  if (!sorted.length) {
+    document.getElementById('summaryBody').innerHTML =
+      '<tr class="empty-row"><td class="empty-state" colspan="7">За выбранный период звонков нет.</td></tr>';
+  } else document.getElementById('summaryBody').innerHTML = sorted.map(row => `
     <tr>
       <td>${escHtml(row.ext)}</td>
       <td>${row.fio ? escHtml(row.fio) : '—'}</td>
