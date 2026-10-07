@@ -792,7 +792,12 @@ function toggleNavGroup(group) {
   }
 }
 
-const MODULE_VIEW_ICONS = { log: "inbox", stats: "chart", directory: "folder", certs: "seal", mchd: "doc", root: "box" };
+const MODULE_VIEW_ICONS = {
+  log: "inbox", stats: "chart", directory: "folder", certs: "seal", mchd: "doc", root: "box",
+  // Разделы панели «Искры».
+  overview: "monitor", users: "users", history: "mail", broadcast: "bell", files: "paperclip",
+  updates: "download", tls: "shield", logs: "list",
+};
 // Иконка пункта меню по идентификатору модуля из config/modules.js. Ключ — тот
 // же id, что и на сервере; для незнакомого модуля остаётся общий «ящик», так
 // что подключение нового ничего здесь не ломает.
@@ -890,7 +895,9 @@ async function paintCertBadge(btn) {
   if (current) applyCertBadge(current);
 }
 
-function renderShell() {
+// Меню целиком. Отдельно от renderShell: при входе в «Искру» и выходе из неё меню
+// перестраивается само, а основная часть экрана с её панелью остаётся как есть.
+function buildNavHtml() {
   const u = state.user;
   const totalUnread = state.notifications.filter(n => !n.is_read).length;
   const isAdmin = Boolean(u.is_admin);
@@ -899,9 +906,6 @@ function renderShell() {
   // может быть и тем и другим одновременно.
   const depts = myDepts(u);
   const isExecutor = depts.length > 0;
-  const roleLabel = !isExecutor
-    ? (isAdmin ? "Администратор" : "Сотрудник")
-    : `${depts.join(", ")}${isAdmin ? " · администратор" : ""}`;
 
   let navHtml;
   // Раздел оповещений собирается здесь, а приписывается в самый конец меню —
@@ -960,7 +964,8 @@ function renderShell() {
   if (state.modules.length) {
     navHtml += state.modules.map(m => {
       const views = (m.views && m.views.length) ? m.views : [{ id: "root", label: m.label, sub: "" }];
-      if (views.length === 1) {
+      // Модуль со своим входом («Искра»): до входа в него — одна кнопка, разделы — после.
+      if (views.length === 1 || (m.authGated && !moduleAuthed(m.id))) {
         const it = { id: `module:${m.id}:${views[0].id}`, label: m.label, icon: moduleIcon(m.id) };
         return navBtnHtml(it, navView() === it.id, false);
       }
@@ -970,6 +975,19 @@ function renderShell() {
   }
 
   navHtml += notifHtml;
+  return navHtml;
+}
+
+function renderShell() {
+  const u = state.user;
+  const totalUnread = state.notifications.filter(n => !n.is_read).length;
+  const isAdmin = Boolean(u.is_admin);
+  const depts = myDepts(u);
+  const isExecutor = depts.length > 0;
+  const roleLabel = !isExecutor
+    ? (isAdmin ? "Администратор" : "Сотрудник")
+    : `${depts.join(", ")}${isAdmin ? " · администратор" : ""}`;
+  const navHtml = buildNavHtml();
 
   root.innerHTML = `
     <div class="app-shell">
@@ -1004,8 +1022,7 @@ function renderShell() {
   const certsBtn = document.getElementById("certsBtn");
   if (certsBtn) { certsBtn.onclick = () => setView("certs"); paintCertBadge(certsBtn); }
 
-  root.querySelectorAll(".nav-btn").forEach(btn => btn.onclick = () => setView(btn.dataset.view));
-  root.querySelectorAll(".nav-group-header").forEach(btn => btn.onclick = () => toggleNavGroup(btn.closest(".nav-group")));
+  wireNav(root);
 
   wireThemePicker();
 
@@ -1013,6 +1030,11 @@ function renderShell() {
     clearViewPoll();
     if (notifPollHandle) { clearInterval(notifPollHandle); notifPollHandle = null; }
     await api("/auth/logout", { method: "POST" });
+    // Вход в панель «Искры» живёт в этом же браузере (её токен — в localStorage того же
+    // адреса). Вышли из платформы — выходим и из неё: следующему за этим компьютером
+    // панель не должна открыться сразу вошедшей.
+    try { localStorage.removeItem("admin_token"); localStorage.removeItem("admin_me"); } catch { /* недоступно */ }
+    for (const m of state.modules) setModuleAuthed(m.id, false);
     state.user = null;
     renderLogin();
   };
@@ -1039,15 +1061,106 @@ function renderShell() {
   }
 }
 
+function wireNav(container) {
+  container.querySelectorAll(".nav-btn").forEach(btn => btn.onclick = () => openNavView(btn.dataset.view));
+  container.querySelectorAll(".nav-group-header").forEach(btn => btn.onclick = () => toggleNavGroup(btn.closest(".nav-group")));
+}
+
+/** Перестроить только меню — основная часть экрана (и панель модуля в ней) не трогается. */
+function refreshNav() {
+  const nav = document.querySelector(".sidebar-nav");
+  if (!nav || !state.user) return;
+  nav.innerHTML = buildNavHtml();
+  wireNav(nav);
+}
+
+// ====== Модуль со своим входом («Искра») ======
+//
+// У веб-панели «Искры» свой логин. Пока в неё не вошли, в меню одна кнопка «Искра»
+// (открывает экран входа панели); после входа кнопка становится группой с разделами
+// панели. Панель внутри платформы прячет свои вкладки и сама сообщает о входе,
+// выходе и открытом разделе (postMessage, только с этого же адреса). Раздел
+// переключается сообщением в уже открытую панель — без перезагрузки: она при
+// запуске подтягивает пользователей, переписки, файлы и журналы, это заметно.
+// Признак входа — на вкладку браузера (sessionStorage): после F5 меню сразу
+// с разделами, а если вход в панели уже истёк, она сама скажет «вышел».
+const MODULE_AUTH_KEY = (id) => `adm.moduleAuth.${id}`;
+function moduleAuthed(id) {
+  try { return sessionStorage.getItem(MODULE_AUTH_KEY(id)) === "1"; } catch { return false; }
+}
+function setModuleAuthed(id, on) {
+  try { on ? sessionStorage.setItem(MODULE_AUTH_KEY(id), "1") : sessionStorage.removeItem(MODULE_AUTH_KEY(id)); } catch { /* хранилище недоступно */ }
+}
+
+function openNavView(view) {
+  const m = /^module:([^:]+):(.+)$/.exec(view);
+  const frame = document.querySelector("iframe.module-frame");
+  const mod = m && state.modules.find((x) => x.id === m[1]);
+  // Тот же модуль со своим входом уже открыт — только переключаем раздел внутри панели.
+  if (mod && mod.authGated && frame && frame.dataset.module === mod.id && state.view.startsWith(`module:${mod.id}:`)) {
+    state.view = view;
+    writeHash(false);
+    document.querySelectorAll(".sidebar-nav .nav-btn").forEach((b) => b.classList.toggle("active", b.dataset.view === view));
+    const v = mod.views.find((x) => x.id === m[2]);
+    const title = document.querySelector(".topbar-title");
+    if (title && v) title.textContent = moduleTitle(mod, v);
+    frame.contentWindow.postMessage({ to: "module", type: "open", view: m[2] }, location.origin);
+    return;
+  }
+  setView(view);
+}
+
+window.addEventListener("message", (e) => {
+  if (e.origin !== location.origin || !e.data || e.data.from !== "module") return;
+  const frame = document.querySelector("iframe.module-frame");
+  if (!frame || e.source !== frame.contentWindow) return;
+  const mod = state.modules.find((x) => x.id === frame.dataset.module);
+  if (!mod || !mod.authGated) return;
+  if (e.data.type === "auth") {
+    const was = moduleAuthed(mod.id);
+    setModuleAuthed(mod.id, Boolean(e.data.loggedIn));
+    // Вышли — раздел в адресе сбрасываем на первый: после входа панель откроется на нём.
+    if (!e.data.loggedIn && state.view !== `module:${mod.id}:${mod.views[0].id}`) {
+      state.view = `module:${mod.id}:${mod.views[0].id}`;
+      writeHash(true);
+    }
+    const [, , viewId] = state.view.split(":");
+    const title = document.querySelector(".topbar-title");
+    const v = mod.views.find((x) => x.id === viewId);
+    if (title && v) title.textContent = moduleTitle(mod, v);
+    if (was !== Boolean(e.data.loggedIn)) {
+      // Только что вошли — группу раскрываем: ради её разделов и входили.
+      if (e.data.loggedIn) { state.navGroupOpen[`mod-${mod.id}`] = true; saveNavGroups(); }
+      refreshNav();
+    }
+  } else if (e.data.type === "view" && mod.views.some((v) => v.id === e.data.view)) {
+    const view = `module:${mod.id}:${e.data.view}`;
+    if (state.view === view) return;
+    state.view = view;
+    writeHash(true);
+    document.querySelectorAll(".sidebar-nav .nav-btn").forEach((b) => b.classList.toggle("active", b.dataset.view === view));
+    const title = document.querySelector(".topbar-title");
+    const v = mod.views.find((x) => x.id === e.data.view);
+    if (title && v) title.textContent = moduleTitle(mod, v);
+  }
+});
+
+// «Искра — Пользователи»; до входа в модуль со своим входом — просто «Искра».
+function moduleTitle(mod, view) {
+  if (mod.authGated && !moduleAuthed(mod.id)) return mod.label;
+  return (mod.views && mod.views.length > 1) ? `${mod.label} — ${view.label}` : mod.label;
+}
+
 // ====== Встроенный модуль (фрейм) ======
 function renderModule(main, mod, view) {
   clearViewPoll();
-  const src = `${mod.path}/${view.sub || ""}`;
-  const title = (mod.views && mod.views.length > 1) ? `${mod.label} — ${view.label}` : mod.label;
+  // Модулю со своим входом раздел передаётся якорем: панель откроет его после входа.
+  const src = mod.authGated ? `${mod.path}/#${encodeURIComponent(view.id)}` : `${mod.path}/${view.sub || ""}`;
+  const title = moduleTitle(mod, view);
   main.innerHTML = `
     <div class="topbar"><div class="topbar-title">${esc(title)}</div></div>
     <div class="page page-flush">
-      <iframe class="module-frame" src="${esc(src)}" title="${esc(title)}"></iframe>
+      <iframe class="module-frame" data-module="${esc(mod.id)}" src="${esc(src)}" title="${esc(title)}"></iframe>
     </div>`;
 }
 

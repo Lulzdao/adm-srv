@@ -444,3 +444,10 @@
 
 /* Версия клиента, собранная на сервере и готовая к выкладке (раздел «Клиенты»). */
 .ready-release { padding: 12px 14px; margin-bottom: 14px; border-radius: 10px; background: var(--md-success-container); }
+
+/* Внутри «Центра» разделы переключаются из его меню (см. EMBEDDED в panel.js) — свои вкладки
+   не нужны; остаётся строка с именем и «Выйти». */
+html.embedded #tabGroup { display: none; }
+html.embedded #tabs { justify-content: flex-end; padding: 8px 20px; }
+/* Название раздела уже стоит в шапке «Центра» («Искра — Пользователи») — второе не нужно. */
+html.embedded .view > h2:first-child { display: none; }
