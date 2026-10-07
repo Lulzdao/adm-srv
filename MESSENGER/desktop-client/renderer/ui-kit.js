@@ -46,6 +46,7 @@
     trash: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5a2 2 0 012-2h2a2 2 0 012 2v2m3 0l-1 13a2 2 0 01-2 2H8a2 2 0 01-2-2L5 7"/></svg>',
     plus: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
     file: '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2.5H7a2 2 0 00-2 2v15a2 2 0 002 2h10a2 2 0 002-2V8.5z"/><path d="M14 2.5V8.5h5.5"/></svg>',
+    copy: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="8.5" y="8.5" width="11" height="11" rx="2.2"/><path d="M15.5 8.5V6.7a2.2 2.2 0 00-2.2-2.2H6.7a2.2 2.2 0 00-2.2 2.2v6.6a2.2 2.2 0 002.2 2.2h1.8"/></svg>',
     download: '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 19.5h16"/></svg>',
     check: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5.5 5.5L20 6.5"/></svg>',
     checkDouble: '<svg viewBox="0 0 28 24" width="17" height="15" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12.5l4.5 4.5L14 8"/><path d="M8 12.5l4.5 4.5L21 8"/></svg>',
@@ -68,6 +69,63 @@
     group: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="8.5" cy="8" r="3"/><path d="M2.3 20a6.2 6.2 0 0112.4 0"/><circle cx="17" cy="8.7" r="2.4"/><path d="M15.3 13.3a5.3 5.3 0 015.9 5.1"/></svg>',
   };
   window.uiIcon = (name) => ICONS[name] || '';
+
+  // Контекстное меню (ПКМ) в оформлении клиента. Раньше это было системное меню Electron — его
+  // рисует Windows по своей теме (у многих тёмной), и ни цвет, ни шрифт, ни скругления «Искры» к
+  // нему не применить. Меню живёт внутри окна: у края оно сдвигается, чтобы целиком влезть.
+  // items: [{ label, icon, onClick }]. Закрывается щелчком мимо, Esc, прокруткой, потерей фокуса.
+  let ctxClose = null;
+  window.uiContextMenu = (x, y, items) => {
+    if (ctxClose) ctxClose();
+    if (!items || !items.length) return;
+    const menu = document.createElement('div');
+    menu.className = 'ui-ctx';
+    menu.setAttribute('role', 'menu');
+    for (const it of items) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'ui-ctx-item';
+      b.setAttribute('role', 'menuitem');
+      b.innerHTML = `${it.icon ? `<span class="ui-ctx-ic">${uiIcon(it.icon)}</span>` : ''}<span class="ui-ctx-label"></span>`;
+      b.querySelector('.ui-ctx-label').textContent = it.label;
+      b.title = it.label;
+      b.onclick = () => { close(); it.onClick(); };
+      menu.appendChild(b);
+    }
+    document.body.appendChild(menu);
+    const r = menu.getBoundingClientRect();
+    const pad = 6;
+    menu.style.left = `${Math.max(pad, Math.min(x, window.innerWidth - r.width - pad))}px`;
+    menu.style.top = `${Math.max(pad, Math.min(y, window.innerHeight - r.height - pad))}px`;
+    menu.querySelector('button').focus({ preventScroll: true });
+
+    const onDown = (e) => { if (!menu.contains(e.target)) close(); };
+    const onKey = (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); close(); return; }
+      if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+      e.preventDefault();
+      const list = [...menu.querySelectorAll('button')];
+      const i = list.indexOf(document.activeElement);
+      list[(i + (e.key === 'ArrowDown' ? 1 : list.length - 1)) % list.length].focus();
+    };
+    function close() {
+      if (!menu.isConnected) return;
+      menu.remove();
+      document.removeEventListener('pointerdown', onDown, true);
+      document.removeEventListener('keydown', onKey, true);
+      document.removeEventListener('scroll', close, true);
+      window.removeEventListener('blur', close);
+      window.removeEventListener('resize', close);
+      ctxClose = null;
+    }
+    // Перехват, а не всплытие: строки ростера и чата гасят часть событий у себя.
+    document.addEventListener('pointerdown', onDown, true);
+    document.addEventListener('keydown', onKey, true);
+    document.addEventListener('scroll', close, true);
+    window.addEventListener('blur', close);
+    window.addEventListener('resize', close);
+    ctxClose = close;
+  };
 
   // ---------- Кнопки окна (свернуть/развернуть/закрыть) ----------
   // Общая логика для всех окон: разметка одинаковая везде —

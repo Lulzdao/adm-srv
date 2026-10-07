@@ -92,9 +92,9 @@
       place();
       menu.style.visibility = '';
     }
-    btn.onclick = function (e) { e.stopPropagation(); menu.hidden ? open() : close(); };
+    wrap._close = close;
+    btn.onclick = function () { menu.hidden ? open() : close(); };
     sel.addEventListener('change', syncLabel);
-    document.addEventListener('click', function (e) { if (!wrap.contains(e.target)) close(); });
     // capture: true — прокручиваться может не окно, а внутренний блок
     // (в журнале скроллится сама таблица), а его событие всплывать не будет.
     window.addEventListener('scroll', function () { if (!menu.hidden) close(); }, true);
@@ -105,6 +105,11 @@
   function enhanceAll() {
     document.querySelectorAll('select:not([data-enhanced])').forEach(enhance);
   }
+  // Щелчок мимо закрывает открытые списки — один обработчик на страницу, в фазе перехвата: так его не
+  // гасит ничей stopPropagation, и, открыв второй список, первый больше не остаётся висеть открытым.
+  document.addEventListener('pointerdown', function (e) {
+    document.querySelectorAll('.select-wrap.open').forEach(function (w) { if (!w.contains(e.target) && w._close) w._close(); });
+  }, true);
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', enhanceAll);
   else enhanceAll();
   // Экраны перерисовываются, поэтому следим за появлением новых select.

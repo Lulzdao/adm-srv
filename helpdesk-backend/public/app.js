@@ -86,21 +86,14 @@ function wireThemePicker() {
   const btn = document.getElementById("themeBtn");
   const pop = document.getElementById("themePop");
   if (!btn || !pop) return;
-  btn.onclick = (e) => { e.stopPropagation(); pop.hidden = !pop.hidden; };
+  btn.onclick = () => { pop.hidden = !pop.hidden; };
   pop.onclick = (e) => {
     const opt = e.target.closest(".theme-opt");
     if (!opt) return;
     CenterTheme.set(opt.dataset.themeId);
     pop.querySelectorAll(".theme-opt").forEach((o) => o.classList.toggle("on", o === opt));
   };
-  // Клик мимо — закрыть. Обработчик один на страницу, а не новый при каждой перерисовке оболочки.
-  if (!wireThemePicker.bound) {
-    wireThemePicker.bound = true;
-    document.addEventListener("click", (e) => {
-      const p = document.getElementById("themePop");
-      if (p && !p.hidden && !e.target.closest("#themePop")) p.hidden = true;
-    });
-  }
+  // Клик мимо закрывает — общим перехватчиком рядом с выпадающими списками (enhanceSelect).
 }
 
 // Государственный герб — фирменный знак системы вместо прежней плитки с
@@ -214,7 +207,8 @@ function enhanceSelect(sel) {
     if (sel_) sel_.scrollIntoView({ block: "nearest" });
   };
 
-  btn.onclick = (e) => { e.stopPropagation(); menu.hidden ? open() : close(); };
+  wrap._close = close;
+  btn.onclick = () => { menu.hidden ? open() : close(); };
   btn.onkeydown = (e) => {
     if (e.key === "Escape") close();
     else if (e.key === "ArrowDown" && menu.hidden) { e.preventDefault(); open(); }
@@ -229,9 +223,23 @@ function enhanceSelect(sel) {
   // «— не назначено —». Наблюдатель чинит это для любого списка, который
   // наполняется позже, а не только для исполнителя.
   new MutationObserver(syncLabel).observe(sel, { childList: true });
-  document.addEventListener("click", (e) => { if (!wrap.contains(e.target)) close(); });
   syncLabel();
 }
+
+// Закрыть открытые списки при щелчке мимо них — один обработчик на страницу,
+// в фазе перехвата. Раньше у каждого списка был свой обработчик на всплытии, а
+// кнопка списка гасила всплытие (stopPropagation): открыли нижний, потом
+// верхний — нижний так и оставался открытым. Перехват срабатывает раньше любого
+// stopPropagation на пути, поэтому список закрывается при щелчке куда угодно,
+// в том числе по другому списку или кнопке, которая сама гасит событие.
+document.addEventListener("pointerdown", (e) => {
+  document.querySelectorAll(".select-wrap.open").forEach((w) => { if (!w.contains(e.target) && w._close) w._close(); });
+  const pop = document.getElementById("themePop");
+  if (pop && !pop.hidden && !e.target.closest("#themePop, #themeBtn")) pop.hidden = true;
+}, true);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") document.querySelectorAll(".select-wrap.open").forEach((w) => w._close && w._close());
+});
 
 function enhanceSelects(root) {
   (root || document).querySelectorAll("select:not([data-enhanced])").forEach(enhanceSelect);

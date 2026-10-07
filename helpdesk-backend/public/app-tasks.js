@@ -1108,7 +1108,8 @@ async function renderTaskNotes(main) {
         await patch(rec.data.id, { color: rec.data.color });
       };
     });
-    setTimeout(() => document.addEventListener("pointerdown", function off(ev) { if (!pop.contains(ev.target)) { pop.remove(); document.removeEventListener("pointerdown", off); } }), 0);
+    // В фазе перехвата: ручка размера и шапка заметки гасят pointerdown, и на всплытии палитра бы не закрылась.
+    setTimeout(() => document.addEventListener("pointerdown", function off(ev) { if (!pop.contains(ev.target)) { pop.remove(); document.removeEventListener("pointerdown", off, true); } }, true), 0);
   }
 
   async function saveContent(rec) {

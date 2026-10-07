@@ -558,7 +558,13 @@ function applyReachability(row, u, p) {
     + (reachable ? '' : '\nСейчас недоступен для сообщений и файлов — подключён только через веб-панель администратора');
   row.onclick = reachable ? () => desktop.openChat(chatPayload) : null;
   row.oncontextmenu = reachable
-    ? (e) => { e.preventDefault(); desktop.showUserMenu(chatPayload); }
+    ? (e) => {
+      e.preventDefault();
+      uiContextMenu(e.clientX, e.clientY, [
+        { label: `Написать: ${chatPayload.label}`, icon: 'send', onClick: () => desktop.openChat(chatPayload) },
+        { label: 'Отправить файл…', icon: 'attach', onClick: () => desktop.sendFileTo(chatPayload) },
+      ]);
+    }
     : (e) => e.preventDefault();
 }
 
@@ -820,7 +826,10 @@ function renderList() {
     if (dept) {
       section.oncontextmenu = (e) => {
         e.preventDefault();
-        desktop.showDepartmentMenu({ departmentId: dept.id, departmentName: dept.name, token, serverUrl, me: JSON.stringify(me) });
+        const payload = { departmentId: dept.id, departmentName: dept.name, token, serverUrl, me: JSON.stringify(me) };
+        uiContextMenu(e.clientX, e.clientY, [
+          { label: `Сообщение всему отделу «${dept.name}»`, icon: 'megaphone', onClick: () => desktop.openDepartmentBroadcast(payload) },
+        ]);
       };
       section.title += ' · ПКМ — написать всему отделу';
     }

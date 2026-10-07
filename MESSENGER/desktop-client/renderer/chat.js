@@ -1060,26 +1060,27 @@ function wireFileClicks(container) {
 wireFileClicks(document.getElementById('messages'));
 wireFileClicks(document.getElementById('hpMessages'));
 
-// ПКМ по сообщению: на файле — "Сохранить как...", на тексте — "Копировать текст".
-// Реализовано нативным меню Electron (через главный процесс), т.к. буфер обмена и системный
-// диалог "Сохранить как" всё равно должны идти оттуда.
+// ПКМ по сообщению: на файле — "Сохранить как...", на тексте — "Копировать текст". Меню —
+// в оформлении клиента (uiContextMenu); буфер обмена и диалог "Сохранить как" — в главном процессе.
 function wireMessageContextMenu(container) {
-  container.addEventListener('contextmenu', async (e) => {
+  container.addEventListener('contextmenu', (e) => {
     const fileLink = e.target.closest('a.file');
     if (fileLink) {
       e.preventDefault();
-      try {
-        const url = await getDownloadUrl(fileLink.dataset.url, fileLink.dataset.name);
-        desktop.showMessageMenu({ kind: 'file', url, name: fileLink.dataset.name });
-      } catch {
-        chatToast('Не удалось подготовить файл — проверьте подключение.', { error: true });
-      }
+      const name = fileLink.dataset.name;
+      uiContextMenu(e.clientX, e.clientY, [{
+        label: `Сохранить «${name}» как…`, icon: 'download',
+        onClick: async () => {
+          try { desktop.saveFileAs({ url: await getDownloadUrl(fileLink.dataset.url, name), name }); }
+          catch { chatToast('Не удалось подготовить файл — проверьте подключение.', { error: true }); }
+        },
+      }]);
       return;
     }
     const txtEl = e.target.closest('.txt');
     if (txtEl) {
       e.preventDefault();
-      desktop.showMessageMenu({ kind: 'text', text: txtEl.dataset.rawText || '' });
+      uiContextMenu(e.clientX, e.clientY, [{ label: 'Копировать текст', icon: 'copy', onClick: () => desktop.copyText(txtEl.dataset.rawText || '') }]);
     }
   });
 }

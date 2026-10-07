@@ -11,10 +11,12 @@ contextBridge.exposeInMainWorld('desktop', {
   buildTrack: STATIC.buildTrack,
   openChat: (payload) => ipcRenderer.send('open-chat', payload),
   openBroadcast: (payload) => ipcRenderer.send('open-broadcast', payload),
-  showUserMenu: (payload) => ipcRenderer.send('show-user-menu', payload),
-  // ПКМ по отделу в списке контактов — «Сообщение всему отделу».
-  showDepartmentMenu: (payload) => ipcRenderer.send('show-department-menu', payload),
-  showMessageMenu: (payload) => ipcRenderer.send('show-message-menu', payload),
+  // Действия меню по ПКМ. Само меню рисует окно (uiContextMenu в ui-kit.js) — системное меню
+  // Windows оформить под «Искру» нельзя; здесь только то, что делает главный процесс.
+  sendFileTo: (payload) => ipcRenderer.send('send-file-to', payload),
+  openDepartmentBroadcast: (payload) => ipcRenderer.send('open-department-broadcast', payload),
+  copyText: (text) => ipcRenderer.send('copy-text', text),
+  saveFileAs: (payload) => ipcRenderer.send('save-file-as', payload),
   windowAction: (action) => ipcRenderer.send('window-action', action),
   notify: (payload) => ipcRenderer.send('notify', payload),
   logout: () => ipcRenderer.send('logout'),
