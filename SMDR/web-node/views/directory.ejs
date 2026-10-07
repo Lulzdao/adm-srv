@@ -5,18 +5,56 @@
 <script src="/theme.js"></script><link rel="stylesheet" href="/themes.css"></head><body>
 <div class="container">
 <h1>Справочник добавочных</h1>
+<p class="muted dir-hint">ФИО сохраняется само — через секунду после ввода или при переходе к другому полю.</p>
 <table class="dir-table">
 <tr><th>Добавочный</th><th>ФИО</th><th></th></tr>
+<%# Строка — без <form>: форма внутри <tr> недопустима в HTML (браузер её прощал, но разметка была
+    хрупкой). Сохраняет скрипт ниже тем же POST directory, что и прежняя кнопка. %>
 <% exts.forEach(ext => { %>
 <tr>
-  <form method="post" action="directory">
-    <td class="ext-cell"><%= ext %><input type="hidden" name="ext" value="<%= ext %>"></td>
-    <td><input type="text" name="fio" value="<%= map[ext] || '' %>" placeholder="Фамилия Имя"></td>
-    <td><button type="submit">Сохранить</button></td>
-  </form>
+  <td class="ext-cell"><%= ext %></td>
+  <td><input type="text" class="dir-fio" data-ext="<%= ext %>" value="<%= map[ext] || '' %>" placeholder="Фамилия Имя" maxlength="200" aria-label="ФИО для добавочного <%= ext %>"></td>
+  <td class="dir-state" aria-live="polite"></td>
 </tr>
 <% }) %>
 </table>
 </div>
+<script>
+// Автосохранение ФИО: через 700 мс после ввода, сразу — при уходе из поля и по Enter. Тот же POST
+// directory (ext, fio), что отправляла кнопка «Сохранить» в каждой строке; сервер отвечает переходом
+// на справочник — он не нужен, поэтому redirect: 'manual' (ответ-переход = сохранено).
+(function () {
+  function save(input) {
+    clearTimeout(input._timer);
+    var fio = input.value.trim();
+    if (fio === input._saved) return;
+    var state = input.closest('tr').querySelector('.dir-state');
+    state.className = 'dir-state saving'; state.textContent = 'Сохраняю…';
+    var sent = fio;
+    fetch('directory', {
+      method: 'POST', redirect: 'manual',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ ext: input.dataset.ext, fio: sent }).toString(),
+    }).then(function (r) {
+      if (r.type === 'opaqueredirect' || r.ok) {
+        input._saved = sent;
+        // Пока ждали ответ, человек мог допечатать — тогда сохраним и это.
+        if (input.value.trim() !== sent) { schedule(input); return; }
+        state.className = 'dir-state ok'; state.textContent = 'Сохранено';
+        clearTimeout(input._fade); input._fade = setTimeout(function () { state.textContent = ''; }, 2500);
+      } else {
+        return r.text().then(function (t) { state.className = 'dir-state err'; state.textContent = t || ('Ошибка ' + r.status); });
+      }
+    }).catch(function () { state.className = 'dir-state err'; state.textContent = 'Нет связи — не сохранено'; });
+  }
+  function schedule(input) { clearTimeout(input._timer); input._timer = setTimeout(function () { save(input); }, 700); }
+  document.querySelectorAll('.dir-fio').forEach(function (input) {
+    input._saved = input.value.trim();
+    input.addEventListener('input', function () { schedule(input); });
+    input.addEventListener('blur', function () { save(input); });
+    input.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); save(input); } });
+  });
+})();
+</script>
 <script src="select.js"></script>
 </body></html>

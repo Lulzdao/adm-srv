@@ -269,9 +269,15 @@ document.getElementById('exportGo').addEventListener('click', function () {
 });
 
 // Число строк на кнопке выгрузки — то же, что показывает счётчик страниц.
+// Пустая выборка — выгружать нечего: кнопка неактивна, а не «Выгрузить 0 строк», которая
+// открывала окно выгрузки и отдавала пустой файл.
 function syncExportLabel(total) {
-  document.getElementById('exportLabel').textContent =
-    'Выгрузить ' + formatRows(total) + ' ' + plural(total, 'строку', 'строки', 'строк');
+  var btn = document.getElementById('exportBtn');
+  btn.disabled = !total;
+  btn.title = total ? '' : 'По выбранным фильтрам звонков нет — измените фильтры';
+  document.getElementById('exportLabel').textContent = total
+    ? 'Выгрузить ' + formatRows(total) + ' ' + plural(total, 'строку', 'строки', 'строк')
+    : 'Нечего выгружать';
 }
 syncExportLabel(<%= filteredTotal %>);
 </script>
