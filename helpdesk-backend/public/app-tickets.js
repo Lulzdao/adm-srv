@@ -8,42 +8,9 @@
 // естественно.
 const listMemory = {};
 
-// ====== Анимация: заявка раскрывается из строки, закрытая «втягивается» в кнопку списка ======
-// Экран перерисовывается целиком (setView), поэтому прежний экран перед перерисовкой снимается
-// копией (snapshotMain) и на время движения кладётся поверх или под новым — так нет ни пустого
-// белого кадра, ни плашки другого цвета:
-//   открытие — копия строки вырастает в карточку заявки (см. playTicketOpen), вокруг проявляется
-//   экран заявки, список под ним гаснет;
-//   закрытие / возврат в работу — копия самой карточки сжимается и уходит в кнопку «Закрытые» или
-//   «Открытые», экран заявки под ней растворяется в список.
-// Web Animations API — есть и в Chrome 109 (Windows 7). Кто отключил анимацию в системе
-// (prefers-reduced-motion), видит переходы как раньше, без движения.
-function motionAllowed() {
-  return typeof Element.prototype.animate === "function"
-    && !(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches);
-}
-// Копия без id: иначе на странице на время анимации оказались бы два #statusSelect и т.п.
-function cloneWithoutIds(el) {
-  const c = el.cloneNode(true);
-  c.removeAttribute("id");
-  c.querySelectorAll("[id]").forEach((n) => n.removeAttribute("id"));
-  return c;
-}
-function snapshotMain() {
-  const area = document.getElementById("mainArea");
-  if (!area || !motionAllowed()) return null;
-  const page = area.querySelector(".page");
-  return { node: cloneWithoutIds(area), rect: area.getBoundingClientRect(), scroll: page ? page.scrollTop : 0 };
-}
-function mountSnapshot(snap, zIndex) {
-  const el = snap.node;
-  el.classList.add("fly-snapshot");
-  Object.assign(el.style, { left: snap.rect.left + "px", top: snap.rect.top + "px", width: snap.rect.width + "px", height: snap.rect.height + "px", zIndex: String(zIndex) });
-  document.body.appendChild(el);
-  const page = el.querySelector(".page");
-  if (page) page.scrollTop = snap.scroll;
-  return el;
-}
+// ====== Анимация заявок (общие функции — motion.js) ======
+// Открытие — копия строки вырастает в карточку (playTicketOpen). Закрытие и возврат в работу — копия
+// карточки «втягивается» в кнопку «Закрытые» / «Открытые» (flyInto), экран заявки растворяется в список.
 
 // row — копия строки, по которой щёлкнули, и её место ({ node, rect }); snap — копия списка. Сняты до
 // перерисовки. Копия строки вырастает до места карточки заявки; по дороге её содержимое сменяется
@@ -91,37 +58,6 @@ function playTicketOpen(row, snap) {
     g.remove(); old.remove();
     Object.assign(area.style, keep);
   };
-}
-
-// card — карточка заявки (её копия и улетает), snap — копия экрана заявки; target — кнопка списка.
-// Всё снято до перехода к списку.
-function playTicketFly(card, snap, target) {
-  if (!motionAllowed() || !card || !snap || !target) return;
-  const from = card.rect, to = target.getBoundingClientRect();
-  const old = mountSnapshot(snap, 1999);
-  old.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 260, easing: "ease-out", fill: "forwards" });
-  const g = card.node;
-  g.classList.add("fly-ghost");
-  Object.assign(g.style, { left: from.left + "px", top: from.top + "px", width: from.width + "px", height: from.height + "px" });
-  document.body.appendChild(g);
-  const dx = (to.left + to.width / 2) - (from.left + from.width / 2);
-  const dy = (to.top + to.height / 2) - (from.top + from.height / 2);
-  const end = Math.max(0.02, Math.min(to.width / from.width, to.height / from.height) * 0.5);
-  // Сначала карточка чуть приподнимается и сжимается, потом с ускорением уходит в кнопку — «втягивается».
-  const suck = g.animate([
-    { transform: "translate(0, 0) scale(1)", opacity: 1 },
-    { transform: `translate(${dx * 0.15}px, ${dy * 0.15 - 18}px) scale(0.62)`, opacity: 1, offset: 0.32 },
-    { transform: `translate(${dx}px, ${dy}px) scale(${end})`, opacity: 0.2 },
-  ], { duration: 560, easing: "cubic-bezier(0.55, 0, 0.8, 0.3)", fill: "forwards" });
-  suck.onfinish = suck.oncancel = () => {
-    g.remove(); old.remove();
-    target.animate([{ transform: "scale(1)" }, { transform: "scale(1.16)" }, { transform: "scale(0.96)" }, { transform: "scale(1)" }],
-      { duration: 320, easing: "ease-out" });
-  };
-}
-function snapshotCard() {
-  const card = document.querySelector(".detail-main .card");
-  return card && motionAllowed() ? { node: cloneWithoutIds(card), rect: card.getBoundingClientRect() } : null;
 }
 
 // Номера страниц для переключателя: первая, последняя и соседи текущей, между ними —
@@ -303,7 +239,7 @@ async function renderList(main, opts = {}) {
             api(`/notifications/ticket/${row.dataset.id}/read`, { method: "PATCH" })
               .then(refreshNotifications).then(updateBadgeDom).catch(() => {});
             // До перерисовки: после неё ни строки, ни списка уже не будет.
-            const rowSnap = motionAllowed() ? { node: cloneWithoutIds(row), rect: row.getBoundingClientRect() } : null;
+            const rowSnap = snapshotEl(row);
             const snap = snapshotMain();
             setView("detail", ticket);
             playTicketOpen(rowSnap, snap);
@@ -624,8 +560,11 @@ function renderCreate(main) {
       toast(`Заявка ${ticket.display_id} создана`);
     }
     // Открываем саму заявку, а не список: человек видит, что она есть, и может
-    // тут же дослать то, что не прикрепилось.
+    // тут же дослать то, что не прикрепилось. Форма при этом «втягивается» в пункт
+    // «Мои заявки» — видно, где заявку искать потом.
+    const form = snapshotEl(document.querySelector("#ticketPart .form-card")), snap = snapshotMain();
     setView("detail", ticket);
+    flyInto(form, visibleNav('.nav-btn[data-view="mine"]', '.nav-group[data-group="tickets"] > .nav-group-header'), { snap });
   };
 }
 
@@ -764,6 +703,8 @@ function renderDetail(main, ticket) {
       await api(`/tickets/${ticket.id}/comments`, { method: "POST", body: { text, is_internal: isInternal } });
       const fresh = await reloadTicket(ticket.id);
       renderDetail(main, fresh);
+      // Новый комментарий — последний в ленте: он въезжает снизу, а не появляется рывком.
+      enterFromBelow(main.querySelector("#commentsList .comment-box:last-child"));
     } catch (e) { toast(e.message, true); }
   };
 
@@ -780,9 +721,9 @@ function renderDetail(main, ticket) {
         if (closing || reopening) {
           if (closing) m.closed = false;
           toast(closing ? `Заявка ${ticket.display_id} закрыта` : `Заявка ${ticket.display_id} снова открыта`);
-          const card = snapshotCard(), snap = snapshotMain();
+          const card = snapshotEl(document.querySelector(".detail-main .card")), snap = snapshotMain();
           setView("inbox");
-          playTicketFly(card, snap, document.querySelector(`.toggle-btn[data-closed="${closing ? 1 : 0}"]`));
+          flyInto(card, document.querySelector(`.toggle-btn[data-closed="${closing ? 1 : 0}"]`), { snap });
           return;
         }
         const fresh = await reloadTicket(ticket.id);
