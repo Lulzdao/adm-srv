@@ -70,7 +70,12 @@
 
   /* --- Сигналы: из дополнительных цветов (3.3), в малом количестве --- */
   --md-error: #E7004B;                /* тёмно-розовый */
-  --md-on-error: #FFFFFF;             /* текст на заливке --md-error (кнопка «Удалить» в окне подтверждения) */
+  --md-on-error: #FFFFFF;
+  /* Кромки приоритета в списке заявок — сигнальные цвета, одни во всех темах; акценты, с которыми они
+     спорят (Гранат, Розовый, Янтарь), переопределяют их в themes.css. */
+  --prio-critical: #E7004B;
+  --prio-high: #FF8B3A;
+  --prio-low: #BFBFBF;             /* текст на заливке --md-error (кнопка «Удалить» в окне подтверждения) */
   --md-error-container: #FDE3EA;
   --md-on-error-container: #E7004B;
   --md-warn-container: #FFE7D6;
@@ -397,18 +402,31 @@ a { color: var(--md-primary); }
 /* Выбор цветовой темы — раскрывается над кнопкой «Оформление». */
 .sidebar-foot { position: relative; }
 .theme-pop {
-  position: absolute; left: 16px; right: 16px; bottom: 100px; z-index: 30; padding: 6px;
+  position: absolute; left: 12px; right: 12px; bottom: 100px; z-index: 30; padding: 4px 6px;
   background: var(--md-surface-container-lowest); border: 1px solid var(--md-outline);
   border-radius: var(--md-shape-l); box-shadow: 0 8px 28px rgba(10, 30, 60, .28);
 }
-.theme-opt {
-  width: 100%; display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: none;
-  background: none; color: var(--md-on-surface); font: inherit; font-size: 13px; text-align: left;
-  border-radius: var(--md-shape-s); cursor: pointer;
+/* Как в настройках «Искры»: «Тема» с переключателем, «Акцент» с кружками; подписи над элементами —
+   окошко помещается в ширину боковой панели. */
+.look-row[hidden] { display: none; }
+.look-row { display: flex; flex-direction: column; align-items: stretch; gap: 8px; padding: 10px 6px; }
+.look-row + .look-row { border-top: 1px solid var(--md-outline-variant); }
+.look-label { font-size: 11px; font-weight: 700; letter-spacing: .4px; text-transform: uppercase; color: var(--md-on-surface-variant); }
+.look-seg { display: flex; padding: 3px; gap: 2px; border-radius: var(--md-shape-m); background: var(--md-surface-container-highest); }
+.look-seg-btn {
+  flex: 1; display: inline-flex; align-items: center; justify-content: center; padding: 6px 4px; border: none; border-radius: var(--md-shape-s);
+  background: none; color: var(--md-on-surface-variant); font: inherit; font-size: 12.5px; cursor: pointer;
 }
-.theme-opt:hover { background: var(--md-state-hover); }
-.theme-opt.on { background: var(--md-primary-container); color: var(--md-on-primary-container); font-weight: 700; }
-.theme-swatch { width: 20px; height: 20px; border-radius: 50%; border: 1px solid var(--md-outline); flex-shrink: 0; }
+.look-seg-btn:hover { color: var(--md-on-surface); }
+.look-seg-btn.on { background: var(--md-primary); color: var(--md-on-primary); font-weight: 600; }
+.look-dots { display: flex; justify-content: space-between; gap: 6px; padding: 0 2px; }
+.look-dot {
+  width: 20px; height: 20px; padding: 0; border: none; border-radius: 50%; background: var(--c); cursor: pointer;
+  transition: transform .12s ease, box-shadow .12s ease;
+}
+.look-dot:hover { transform: scale(1.12); }
+.look-dot.on { box-shadow: 0 0 0 2px var(--md-surface-container-lowest), 0 0 0 4px var(--md-on-surface); }
+.look-seg-btn:focus-visible, .look-dot:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 2px; }
 
 .main {
   flex: 1; min-width: 0; background: var(--md-surface-container-lowest);
@@ -595,10 +613,10 @@ textarea.input { font-family: inherit; resize: vertical; }
   transition: background 0.15s ease, transform 0.15s ease;
 }
 .ticket-row:hover { background: var(--md-surface-container-highest); transform: translateX(2px); }
-.ticket-row[data-prio="critical"] { border-left-color: #E7004B; }
-.ticket-row[data-prio="high"]     { border-left-color: #FF8B3A; }
+.ticket-row[data-prio="critical"] { border-left-color: var(--prio-critical); }
+.ticket-row[data-prio="high"]     { border-left-color: var(--prio-high); }
 .ticket-row[data-prio="medium"]   { border-left-color: var(--md-primary); }
-.ticket-row[data-prio="low"]      { border-left-color: #BFBFBF; }
+.ticket-row[data-prio="low"]      { border-left-color: var(--prio-low); }
 @media (prefers-reduced-motion: reduce) { .ticket-row:hover { transform: none; } }
 .row-arrow { display: flex; justify-content: flex-end; color: var(--md-on-surface-variant); }
 .mono { font-family: var(--mono); }
@@ -964,7 +982,7 @@ textarea.input { font-family: inherit; resize: vertical; }
 .td-feed > div { margin-bottom: 10px; position: relative; }
 .td-feed > div::before { content: ""; position: absolute; left: -19px; top: 5px; width: 8px; height: 8px; border-radius: 50%; background: var(--md-outline); }
 .td-feed > div.cmt::before { background: var(--md-primary); }
-.td-feed > div.sys::before { background: #FF8B3A; }
+.td-feed > div.sys::before { background: var(--prio-high); }
 .td-feed b { font-weight: 700; }
 .td-feed small { display: block; color: var(--md-on-surface-variant); font-size: 11px; margin-top: 2px; }
 .td-cmt { display: block; margin-top: 4px; padding: 8px 10px; border-radius: 4px 10px 10px 10px; background: var(--md-primary-container); white-space: pre-wrap; word-break: break-word; }

@@ -103,7 +103,19 @@ html { font-kerning: none; }
   --dir-outgoing: #0A61AE;
   --dir-incoming: #008F9F;
   --dir-internal: #663AB5;
-  --dir-missed: #E7004B;
+  /* Пропущенный — сигнал, а не направление: цвет ошибки платформы. При акценте «Гранат» темы
+     «Центра» уводят ошибку из розовой гаммы — точка на чипе уходит вместе с ней и не спорит
+     с основным цветом. */
+  --dir-missed: var(--md-error);
+  /* Плашки направления в таблице и цифры на карточках статистики — те же гаммы, что у столбцов
+     графика. Свои переменные, а не --md-info-/--md-success-container: их темы «Центра»
+     перекрашивают под акцент (2026-10-08), и «Исходящий» в таблице становился оранжевым или
+     зелёным, а на графике оставался голубым. Направление звонка — данные, их цвет от выбранного
+     оформления не зависит. */
+  --dir-outgoing-container: #DCE7F6;
+  --dir-on-outgoing-container: #0A61AE;
+  --dir-incoming-container: #DBF0F2;
+  --dir-on-incoming-container: #007A88;   /* на ступень темнее #008F9F — мелкий текст на светлой плашке */
 
   --sans: "PT Root UI", Arial, "Segoe UI", system-ui, -apple-system, sans-serif;
 
@@ -200,9 +212,9 @@ h1 { font-size: 24px; font-weight: 600; letter-spacing: 0; }
 }
 .card .num { font-size: 30px; font-weight: 600; letter-spacing: -0.5px; }
 .card .label { font-size: 11.5px; color: var(--md-on-surface-variant); text-transform: uppercase; letter-spacing: .5px; font-weight: 500; }
-.card.out .num { color: var(--md-on-info-container, #1E4B8F); }
-.card.in .num { color: var(--md-on-success-container, #1F6B37); }
-.card.internal .num { color: var(--md-on-secondary-container, #5B3BA8); }
+.card.out .num { color: var(--dir-on-outgoing-container); }
+.card.in .num { color: var(--dir-on-incoming-container); }
+.card.internal .num { color: var(--dir-internal); }
 
 /* Фильтры */
 .filters {
@@ -255,8 +267,8 @@ tbody tr:last-child td { border-bottom: none; }
 
 /* Chip M3 — тональные пары под направление звонка */
 .badge { display: inline-block; padding: 5px 12px; border-radius: var(--md-shape-xs); font-size: 12px; font-weight: 500; }
-.badge.outgoing { background: var(--md-info-container); color: var(--md-on-info-container); }
-.badge.incoming { background: var(--md-success-container); color: var(--md-on-success-container); }
+.badge.outgoing { background: var(--dir-outgoing-container); color: var(--dir-on-outgoing-container); }
+.badge.incoming { background: var(--dir-incoming-container); color: var(--dir-on-incoming-container); }
 .badge.internal { background: var(--md-tertiary-container); color: var(--md-on-tertiary-container); }
 .badge.missed { background: var(--md-error-container); color: var(--md-on-error-container); }
 .badge.unknown { background: var(--md-neutral-container); color: var(--md-on-neutral-container); }
@@ -560,7 +572,10 @@ html[data-theme="dark"] {
   --dir-outgoing: #87A9E3;
   --dir-incoming: #1AC4BC;
   --dir-internal: #C5B4E2;
-  --dir-missed: #FF5A67;
+  --dir-outgoing-container: #24344E;
+  --dir-on-outgoing-container: #B0C8E7;
+  --dir-incoming-container: #173B3F;
+  --dir-on-incoming-container: #A4E5D8;
 }
 
 /* Пустая выборка: строка-пояснение вместо пустого поля под шапкой.

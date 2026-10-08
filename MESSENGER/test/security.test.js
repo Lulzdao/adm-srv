@@ -44,7 +44,8 @@ async function open(кто) {
   return { raw };
 }
 
-test('смена пароля администратором закрывает прежние входы и открытые окна', async () => {
+// Решение пользователя 2026-10-08: смена пароля — для следующего входа; уже вошедший клиент не вылетает.
+test('смена пароля администратором не выкидывает уже вошедших; новый пароль — для следующего входа', async () => {
   const u = await makeUser(srv.url, admin.token, 'сменит-пароль');
   const ws = await open(u);
   assert.equal((await me(u)).status, 200);
@@ -52,11 +53,13 @@ test('смена пароля администратором закрывает 
   const r = await request(srv.url, 'PATCH', `/api/admin/users/${u.id}`, { token: admin.token, body: { password: 'новый-пароль-1' } });
   assert.equal(r.status, 200, r.text);
 
-  assert.equal((await me(u)).status, 401, 'старый токен после смены пароля не пускает');
-  assert.equal(await closed(ws), true, 'открытое окно отключено');
-  // Сервер принимает рукопожатие и сразу закрывает сокет, если токен не годится.
+  assert.equal((await me(u)).status, 200, 'прежний вход продолжает работать');
+  assert.equal(await closed(ws), false, 'открытое окно не отключено');
   const ws2 = await open(u);
-  assert.equal(await closed(ws2), true, 'со старым токеном WebSocket не держится');
+  assert.equal(await closed(ws2), false, 'переподключение с прежним входом проходит');
+  ws.raw.close(); ws2.raw.close();
+  const старый = await request(srv.url, 'POST', '/api/login', { body: { username: 'сменит-пароль', password: PASSWORD } });
+  assert.equal(старый.status, 401, 'старым паролем войти заново нельзя');
   const новый = await login(srv.url, 'сменит-пароль', 'новый-пароль-1');
   assert.equal((await me(новый)).status, 200, 'новый вход работает');
 });
@@ -84,6 +87,30 @@ test('токены, выданные до обновления (без номе�
   db.close();
   const старый = jwt.sign({ id: u.id }, secret, { expiresIn: '30d' });
   assert.equal((await me({ token: старый })).status, 200, 'обновление сервера не должно разлогинить всех');
+});
+
+// 2026-10-08: работающий клиент не должен вылетать через 30 дней — при подключении окна с токеном старше
+// суток сервер выдаёт свежий (сообщение 'token'); свежему токену новый не нужен.
+test('вход продлевается: токену старше суток при подключении выдаётся новый', async () => {
+  const u = await makeUser(srv.url, admin.token, 'давно-вошёл');
+  const db = new DatabaseSync(path.join(srv.dir, 'messenger.db'), { readOnly: true });
+  const secret = db.prepare("SELECT value FROM app_settings WHERE key = 'jwt_secret'").get().value;
+  db.close();
+  const firstToken = (raw) => new Promise((resolve) => {
+    const t = setTimeout(() => resolve(null), 1500);
+    raw.on('message', (m) => { const d = JSON.parse(m); if (d.type === 'token') { clearTimeout(t); resolve(d.token); } });
+  });
+  const старый = jwt.sign({ id: u.id, sg: 0, iat: Math.floor(Date.now() / 1000) - 2 * 24 * 3600 }, secret, { expiresIn: '30d' });
+  const ws = await open({ token: старый });
+  const новый = await firstToken(ws.raw);
+  ws.raw.close();
+  assert.ok(новый, 'старому входу выдан новый токен');
+  assert.equal((await me({ token: новый })).status, 200, 'новый токен — рабочий вход');
+  assert.ok(jwt.decode(новый).iat > jwt.decode(старый).iat, 'и выдан сейчас');
+
+  const ws2 = await open(u); // свежий токен из makeUser
+  assert.equal(await firstToken(ws2.raw), null, 'свежему входу новый токен не нужен');
+  ws2.raw.close();
 });
 
 test('токен на скачивание файла не годится как вход', async () => {

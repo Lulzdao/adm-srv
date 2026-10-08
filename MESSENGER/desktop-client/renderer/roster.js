@@ -163,8 +163,28 @@ async function api(path, opts) {
 
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 
-let wsLostTimer = null; // см. showConnectionLostModal в ui-kit.js
+let wsLostTimer = null; // см. showOfflineBar в ui-kit.js
 let wsReconnectDelay = 2000; // экспоненциальный бэкофф между попытками (см. onclose ниже)
+let wsEverOpened = false;    // первое подключение — не «восстановление»: дозагружать нечего
+
+// Связь вернулась после обрыва. Сервер пропущенное не досылает (живые события шли мимо), поэтому
+// досчитываем сами: непрочитанные личные и объявления — с сервера (seedMissedUnread), список и группы —
+// заново. Если за время обрыва написали — одно общее уведомление, а не по штуке на каждое сообщение.
+async function resyncAfterReconnect() {
+  try {
+    const before = (await desktop.getUnreadState()).dms || {};
+    await seedMissedUnread();
+    refreshUsers().catch(() => {});
+    refreshGroups().then(renderList).catch(() => {});
+    refreshBroadcastPreview();
+    const after = (await desktop.getUnreadState()).dms || {};
+    const grew = Object.keys(after).filter((uid) => (after[uid] || 0) > (before[uid] || 0));
+    if (grew.length) {
+      const names = grew.map((uid) => { const u = usersCache.find((x) => String(x.id) === uid); return u ? displayNameOf(u) : 'сотрудник'; });
+      desktop.notify({ title: 'Пока не было связи', body: `Новые сообщения: ${names.slice(0, 3).join(', ')}${names.length > 3 ? ` и ещё ${names.length - 3}` : ''}` });
+    }
+  } catch { /* связь снова пропала — следующее восстановление попробует ещё раз */ }
+}
 function connectWs() {
   const wsUrl = serverUrl.replace(/^http/, 'ws');
   ws = new WebSocket(`${wsUrl}?token=${token}&host=${encodeURIComponent(desktop.hostname)}`
@@ -178,12 +198,17 @@ function connectWs() {
     clearTimeout(wsLostTimer);
     wsLostTimer = null;
     wsReconnectDelay = 2000;
-    hideConnectionLostModal();
+    hideOfflineBar();
     const { state } = await desktop.getIdleState();
+    paintMeSub(state);
     ws.send(JSON.stringify({ type: 'status', state }));
+    if (wsEverOpened) resyncAfterReconnect();
+    wsEverOpened = true;
   };
   ws.onmessage = (e) => {
     const data = JSON.parse(e.data);
+    // Сервер продлил вход (токену больше суток) — сохраняем: с ним же откроются окна и следующий запуск.
+    if (data.type === 'token' && data.token) { token = data.token; localStorage.setItem('token', token); return; }
     if (data.type === 'presence') { presence = data.users; updatePresenceOnly(); }
     // Команды администратора из веб-панели. Выполняет их главный процесс — окно только передаёт.
     if (data.type === 'force-update') { desktop.forceUpdate(); return; }
@@ -226,15 +251,14 @@ function connectWs() {
     if (data.type === 'groups-changed') refreshGroups().then(renderList);
   };
   ws.onclose = () => {
-    if (window.appShuttingDown) return; // выключается ПК — не переподключаемся и не мигаем модалкой
-    // Не сбрасываем таймер на каждой неудачной попытке (реконнект — раз в 2с) — иначе постоянные
-    // провалы просто бесконечно откладывали бы показ диалога. Ставим один раз на первый обрыв и
-    // ждём (5с), пока какая-нибудь попытка не удастся; удачное onopen выше сам его отменяет.
-    if (!wsLostTimer) wsLostTimer = setTimeout(() => { wsLostTimer = null; showConnectionLostModal(connectWs); }, 5000);
-    // Бэкофф: 2с → ×1.5 после каждой неудачи, потолок 30с — при обрыве сети на несколько часов
+    if (window.appShuttingDown) return; // выключается ПК — не переподключаемся и не показываем «нет связи»
+    // Полоса «нет связи» — не на первый же обрыв (короткие разрывы на пару секунд не мигают), а если
+    // за 3 с ни одна попытка не удалась; таймер ставится один раз, удачное onopen его отменяет.
+    if (!wsLostTimer) wsLostTimer = setTimeout(() => { wsLostTimer = null; showOfflineBar(); paintMeSub('offline'); }, 3000);
+    // Бэкофф: 2с → ×1.5 после каждой неудачи, потолок 10с (было 30 — «Нет связи» висело до полуминуты после возвращения сервера); при обрыве на часы
     // это фоновые редкие попытки, а не спам раз в 2 секунды. Успешное onopen сбрасывает задержку.
     setTimeout(connectWs, wsReconnectDelay);
-    wsReconnectDelay = Math.min(wsReconnectDelay * 1.5, 30000);
+    wsReconnectDelay = Math.min(wsReconnectDelay * 1.5, 10000);
   };
 }
 
@@ -274,8 +298,11 @@ desktop.onIdleState(({ state, idleSeconds }) => {
 });
 // Вторая строка в карточке профиля: свой статус и имя этого компьютера (как его видят коллеги).
 function paintMeSub(state) {
+  // Пока нет связи, «Отошёл / В сети» от таймера простоя не перебивает «Нет связи».
+  if (state !== 'offline' && document.body.classList.contains('is-offline')) return;
   const sub = document.getElementById('meSub');
-  if (sub) sub.textContent = `${state === 'idle' ? 'Отошёл' : 'В сети'} · ${desktop.hostname}`;
+  const label = state === 'offline' ? 'Нет связи' : state === 'idle' ? 'Отошёл' : 'В сети';
+  if (sub) sub.textContent = `${label} · ${desktop.hostname}`;
 }
 
 desktop.onShowAlert(({ message, title }) => uiAlert(message, title));
@@ -388,6 +415,9 @@ document.querySelector('#profilePanel .pp-me').title = 'Вернуться к с
 document.getElementById('searchIcon').innerHTML = uiIcon('search');
 document.getElementById('ppEmblem').innerHTML = uiIcon('emblem');
 
+// «Отошёл» — не дольше чем через 30 минут: дольше статус «в сети» у ушедшего человека вводит коллег в
+// заблуждение (пишут — а его нет). Тот же предел держит главный процесс (currentIdleState в main.js).
+const IDLE_MAX_MINUTES = 30;
 const PP_CHECKBOX_IDS = [
   ['ppNotifications', 'notifications'],
   ['ppOpenChatOnMessage', 'openChatOnMessage'],
@@ -416,7 +446,7 @@ async function loadProfilePanel() {
   paintProfileTheme(settings.theme);
   paintProfileAccent(settings.accent);
   paintProfileDownloadPath(settings.downloadPath);
-  document.getElementById('ppIdleThresholdMinutes').value = settings.idleThresholdMinutes || 15;
+  document.getElementById('ppIdleThresholdMinutes').value = Math.min(IDLE_MAX_MINUTES, settings.idleThresholdMinutes || 15);
   paintProfileUiScale(settings.uiScale);
   // Карточка «кто я»: полное имя и отделы — как записаны на сервере.
   document.getElementById('ppFullName').textContent = displayNameOf(me);
@@ -481,7 +511,7 @@ document.getElementById('ppPickFolderBtn').onclick = async () => {
 };
 document.getElementById('ppClearFolderBtn').onclick = () => { desktop.setSettings({ downloadPath: null }); paintProfileDownloadPath(null); };
 document.getElementById('ppIdleThresholdMinutes').addEventListener('change', (e) => {
-  const mins = Math.min(240, Math.max(1, Number(e.target.value) || 15));
+  const mins = Math.min(IDLE_MAX_MINUTES, Math.max(1, Number(e.target.value) || 15));
   e.target.value = mins;
   desktop.setSettings({ idleThresholdMinutes: mins });
 });

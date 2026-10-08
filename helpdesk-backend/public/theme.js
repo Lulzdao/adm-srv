@@ -1,58 +1,110 @@
-// Цветовая тема: личный выбор, хранится в этом браузере (localStorage), на сервер не уходит.
+// Оформление: вариант темы и цвет акцента — личный выбор, хранится в этом браузере (localStorage), на
+// сервер не уходит. Как в клиенте «Искры» — два переключателя (решение пользователя 2026-10-08; раньше
+// был один список из шести тем): «Тема» — цветная (боковая панель цвета акцента), светлая (белая
+// панель) или тёмная; «Акцент» — те же шесть цветов, что в «Искре», и розовый.
 //
-// Подключается в <head> ДО стилей страницы и сразу ставит <html data-theme="…"> — иначе страница
-// успевала бы мигнуть голубой темой. Сами темы — themes.css.
+// Подключается в <head> ДО стилей страницы и сразу ставит атрибуты на <html> — иначе страница
+// успевала бы мигнуть голубой темой:
+//   data-theme="light"     — светлая: белая боковая панель; data-theme="dark" — тёмная; цветная (по
+//                            умолчанию) — без атрибута. Имя "dark" слушают модули: Сертвивер, журнал
+//                            звонков и панель «Искры» держат в своих стилях правила для html[data-theme="dark"];
+//   data-accent="…"        — акцент, только в цветной теме (Лазурь — по умолчанию, без атрибута). Цвета — themes.css.
 //
-// Ключи:
-//   center.theme            — тема, действующая в этом браузере сейчас (её же читают модули,
-//                             открытые внутри «Центра»: они на том же адресе, хранилище общее);
-//   center.theme:<логин>    — выбор конкретного сотрудника. За одним компьютером работают
-//                             сменами: вошёл другой человек — применяется его тема.
-// Событие storage приходит во все остальные вкладки и встроенные страницы этого адреса — тема
+// Ключи хранилища:
+//   center.mode, center.accent             — действующие в этом браузере сейчас (их же читают модули,
+//                                            открытые внутри «Центра»: адрес тот же, хранилище общее);
+//   center.mode:<логин>, center.accent:<логин> — выбор конкретного сотрудника. За одним компьютером
+//                                            работают сменами: вошёл другой — применяется его оформление.
+//   center.theme[:<логин>]                 — прежний единый выбор (до 2026-10-08); читается один раз,
+//                                            чтобы перенести выбор сотрудников, и больше не пишется.
+// Событие storage приходит во все остальные вкладки и встроенные страницы этого адреса — оформление
 // меняется в них сразу, без перезагрузки.
 (function () {
-  var KEY = 'center.theme';
-  var THEMES = [
-    { id: 'blue', name: 'Голубая', swatch: ['#0A61AE', '#E8EDF5'] },
-    { id: 'lilac', name: 'Сиреневая', swatch: ['#663AB5', '#ECE8F4'] },
-    { id: 'emerald', name: 'Изумрудная', swatch: ['#00818F', '#E4EFF0'] },
-    { id: 'pink', name: 'Розовая', swatch: ['#C2003F', '#F5E9ED'] },
-    { id: 'light', name: 'Светлая', swatch: ['#FFFFFF', '#E8EDF5'] },
-    { id: 'dark', name: 'Тёмная', swatch: ['#121416', '#23262B'] },
+  var MODES = [
+    { id: 'color', name: 'Цветная' },
+    { id: 'light', name: 'Светлая' },
+    { id: 'dark', name: 'Тёмная' },
   ];
-  var DEFAULT = 'blue';
-  var known = function (t) { for (var i = 0; i < THEMES.length; i++) if (THEMES[i].id === t) return true; return false; };
-  // Хранилище может быть недоступно (режим инкогнито со строгими настройками) — тогда просто
-  // голубая тема на время сеанса.
-  var read = function (key) { try { var t = localStorage.getItem(key); return known(t) ? t : null; } catch (e) { return null; } };
-  var write = function (key, t) { try { localStorage.setItem(key, t); } catch (e) { /* не сохранилось — не беда */ } };
+  // Порядок и названия — как в настройках клиента «Искры»; розовый — сверх них, по просьбе пользователя.
+  var ACCENTS = [
+    { id: 'ember', name: 'Янтарь', color: '#C2560F' },
+    { id: 'garnet', name: 'Гранат', color: '#9C2A2E' },
+    { id: 'pink', name: 'Розовый', color: '#C2003F' },
+    { id: 'gold', name: 'Латунь', color: '#8F6B00' },
+    { id: 'jade', name: 'Малахит', color: '#00775A' },
+    { id: 'azure', name: 'Лазурь', color: '#0A61AE' },
+    { id: 'violet', name: 'Аметист', color: '#663AB5' },
+  ];
+  var DEFAULT_MODE = 'color', DEFAULT_ACCENT = 'azure';
+  // Прежние темы → новое оформление: так выбор, сделанный до обновления, не теряется.
+  var LEGACY = {
+    blue: ['color', 'azure'], light: ['light', 'azure'], dark: ['dark', 'azure'],
+    lilac: ['color', 'violet'], emerald: ['color', 'jade'], pink: ['color', 'pink'],
+  };
+  var has = function (list, id) { for (var i = 0; i < list.length; i++) if (list[i].id === id) return true; return false; };
+  // Хранилище может быть недоступно (режим инкогнито со строгими настройками) — тогда оформление по
+  // умолчанию на время сеанса.
+  var read = function (key) { try { return localStorage.getItem(key); } catch (e) { return null; } };
+  var write = function (key, v) { try { localStorage.setItem(key, v); } catch (e) { /* не сохранилось — не беда */ } };
 
   var user = null;
-  function apply(t) {
-    var el = document.documentElement;
-    if (!t || t === DEFAULT) el.removeAttribute('data-theme'); else el.setAttribute('data-theme', t);
+  var mode = null, accent = null; // выбор на время сеанса, если хранилище недоступно
+  // Сохранённое для ключа (общего или сотрудника): новое, иначе перенесённое из прежней темы.
+  function stored(suffix) {
+    var m = read('center.mode' + suffix), a = read('center.accent' + suffix);
+    var legacy = LEGACY[read('center.theme' + suffix)];
+    return {
+      mode: has(MODES, m) ? m : legacy ? legacy[0] : null,
+      accent: has(ACCENTS, a) ? a : legacy ? legacy[1] : null,
+    };
   }
-  function current() { return (user && read(KEY + ':' + user)) || read(KEY) || DEFAULT; }
+  function current() {
+    var own = user ? stored(':' + user) : { mode: null, accent: null };
+    var here = stored('');
+    return {
+      mode: own.mode || here.mode || mode || DEFAULT_MODE,
+      accent: own.accent || here.accent || accent || DEFAULT_ACCENT,
+    };
+  }
+  function apply(c) {
+    var el = document.documentElement;
+    if (c.mode === DEFAULT_MODE) el.removeAttribute('data-theme'); else el.setAttribute('data-theme', c.mode);
+    // Акцент — только у цветной темы; светлая и тёмная — как были, голубые (выбор акцента при этом помнится).
+    if (c.mode !== DEFAULT_MODE || c.accent === DEFAULT_ACCENT) el.removeAttribute('data-accent'); else el.setAttribute('data-accent', c.accent);
+  }
+  function save(c) {
+    if (user) { write('center.mode:' + user, c.mode); write('center.accent:' + user, c.accent); }
+    write('center.mode', c.mode);
+    write('center.accent', c.accent);
+  }
 
   apply(current());
-  window.addEventListener('storage', function (e) { if (!e.key || e.key.indexOf(KEY) === 0) apply(current()); });
+  window.addEventListener('storage', function (e) { if (!e.key || e.key.indexOf('center.') === 0) apply(current()); });
 
   window.CenterTheme = {
-    list: THEMES,
+    modes: MODES,
+    accents: ACCENTS,
+    /** Действующее оформление: { mode: 'color'|'light'|'dark', accent: 'azure'|… }. */
     get: current,
-    /** Выбрать тему: запоминается для вошедшего сотрудника и как действующая в браузере. */
-    set: function (t) {
-      if (!known(t)) return;
-      if (user) write(KEY + ':' + user, t);
-      write(KEY, t);
-      apply(t);
+    /** Вариант темы (цветная, светлая, тёмная) — запоминается для вошедшего сотрудника и как действующая в браузере. */
+    setMode: function (m) {
+      if (!has(MODES, m)) return;
+      var c = current(); c.mode = m; mode = m;
+      save(c); apply(c);
     },
-    /** После входа: применить тему этого сотрудника (или оставить действующую, если он не выбирал). */
+    /** Цвет акцента — так же. */
+    setAccent: function (a) {
+      if (!has(ACCENTS, a)) return;
+      var c = current(); c.accent = a; accent = a;
+      save(c); apply(c);
+    },
+    /** После входа: применить оформление этого сотрудника (или оставить действующее, если он не выбирал). */
     useUser: function (login) {
       user = login ? String(login).toLowerCase() : null;
-      var t = current();
-      write(KEY, t);
-      apply(t);
+      var c = current();
+      write('center.mode', c.mode);
+      write('center.accent', c.accent);
+      apply(c);
     },
   };
 })();

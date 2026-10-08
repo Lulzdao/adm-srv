@@ -40,6 +40,7 @@
     <div id="tabGroup">
       <div class="nav-item active" data-view="overview">Обзор</div>
       <div class="nav-item" data-view="users">Пользователи</div>
+      <div class="nav-item" data-view="depts">Отделы</div>
       <div class="nav-item" data-view="history">Переписки</div>
       <div class="nav-item" data-view="broadcast">Рассылка</div>
       <div class="nav-item" data-view="files">Файлы</div>
@@ -89,23 +90,6 @@
       </div>
 
       <div class="panel">
-        <h3>Отделы</h3>
-        <p style="color:var(--muted); font-size:12px; margin:0 0 10px;">
-          Права (рассылки/админка) выдаются только персонально — ниже, каждому пользователю. Здесь
-          только название отдела и порядок: перетащите строку за ручку слева. В этом же порядке
-          отделы идут в списке пользователей.
-        </p>
-        <div class="row-flex">
-          <input id="newDeptName" placeholder="Название отдела">
-          <button class="action" onclick="createDept()">Добавить</button>
-        </div>
-        <table style="margin-top:12px;">
-          <thead><tr><th style="width:44px"></th><th>Название</th><th style="width:250px"></th></tr></thead>
-          <tbody id="deptsBody"></tbody>
-        </table>
-      </div>
-
-      <div class="panel">
         <h3>Новый пользователь</h3>
         <div class="row-flex">
           <input id="newUsername" placeholder="Логин">
@@ -122,6 +106,27 @@
           <span id="usersCount" style="color:var(--muted); font-size:12.5px; white-space:nowrap;"></span>
         </div>
         <div id="usersList"></div>
+      </div>
+    </div>
+
+    <div class="view" id="view-depts">
+      <h2>Отделы</h2>
+
+      <div class="panel">
+        <h3>Список отделов</h3>
+        <p style="color:var(--muted); font-size:12px; margin:0 0 10px;">
+          Права (рассылки/админка) выдаются только персонально — в разделе «Пользователи», каждому. Здесь
+          только название отдела и порядок: перетащите строку за ручку слева. В этом же порядке
+          отделы идут в списке пользователей.
+        </p>
+        <div class="row-flex">
+          <input id="newDeptName" placeholder="Название отдела">
+          <button class="action" onclick="createDept()">Добавить</button>
+        </div>
+        <table style="margin-top:12px;">
+          <thead><tr><th style="width:44px"></th><th>Название</th><th style="width:250px"></th></tr></thead>
+          <tbody id="deptsBody"></tbody>
+        </table>
       </div>
     </div>
 

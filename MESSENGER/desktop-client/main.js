@@ -289,7 +289,7 @@ const DEFAULT_SETTINGS = {
   alwaysOnTop: true,         // держать окна поверх остальных
   hideNameInMessages: true,  // не повторять имя собеседника в каждом сообщении личного чата (по умолчанию включено)
   theme: 'light',            // 'dark' | 'light'
-  accent: 'azure',           // цвет кнопок, отметок и герба: 'ember' | 'garnet' | 'gold' | 'jade' | 'azure' | 'violet'
+  accent: 'azure',           // цвет кнопок, отметок и герба: 'ember' | 'garnet' | 'pink' | 'gold' | 'jade' | 'azure' | 'violet'
   downloadPath: null,        // папка для сохранения файлов по умолчанию (null = каждый раз спрашивать)
   idleThresholdMinutes: 15,  // сколько минут без активности мыши/клавиатуры -> статус "Отошёл"
   uiScale: 1,                // масштаб всего интерфейса (1 = 100%, текущий размер как есть) — см. applyUiScale
@@ -566,6 +566,9 @@ function hookSessionEnd(win) {
 
 // Ключ в settings.json для запоминания размера окна — свой на каждый тип окна (чат, рассылки),
 // не только на чат, как было раньше.
+// Окно объявлений по умолчанию — 574×423 (так настроил пользователь 2026-10-08; было 420×520). Чат — 380×520.
+const BROADCAST_DEFAULT_SIZE = { width: 574, height: 423, minWidth: 360, minHeight: 400 };
+
 function sizeKeyForFile(file) {
   const map = { 'chat.html': 'chatSize', 'broadcast.html': 'broadcastSize' };
   return map[file] || null;
@@ -625,11 +628,21 @@ function createWindow(key, file, payload, size) {
   return win;
 }
 
+// Первое открытие ростера (размер не сохранён или «Запоминать размер окон» выключено): прижат к правому
+// краю основного экрана во всю высоту рабочей области (над панелью задач), шириной 340 — так его настроил
+// пользователь 2026-10-08. Не точные координаты его экрана, а «правый край, вся высота» — на любом мониторе.
+const ROSTER_DEFAULT_WIDTH = 340;
+function rosterDefaultBounds() {
+  const wa = screen.getPrimaryDisplay().workArea;
+  return { width: ROSTER_DEFAULT_WIDTH, height: wa.height, x: wa.x + wa.width - ROSTER_DEFAULT_WIDTH, y: wa.y };
+}
+
 function createRoster() {
   const saved = settings.rememberWindowSize ? settings.rosterSize : null;
-  const width = saved?.width || 300;
-  const height = saved?.height || 620;
-  const pos = clampToVisibleArea(saved?.x, saved?.y, width, height);
+  const def = rosterDefaultBounds();
+  const width = saved?.width || def.width;
+  const height = saved?.height || def.height;
+  const pos = saved ? clampToVisibleArea(saved.x, saved.y, width, height) : { x: def.x, y: def.y };
   rosterWin = new BrowserWindow({
     width, height, ...(pos || {}),
     minWidth: 260,
@@ -747,7 +760,8 @@ function createTray() {
 // работает корректно. Текущее время простоя показывается во всплывающей подсказке над своим статусом.
 function currentIdleState() {
   const idleSeconds = powerMonitor.getSystemIdleTime();
-  const thresholdSeconds = (Number(settings.idleThresholdMinutes) || 15) * 60;
+  // Не дольше 30 минут — и для настройки, сохранённой ещё до этого предела (было до 240).
+  const thresholdSeconds = Math.min(30, Math.max(1, Number(settings.idleThresholdMinutes) || 15)) * 60;
   return { state: idleSeconds >= thresholdSeconds ? 'idle' : 'active', idleSeconds };
 }
 
@@ -999,7 +1013,7 @@ ipcMain.on('open-chat', (event, payload) => {
 });
 
 ipcMain.on('open-broadcast', (event, payload) => {
-  createWindow('broadcast', 'broadcast.html', payload, { width: 420, height: 520, minWidth: 360, minHeight: 400 });
+  createWindow('broadcast', 'broadcast.html', payload, BROADCAST_DEFAULT_SIZE);
 });
 
 // ПКМ по отделу в списке контактов → «Сообщение всему отделу». Окно то же самое, что у объявлений
@@ -1007,7 +1021,7 @@ ipcMain.on('open-broadcast', (event, payload) => {
 // адресатов, см. departmentId. Ключ окна свой на каждый отдел, чтобы окна разных отделов и общие
 // объявления не подменяли друг друга. Само меню рисует окно (uiContextMenu в ui-kit.js).
 ipcMain.on('open-department-broadcast', (event, payload) => {
-  createWindow(`broadcast:dept:${payload.departmentId}`, 'broadcast.html', payload, { width: 420, height: 520, minWidth: 360, minHeight: 400 });
+  createWindow(`broadcast:dept:${payload.departmentId}`, 'broadcast.html', payload, BROADCAST_DEFAULT_SIZE);
 });
 
 // ПКМ по сотруднику → «Отправить файл…».
@@ -1221,7 +1235,7 @@ ipcMain.on('notify', (event, payload) => {
   // открывать (chat.html по умолчанию, либо broadcast.html), так что механизм общий для обоих.
   const file = openPayload?.file || 'chat.html';
   const key = !openPayload ? null : (file === 'broadcast.html' ? 'broadcast' : `${openPayload.type}:${openPayload.id}`);
-  const winSize = file === 'broadcast.html' ? { width: 420, height: 520, minWidth: 360, minHeight: 400 } : undefined;
+  const winSize = file === 'broadcast.html' ? BROADCAST_DEFAULT_SIZE : undefined;
 
   if (settings.openChatOnMessage && openPayload) {
     // Окно открывается само, но «открылось» — ещё не «прочитано»: за чужим окном или свёрнутым его

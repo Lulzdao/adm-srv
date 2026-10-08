@@ -177,7 +177,7 @@ html { font-kerning: none; }
     background: var(--md-inverse-surface, #37322B); color: var(--md-inverse-on-surface, #F6EEE6);
   }
   #status:empty { display: none; }
-  #status.error { background: var(--md-error); color: var(--md-on-primary, #fff); }
+  #status.error { background: var(--md-error); color: var(--md-on-error, #fff); }
   #status.ok { background: var(--md-success-container); color: var(--md-on-success-container); }
 
   .table-wrap {

@@ -1,6 +1,6 @@
 // Окно «broadcast.html»: скрипт (вынесен из страницы, текст без правок).
 const params = new URLSearchParams(location.search);
-const token = params.get('token');
+let token = params.get('token'); // может обновиться: сервер продлевает вход (сообщение 'token')
 const serverUrl = params.get('serverUrl');
 const me = JSON.parse(params.get('me') || 'null');
 installErrorReporting(serverUrl, token, 'broadcast'); // см. ui-kit.js
@@ -622,7 +622,8 @@ document.getElementById('feed').addEventListener('scroll', () => {
 });
 
 let ws;
-let wsLostTimer = null; // см. showConnectionLostModal в ui-kit.js
+let wsLostTimer = null; // см. showOfflineBar в ui-kit.js
+let wsEverOpened = false; // первое подключение — не «восстановление»
 let wsReconnectDelay = 2000; // экспоненциальный бэкофф между попытками (см. onclose ниже)
 function connectWs() {
   const wsUrl = serverUrl.replace(/^http/, 'ws');
@@ -634,21 +635,25 @@ function connectWs() {
     clearTimeout(wsLostTimer);
     wsLostTimer = null;
     wsReconnectDelay = 2000;
-    hideConnectionLostModal();
+    hideOfflineBar();
     const { state } = await desktop.getIdleState();
     ws.send(JSON.stringify({ type: 'status', state }));
+    // Связь вернулась после обрыва — объявления, пришедшие за это время, сервер не досылает: перечитываем ленту.
+    if (wsEverOpened) loadFeed();
+    wsEverOpened = true;
   };
   ws.onmessage = (e) => {
     const data = JSON.parse(e.data);
+    if (data.type === 'token' && data.token) { token = data.token; return; } // сервер продлил вход
     if (data.type === 'broadcast') addLiveBroadcast(data);
   };
   ws.onclose = () => {
-    if (window.appShuttingDown) return; // выключается ПК — не переподключаемся и не мигаем модалкой
-    if (!wsLostTimer) wsLostTimer = setTimeout(() => { wsLostTimer = null; showConnectionLostModal(connectWs); }, 5000);
-    // Бэкофф: 2с → ×1.5 после каждой неудачи, потолок 30с — при обрыве сети на несколько часов
+    if (window.appShuttingDown) return; // выключается ПК — не переподключаемся и не показываем «нет связи»
+    if (!wsLostTimer) wsLostTimer = setTimeout(() => { wsLostTimer = null; showOfflineBar(); }, 3000);
+    // Бэкофф: 2с → ×1.5 после каждой неудачи, потолок 10с (было 30 — «Нет связи» висело до полуминуты после возвращения сервера); при обрыве на часы
     // это фоновые редкие попытки, а не спам раз в 2 секунды. Успешное onopen сбрасывает задержку.
     setTimeout(connectWs, wsReconnectDelay);
-    wsReconnectDelay = Math.min(wsReconnectDelay * 1.5, 30000);
+    wsReconnectDelay = Math.min(wsReconnectDelay * 1.5, 10000);
   };
 }
 

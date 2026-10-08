@@ -156,7 +156,7 @@
       const s = await window.desktop.getSettings();
       document.documentElement.dataset.theme = s.theme === 'dark' ? 'dark' : 'light';
       // Акцент — только из известного списка: значение попадает в атрибут, по которому theme.css выбирает цвета.
-      document.documentElement.dataset.accent = ['ember', 'garnet', 'gold', 'jade', 'violet'].includes(s.accent) ? s.accent : 'azure';
+      document.documentElement.dataset.accent = ['ember', 'garnet', 'pink', 'gold', 'jade', 'violet'].includes(s.accent) ? s.accent : 'azure';
     } catch { /* игнор */ }
   }
   if (window.desktop) {
@@ -197,56 +197,40 @@
   window.uiAlert = (message, title = 'Сообщение') =>
     modal({ title: `${uiIcon('warn')} ${title}`, message, buttons: [{ label: 'ОК', value: true, className: 'ui-btn-primary' }] });
 
-  // Диалог "потеряна связь с сервером" — визуально тот же modal(), что и uiConfirm/uiAlert, но
-  // не через него напрямую: нужно уметь программно СКРЫТЬ диалог, если соединение восстановится
-  // само (см. connectWs в каждом окне), а modal() отдаёт наружу только Promise без такой ручки.
-  // Один диалог на окно (каждое окно — свой рендерер, свой WS) — если открыто несколько окон и
-  // сервер лёг, у каждого появится свой, это ожидаемо, не дублирование одного и того же окна.
-  let connectionLostOverlay = null;
-  window.showConnectionLostModal = (onRetry) => {
-    if (connectionLostOverlay || window.appShuttingDown) return; // уже показан в этом окне / выключаемся
-    const overlay = document.createElement('div');
-    overlay.className = 'ui-modal-overlay';
-    const box = document.createElement('div');
-    box.className = 'ui-modal-box';
-    box.innerHTML = `
-      <div class="ui-modal-title">${uiIcon('warn')} Соединение с сервером потеряно</div>
-      <div class="ui-modal-msg">Проверьте подключение к сети. Можно попробовать ещё раз, выйти из аккаунта или закрыть приложение.</div>
-      <div class="ui-modal-actions stacked">
-        <button class="ui-btn-primary" id="uiClRetry">Повторить</button>
-        <button class="ui-btn-ghost" id="uiClLogout">Выйти из аккаунта</button>
-        <button class="ui-btn-ghost" id="uiClExit">Закрыть приложение</button>
-      </div>
-    `;
-    overlay.appendChild(box);
-    document.body.appendChild(overlay);
-    connectionLostOverlay = overlay;
-    // Выход из аккаунта возвращает на экран входа, а он тут единственный способ выбраться из
-    // тупика: если адрес сервера задан неверно, приложение бесконечно переподключается, и попасть
-    // туда, где адрес можно исправить (Ctrl+S на экране входа), иначе не выйдет — перезапуск не
-    // поможет, клиент снова войдёт по сохранённому токену и снова упрётся в тот же адрес.
-    // Обращения к серверу выход не требует: токен просто стирается на этой машине (см. logout
-    // в main.js), поэтому кнопка работает и при полностью недоступном сервере.
-    box.querySelector('#uiClLogout').onclick = () => window.desktop.logout();
-    box.querySelector('#uiClExit').onclick = () => window.desktop.windowAction('quit');
-    box.querySelector('#uiClRetry').onclick = () => { window.hideConnectionLostModal(); onRetry(); };
+  // Нет связи с сервером — тонкая полоса под шапкой окна, а не окно поверх всего. Раньше здесь было
+  // модальное «Соединение с сервером потеряно» с кнопкой «Выйти из аккаунта»: решение пользователя
+  // 2026-10-08 — выход из аккаунта по ошибке критичнее, чем любая потеря связи, поэтому никаких
+  // вопросов: по самому окну видно, что связи нет, клиент переподключается сам, а когда связь вернётся,
+  // полоса исчезает и окно дозагружает пропущенное (см. connectWs в roster/chat/broadcast).
+  let offlineBar = null;
+  window.showOfflineBar = () => {
+    if (offlineBar || window.appShuttingDown) return;
+    offlineBar = document.createElement('div');
+    offlineBar.className = 'offline-bar';
+    offlineBar.setAttribute('role', 'status');
+    offlineBar.innerHTML = '<span class="offline-dot"></span><span>Нет связи с сервером — переподключаемся…</span>';
+    const bar = document.querySelector('.wintitlebar');
+    if (bar && bar.parentNode) bar.insertAdjacentElement('afterend', offlineBar);
+    else document.body.prepend(offlineBar);
+    document.body.classList.add('is-offline');
   };
-  window.hideConnectionLostModal = () => {
-    if (!connectionLostOverlay) return;
-    connectionLostOverlay.remove();
-    connectionLostOverlay = null;
+  window.hideOfflineBar = () => {
+    if (!offlineBar) return;
+    offlineBar.remove();
+    offlineBar = null;
+    document.body.classList.remove('is-offline');
   };
 
   // Windows завершает сеанс (выключение/перезагрузка), главный процесс вот-вот снесёт окна — см.
   // beginShutdown в main.js. Общий флаг на окно: connectWs в roster/chat/broadcast перестаёт
-  // переподключаться, а диалог о потере связи больше не всплывает. Без этого сеть, отваливающаяся
+  // переподключаться, а полоса «нет связи» больше не появляется. Без этого сеть, отваливающаяся
   // на выключении раньше нас, гарантированно роняла каждое окно в цикл реконнекта и показывала
   // модалку прямо поверх экрана выключения — лишняя работа ровно тогда, когда её меньше всего надо.
   window.appShuttingDown = false;
   if (window.desktop && window.desktop.onShuttingDown) {
     window.desktop.onShuttingDown(() => {
       window.appShuttingDown = true;
-      window.hideConnectionLostModal();
+      window.hideOfflineBar();
     });
   }
 

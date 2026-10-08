@@ -10,7 +10,7 @@ const zlib = require('node:zlib');
 // Цвета акцентов — как в тёмной теме (theme.css): панель задач Windows тёмная и при светлой теме
 // приложения, а светлые варианты акцентов на ней тускнеют.
 const ACCENT_COLORS = {
-  ember: '#f28e42', garnet: '#ef7d83', gold: '#e1b75c', jade: '#54c398', azure: '#7aaeef', violet: '#b494ed',
+  ember: '#f28e42', garnet: '#ef7d83', pink: '#f37fae', gold: '#e1b75c', jade: '#54c398', azure: '#7aaeef', violet: '#b494ed',
 };
 
 // Контур искры в поле 24×24 — те же четыре дуги, что в spark-star.svg: [начало, опора 1, опора 2, конец].

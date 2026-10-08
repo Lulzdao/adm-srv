@@ -1,29 +1,28 @@
 /* ============================================================================
-   Цветовые темы «Центра» — личный выбор каждого сотрудника.
+   Оформление «Центра»: тема (цветная / светлая / тёмная) и акцент цветной темы — личный выбор.
 
-   Тема — это набор переменных: правила в styles.css одни на все темы. Выбор
-   хранится в браузере (theme.js, localStorage) и ставится атрибутом
-   <html data-theme="…">; без атрибута действует голубая тема из styles.css.
-   Этот же файл подключают модули (Сертвивер, журнал звонков, панель «Искры»),
-   открытые внутри «Центра», — тема у них та же.
+   Решение пользователя 2026-10-08: два переключателя, как в клиенте «Искры». theme.js ставит на <html>:
+     без data-theme     — цветная: боковая панель цвета акцента (наборы в :root styles.css и ниже);
+     data-theme="light" — светлая, как была: голубая гамма, боковая панель белая;
+     data-theme="dark"  — тёмная, как была;
+     data-accent="…"    — акцент, только в цветной теме; без атрибута — Лазурь (голубой из :root).
+   Светлая и тёмная с акцентом не сочетаются (просьба пользователя): theme.js при них data-accent не ставит.
+   Этот же файл подключают модули (Сертвивер, журнал звонков, панель «Искры»), открытые внутри
+   «Центра», — оформление у них то же; свои добавки к тёмной теме они держат под html[data-theme="dark"].
 
-   Цвета — из «Руководства по использованию фирменного стиля» Росстата:
-     3.1 основные: голубая и сиреневая гаммы — темы «Голубая» и «Сиреневая»;
-     3.2 изумрудная гамма — для внутренних коммуникаций, вместе с основными —
-         тема «Изумрудная» (вторым цветом в ней остаётся голубой);
-     3.3 дополнительные (розовый, оранжевый, зелёный, коричневый) брендбук
-         отводит под акценты. «Розовая» — личная тема по просьбе
-         пользователей, а не фирменный вид: по умолчанию остаётся голубая.
-     3.4 на тёмном фоне текст белый, на светлом — тёмно-серый: так собраны
-         «Светлая» (светлая боковая панель) и «Тёмная».
+   Акценты — те же, что в «Искре»: Янтарь, Гранат, Латунь, Малахит, Лазурь, Аметист, и Розовый сверх них
+   (по просьбе пользователя). Цвета взяты на
+   ступень темнее клиентских там, где на них лежит белый текст боковой панели (3.4 брендбука: на тёмном
+   фоне текст белый) — иначе подписи меню не читались бы. Лазурь и Аметист — основные цвета брендбука
+   Росстата (3.1), Розовый — прежняя «Розовая» тема, остальные — из дополнительных (3.3).
 
-   Где названный в брендбуке цвет слишком светел для белого текста на нём
-   (тёмно-изумрудный #008F9F, тёмно-розовый #E7004B в роли фона панели), взят
-   тон на ступень темнее — чтобы подписи в боковой панели читались.
+   Акцент задаёт основной цвет, лёгкий оттенок фона и боковую панель.
    ========================================================================= */
 
-/* ---------- Сиреневая ---------- */
-html[data-theme="lilac"] {
+/* ===================== Цветная тема: акценты ===================== */
+
+/* ---------- Аметист (прежняя «Сиреневая») ---------- */
+html[data-accent="violet"] {
   --md-primary: #663AB5;                 /* тёмно-сиреневый */
   --md-primary-container: #E9E2F6;
   --md-on-primary-container: #663AB5;
@@ -50,40 +49,47 @@ html[data-theme="lilac"] {
   --sidebar-ink-faint: #C5B4E2;
 }
 
-/* ---------- Изумрудная ---------- */
-html[data-theme="emerald"] {
-  --md-primary: #00818F;                 /* тёмно-изумрудный, на ступень темнее */
-  --md-primary-container: #DBF0F2;
-  --md-on-primary-container: #00707C;
+/* ---------- Гранат: тёмно-красный, отдельно от розового ---------- */
+html[data-accent="garnet"] {
+  --md-primary: #9C2A2E;
+  --md-primary-container: #F8E1E0;
+  --md-on-primary-container: #86232A;
   --md-secondary-container: #DCE7F6;
   --md-on-secondary-container: #0A61AE;
-  --md-surface: #E4EFF0;
-  --md-surface-container-low: #F6FAFB;
-  --md-surface-container-high: #F6FAFB;
-  --md-surface-container-highest: #E9F3F4;
-  --md-outline: #D3E5E7;
-  --md-outline-variant: #DEECEE;
-  --md-info-container: #DBF0F2;
-  --md-on-info-container: #00707C;
-  /* Изумрудный занят основным цветом — «всё в порядке» обозначает зелёный. */
-  --md-success-container: #EAF3CC;
-  --md-on-success-container: #5C7500;
-  --green: #5C7500;
-  --md-state-hover: #E9F3F4;
-  --md-state-hover-strong: #DBF0F2;
-  --md-primary-strong: #006B77;
-  --md-primary-tint: rgba(0, 143, 159, 0.09);
-  --md-primary-ring: rgba(0, 143, 159, 0.16);
-  --md-primary-edge: #A4E5D8;            /* светло-изумрудный */
+  --md-surface: #F3E9E8;
+  --md-surface-container-low: #FCF8F8;
+  --md-surface-container-high: #FCF8F8;
+  --md-surface-container-highest: #F6EDEC;
+  --md-outline: #EBDAD9;
+  --md-outline-variant: #F0E4E3;
+  --md-info-container: #F8E1E0;
+  --md-on-info-container: #86232A;
+  --md-state-hover: #F6EDEC;
+  --md-state-hover-strong: #F8E1E0;
+  --md-primary-strong: #7F2125;
+  --md-primary-tint: rgba(156, 42, 46, 0.08);
+  --md-primary-ring: rgba(156, 42, 46, 0.15);
+  --md-primary-edge: #E7AFAF;
   --md-secondary-faint: #F2F7FD;
-  --md-disabled: #D8E6E8;
+  --md-disabled: #ECE0DF;
+  /* Красный рядом с розовым цветом ошибки не отличить — ошибка уходит в тёмно-оранжевую гамму,
+     «истекает срок» — в коричневую (как у розового акцента). */
+  --md-error: #D4380D;
+  --md-error-container: #FFE4DA;
+  --md-on-error-container: #B8320F;
+  --md-error-strong: #B8320F;
+  --md-error-edge: #FFA489;
+  --md-error-faint: #FFF4EF;
+  --md-warn-container: #F1E4DA;
+  --md-on-warn-container: #7A5140;
+  --amber: #8A5A44;
   --note: #0A61AE;
-  --sidebar-ink-soft: #D6EEF0;
-  --sidebar-ink-faint: #A4E5D8;
+  --sidebar-ink-soft: #F6D9D9;
+  --sidebar-ink-faint: #E7AFAF;
 }
 
-/* ---------- Розовая ---------- */
-html[data-theme="pink"] {
+/* ---------- Розовый (прежняя тема «Розовая») ---------- */
+html[data-accent="pink"] {
   --md-primary: #C2003F;                 /* тёмно-розовый, на ступень темнее */
   --md-primary-container: #FDE3EA;
   --md-on-primary-container: #B4003C;
@@ -118,6 +124,110 @@ html[data-theme="pink"] {
   --sidebar-ink-faint: #FEAFBF;
 }
 
+/* ---------- Малахит ---------- */
+html[data-accent="jade"] {
+  --md-primary: #00775A;                 /* малахитовый, как в «Искре», на ступень темнее */
+  --md-primary-container: #D7F0E6;
+  --md-on-primary-container: #00664D;
+  --md-secondary-container: #DCE7F6;     /* вторым — голубая гамма */
+  --md-on-secondary-container: #0A61AE;
+  --md-surface: #E3EFEA;
+  --md-surface-container-low: #F5FAF8;
+  --md-surface-container-high: #F5FAF8;
+  --md-surface-container-highest: #E8F3EE;
+  --md-outline: #D1E5DC;
+  --md-outline-variant: #DDECE5;
+  --md-info-container: #D7F0E6;
+  --md-on-info-container: #00664D;
+  /* Зелёный занят основным цветом — «всё в порядке» обозначает оливковый. */
+  --md-success-container: #EAF3CC;
+  --md-on-success-container: #5C7500;
+  --green: #5C7500;
+  --md-state-hover: #E8F3EE;
+  --md-state-hover-strong: #D7F0E6;
+  --md-primary-strong: #005E47;
+  --md-primary-tint: rgba(0, 119, 90, 0.09);
+  --md-primary-ring: rgba(0, 119, 90, 0.16);
+  --md-primary-edge: #9ED8C2;
+  --md-secondary-faint: #F2F7FD;
+  --md-disabled: #D6E6DF;
+  --note: #0A61AE;
+  --sidebar-ink-soft: #D2EFE4;
+  --sidebar-ink-faint: #9ED8C2;
+}
+
+/* ---------- Янтарь ---------- */
+html[data-accent="ember"] {
+  --md-primary: #C2560F;                 /* оранжевый, на ступень темнее — под белый текст панели */
+  --md-primary-container: #FCE6D6;
+  --md-on-primary-container: #A4470B;
+  --md-secondary-container: #DCE7F6;
+  --md-on-secondary-container: #0A61AE;
+  --md-surface: #F4EBE4;
+  --md-surface-container-low: #FCF8F5;
+  --md-surface-container-high: #FCF8F5;
+  --md-surface-container-highest: #F7EEE7;
+  --md-outline: #ECDDD1;
+  --md-outline-variant: #F1E6DD;
+  --md-info-container: #FCE6D6;
+  --md-on-info-container: #A4470B;
+  --md-state-hover: #F7EEE7;
+  --md-state-hover-strong: #FCE6D6;
+  --md-primary-strong: #A0470B;
+  --md-primary-tint: rgba(194, 86, 15, 0.08);
+  --md-primary-ring: rgba(194, 86, 15, 0.15);
+  --md-primary-edge: #F4C3A0;
+  --md-secondary-faint: #F2F7FD;
+  --md-disabled: #EDE2DA;
+  /* Оранжевый занят основным цветом — «истекает срок» уходит в коричневую гамму. */
+  --md-warn-container: #F1E4DA;
+  --md-on-warn-container: #7A5140;
+  --amber: #8A5A44;
+  --note: #0A61AE;
+  --sidebar-ink-soft: #FDEBDD;
+  --sidebar-ink-faint: #FAD9C2;          /* светлее — на янтаре бледные подписи иначе не читались */
+}
+
+/* ---------- Латунь ---------- */
+html[data-accent="gold"] {
+  --md-primary: #8F6B00;                 /* латунь, заметно темнее клиентской — под белый текст панели */
+  --md-primary-container: #F5EBC9;
+  --md-on-primary-container: #6E5300;
+  --md-secondary-container: #DCE7F6;
+  --md-on-secondary-container: #0A61AE;
+  --md-surface: #F2EEE0;
+  --md-surface-container-low: #FBFAF4;
+  --md-surface-container-high: #FBFAF4;
+  --md-surface-container-highest: #F5F0DF;
+  --md-outline: #E5DDC4;
+  --md-outline-variant: #ECE6D2;
+  --md-info-container: #F5EBC9;
+  --md-on-info-container: #6E5300;
+  --md-state-hover: #F5F0DF;
+  --md-state-hover-strong: #F5EBC9;
+  --md-primary-strong: #745700;
+  --md-primary-tint: rgba(143, 107, 0, 0.08);
+  --md-primary-ring: rgba(143, 107, 0, 0.16);
+  --md-primary-edge: #E2CC86;
+  --md-secondary-faint: #F2F7FD;
+  --md-disabled: #EAE5D3;
+  --note: #0A61AE;
+  --sidebar-ink-soft: #FAF3DE;
+  --sidebar-ink-faint: #F2E4B6;          /* светлее — на латуни бледные подписи иначе не читались */
+}
+
+/* Подсветка строки «истекает срок» под курсором (Сертвивер) — в тон акценту. */
+html[data-accent="garnet"] { --md-warn-edge: #E7CDB4; }
+html[data-accent="pink"] { --md-warn-edge: #E7CDB4; }
+
+/* Кромки приоритета заявок не должны совпадать с акцентом: при красных акцентах «критичный» — цвет
+   ошибки (оранжевый), «высокий» — коричневый; при Янтаре «высокий» — коричневый. */
+html[data-accent="garnet"], html[data-accent="pink"] {
+  --prio-critical: var(--md-error);
+  --prio-high: #8A5A44;
+}
+html[data-accent="ember"] { --prio-high: #8A5A44; }
+
 /* ---------- Светлая: та же голубая гамма, но боковая панель белая ---------- */
 html[data-theme="light"] {
   --sidebar: #FFFFFF;
@@ -129,6 +239,10 @@ html[data-theme="light"] {
   --sidebar-active: #DCE7F6;
   --sidebar-active-ink: #0A61AE;
 }
+/* Герб в боковой панели белый (фильтр в styles.css). На светлой панели — как есть, цветной. */
+html[data-theme="light"] .sidebar .brand-emblem { filter: none; }
+html[data-theme="light"] .sidebar { border-right: 1px solid var(--md-outline); }
+html[data-accent="ember"] { --md-warn-edge: #E7CDB4; }
 
 /* ---------- Тёмная ----------
    Фон — производные тёмно-серого #282A2E, акцент — «голубой» и «светло-
@@ -192,12 +306,6 @@ html[data-theme="dark"] {
   --sidebar-active-ink: #B0C8E7;
 }
 
-/* Герб в боковой панели белый (фильтр в styles.css). На светлой панели — как есть, цветной. */
-html[data-theme="light"] .sidebar .brand-emblem { filter: none; }
-html[data-theme="light"] .sidebar { border-right: 1px solid var(--md-outline); }
-
-/* Подсветка строки «истекает срок» под курсором (Сертвивер) — в тон теме. */
-html[data-theme="pink"] { --md-warn-edge: #E7CDB4; }
 html[data-theme="dark"] { --md-warn-edge: #6A4326; }
 
 /* Заметки в тёмной теме: приглушённые цвета карточек, текст остаётся светлым. */

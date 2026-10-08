@@ -1241,9 +1241,10 @@ app.patch('/api/admin/users/:id', auth, requireCapability('can_admin'), (req, re
   else if (department_id !== undefined) setUserDepartments(id, department_id ? [department_id] : []);
   if (password) {
     updateUserPassword.run(bcrypt.hashSync(password, 10), id);
-    // Новый пароль закрывает все прежние входы — ради этого пароль обычно и меняют.
-    bumpSessionGen.run(id);
-    dropConnections(id);
+    // Решение пользователя 2026-10-08: новый пароль — для СЛЕДУЮЩЕГО входа, уже вошедшие клиенты работают
+    // дальше без сообщений и без выхода (вылет сотрудника из мессенджера посреди работы критичнее). Раньше
+    // смена пароля поднимала session_gen и рвала соединения — клиент видел «соединение потеряно» и через
+    // ~20 с оказывался на экране входа. Механизм session_gen остался (userFromToken) для отзыва входа отдельно.
     logServer('INFO', 'password_reset', { adminId: req.user.id, userId: id });
   }
   if (cleanDisplay) updateDisplayName.run(cleanDisplay.slice(0, 60), id);
@@ -1744,6 +1745,13 @@ wss.on('connection', (ws, req) => {
   if (!online.has(user.id)) online.set(user.id, new Set());
   online.get(user.id).add(ws);
   connMeta.set(ws, { userId: user.id, hostname, appVersion, buildTrack, state: 'active', lastSeen: Date.now(), idleSince: null });
+  // Продление входа (2026-10-08): токен выдаётся на 30 дней, и клиент, который месяц не перезаходил, вылетал
+  // на экран входа. Окно подключается — если его токену больше суток, сервер выдаёт свежий, окно его
+  // сохраняет. Так у работающих клиентов вход не кончается никогда, а у выключенного больше 30 дней — кончается.
+  try {
+    const { iat } = jwt.decode(token) || {};
+    if (iat && Date.now() / 1000 - iat > 24 * 3600) sendTo(ws, JSON.stringify({ type: 'token', token: issueToken(user.id) }));
+  } catch (err) { logServer('WARN', 'token_renew_failed', { userId: user.id, message: err.message }); }
   // Снимок присутствия этому сокету — обязательно отдельно от broadcastPresence(): та теперь молчит,
   // когда снимок не изменился (см. её комментарий), а при втором подключении с того же ПК он и не
   // меняется — новое окно осталось бы вообще без списка, кто сейчас в сети.
