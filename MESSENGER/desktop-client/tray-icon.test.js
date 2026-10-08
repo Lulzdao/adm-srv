@@ -43,7 +43,7 @@ test('значок трея: рисунок симметричен и есть �
       assert.strictEqual(px(3, i)[3], px(3, size - 1 - i)[3], `размер ${size}: зеркально по вертикали`);
     }
   }
-  for (const name of ['ember', 'garnet', 'gold', 'jade', 'azure', 'violet']) assert.match(accentColor(name), /^#[0-9a-f]{6}$/);
+  for (const name of ['ember', 'garnet', 'pink', 'gold', 'jade', 'azure', 'violet']) assert.match(accentColor(name), /^#[0-9a-f]{6}$/);
   assert.strictEqual(accentColor('нет-такого'), ACCENT_COLORS.azure, 'неизвестный акцент — лазурь, как по умолчанию');
   assert.strictEqual(accentColor(undefined), ACCENT_COLORS.azure);
 });
@@ -59,6 +59,7 @@ test('значок программы: заливка сверху вниз, п�
   assert.strictEqual(px(32, 0)[3], 0, 'сверху поле: искра не упирается в край');
   assert.strictEqual(px(0, 0)[3], 0, 'фона нет');
 
+  // Сборщик значков сам по себе ещё нужен (запасной значок трея) — проверяем, что .ico он собирает верно.
   const entries = APP_ICON_SIZES.map((size) => ({ size, png: appIconPng(size) }));
   const ico = icoFromPngs(entries);
   assert.strictEqual(ico.readUInt16LE(2), 1, 'тип: значок'); assert.strictEqual(ico.readUInt16LE(4), entries.length);
@@ -67,8 +68,23 @@ test('значок программы: заливка сверху вниз, п�
     assert.strictEqual(ico[o] || 256, size);
     assert.ok(png.equals(ico.subarray(ico.readUInt32LE(o + 12), ico.readUInt32LE(o + 12) + ico.readUInt32LE(o + 8))), `размер ${size}: PNG лежит по своему смещению`);
   });
-  // Файл в git — тот, что получается из рисунка: правка рисунка без `npm run icons` не останется незамеченной.
-  assert.ok(ico.equals(fs.readFileSync(path.join(__dirname, 'build', 'icon.ico'))), 'build/icon.ico устарел — выполните: npm run icons');
+});
+
+// С 2026-10-08 значок программы — готовый рисунок пользователя (build/icon.ico), а не искра из кода.
+// Проверяем, что файл годится Windows и установщику: значок, все размеры от 16 до 256, внутри PNG.
+test('значок программы build/icon.ico: все размеры от 16 до 256', () => {
+  const ico = fs.readFileSync(path.join(__dirname, 'build', 'icon.ico'));
+  assert.strictEqual(ico.readUInt16LE(0), 0); assert.strictEqual(ico.readUInt16LE(2), 1, 'тип: значок');
+  const sizes = [];
+  for (let i = 0; i < ico.readUInt16LE(4); i++) {
+    const o = 6 + i * 16;
+    sizes.push(ico[o] || 256);
+    const off = ico.readUInt32LE(o + 12);
+    assert.strictEqual(ico.subarray(off, off + 4).toString('hex'), '89504e47', 'внутри PNG');
+  }
+  for (const need of [16, 24, 32, 48, 256]) assert.ok(sizes.includes(need), `нет размера ${need}`);
+  const png = fs.readFileSync(path.join(__dirname, 'build', 'icon.png'));
+  assert.strictEqual(png.readUInt32BE(16), 256, 'build/icon.png — 256×256');
 });
 
 test('значок программы: мелкие размеры — искра во всю ширину (панель задач), крупные — узкая с полями (ярлык)', () => {

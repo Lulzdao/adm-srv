@@ -157,6 +157,8 @@ body:has(#auth) #wcMax { display: none; }
 [data-theme="light"] .accent-pick [data-accent="ember"] { background: #d66919; }
 [data-theme="dark"] .accent-pick [data-accent="garnet"] { background: #ef7d83; }
 [data-theme="light"] .accent-pick [data-accent="garnet"] { background: #bd404d; }
+[data-theme="dark"] .accent-pick [data-accent="pink"] { background: #f37fae; }
+[data-theme="light"] .accent-pick [data-accent="pink"] { background: #c2366f; }
 [data-theme="dark"] .accent-pick [data-accent="gold"] { background: #e1b75c; }
 [data-theme="light"] .accent-pick [data-accent="gold"] { background: #d3a23b; }
 [data-theme="dark"] .accent-pick [data-accent="jade"] { background: #54c398; }

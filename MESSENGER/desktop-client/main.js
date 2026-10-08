@@ -289,7 +289,7 @@ const DEFAULT_SETTINGS = {
   alwaysOnTop: true,         // держать окна поверх остальных
   hideNameInMessages: true,  // не повторять имя собеседника в каждом сообщении личного чата (по умолчанию включено)
   theme: 'light',            // 'dark' | 'light'
-  accent: 'azure',           // цвет кнопок, отметок и герба: 'ember' | 'garnet' | 'gold' | 'jade' | 'azure' | 'violet'
+  accent: 'azure',           // цвет кнопок, отметок и герба: 'ember' | 'garnet' | 'pink' | 'gold' | 'jade' | 'azure' | 'violet'
   downloadPath: null,        // папка для сохранения файлов по умолчанию (null = каждый раз спрашивать)
   idleThresholdMinutes: 15,  // сколько минут без активности мыши/клавиатуры -> статус "Отошёл"
   uiScale: 1,                // масштаб всего интерфейса (1 = 100%, текущий размер как есть) — см. applyUiScale

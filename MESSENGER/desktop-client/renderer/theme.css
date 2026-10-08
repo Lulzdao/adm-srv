@@ -1,7 +1,7 @@
 /* Общая тема клиента «Искра» — редизайн «Уголь».
    Подключается на каждой странице. Переключение = атрибуты на <html>:
      data-theme  = "dark" | "light"
-     data-accent = "ember" | "garnet" | "gold" | "jade" | "azure" | "violet"
+     data-accent = "ember" | "garnet" | "pink" | "gold" | "jade" | "azure" | "violet"
    ВАЖНО: только hex/rgba — Electron 22 (Chromium 108) не понимает oklch() и color-mix(). */
 
 :root, [data-theme="dark"] {
@@ -44,6 +44,17 @@ html[data-accent="garnet"][data-theme="light"] {
   --accent: #bd404d; --accent-2: #ce594e; --accent-ink: #ffffff;
   --own: #ffdfdf; --own-border: #f7c6c7;
   --accent-a12: #bd404d1f; --accent-a20: #bd404d33; --accent-a35: #bd404d59; --accent-a70: #bd404db3;
+}
+/* Розовый (по просьбе пользователя 2026-10-08; в «Центре» такой же акцент) */
+html[data-accent="pink"], html[data-accent="pink"][data-theme="dark"] {
+  --accent: #f37fae; --accent-2: #f99cc4; --accent-ink: #1b120c;
+  --own: #46253a; --own-border: #603350;
+  --accent-a12: #f37fae1f; --accent-a20: #f37fae33; --accent-a35: #f37fae59; --accent-a70: #f37faeb3;
+}
+html[data-accent="pink"][data-theme="light"] {
+  --accent: #c2366f; --accent-2: #d4528a; --accent-ink: #ffffff;
+  --own: #ffe0ec; --own-border: #f7c4d9;
+  --accent-a12: #c2366f1f; --accent-a20: #c2366f33; --accent-a35: #c2366f59; --accent-a70: #c2366fb3;
 }
 /* Латунь */
 html[data-accent="gold"], html[data-accent="gold"][data-theme="dark"] {
