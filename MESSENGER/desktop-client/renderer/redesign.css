@@ -370,6 +370,8 @@ textarea:focus { box-shadow: 0 0 0 3px var(--accent-a20); }
 @keyframes offline-pulse { 50% { opacity: .35; } }
 /* Своя карточка в списке: пока нет связи — серая точка и «Нет связи». */
 body.is-offline #meDot { background: var(--offline) !important; box-shadow: none !important; }
+/* Статусы в списке без связи устарели (сервер их не присылает) — серые, а не застывшие «в сети». */
+body.is-offline #list .dot { background: var(--offline) !important; box-shadow: none !important; }
 /* Сообщение, которое не ушло: приглушено, под ним «Не отправлено · Повторить». */
 .msg.pending { opacity: .72; }
 .msg.pending .pending-bar { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 6px;
