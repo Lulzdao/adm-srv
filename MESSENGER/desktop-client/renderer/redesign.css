@@ -327,8 +327,9 @@ body:has(#messages) #historyPanel, body:has(#feed) #historyPanel, body:has(#feed
 #ttl .ttl-icon { width: 30px; height: 30px; border-radius: 10px; background: var(--accent); color: var(--accent-ink); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 #ttl .ttl-icon svg { width: 16px; height: 16px; }
 #ttl .ttl-text { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; }
-/* «История» здесь — кнопка-значок без подписи, «Написать» — акцентная. В шапке только «закрыть». */
-body:has(#feed) #historyBtn { width: 30px; padding: 0; justify-content: center; font-size: 0; gap: 0; color: var(--muted); }
+/* «История» — с подписью, как в окне чата (решение пользователя 2026-10-08; в макете была значком без
+   подписи), «Написать» — акцентная. В шапке только «закрыть». */
+body:has(#feed) #historyBtn { gap: 6px; }
 #composeBtn, #composeBtn:hover { gap: 5px; padding: 0 11px; background: var(--accent); color: var(--accent-ink); font-weight: 600; }
 #composeBtn svg { width: 13px; height: 13px; }
 #composeBtn.active { box-shadow: 0 0 0 3px var(--accent-a35); }
