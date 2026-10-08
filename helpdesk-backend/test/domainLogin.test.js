@@ -191,6 +191,37 @@ test("подсети и адреса разбираются правильно",
   assert.strictEqual(detectDomain("172.16.0.1", cfg), null);
 });
 
+test("у домена может быть несколько подсетей и отдельные адреса — для клиентов за прокси", () => {
+  const { parseCidrList, detectDomain } = require("../services/network");
+  assert.deepStrictEqual(
+    parseCidrList(" 192.168.254.0/23, 10.148.130.87;10.0.0.1 "),
+    ["192.168.254.0/23", "10.148.130.87/32", "10.0.0.1/32"],
+    "разделители — запятая, пробел, точка с запятой; адрес без маски — один адрес"
+  );
+  assert.deepStrictEqual(parseCidrList(""), []);
+  assert.deepStrictEqual(parseCidrList(undefined), []);
+
+  // Прокси выходит к платформе с адреса вне обеих подсетей.
+  const cfg = { network: { domainACidr: "10.148.12.0/22", domainBCidr: "192.168.254.0/23, 10.148.130.87" } };
+  assert.strictEqual(detectDomain("10.148.130.87", cfg), "B", "адрес прокси записан домену B");
+  assert.strictEqual(detectDomain("10.148.130.88", cfg), null, "соседний адрес — не прокси");
+  assert.strictEqual(detectDomain("10.148.13.5", cfg), "A");
+  assert.strictEqual(detectDomain("192.168.255.102", cfg), "B");
+
+  // Адрес прокси лежит внутри подсети другого домена: узкая запись важнее широкой.
+  const wide = { network: { domainACidr: "10.148.0.0/16", domainBCidr: "192.168.254.0/23 10.148.130.87" } };
+  assert.strictEqual(detectDomain("10.148.130.87", wide), "B");
+  assert.strictEqual(detectDomain("10.148.130.210", wide), "A");
+
+  // Одинаковая запись у обоих доменов — домен A, как и до списков.
+  const same = { network: { domainACidr: "10.0.0.0/8", domainBCidr: "10.0.0.0/8" } };
+  assert.strictEqual(detectDomain("10.1.2.3", same), "A");
+
+  // Опечатка в одной записи не выключает остальные.
+  const typo = { network: { domainACidr: "", domainBCidr: "192.168.254.0/23, 10.148.130/32, 10.148.130.87" } };
+  assert.strictEqual(detectDomain("10.148.130.87", typo), "B");
+});
+
 test("все группы из домена запоминаются по имени и пересчитываются при входе — для общего ящика рассылок", async (t) => {
   const { db, app } = await stand(t);
   const { userInGroup } = require("../services/userStore");

@@ -111,7 +111,8 @@ module.exports = {
   ],
 
   // Автоопределение домена по подсети клиента — чтобы не показывать
-  // пользователю вкладки выбора домена.
+  // пользователю вкладки выбора домена. В каждой переменной — список подсетей
+  // и отдельных адресов (см. services/network.js).
   network: {
     domainACidr: process.env.NETWORK_DOMAIN_A_CIDR || "",
     domainBCidr: process.env.NETWORK_DOMAIN_B_CIDR || "",
