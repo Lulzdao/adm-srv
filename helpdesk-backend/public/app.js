@@ -12,6 +12,8 @@ const ICON_PATHS = {
   paperclip: '<path d="M21 12.5l-8.5 8.5a4 4 0 1 1-5.66-5.66l9-9a2.5 2.5 0 1 1 3.54 3.54l-9 9a1 1 0 1 1-1.42-1.42l8-8"/>',
   x: '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
   // Палитра — выбор цветовой темы (низ боковой панели).
+  moon: '<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
   palette: '<path d="M12 3a9 9 0 1 0 0 18c1.1 0 1.8-.8 1.8-1.8 0-.5-.2-.9-.5-1.2-.3-.3-.5-.7-.5-1.2 0-1 .8-1.8 1.8-1.8H17a4 4 0 0 0 4-4c0-4.4-4-8-9-8z"/><circle cx="7.5" cy="11.5" r="1"/><circle cx="10" cy="7.5" r="1"/><circle cx="15" cy="7.5" r="1"/>',
   box: '<path d="M21 8L12 3 3 8l9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/>',
   // Иконки модулей: печать с лентами — Сертвивер, трубка — журнал звонков,
@@ -71,15 +73,20 @@ function icon(name, size) {
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">${ICON_PATHS[name] || ""}</svg>`;
 }
 
-// ---- Цветовая тема (theme.js, themes.css): выбор в низу боковой панели ----
-// Тема личная: хранится в браузере для вошедшего сотрудника, на сервер не уходит.
+// ---- Оформление (theme.js, themes.css): выбор в низу боковой панели ----
+// Как в настройках клиента «Искры»: «Тема» — светлая или тёмная, «Акцент» — один из шести цветов.
+// Выбор личный: хранится в браузере для вошедшего сотрудника, на сервер не уходит.
 function themeOptionsHtml() {
   const now = CenterTheme.get();
-  return CenterTheme.list.map((t) => `
-    <button class="theme-opt${t.id === now ? " on" : ""}" data-theme-id="${t.id}">
-      <span class="theme-swatch" style="background:linear-gradient(135deg, ${t.swatch[0]} 0 50%, ${t.swatch[1]} 50% 100%);"></span>
-      <span>${esc(t.name)}</span>
-    </button>`).join("");
+  const modeBtn = (id, iconName, label) =>
+    `<button type="button" class="look-seg-btn${now.mode === id ? " on" : ""}" data-mode="${id}">${icon(iconName, 14)} ${label}</button>`;
+  return `
+    <div class="look-row"><span class="look-label">Тема</span>
+      <div class="look-seg">${modeBtn("dark", "moon", "Тёмная")}${modeBtn("light", "sun", "Светлая")}</div></div>
+    <div class="look-row"><span class="look-label">Акцент</span>
+      <div class="look-dots">${CenterTheme.accents.map((a) => `
+        <button type="button" class="look-dot${now.accent === a.id ? " on" : ""}" data-accent="${a.id}" title="${esc(a.name)}"
+          aria-label="Акцент: ${esc(a.name)}" style="--c: ${a.color};"></button>`).join("")}</div></div>`;
 }
 
 function wireThemePicker() {
@@ -88,10 +95,12 @@ function wireThemePicker() {
   if (!btn || !pop) return;
   btn.onclick = () => { pop.hidden = !pop.hidden; };
   pop.onclick = (e) => {
-    const opt = e.target.closest(".theme-opt");
-    if (!opt) return;
-    CenterTheme.set(opt.dataset.themeId);
-    pop.querySelectorAll(".theme-opt").forEach((o) => o.classList.toggle("on", o === opt));
+    const m = e.target.closest("[data-mode]");
+    const a = e.target.closest(".look-dot");
+    if (m) CenterTheme.setMode(m.dataset.mode);
+    else if (a) CenterTheme.setAccent(a.dataset.accent);
+    else return;
+    pop.innerHTML = themeOptionsHtml(); // отметить выбранное
   };
   // Клик мимо закрывает — общим перехватчиком рядом с выпадающими списками (enhanceSelect).
 }
