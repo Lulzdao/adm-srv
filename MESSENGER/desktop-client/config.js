@@ -17,7 +17,9 @@ module.exports = {
 
   // Подключение к ПК сотрудника (ПКМ по контакту у администратора): где на ПК администраторов лежит
   // просмотрщик UltraVNC и какой порт слушает его сервер на рабочих местах (PortNumber в
-  // ultravnc.ini). На отдельной машине переопределяется без пересборки — vncViewerPath и vncPort в
+  // ultravnc.ini). Диск у администраторов разный, поэтому тот же путь пробуется и на C:, D:, F:, а
+  // последним — Program Files\uvnc_s, где просмотрщик есть на каждом ПК (см. viewerCandidates в
+  // remote.js). На отдельной машине переопределяется без пересборки — vncViewerPath и vncPort в
   // C:\ProgramData\Iskra\config.json.
   VNC_VIEWER_PATH: 'E:\\uvnc_support\\vncviewer.exe',
   VNC_PORT: 5995,

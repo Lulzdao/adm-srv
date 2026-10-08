@@ -26,4 +26,28 @@ function viewerArgs(host, port, extraArgs) {
   return ['-connect', `${host}:${port}`, ...(extraArgs || [])];
 }
 
-module.exports = { isRemoteHost, remoteHostsOf, viewerArgs };
+// Где искать просмотрщик, по порядку. Папка у администраторов одна и та же, а диск — разный: у кого
+// E:, у кого C:. Поэтому путь из сборки пробуется на нескольких дисках, а последним идёт папка
+// сервера UltraVNC (Program Files\uvnc_s): она есть на каждом ПК, и просмотрщик с плагином
+// шифрования в ней тоже лежит.
+//
+// Путь из машинной политики — единственный: администратор назвал его явно, и молча брать вместо
+// него другой файл нельзя.
+const DRIVES = ['C', 'D', 'E', 'F'];
+function viewerCandidates(policyPath, defaultPath, programFilesDirs) {
+  if (policyPath) return [policyPath];
+  const list = [defaultPath];
+  const tail = /^[a-z]:(\\.+)$/i.exec(defaultPath || '');
+  if (tail) for (const d of DRIVES) list.push(`${d}:${tail[1]}`);
+  for (const pf of programFilesDirs || []) if (pf) list.push(`${pf}\\uvnc_s\\vncviewer.exe`);
+  const seen = new Set();
+  return list.filter((p) => p && !seen.has(p.toLowerCase()) && seen.add(p.toLowerCase()));
+}
+
+// Первый существующий из кандидатов или null. exists — (путь) => boolean.
+function findViewer(candidates, exists) {
+  for (const p of candidates) if (exists(p)) return p;
+  return null;
+}
+
+module.exports = { isRemoteHost, remoteHostsOf, viewerArgs, viewerCandidates, findViewer };
