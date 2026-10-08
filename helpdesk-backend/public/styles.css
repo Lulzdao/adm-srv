@@ -397,22 +397,23 @@ a { color: var(--md-primary); }
 /* Выбор цветовой темы — раскрывается над кнопкой «Оформление». */
 .sidebar-foot { position: relative; }
 .theme-pop {
-  position: absolute; left: 16px; width: 330px; bottom: 100px; z-index: 30; padding: 6px 8px;
+  position: absolute; left: 12px; right: 12px; bottom: 100px; z-index: 30; padding: 4px 6px;
   background: var(--md-surface-container-lowest); border: 1px solid var(--md-outline);
   border-radius: var(--md-shape-l); box-shadow: 0 8px 28px rgba(10, 30, 60, .28);
 }
-/* Как в настройках «Искры»: строка «Тема» с переключателем, строка «Акцент» с кружками. */
-.look-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 8px; }
+/* Как в настройках «Искры»: «Тема» с переключателем, «Акцент» с кружками; подписи над элементами —
+   окошко помещается в ширину боковой панели. */
+.look-row { display: flex; flex-direction: column; align-items: stretch; gap: 8px; padding: 10px 6px; }
 .look-row + .look-row { border-top: 1px solid var(--md-outline-variant); }
-.look-label { font-size: 13px; color: var(--md-on-surface); }
+.look-label { font-size: 11px; font-weight: 700; letter-spacing: .4px; text-transform: uppercase; color: var(--md-on-surface-variant); }
 .look-seg { display: flex; padding: 3px; gap: 2px; border-radius: var(--md-shape-m); background: var(--md-surface-container-highest); }
 .look-seg-btn {
-  display: inline-flex; align-items: center; gap: 5px; padding: 6px 10px; border: none; border-radius: var(--md-shape-s);
+  flex: 1; display: inline-flex; align-items: center; justify-content: center; padding: 6px 4px; border: none; border-radius: var(--md-shape-s);
   background: none; color: var(--md-on-surface-variant); font: inherit; font-size: 12.5px; cursor: pointer;
 }
 .look-seg-btn:hover { color: var(--md-on-surface); }
 .look-seg-btn.on { background: var(--md-primary); color: var(--md-on-primary); font-weight: 600; }
-.look-dots { display: flex; gap: 8px; }
+.look-dots { display: flex; justify-content: space-between; gap: 6px; padding: 0 2px; }
 .look-dot {
   width: 20px; height: 20px; padding: 0; border: none; border-radius: 50%; background: var(--c); cursor: pointer;
   transition: transform .12s ease, box-shadow .12s ease;

@@ -74,15 +74,15 @@ function icon(name, size) {
 }
 
 // ---- Оформление (theme.js, themes.css): выбор в низу боковой панели ----
-// Как в настройках клиента «Искры»: «Тема» — светлая или тёмная, «Акцент» — один из шести цветов.
+// Как в настройках клиента «Искры»: «Тема» — цветная, светлая (белая панель) или тёмная, «Акцент» —
+// один из семи цветов. Подписи над элементами — чтобы окошко помещалось в ширину боковой панели.
 // Выбор личный: хранится в браузере для вошедшего сотрудника, на сервер не уходит.
 function themeOptionsHtml() {
   const now = CenterTheme.get();
-  const modeBtn = (id, iconName, label) =>
-    `<button type="button" class="look-seg-btn${now.mode === id ? " on" : ""}" data-mode="${id}">${icon(iconName, 14)} ${label}</button>`;
   return `
     <div class="look-row"><span class="look-label">Тема</span>
-      <div class="look-seg">${modeBtn("dark", "moon", "Тёмная")}${modeBtn("light", "sun", "Светлая")}</div></div>
+      <div class="look-seg">${CenterTheme.modes.map((m) =>
+        `<button type="button" class="look-seg-btn${now.mode === m.id ? " on" : ""}" data-mode="${m.id}">${esc(m.name)}</button>`).join("")}</div></div>
     <div class="look-row"><span class="look-label">Акцент</span>
       <div class="look-dots">${CenterTheme.accents.map((a) => `
         <button type="button" class="look-dot${now.accent === a.id ? " on" : ""}" data-accent="${a.id}" title="${esc(a.name)}"

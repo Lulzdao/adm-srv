@@ -39,12 +39,12 @@ function loadTheme(store = {}, { broken = false } = {}) {
   return { theme: sandbox.window.CenterTheme, attrs, store, listeners };
 }
 
-test("у каждого акцента есть набор и для светлой, и для тёмной темы; лишних наборов нет", () => {
+test("у каждого акцента есть набор и для цветной/светлой, и для тёмной темы; лишних наборов нет", () => {
   const { theme } = loadTheme();
   // Array.from: список создан в другом контексте (vm) — его массив формально другого типа.
-  assert.deepStrictEqual(Array.from(theme.modes, (m) => m.id), ["light", "dark"]);
+  assert.deepStrictEqual(Array.from(theme.modes, (m) => m.id), ["color", "light", "dark"]);
   const accents = Array.from(theme.accents, (a) => a.id);
-  assert.deepStrictEqual(accents, ["ember", "garnet", "gold", "jade", "azure", "violet"], "порядок — как в клиенте «Искры»");
+  assert.deepStrictEqual(accents, ["ember", "garnet", "pink", "gold", "jade", "azure", "violet"], "порядок — как в клиенте «Искры», плюс розовый");
   const css = read("themes.css");
   const light = [...new Set([...css.matchAll(/html\[data-accent="([a-z]+)"\]:not\(\[data-theme="dark"\]\) \{\r?\n/g)].map((m) => m[1]))].sort();
   const dark = [...new Set([...css.matchAll(/html\[data-theme="dark"\]\[data-accent="([a-z]+)"\] \{/g)].map((m) => m[1]))].sort();
@@ -53,7 +53,8 @@ test("у каждого акцента есть набор и для светл�
   assert.deepStrictEqual(light, others, "светлые наборы акцентов");
   assert.deepStrictEqual(dark, others, "тёмные наборы акцентов");
   assert.ok(/html\[data-theme="dark"\] \{\r?\n\s*color-scheme: dark;/.test(css), "базовый набор тёмной темы");
-  assert.ok(!/data-theme="(blue|lilac|emerald|pink|light)"/.test(css), "прежних тем в стилях не осталось");
+  assert.ok(/html:root\[data-theme="light"\] \{/.test(css), "светлая тема: белая боковая панель");
+  assert.ok(!/data-theme="(blue|lilac|emerald|pink)"/.test(css), "прежних тем в стилях не осталось");
 });
 
 test("в правилах styles.css нет цветов в обход переменных", () => {
@@ -89,8 +90,8 @@ test("переменные, на которые ссылаются правил�
 test("выбор запоминается для вошедшего сотрудника; сменщик на том же компьютере видит своё оформление", () => {
   const store = {};
   let { theme, attrs } = loadTheme(store);
-  assert.deepStrictEqual({ ...theme.get() }, { mode: "light", accent: "azure" });
-  assert.strictEqual(attrs["data-theme"], undefined, "светлая — без атрибута");
+  assert.deepStrictEqual({ ...theme.get() }, { mode: "color", accent: "azure" });
+  assert.strictEqual(attrs["data-theme"], undefined, "цветная — без атрибута");
   assert.strictEqual(attrs["data-accent"], undefined, "лазурь — без атрибута");
 
   theme.useUser("Ivanov");
@@ -108,20 +109,21 @@ test("выбор запоминается для вошедшего сотруд
   theme.setMode("light");
   theme.setAccent("ember");
   assert.strictEqual(store["center.accent:petrov"], "ember");
+  assert.strictEqual(store["center.mode:petrov"], "light");
   assert.strictEqual(store["center.accent:ivanov"], "violet", "чужой выбор не тронут");
 
   // Перезагрузка страницы и снова Иванов (регистр логина не важен).
   ({ theme, attrs } = loadTheme(store));
   assert.strictEqual(attrs["data-accent"], "ember", "до входа — последнее действовавшее");
-  assert.strictEqual(attrs["data-theme"], undefined);
+  assert.strictEqual(attrs["data-theme"], "light", "светлая — белая боковая панель");
   theme.useUser("IVANOV");
   assert.strictEqual(attrs["data-theme"], "dark");
   assert.strictEqual(attrs["data-accent"], "violet");
 });
 
 test("выбор, сделанный до обновления (одна тема из списка), переносится", () => {
-  const cases = { blue: [undefined, undefined], light: [undefined, undefined], dark: ["dark", undefined],
-    lilac: [undefined, "violet"], emerald: [undefined, "jade"], pink: [undefined, "garnet"] };
+  const cases = { blue: [undefined, undefined], light: ["light", undefined], dark: ["dark", undefined],
+    lilac: [undefined, "violet"], emerald: [undefined, "jade"], pink: [undefined, "pink"] };
   for (const [old, [mode, accent]] of Object.entries(cases)) {
     const { attrs } = loadTheme({ "center.theme": old });
     assert.strictEqual(attrs["data-theme"], mode, `${old}: тема`);
@@ -131,18 +133,18 @@ test("выбор, сделанный до обновления (одна тем�
   const store = { "center.theme": "blue", "center.theme:ivanov": "pink" };
   const { theme, attrs } = loadTheme(store);
   theme.useUser("ivanov");
-  assert.strictEqual(attrs["data-accent"], "garnet");
+  assert.strictEqual(attrs["data-accent"], "pink");
 });
 
 test("неизвестные значения и недоступное хранилище — оформление по умолчанию, без ошибок", () => {
   const a = loadTheme({ "center.mode": "фиолетовая", "center.accent": "красно-зелёный", "center.theme": "нет-такой" });
-  assert.deepStrictEqual({ ...a.theme.get() }, { mode: "light", accent: "azure" });
+  assert.deepStrictEqual({ ...a.theme.get() }, { mode: "color", accent: "azure" });
   a.theme.setMode("нет-такой"); a.theme.setAccent("нет-такого");
   assert.strictEqual(a.attrs["data-theme"], undefined);
   assert.strictEqual(a.attrs["data-accent"], undefined);
 
   const b = loadTheme({}, { broken: true });
-  assert.deepStrictEqual({ ...b.theme.get() }, { mode: "light", accent: "azure" });
+  assert.deepStrictEqual({ ...b.theme.get() }, { mode: "color", accent: "azure" });
   b.theme.setAccent("jade");
   b.theme.setMode("dark");
   assert.strictEqual(b.attrs["data-accent"], "jade", "на время сеанса выбор всё же применяется");

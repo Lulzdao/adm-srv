@@ -1,12 +1,13 @@
-// Оформление: светлая или тёмная тема и цвет акцента — личный выбор, хранится в этом браузере
-// (localStorage), на сервер не уходит. Как в клиенте «Искры»: те же два переключателя, те же шесть
-// акцентов (решение пользователя 2026-10-08; раньше был один список из шести тем).
+// Оформление: вариант темы и цвет акцента — личный выбор, хранится в этом браузере (localStorage), на
+// сервер не уходит. Как в клиенте «Искры» — два переключателя (решение пользователя 2026-10-08; раньше
+// был один список из шести тем): «Тема» — цветная (боковая панель цвета акцента), светлая (белая
+// панель) или тёмная; «Акцент» — те же шесть цветов, что в «Искре», и розовый.
 //
 // Подключается в <head> ДО стилей страницы и сразу ставит атрибуты на <html> — иначе страница
 // успевала бы мигнуть голубой темой:
-//   data-theme="dark"      — тёмная (светлая — без атрибута). Это же имя слушают модули: Сертвивер,
-//                            журнал звонков и панель «Искры» держат в своих стилях правила для
-//                            html[data-theme="dark"];
+//   data-theme="light"     — светлая: белая боковая панель; data-theme="dark" — тёмная; цветная (по
+//                            умолчанию) — без атрибута. Имя "dark" слушают модули: Сертвивер, журнал
+//                            звонков и панель «Искры» держат в своих стилях правила для html[data-theme="dark"];
 //   data-accent="…"        — акцент (Лазурь — по умолчанию, без атрибута). Сами цвета — themes.css.
 //
 // Ключи хранилища:
@@ -20,23 +21,25 @@
 // меняется в них сразу, без перезагрузки.
 (function () {
   var MODES = [
+    { id: 'color', name: 'Цветная' },
     { id: 'light', name: 'Светлая' },
     { id: 'dark', name: 'Тёмная' },
   ];
-  // Порядок и названия — как в настройках клиента «Искры».
+  // Порядок и названия — как в настройках клиента «Искры»; розовый — сверх них, по просьбе пользователя.
   var ACCENTS = [
     { id: 'ember', name: 'Янтарь', color: '#C2560F' },
-    { id: 'garnet', name: 'Гранат', color: '#B0303F' },
+    { id: 'garnet', name: 'Гранат', color: '#9C2A2E' },
+    { id: 'pink', name: 'Розовый', color: '#C2003F' },
     { id: 'gold', name: 'Латунь', color: '#9A7400' },
     { id: 'jade', name: 'Малахит', color: '#00775A' },
     { id: 'azure', name: 'Лазурь', color: '#0A61AE' },
     { id: 'violet', name: 'Аметист', color: '#663AB5' },
   ];
-  var DEFAULT_MODE = 'light', DEFAULT_ACCENT = 'azure';
+  var DEFAULT_MODE = 'color', DEFAULT_ACCENT = 'azure';
   // Прежние темы → новое оформление: так выбор, сделанный до обновления, не теряется.
   var LEGACY = {
-    blue: ['light', 'azure'], light: ['light', 'azure'], dark: ['dark', 'azure'],
-    lilac: ['light', 'violet'], emerald: ['light', 'jade'], pink: ['light', 'garnet'],
+    blue: ['color', 'azure'], light: ['light', 'azure'], dark: ['dark', 'azure'],
+    lilac: ['color', 'violet'], emerald: ['color', 'jade'], pink: ['color', 'pink'],
   };
   var has = function (list, id) { for (var i = 0; i < list.length; i++) if (list[i].id === id) return true; return false; };
   // Хранилище может быть недоступно (режим инкогнито со строгими настройками) — тогда оформление по
@@ -65,7 +68,7 @@
   }
   function apply(c) {
     var el = document.documentElement;
-    if (c.mode === 'dark') el.setAttribute('data-theme', 'dark'); else el.removeAttribute('data-theme');
+    if (c.mode === DEFAULT_MODE) el.removeAttribute('data-theme'); else el.setAttribute('data-theme', c.mode);
     if (c.accent === DEFAULT_ACCENT) el.removeAttribute('data-accent'); else el.setAttribute('data-accent', c.accent);
   }
   function save(c) {
@@ -80,9 +83,9 @@
   window.CenterTheme = {
     modes: MODES,
     accents: ACCENTS,
-    /** Действующее оформление: { mode: 'light'|'dark', accent: 'azure'|… }. */
+    /** Действующее оформление: { mode: 'color'|'light'|'dark', accent: 'azure'|… }. */
     get: current,
-    /** Светлая или тёмная — запоминается для вошедшего сотрудника и как действующая в браузере. */
+    /** Вариант темы (цветная, светлая, тёмная) — запоминается для вошедшего сотрудника и как действующая в браузере. */
     setMode: function (m) {
       if (!has(MODES, m)) return;
       var c = current(); c.mode = m; mode = m;
