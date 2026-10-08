@@ -8,7 +8,7 @@ const https = require('https');
 const tls = require('tls');
 const { diagnoseServer } = require('./diagnose');
 const { parseMachinePolicy } = require('./policy');
-const { viewerArgs } = require('./remote');
+const { viewerArgs, viewerCandidates, findViewer } = require('./remote');
 const { SERVER_URL, VNC_VIEWER_PATH, VNC_PORT, VNC_VIEWER_ARGS } = require('./config');
 const { autoUpdater } = require('electron-updater');
 
@@ -298,6 +298,7 @@ const DEFAULT_SETTINGS = {
   broadcastSize: null,
   serverUrlOverride: null,   // переопределяет SERVER_URL из config.js без пересборки — см. Ctrl+S на экране входа
   autoUpdate: true,          // сама качать вышедшие обновления (ставятся при выходе) — см. setupUpdater
+  autoStart: true,           // запускаться при входе в Windows — см. applyAutoStart
   lastSeenVersion: null,     // версия на предыдущем запуске — чтобы показать "обновлено до X" один раз после установки
 };
 
@@ -326,6 +327,22 @@ function saveSettings() {
   try { fs.writeFileSync(SETTINGS_PATH, JSON.stringify(settings)); } catch { /* не критично */ }
 }
 let settings = loadSettings();
+
+// ---------- Запуск при входе в Windows ----------
+// Запись в автозагрузке — у каждого пользователя своя (HKCU\...\Run), хотя приложение стоит одно на
+// весь компьютер: за ним работают сменами, и настройка «запускать или нет» у каждого должна быть
+// своей. По умолчанию включено, поэтому запись появляется при первом же запуске под этой учёткой.
+// Выставляем при каждом старте, а не только при смене настройки: у тех, кто поставил «Искру» до
+// появления настройки, записи ещё нет, а в settings.json нет и ключа — значит, действует умолчание.
+// Только в собранном приложении: при запуске из исходников в автозагрузку попал бы голый electron.exe.
+function applyAutoStart() {
+  if (process.platform !== 'win32' || !app.isPackaged) return;
+  try {
+    app.setLoginItemSettings({ openAtLogin: !!settings.autoStart, path: process.execPath });
+  } catch (err) {
+    logLocal('autostart_failed', { message: String((err && err.message) || err) });
+  }
+}
 
 // Единственное место, где решается, куда клиент подключается. Порядок приоритета:
 //   1) машинная политика — раздаётся администратором через GPO, перекрывает всё;
@@ -1004,7 +1021,9 @@ ipcMain.on('send-file-to', (event, payload) => { handleSendFile(payload); });
 // что является именем ПК: имя сообщает клиент сотрудника, то есть оно чужое (см. remote.js).
 ipcMain.handle('remote-connect', (event, host) => {
   if (BrowserWindow.fromWebContents(event.sender) !== rosterWin) return { ok: false, error: 'Недоступно из этого окна.' };
-  const viewer = machinePolicy.vncViewerPath || VNC_VIEWER_PATH;
+  const candidates = viewerCandidates(machinePolicy.vncViewerPath, VNC_VIEWER_PATH,
+    [process.env.ProgramFiles, process.env.ProgramW6432, process.env['ProgramFiles(x86)']]);
+  const viewer = findViewer(candidates, (p) => fs.existsSync(p));
   let args;
   try {
     args = viewerArgs(host, machinePolicy.vncPort || VNC_PORT, machinePolicy.vncViewerArgs || VNC_VIEWER_ARGS);
@@ -1012,8 +1031,9 @@ ipcMain.handle('remote-connect', (event, host) => {
     logLocal('remote_connect_bad_host', { host: String(host).slice(0, 100) }, 'WARN');
     return { ok: false, error: 'Имя этого компьютера не похоже на имя ПК — подключение не запущено.' };
   }
-  if (!fs.existsSync(viewer)) {
-    return { ok: false, error: `Не найден просмотрщик UltraVNC:\n${viewer}\n\nПуть задаётся строкой vncViewerPath в ${MACHINE_POLICY_PATH}.` };
+  if (!viewer) {
+    logLocal('remote_connect_no_viewer', { tried: candidates }, 'WARN');
+    return { ok: false, error: `Не найден просмотрщик UltraVNC. Искали здесь:\n${candidates.join('\n')}\n\nДругой путь задаётся строкой vncViewerPath в ${MACHINE_POLICY_PATH}.` };
   }
   return new Promise((resolve) => {
     // Без оболочки (shell): аргументы уходят программе как есть, собрать из них команду нельзя.
@@ -1174,6 +1194,7 @@ ipcMain.on('set-settings', (event, partial) => {
   if ('uiScale' in partial) {
     for (const win of allWindows()) win.webContents.setZoomFactor(settings.uiScale || 1);
   }
+  if ('autoStart' in partial) applyAutoStart();
   // Включили автообновление — начинаем качать уже найденное, не дожидаясь следующей проверки.
   if ('autoUpdate' in partial && app.isPackaged) {
     autoUpdater.autoDownload = !!settings.autoUpdate;
@@ -1313,6 +1334,7 @@ app.whenReady().then(() => {
   createTray();
   startIdleWatch();
   setupUpdater();
+  applyAutoStart();
   // once, а не на каждый did-finish-load: сказать "обновлено" нужно один раз за запуск, а не
   // при каждой перезагрузке страницы (например, после выхода из аккаунта — см. logout).
   rosterWin.webContents.once('did-finish-load', announceVersionIfUpdated);

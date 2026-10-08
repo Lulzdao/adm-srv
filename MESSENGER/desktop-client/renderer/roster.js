@@ -393,6 +393,7 @@ const PP_CHECKBOX_IDS = [
   ['ppOpenChatOnMessage', 'openChatOnMessage'],
   ['ppRememberWindowSize', 'rememberWindowSize'],
   ['ppAlwaysOnTop', 'alwaysOnTop'],
+  ['ppAutoStart', 'autoStart'],
   ['ppHideNames', 'hideNameInMessages'],
   ['ppAutoUpdate', 'autoUpdate'],
 ];

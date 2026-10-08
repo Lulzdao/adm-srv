@@ -5,7 +5,30 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { isRemoteHost, remoteHostsOf, viewerArgs } = require('./remote');
+const { isRemoteHost, remoteHostsOf, viewerArgs, viewerCandidates, findViewer } = require('./remote');
+
+test('просмотрщик ищется на нескольких дисках и в папке сервера UltraVNC', () => {
+  const list = viewerCandidates(null, 'E:\\uvnc_support\\vncviewer.exe', ['C:\\Program Files', 'C:\\Program Files', undefined, 'C:\\Program Files (x86)']);
+  assert.deepStrictEqual(list, [
+    'E:\\uvnc_support\\vncviewer.exe',
+    'C:\\uvnc_support\\vncviewer.exe',
+    'D:\\uvnc_support\\vncviewer.exe',
+    'F:\\uvnc_support\\vncviewer.exe',
+    'C:\\Program Files\\uvnc_s\\vncviewer.exe',
+    'C:\\Program Files (x86)\\uvnc_s\\vncviewer.exe',
+  ], 'путь из сборки первым, без повторов');
+
+  // У коллеги папка на C:, у другого её нет вовсе — берётся та, что есть на каждом ПК.
+  assert.strictEqual(findViewer(list, (p) => p.startsWith('C:\\uvnc_support')), 'C:\\uvnc_support\\vncviewer.exe');
+  assert.strictEqual(findViewer(list, (p) => p.includes('uvnc_s\\')), 'C:\\Program Files\\uvnc_s\\vncviewer.exe');
+  assert.strictEqual(findViewer(list, () => false), null);
+});
+
+test('путь из политики — единственный: другой файл вместо него не берётся', () => {
+  const list = viewerCandidates('D:\\Tools\\vncviewer.exe', 'E:\\uvnc_support\\vncviewer.exe', ['C:\\Program Files']);
+  assert.deepStrictEqual(list, ['D:\\Tools\\vncviewer.exe']);
+  assert.strictEqual(findViewer(list, (p) => p.startsWith('C:')), null);
+});
 
 test('имя ПК — только буквы, цифры, дефис, подчёркивание и точка', () => {
   for (const ok of ['p48-312-tas', 'PC-209-MAA2', 'pc_old1', 'p48-312-tas.test.local', 'a']) {
