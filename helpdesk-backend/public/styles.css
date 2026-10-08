@@ -408,6 +408,7 @@ a { color: var(--md-primary); }
 }
 /* Как в настройках «Искры»: «Тема» с переключателем, «Акцент» с кружками; подписи над элементами —
    окошко помещается в ширину боковой панели. */
+.look-row[hidden] { display: none; }
 .look-row { display: flex; flex-direction: column; align-items: stretch; gap: 8px; padding: 10px 6px; }
 .look-row + .look-row { border-top: 1px solid var(--md-outline-variant); }
 .look-label { font-size: 11px; font-weight: 700; letter-spacing: .4px; text-transform: uppercase; color: var(--md-on-surface-variant); }

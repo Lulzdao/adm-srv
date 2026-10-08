@@ -75,7 +75,8 @@ function icon(name, size) {
 
 // ---- Оформление (theme.js, themes.css): выбор в низу боковой панели ----
 // Как в настройках клиента «Искры»: «Тема» — цветная, светлая (белая панель) или тёмная, «Акцент» —
-// один из семи цветов. Подписи над элементами — чтобы окошко помещалось в ширину боковой панели.
+// один из семи цветов, только у цветной темы (светлая и тёмная — как были, голубые; строка акцента при
+// них скрыта). Подписи над элементами — чтобы окошко помещалось в ширину боковой панели.
 // Выбор личный: хранится в браузере для вошедшего сотрудника, на сервер не уходит.
 function themeOptionsHtml() {
   const now = CenterTheme.get();
@@ -83,7 +84,7 @@ function themeOptionsHtml() {
     <div class="look-row"><span class="look-label">Тема</span>
       <div class="look-seg">${CenterTheme.modes.map((m) =>
         `<button type="button" class="look-seg-btn${now.mode === m.id ? " on" : ""}" data-mode="${m.id}">${esc(m.name)}</button>`).join("")}</div></div>
-    <div class="look-row"><span class="look-label">Акцент</span>
+    <div class="look-row"${now.mode === "color" ? "" : " hidden"}><span class="look-label">Акцент</span>
       <div class="look-dots">${CenterTheme.accents.map((a) => `
         <button type="button" class="look-dot${now.accent === a.id ? " on" : ""}" data-accent="${a.id}" title="${esc(a.name)}"
           aria-label="Акцент: ${esc(a.name)}" style="--c: ${a.color};"></button>`).join("")}</div></div>`;
