@@ -343,8 +343,8 @@ function userRowHtml(u, blockName) {
     <div class="user-id">
       <span class="user-dot ${p.state}" title="${PRESENCE_LABEL[p.state]}"></span>
       <div style="min-width:0;">
-        <div class="user-login">${escapeHtml(u.username)}</div>
-        <div class="user-sub">${escapeHtml(u.display_name || '')}</div>
+        <div class="user-login">${escapeHtml(u.display_name || u.username)}</div>
+        <div class="user-sub" title="Логин — что сотрудник вводит при входе в клиент">логин: ${escapeHtml(u.username)}</div>
       </div>
     </div>
     <div class="user-cell">${PRESENCE_LABEL[p.state]}${p.since ? ` · ${sinceText(p.since)}` : ''}</div>
@@ -400,7 +400,8 @@ function openUserMenu(id, anchor) {
   menu.id = 'userMenu';
   menu.dataset.forUser = String(id);
   menu.innerHTML = `
-    <button data-act="rename">Переименовать</button>
+    <button data-act="rename-name">Изменить имя<span class="menu-state">как видят коллеги</span></button>
+    <button data-act="rename-login">Изменить логин<span class="menu-state">для входа</span></button>
     <button data-act="depts">Отделы<span class="menu-state">${escapeHtml((u.departments || []).map(d => d.name).join(', ') || 'нет')}</span></button>
     <div class="menu-sep"></div>
     <button data-act="broadcast">Рассылки<span class="menu-state">${u.can_broadcast ? 'включены' : 'выключены'}</span></button>
@@ -423,7 +424,8 @@ function openUserMenu(id, anchor) {
       const act = b.dataset.act;
       if (act === 'depts') { pickUserDepartments(id, anchor); closeUserMenu(); return; }
       closeUserMenu();
-      if (act === 'rename') return renameUser(id);
+      if (act === 'rename-name') return renameUserName(id);
+      if (act === 'rename-login') return renameUserLogin(id);
       if (act === 'broadcast') return toggleUserCap(id, 'can_broadcast', !u.can_broadcast);
       if (act === 'admin') return toggleUserCap(id, 'can_admin', !u.can_admin);
       if (act === 'password') return resetPassword(id);
@@ -435,24 +437,35 @@ function openUserMenu(id, anchor) {
 function userVersion(id) { return usersCache.find(u => u.id === id)?.version; }
 function applyUserVersion(id, version) { const u = usersCache.find(x => x.id === id); if (u && version !== undefined) u.version = version; }
 
-// Переименование меняет и ФИО, и логин — они здесь одно и то же. Пользователя
-// так и заводят: логином служит ФИО целиком. Раньше правилось только
-// отображаемое имя, и опечатка в фамилии навсегда оставалась в логине.
-async function renameUser(id) {
+// Имя и логин меняются раздельно (решение пользователя 2026-10-08). Сотрудников переносили из старого
+// мессенджера — там логином было ФИО, иногда с приписками («Казарина Светлана Васильевна - 421к»):
+// логин удобнее сократить, а имя в списке оставить как есть — или наоборот. Сервер давно принимает поля по
+// отдельности (PATCH /api/admin/users/:id: display_name, username) и сам не пускает занятый логин.
+// Сотрудника, уже вошедшего в клиент, смена логина не выкидывает: вход хранит id, а не логин.
+async function renameUserName(id) {
   const u = usersCache.find(x => x.id === id);
   if (!u) return;
-  const entered = await uiPrompt('ФИО (оно же логин для входа):', u.display_name || u.username, {
-    title: 'Переименовать сотрудника', ok: 'Переименовать',
-    validate: (v) => (v.trim() ? '' : 'Введите ФИО'),
-  });
-  const фио = (entered || '').trim();
-  if (!фио || (фио === u.display_name && фио === u.username)) return;
-
+  const entered = await uiPrompt('Имя — так сотрудника видят коллеги в списке и в переписке. Логин для входа не меняется.',
+    u.display_name || u.username, { title: 'Изменить имя', ok: 'Сохранить', validate: (v) => (v.trim() ? '' : 'Введите имя') });
+  const name = (entered || '').trim();
+  if (!name || name === u.display_name) return;
   try {
-    await api(`api/admin/users/${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ display_name: фио, username: фио, version: userVersion(id) }),
-    });
+    await api(`api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify({ display_name: name, version: userVersion(id) }) });
+    uiToast('Имя изменено');
+    refreshAll();
+  } catch (e) { await showError(e); refreshAll(); }
+}
+async function renameUserLogin(id) {
+  const u = usersCache.find(x => x.id === id);
+  if (!u) return;
+  const entered = await uiPrompt('Логин — то, что сотрудник вводит при входе в клиент. Если он уже вошёл, его не выкинет: '
+    + 'новый логин понадобится при следующем входе. Имя в списке не меняется.',
+    u.username, { title: 'Изменить логин', ok: 'Сохранить', validate: (v) => (v.trim() ? '' : 'Введите логин') });
+  const login = (entered || '').trim();
+  if (!login || login === u.username) return;
+  try {
+    await api(`api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify({ username: login, version: userVersion(id) }) });
+    uiToast(`Логин изменён: ${login}`);
     refreshAll();
   } catch (e) { await showError(e); refreshAll(); }
 }
