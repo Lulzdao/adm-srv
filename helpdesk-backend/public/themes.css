@@ -185,8 +185,8 @@ html[data-accent="ember"]:not([data-theme="dark"]) {
   --md-on-warn-container: #7A5140;
   --amber: #8A5A44;
   --note: #0A61AE;
-  --sidebar-ink-soft: #FBE0CD;
-  --sidebar-ink-faint: #F4C3A0;
+  --sidebar-ink-soft: #FDEBDD;
+  --sidebar-ink-faint: #FAD9C2;          /* светлее — на янтаре бледные подписи иначе не читались */
 }
 
 /* ---------- Латунь ---------- */
@@ -213,13 +213,21 @@ html[data-accent="gold"]:not([data-theme="dark"]) {
   --md-secondary-faint: #F2F7FD;
   --md-disabled: #EAE5D3;
   --note: #0A61AE;
-  --sidebar-ink-soft: #F5EBC9;
-  --sidebar-ink-faint: #E2CC86;
+  --sidebar-ink-soft: #FAF3DE;
+  --sidebar-ink-faint: #F2E4B6;          /* светлее — на латуни бледные подписи иначе не читались */
 }
 
 /* Подсветка строки «истекает срок» под курсором (Сертвивер) — в тон акценту. */
 html[data-accent="garnet"]:not([data-theme="dark"]) { --md-warn-edge: #E7CDB4; }
 html[data-accent="pink"]:not([data-theme="dark"]) { --md-warn-edge: #E7CDB4; }
+
+/* Кромки приоритета заявок не должны совпадать с акцентом: при красных акцентах «критичный» — цвет
+   ошибки (оранжевый), «высокий» — коричневый; при Янтаре «высокий» — коричневый. */
+html[data-accent="garnet"]:not([data-theme="dark"]), html[data-accent="pink"]:not([data-theme="dark"]) {
+  --prio-critical: var(--md-error);
+  --prio-high: #8A5A44;
+}
+html[data-accent="ember"]:not([data-theme="dark"]) { --prio-high: #8A5A44; }
 
 /* ===================== Светлая тема: белая боковая панель =====================
    Та же гамма, что у цветной, но панель белая, текст на ней тёмно-серый (3.4 брендбука); подсветка
@@ -341,6 +349,13 @@ html[data-theme="dark"][data-accent="jade"] {
 }
 html[data-theme="dark"][data-accent="garnet"],
 html[data-theme="dark"][data-accent="pink"] {
+  /* «Истекает срок» — в песочную гамму: оранжевая теперь у ошибки, иначе «истёк» и «истекает» сливались. */
+  --md-warn-container: #3D341A;
+  --md-on-warn-container: #F0DCA0;
+  --md-warn-edge: #6E5D2A;
+  --amber: #E8C07A;
+  --prio-critical: var(--md-error);
+  --prio-high: #E8C07A;
   /* Розовым и красным в тёмной теме обозначена ошибка; здесь они — акцент, ошибка уходит в оранжевую гамму. */
   --md-error: #FF9B54;
   --md-on-error: #2A140A;
@@ -390,6 +405,7 @@ html[data-theme="dark"][data-accent="ember"] {
   --md-info-container: #4A2F1C;
   --md-on-info-container: #FFC9A3;
   --amber: #E8C07A;                      /* оранжевый занят акцентом — «истекает» в песочный */
+  --prio-high: #E8C07A;
   --md-warn-container: #3D341A;
   --md-on-warn-container: #F0DCA0;
   --sidebar-active: #4A2F1C;

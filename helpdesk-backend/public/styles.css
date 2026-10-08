@@ -70,7 +70,12 @@
 
   /* --- Сигналы: из дополнительных цветов (3.3), в малом количестве --- */
   --md-error: #E7004B;                /* тёмно-розовый */
-  --md-on-error: #FFFFFF;             /* текст на заливке --md-error (кнопка «Удалить» в окне подтверждения) */
+  --md-on-error: #FFFFFF;
+  /* Кромки приоритета в списке заявок — сигнальные цвета, одни во всех темах; акценты, с которыми они
+     спорят (Гранат, Розовый, Янтарь), переопределяют их в themes.css. */
+  --prio-critical: #E7004B;
+  --prio-high: #FF8B3A;
+  --prio-low: #BFBFBF;             /* текст на заливке --md-error (кнопка «Удалить» в окне подтверждения) */
   --md-error-container: #FDE3EA;
   --md-on-error-container: #E7004B;
   --md-warn-container: #FFE7D6;
@@ -607,10 +612,10 @@ textarea.input { font-family: inherit; resize: vertical; }
   transition: background 0.15s ease, transform 0.15s ease;
 }
 .ticket-row:hover { background: var(--md-surface-container-highest); transform: translateX(2px); }
-.ticket-row[data-prio="critical"] { border-left-color: #E7004B; }
-.ticket-row[data-prio="high"]     { border-left-color: #FF8B3A; }
+.ticket-row[data-prio="critical"] { border-left-color: var(--prio-critical); }
+.ticket-row[data-prio="high"]     { border-left-color: var(--prio-high); }
 .ticket-row[data-prio="medium"]   { border-left-color: var(--md-primary); }
-.ticket-row[data-prio="low"]      { border-left-color: #BFBFBF; }
+.ticket-row[data-prio="low"]      { border-left-color: var(--prio-low); }
 @media (prefers-reduced-motion: reduce) { .ticket-row:hover { transform: none; } }
 .row-arrow { display: flex; justify-content: flex-end; color: var(--md-on-surface-variant); }
 .mono { font-family: var(--mono); }
@@ -976,7 +981,7 @@ textarea.input { font-family: inherit; resize: vertical; }
 .td-feed > div { margin-bottom: 10px; position: relative; }
 .td-feed > div::before { content: ""; position: absolute; left: -19px; top: 5px; width: 8px; height: 8px; border-radius: 50%; background: var(--md-outline); }
 .td-feed > div.cmt::before { background: var(--md-primary); }
-.td-feed > div.sys::before { background: #FF8B3A; }
+.td-feed > div.sys::before { background: var(--prio-high); }
 .td-feed b { font-weight: 700; }
 .td-feed small { display: block; color: var(--md-on-surface-variant); font-size: 11px; margin-top: 2px; }
 .td-cmt { display: block; margin-top: 4px; padding: 8px 10px; border-radius: 4px 10px 10px 10px; background: var(--md-primary-container); white-space: pre-wrap; word-break: break-word; }

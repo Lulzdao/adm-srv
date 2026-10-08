@@ -30,7 +30,7 @@
     { id: 'ember', name: 'Янтарь', color: '#C2560F' },
     { id: 'garnet', name: 'Гранат', color: '#9C2A2E' },
     { id: 'pink', name: 'Розовый', color: '#C2003F' },
-    { id: 'gold', name: 'Латунь', color: '#9A7400' },
+    { id: 'gold', name: 'Латунь', color: '#8F6B00' },
     { id: 'jade', name: 'Малахит', color: '#00775A' },
     { id: 'azure', name: 'Лазурь', color: '#0A61AE' },
     { id: 'violet', name: 'Аметист', color: '#663AB5' },
