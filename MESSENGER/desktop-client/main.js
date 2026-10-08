@@ -8,7 +8,8 @@ const https = require('https');
 const tls = require('tls');
 const { diagnoseServer } = require('./diagnose');
 const { parseMachinePolicy } = require('./policy');
-const { SERVER_URL } = require('./config');
+const { viewerArgs } = require('./remote');
+const { SERVER_URL, VNC_VIEWER_PATH, VNC_PORT, VNC_VIEWER_ARGS } = require('./config');
 const { autoUpdater } = require('electron-updater');
 
 // ---------- Доверие к корневому удостоверяющему центру организации ----------
@@ -994,6 +995,43 @@ ipcMain.on('open-department-broadcast', (event, payload) => {
 
 // ПКМ по сотруднику → «Отправить файл…».
 ipcMain.on('send-file-to', (event, payload) => { handleSendFile(payload); });
+
+// ПКМ по сотруднику → «Подключиться к ПК» (пункт есть только у администратора «Искры»).
+// Запускает просмотрщик UltraVNC с именем ПК сотрудника — и всё: вход на ту машину проверяет её
+// сервер UltraVNC по учётной записи домена, пароль спрашивает сам просмотрщик. Поэтому право
+// администратора здесь не проверяется: пункт меню — удобство, а не допуск, и скрытый пункт никого
+// не защищает. Защищаем другое — чтобы окно не могло запустить что-то кроме просмотрщика и не с тем,
+// что является именем ПК: имя сообщает клиент сотрудника, то есть оно чужое (см. remote.js).
+ipcMain.handle('remote-connect', (event, host) => {
+  if (BrowserWindow.fromWebContents(event.sender) !== rosterWin) return { ok: false, error: 'Недоступно из этого окна.' };
+  const viewer = machinePolicy.vncViewerPath || VNC_VIEWER_PATH;
+  let args;
+  try {
+    args = viewerArgs(host, machinePolicy.vncPort || VNC_PORT, machinePolicy.vncViewerArgs || VNC_VIEWER_ARGS);
+  } catch {
+    logLocal('remote_connect_bad_host', { host: String(host).slice(0, 100) }, 'WARN');
+    return { ok: false, error: 'Имя этого компьютера не похоже на имя ПК — подключение не запущено.' };
+  }
+  if (!fs.existsSync(viewer)) {
+    return { ok: false, error: `Не найден просмотрщик UltraVNC:\n${viewer}\n\nПуть задаётся строкой vncViewerPath в ${MACHINE_POLICY_PATH}.` };
+  }
+  return new Promise((resolve) => {
+    // Без оболочки (shell): аргументы уходят программе как есть, собрать из них команду нельзя.
+    // Рабочая папка — папка просмотрщика: там он ищет плагин шифрования и свои настройки.
+    // detached + unref — просмотрщик живёт сам по себе и не закрывается вместе с «Искрой».
+    const child = require('child_process').spawn(viewer, args, { cwd: path.dirname(viewer), detached: true, stdio: 'ignore' });
+    child.once('error', (err) => {
+      logLocal('remote_connect_failed', { host, viewer, message: err.message });
+      resolve({ ok: false, error: `Не удалось запустить просмотрщик UltraVNC: ${err.message}` });
+    });
+    child.once('spawn', () => {
+      child.unref();
+      // В журнал сервера (раздел «Логи»): кто и к какому ПК подключался из «Искры».
+      logLocal('remote_connect', { host }, 'INFO');
+      resolve({ ok: true });
+    });
+  });
+});
 
 // Одноразовое переопределение пути сохранения — см. will-download в app.whenReady() ниже.
 let pendingSaveAsPath = null;

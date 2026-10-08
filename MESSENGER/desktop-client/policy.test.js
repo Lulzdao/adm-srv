@@ -46,3 +46,20 @@ test('http — только явным allowInsecureHttp: true; корни те�
   assert.strictEqual(policy.allowInsecureHttp, false, 'строка "true" — не согласие');
   assert.strictEqual(policy.extraCa.length, 2);
 });
+
+test('просмотрщик UltraVNC: путь, порт и добавочные ключи; негодные значения не действуют', () => {
+  const { policy } = parseMachinePolicy(JSON.stringify({
+    vncViewerPath: '  D:\\Tools\\vnc\\vncviewer.exe ', vncPort: 5900, vncViewerArgs: ['-dsmplugin', 'SecureVNCPlugin.dsm', 7, ''],
+  }), readFile, SRC);
+  assert.strictEqual(policy.vncViewerPath, 'D:\\Tools\\vnc\\vncviewer.exe');
+  assert.strictEqual(policy.vncPort, 5900);
+  assert.deepStrictEqual(policy.vncViewerArgs, ['-dsmplugin', 'SecureVNCPlugin.dsm']);
+
+  const none = parseMachinePolicy('{ "vncViewerPath": 5, "vncPort": "5900" }', readFile, SRC).policy;
+  assert.strictEqual(none.vncViewerPath, null);
+  assert.strictEqual(none.vncPort, null, 'порт строкой — не порт');
+  assert.strictEqual(none.vncViewerArgs, null, 'ключи не заданы — действуют из сборки');
+  assert.strictEqual(parseMachinePolicy('{ "vncPort": 70000 }', readFile, SRC).policy.vncPort, null);
+  assert.strictEqual(parseMachinePolicy(null, readFile, SRC).policy.vncViewerArgs, null);
+  assert.deepStrictEqual(parseMachinePolicy('{ "vncViewerArgs": [] }', readFile, SRC).policy.vncViewerArgs, [], 'пустой список — без ключей');
+});

@@ -557,15 +557,35 @@ function applyReachability(row, u, p) {
   row.title = buildTooltip(p.state, p.idleSince, p.hosts, p.since)
     + (reachable ? '' : '\nСейчас недоступен для сообщений и файлов — подключён только через веб-панель администратора');
   row.onclick = reachable ? () => desktop.openChat(chatPayload) : null;
-  row.oncontextmenu = reachable
-    ? (e) => {
-      e.preventDefault();
-      uiContextMenu(e.clientX, e.clientY, [
-        { label: `Написать: ${chatPayload.label}`, icon: 'send', onClick: () => desktop.openChat(chatPayload) },
-        { label: 'Отправить файл…', icon: 'attach', onClick: () => desktop.sendFileTo(chatPayload) },
-      ]);
+  // Меню собирается в момент щелчка, а не здесь: право администратора могли выдать или снять, пока
+  // строка уже нарисована (см. refreshMe).
+  row.oncontextmenu = (e) => {
+    e.preventDefault();
+    const items = reachable ? [
+      { label: `Написать: ${chatPayload.label}`, icon: 'send', onClick: () => desktop.openChat(chatPayload) },
+      { label: 'Отправить файл…', icon: 'attach', onClick: () => desktop.sendFileTo(chatPayload) },
+    ] : [];
+    // Администратору — подключение к ПК сотрудника через UltraVNC, по пункту на каждый его ПК. Имя
+    // в пункте целиком: его сообщает клиент сотрудника, и администратор должен видеть, куда идёт.
+    if (me.can_admin) {
+      for (const host of remoteHostsOf(p.hosts)) {
+        items.push({ label: `Подключиться к ПК: ${host}`, icon: 'monitor', onClick: () => connectToPc(host) });
+      }
     }
-    : (e) => e.preventDefault();
+    uiContextMenu(e.clientX, e.clientY, items);
+  };
+}
+
+// Имена ПК, к которым можно подключиться: без веб-панели и «неизвестный ПК». Та же проверка, что в
+// remote.js главного процесса, — он её повторит, здесь она только чтобы не рисовать негодный пункт.
+const REMOTE_HOST_RE = /^[a-z0-9][a-z0-9_-]{0,62}(\.[a-z0-9][a-z0-9_-]{0,62})*$/i;
+function remoteHostsOf(hosts) {
+  return [...new Set((hosts || []).filter((h) => typeof h === 'string' && REMOTE_HOST_RE.test(h)))];
+}
+
+async function connectToPc(host) {
+  const res = await desktop.remoteConnect(host);
+  if (!res.ok) uiAlert(res.error, 'Подключение к ПК');
 }
 
 // ---------- Непрочитанные — состояние хранит и считает главный процесс (main.js), здесь только отрисовка ----------
