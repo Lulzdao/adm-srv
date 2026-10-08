@@ -9,7 +9,7 @@ const tls = require('tls');
 const { diagnoseServer } = require('./diagnose');
 const { parseMachinePolicy } = require('./policy');
 const { viewerArgs } = require('./remote');
-const { SERVER_URL, VNC_VIEWER_PATH, VNC_PORT } = require('./config');
+const { SERVER_URL, VNC_VIEWER_PATH, VNC_PORT, VNC_VIEWER_ARGS } = require('./config');
 const { autoUpdater } = require('electron-updater');
 
 // ---------- Доверие к корневому удостоверяющему центру организации ----------
@@ -1007,7 +1007,7 @@ ipcMain.handle('remote-connect', (event, host) => {
   const viewer = machinePolicy.vncViewerPath || VNC_VIEWER_PATH;
   let args;
   try {
-    args = viewerArgs(host, machinePolicy.vncPort || VNC_PORT, machinePolicy.vncViewerArgs);
+    args = viewerArgs(host, machinePolicy.vncPort || VNC_PORT, machinePolicy.vncViewerArgs || VNC_VIEWER_ARGS);
   } catch {
     logLocal('remote_connect_bad_host', { host: String(host).slice(0, 100) }, 'WARN');
     return { ok: false, error: 'Имя этого компьютера не похоже на имя ПК — подключение не запущено.' };

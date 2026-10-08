@@ -21,4 +21,9 @@ module.exports = {
   // C:\ProgramData\Iskra\config.json.
   VNC_VIEWER_PATH: 'E:\\uvnc_support\\vncviewer.exe',
   VNC_PORT: 5995,
+  // Добавочные ключи просмотрщика. Серверы UltraVNC на рабочих местах принимают только шифрованное
+  // соединение (UseDSMPlugin=1), а просмотрщик, запущенный с адресом в командной строке, сам плагин
+  // не включает: в его окне это галочка «Use Encryption» на вкладке Security. Файл плагина лежит
+  // рядом с просмотрщиком. Переопределяется строкой vncViewerArgs в той же политике.
+  VNC_VIEWER_ARGS: ['-dsmplugin', 'SecureVNCPlugin.dsm'],
 };

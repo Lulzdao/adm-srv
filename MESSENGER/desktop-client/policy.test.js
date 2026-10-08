@@ -58,7 +58,8 @@ test('просмотрщик UltraVNC: путь, порт и добавочны�
   const none = parseMachinePolicy('{ "vncViewerPath": 5, "vncPort": "5900" }', readFile, SRC).policy;
   assert.strictEqual(none.vncViewerPath, null);
   assert.strictEqual(none.vncPort, null, 'порт строкой — не порт');
-  assert.deepStrictEqual(none.vncViewerArgs, []);
+  assert.strictEqual(none.vncViewerArgs, null, 'ключи не заданы — действуют из сборки');
   assert.strictEqual(parseMachinePolicy('{ "vncPort": 70000 }', readFile, SRC).policy.vncPort, null);
-  assert.deepStrictEqual(parseMachinePolicy(null, readFile, SRC).policy.vncViewerArgs, []);
+  assert.strictEqual(parseMachinePolicy(null, readFile, SRC).policy.vncViewerArgs, null);
+  assert.deepStrictEqual(parseMachinePolicy('{ "vncViewerArgs": [] }', readFile, SRC).policy.vncViewerArgs, [], 'пустой список — без ключей');
 });

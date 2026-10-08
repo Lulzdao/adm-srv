@@ -4,7 +4,7 @@
 
 const EMPTY = Object.freeze({
   serverUrl: null, allowInsecureHttp: false, extraCa: [], source: null,
-  vncViewerPath: null, vncPort: null, vncViewerArgs: [],
+  vncViewerPath: null, vncPort: null, vncViewerArgs: null,
 });
 
 /**
@@ -50,10 +50,11 @@ function parseMachinePolicy(raw, readFile, source) {
       extraCa,
       source,
       // Подключение к ПК сотрудника через UltraVNC (см. remote.js, remote-connect в main.js). Всё
-      // необязательно: без этих строк действуют путь и порт из config.js.
+      // необязательно: без этих строк действуют путь, порт и ключи из config.js. Ключи заменяют
+      // заданные в сборке целиком — пустой список [] значит «без добавочных ключей».
       vncViewerPath: typeof cfg.vncViewerPath === 'string' && cfg.vncViewerPath.trim() ? cfg.vncViewerPath.trim() : null,
       vncPort: Number.isInteger(cfg.vncPort) && cfg.vncPort > 0 && cfg.vncPort < 65536 ? cfg.vncPort : null,
-      vncViewerArgs: [].concat(cfg.vncViewerArgs || []).filter((a) => typeof a === 'string' && a),
+      vncViewerArgs: Array.isArray(cfg.vncViewerArgs) ? cfg.vncViewerArgs.filter((a) => typeof a === 'string' && a) : null,
     },
     error: null,
   };
