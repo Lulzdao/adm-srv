@@ -747,7 +747,8 @@ function createTray() {
 // работает корректно. Текущее время простоя показывается во всплывающей подсказке над своим статусом.
 function currentIdleState() {
   const idleSeconds = powerMonitor.getSystemIdleTime();
-  const thresholdSeconds = (Number(settings.idleThresholdMinutes) || 15) * 60;
+  // Не дольше 30 минут — и для настройки, сохранённой ещё до этого предела (было до 240).
+  const thresholdSeconds = Math.min(30, Math.max(1, Number(settings.idleThresholdMinutes) || 15)) * 60;
   return { state: idleSeconds >= thresholdSeconds ? 'idle' : 'active', idleSeconds };
 }
 

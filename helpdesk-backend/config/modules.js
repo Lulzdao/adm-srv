@@ -70,6 +70,7 @@ module.exports = [
     views: [
       { id: "overview", label: "Обзор", sub: "" },
       { id: "users", label: "Пользователи", sub: "" },
+      { id: "depts", label: "Отделы", sub: "" },
       { id: "history", label: "Переписки", sub: "" },
       { id: "broadcast", label: "Рассылка", sub: "" },
       { id: "files", label: "Файлы", sub: "" },

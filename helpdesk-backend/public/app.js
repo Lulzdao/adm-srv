@@ -802,7 +802,7 @@ function toggleNavGroup(group) {
 const MODULE_VIEW_ICONS = {
   log: "inbox", stats: "chart", directory: "folder", certs: "seal", mchd: "doc", root: "box",
   // Разделы панели «Искры».
-  overview: "monitor", users: "users", history: "mail", broadcast: "bell", files: "paperclip",
+  overview: "monitor", users: "users", depts: "briefcase", history: "mail", broadcast: "bell", files: "paperclip",
   updates: "download", tls: "shield", logs: "list",
 };
 // Иконка пункта меню по идентификатору модуля из config/modules.js. Ключ — тот

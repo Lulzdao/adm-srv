@@ -388,6 +388,9 @@ document.querySelector('#profilePanel .pp-me').title = 'Вернуться к с
 document.getElementById('searchIcon').innerHTML = uiIcon('search');
 document.getElementById('ppEmblem').innerHTML = uiIcon('emblem');
 
+// «Отошёл» — не дольше чем через 30 минут: дольше статус «в сети» у ушедшего человека вводит коллег в
+// заблуждение (пишут — а его нет). Тот же предел держит главный процесс (currentIdleState в main.js).
+const IDLE_MAX_MINUTES = 30;
 const PP_CHECKBOX_IDS = [
   ['ppNotifications', 'notifications'],
   ['ppOpenChatOnMessage', 'openChatOnMessage'],
@@ -416,7 +419,7 @@ async function loadProfilePanel() {
   paintProfileTheme(settings.theme);
   paintProfileAccent(settings.accent);
   paintProfileDownloadPath(settings.downloadPath);
-  document.getElementById('ppIdleThresholdMinutes').value = settings.idleThresholdMinutes || 15;
+  document.getElementById('ppIdleThresholdMinutes').value = Math.min(IDLE_MAX_MINUTES, settings.idleThresholdMinutes || 15);
   paintProfileUiScale(settings.uiScale);
   // Карточка «кто я»: полное имя и отделы — как записаны на сервере.
   document.getElementById('ppFullName').textContent = displayNameOf(me);
@@ -481,7 +484,7 @@ document.getElementById('ppPickFolderBtn').onclick = async () => {
 };
 document.getElementById('ppClearFolderBtn').onclick = () => { desktop.setSettings({ downloadPath: null }); paintProfileDownloadPath(null); };
 document.getElementById('ppIdleThresholdMinutes').addEventListener('change', (e) => {
-  const mins = Math.min(240, Math.max(1, Number(e.target.value) || 15));
+  const mins = Math.min(IDLE_MAX_MINUTES, Math.max(1, Number(e.target.value) || 15));
   e.target.value = mins;
   desktop.setSettings({ idleThresholdMinutes: mins });
 });
