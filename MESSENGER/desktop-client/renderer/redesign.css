@@ -358,3 +358,23 @@ textarea:focus { box-shadow: 0 0 0 3px var(--accent-a20); }
 #text:focus { box-shadow: none; }
 #sendBtn { border-radius: var(--radius-m); background: linear-gradient(180deg, var(--accent-2), var(--accent)); color: var(--accent-ink); font-weight: 600; font-family: inherit; }
 #attachBtn { border-radius: var(--radius-m); background: var(--panel); }
+
+/* ===================== Нет связи и неотправленное (2026-10-08) ===================== */
+/* Полоса под шапкой вместо окна «Соединение потеряно» (showOfflineBar в ui-kit.js) — видно по самому
+   окну, ничего не спрашивает. */
+.offline-bar { display: flex; align-items: center; gap: 8px; padding: 7px 14px; font-size: 12px; color: var(--text);
+  background: var(--panel-2); border-bottom: 1px solid var(--border); animation: offline-in .2s ease-out; flex-shrink: 0; }
+.offline-bar .offline-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--afk); flex-shrink: 0;
+  animation: offline-pulse 1.4s ease-in-out infinite; }
+@keyframes offline-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+@keyframes offline-pulse { 50% { opacity: .35; } }
+/* Своя карточка в списке: пока нет связи — серая точка и «Нет связи». */
+body.is-offline #meDot { background: var(--offline) !important; box-shadow: none !important; }
+/* Сообщение, которое не ушло: приглушено, под ним «Не отправлено · Повторить». */
+.msg.pending { opacity: .72; }
+.msg.pending .pending-bar { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 6px;
+  font-size: 11px; color: var(--danger); }
+.msg.pending .pending-retry { border: none; background: none; padding: 0; font: inherit; font-weight: 600; color: var(--accent);
+  cursor: pointer; text-decoration: underline; }
+.msg.pending.sending .pending-bar { color: var(--muted); }
+@media (prefers-reduced-motion: reduce) { .offline-bar, .offline-bar .offline-dot { animation: none; } }

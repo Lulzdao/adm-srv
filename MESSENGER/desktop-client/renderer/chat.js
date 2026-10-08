@@ -3,7 +3,7 @@ const params = new URLSearchParams(location.search);
 const type = params.get('type');       // 'room' | 'dm'
 const id = type === 'dm' ? Number(params.get('id')) : params.get('id');
 const label = params.get('label');
-const token = params.get('token');
+let token = params.get('token'); // может обновиться: сервер продлевает вход (сообщение 'token')
 const serverUrl = params.get('serverUrl');
 const me = JSON.parse(localStorage.getItem('me') || 'null');
 installErrorReporting(serverUrl, token, 'chat'); // см. ui-kit.js
@@ -393,8 +393,22 @@ async function loadHistory() {
 }
 
 let ws, wsReadyQueue = [];
-let wsLostTimer = null; // см. showConnectionLostModal в ui-kit.js
+let wsLostTimer = null; // см. showOfflineBar в ui-kit.js
 let wsReconnectDelay = 2000; // экспоненциальный бэкофф между попытками (см. onclose ниже)
+let wsEverOpened = false;    // первое подключение — не «восстановление»: дозагружать нечего
+
+// Связь вернулась после обрыва: сервер пропущенное не досылает, поэтому перечитываем сегодняшнюю
+// переписку и дорисовываем то, чего в окне ещё нет (по id) — пришедшее за время обрыва.
+async function resyncHistoryAfterReconnect() {
+  try {
+    const { since, until } = todayRange();
+    const q = `since=${since}&until=${until}`;
+    const items = type === 'room' ? await api(`/api/history/room/${id}?${q}`) : await api(`/api/history/dm/${id}?${q}`);
+    const box = document.getElementById('messages');
+    items.forEach((m) => { if (!box.querySelector(`.msg[data-id="${m.id}"]`)) addMessage(m); });
+    scheduleUnreadClear();
+  } catch { /* связь снова пропала — следующее восстановление попробует ещё раз */ }
+}
 function connectWs() {
   const wsUrl = serverUrl.replace(/^http/, 'ws');
   ws = new WebSocket(`${wsUrl}?token=${token}&host=${encodeURIComponent(desktop.hostname)}`
@@ -410,14 +424,17 @@ function connectWs() {
     clearTimeout(wsLostTimer);
     wsLostTimer = null;
     wsReconnectDelay = 2000;
-    hideConnectionLostModal();
+    hideOfflineBar();
     const { state } = await desktop.getIdleState();
     ws.send(JSON.stringify({ type: 'status', state }));
     wsReadyQueue.forEach(fn => fn());
     wsReadyQueue = [];
+    if (wsEverOpened) { await resyncHistoryAfterReconnect(); flushPendingSends(); }
+    wsEverOpened = true;
   };
   ws.onmessage = (e) => {
     const data = JSON.parse(e.data);
+    if (data.type === 'token' && data.token) { token = data.token; return; } // сервер продлил вход
     if (data.type === 'presence' && type === 'dm') {
       const p = data.users[id];
       const state = p ? p.state : 'offline';
@@ -449,12 +466,12 @@ function connectWs() {
     if (belongs) { hideTypingIndicator(); addMessage(data); } // раз сообщение пришло — печатать закончил
   };
   ws.onclose = () => {
-    if (window.appShuttingDown) return; // выключается ПК — не переподключаемся и не мигаем модалкой
-    if (!wsLostTimer) wsLostTimer = setTimeout(() => { wsLostTimer = null; showConnectionLostModal(connectWs); }, 5000);
-    // Бэкофф: 2с → ×1.5 после каждой неудачи, потолок 30с — при обрыве сети на несколько часов
+    if (window.appShuttingDown) return; // выключается ПК — не переподключаемся и не показываем «нет связи»
+    if (!wsLostTimer) wsLostTimer = setTimeout(() => { wsLostTimer = null; showOfflineBar(); }, 3000);
+    // Бэкофф: 2с → ×1.5 после каждой неудачи, потолок 10с (было 30 — «Нет связи» висело до полуминуты после возвращения сервера); при обрыве на часы
     // это фоновые редкие попытки, а не спам раз в 2 секунды. Успешное onopen сбрасывает задержку.
     setTimeout(connectWs, wsReconnectDelay);
-    wsReconnectDelay = Math.min(wsReconnectDelay * 1.5, 30000);
+    wsReconnectDelay = Math.min(wsReconnectDelay * 1.5, 10000);
   };
 }
 
@@ -585,8 +602,46 @@ function wireMessageToolbar(container) {
 
 function sendPayload(payload) {
   if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(payload));
+  // Сообщение без связи не исчезает молча из поля ввода: остаётся в ленте с «Не отправлено · Повторить»
+  // и уходит само, когда связь вернётся. Служебное (печатает, прочитано, реакции) просто ждёт связи.
+  else if (payload.type === 'send') addPendingSend(payload);
+  else if (payload.type === 'typing') return; // «печатает» без связи бессмыслен — не копим
   else wsReadyQueue.push(() => ws.send(JSON.stringify(payload)));
 }
+
+// Неотправленные сообщения этого окна: номер → { payload, el }. Живут, пока открыто окно.
+let pendingSeq = 0;
+const pendingSends = new Map();
+function addPendingSend(payload) {
+  const n = ++pendingSeq;
+  const el = document.createElement('div');
+  el.className = 'msg own pending';
+  el.dataset.pending = String(n);
+  const files = payload.files || [];
+  el.innerHTML = `${payload.text ? `<div class="pending-text">${escapeHtml(payload.text)}</div>` : ''}`
+    + `${files.length ? `<div class="pending-text">📎 ${files.map((f) => escapeHtml(f.name)).join(', ')}</div>` : ''}`
+    + '<div class="pending-bar"><span class="pending-state">Не отправлено — нет связи</span><button type="button" class="pending-retry">Повторить</button></div>';
+  el.querySelector('.pending-retry').onclick = () => retryPendingSend(n);
+  const box = document.getElementById('messages');
+  box.appendChild(el);
+  box.scrollTop = box.scrollHeight;
+  pendingSends.set(n, { payload, el });
+}
+// Есть связь — отправляем, а «черновик» убираем: настоящее сообщение придёт обратно от сервера и
+// встанет в ленту как обычно. Нет связи — так и пишем; уйдёт само при восстановлении (flushPendingSends).
+function retryPendingSend(n) {
+  const p = pendingSends.get(n);
+  if (!p) return;
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(p.payload));
+    p.el.remove();
+    pendingSends.delete(n);
+  } else {
+    p.el.classList.add('sending');
+    p.el.querySelector('.pending-state').textContent = 'Связи пока нет — отправим, как только появится';
+  }
+}
+function flushPendingSends() { [...pendingSends.keys()].forEach(retryPendingSend); }
 
 // Тост должен появляться НАД строкой ввода, а не поверх неё — а высота composer не фиксирована
 // (растёт с многострочным текстом), поэтому отступ считаем от его реальной высоты каждый раз.
