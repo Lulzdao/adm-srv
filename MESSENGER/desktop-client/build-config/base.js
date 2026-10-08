@@ -74,6 +74,8 @@ module.exports = {
     'diagnose.js',
     // Разбор машинной политики C:\ProgramData\Iskra\config.json (require из main.js) — то же самое.
     'policy.js',
+    // Подключение к ПК сотрудника через UltraVNC (require из main.js) — то же самое.
+    'remote.js',
     // Значок трея в цвете акцента (require из main.js) — то же самое.
     'tray-icon.js',
     'renderer/**/*',

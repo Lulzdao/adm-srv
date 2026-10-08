@@ -14,4 +14,11 @@
 // ============================================================================
 module.exports = {
   SERVER_URL: 'https://p48-srv-adm01.rosstat.local:3103',
+
+  // Подключение к ПК сотрудника (ПКМ по контакту у администратора): где на ПК администраторов лежит
+  // просмотрщик UltraVNC и какой порт слушает его сервер на рабочих местах (PortNumber в
+  // ultravnc.ini). На отдельной машине переопределяется без пересборки — vncViewerPath и vncPort в
+  // C:\ProgramData\Iskra\config.json.
+  VNC_VIEWER_PATH: 'E:\\uvnc_support\\vncviewer.exe',
+  VNC_PORT: 5995,
 };

@@ -14,6 +14,8 @@ contextBridge.exposeInMainWorld('desktop', {
   // Действия меню по ПКМ. Само меню рисует окно (uiContextMenu в ui-kit.js) — системное меню
   // Windows оформить под «Искру» нельзя; здесь только то, что делает главный процесс.
   sendFileTo: (payload) => ipcRenderer.send('send-file-to', payload),
+  // Подключение к ПК сотрудника через UltraVNC — только у администратора, см. remote-connect в main.js.
+  remoteConnect: (host) => ipcRenderer.invoke('remote-connect', host),
   openDepartmentBroadcast: (payload) => ipcRenderer.send('open-department-broadcast', payload),
   copyText: (text) => ipcRenderer.send('copy-text', text),
   saveFileAs: (payload) => ipcRenderer.send('save-file-as', payload),

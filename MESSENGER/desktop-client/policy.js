@@ -2,7 +2,10 @@
 // его обычными тестами без Electron (см. policy.test.js). Что это за файл и зачем — в комментарии
 // у readMachinePolicy в main.js.
 
-const EMPTY = Object.freeze({ serverUrl: null, allowInsecureHttp: false, extraCa: [], source: null });
+const EMPTY = Object.freeze({
+  serverUrl: null, allowInsecureHttp: false, extraCa: [], source: null,
+  vncViewerPath: null, vncPort: null, vncViewerArgs: [],
+});
 
 /**
  * @param raw       текст файла (как прочитан с диска) или null, если файла нет
@@ -46,6 +49,11 @@ function parseMachinePolicy(raw, readFile, source) {
       allowInsecureHttp: cfg.allowInsecureHttp === true,
       extraCa,
       source,
+      // Подключение к ПК сотрудника через UltraVNC (см. remote.js, remote-connect в main.js). Всё
+      // необязательно: без этих строк действуют путь и порт из config.js.
+      vncViewerPath: typeof cfg.vncViewerPath === 'string' && cfg.vncViewerPath.trim() ? cfg.vncViewerPath.trim() : null,
+      vncPort: Number.isInteger(cfg.vncPort) && cfg.vncPort > 0 && cfg.vncPort < 65536 ? cfg.vncPort : null,
+      vncViewerArgs: [].concat(cfg.vncViewerArgs || []).filter((a) => typeof a === 'string' && a),
     },
     error: null,
   };
