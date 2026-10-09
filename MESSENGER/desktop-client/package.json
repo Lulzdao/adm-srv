@@ -1,7 +1,7 @@
 {
   "_comment_name": "Отсюда Electron берёт имя папки с данными пользователя (%APPDATA%\\<имя>): settings.json и localStorage с токеном входа. Держим его латиницей намеренно — с кириллическим именем Electron 22 на Linux вообще не создаёт подпапку и складывает данные в корень appData (проверено запуском). Отображаемое имя приложения — productName в build-config/base.js, оно на ярлыке и в папке установки.",
   "name": "iskra-desktop",
-  "version": "1.0.18",
+  "version": "1.0.21",
   "author": "Липецкстат",
   "private": true,
   "main": "main.js",
