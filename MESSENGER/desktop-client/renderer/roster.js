@@ -163,6 +163,23 @@ async function api(path, opts) {
 
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 
+// Неотправленное из закрытых окон чата (renderer/outbox.js): человек написал без связи и закрыл чат.
+// Список работает всегда, поэтому отправляет он — как только есть связь. Диалоги, чьё окно открыто,
+// не трогает: там отправит само окно. Давнее (старше 12 часов) не отправляет — оно ждёт в чате.
+function sendClosedOutboxes() {
+  if (!me || !ws || ws.readyState !== WebSocket.OPEN) return;
+  let sent = 0;
+  for (const dialog of Outbox.collectClosed(localStorage, me.id, Date.now())) {
+    // Сначала убираем из хранилища, потом отправляем: если окно чата откроют в эту же секунду, оно
+    // этих сообщений уже не увидит и не отправит второй раз.
+    Outbox.write(localStorage, dialog.key, dialog.keep);
+    for (const item of dialog.send) { ws.send(JSON.stringify(item.payload)); sent += 1; }
+  }
+  if (sent) uiToast(sent === 1 ? 'Отправлено сообщение, написанное без связи' : `Отправлены сообщения, написанные без связи: ${sent}`);
+}
+// Связь у списка могла и не пропадать (упало только соединение окна чата) — поэтому ещё и по таймеру.
+setInterval(sendClosedOutboxes, 30000);
+
 let wsLostTimer = null; // см. showOfflineBar в ui-kit.js
 let wsReconnectDelay = 2000; // экспоненциальный бэкофф между попытками (см. onclose ниже)
 let wsEverOpened = false;    // первое подключение — не «восстановление»: дозагружать нечего
@@ -204,6 +221,7 @@ function connectWs() {
     ws.send(JSON.stringify({ type: 'status', state }));
     if (wsEverOpened) resyncAfterReconnect();
     wsEverOpened = true;
+    sendClosedOutboxes();
   };
   ws.onmessage = (e) => {
     const data = JSON.parse(e.data);

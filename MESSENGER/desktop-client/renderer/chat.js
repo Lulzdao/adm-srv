@@ -334,6 +334,8 @@ function addMessage(m) {
   box.appendChild(div.firstElementChild);
   // Пузырь "печатает" должен оставаться в самом низу. Обычно его к этому моменту уже сняли (см.
   // ws.onmessage), но в комнате может печатать один, а сообщение прийти от другого.
+  // Неотправленное (см. addPendingSend) — всегда ниже пришедшего: оно ещё не в переписке.
+  box.querySelectorAll('.msg.pending').forEach((p) => box.appendChild(p));
   const typing = document.getElementById('typingBubble');
   if (typing) box.appendChild(typing);
   if (incoming && m.created_at > maxKnownTs) maxKnownTs = m.created_at;
@@ -429,7 +431,8 @@ function connectWs() {
     ws.send(JSON.stringify({ type: 'status', state }));
     wsReadyQueue.forEach(fn => fn());
     wsReadyQueue = [];
-    if (wsEverOpened) { await resyncHistoryAfterReconnect(); flushPendingSends(); }
+    if (wsEverOpened) await resyncHistoryAfterReconnect();
+    flushPendingSends(); // и при первом подключении: в окне могло остаться неотправленное с прошлого раза
     wsEverOpened = true;
   };
   ws.onmessage = (e) => {
@@ -609,10 +612,35 @@ function sendPayload(payload) {
   else wsReadyQueue.push(() => ws.send(JSON.stringify(payload)));
 }
 
-// Неотправленные сообщения этого окна: номер → { payload, el }. Живут, пока открыто окно.
+// Неотправленные сообщения этого окна: номер → { payload, el, at }. Копия лежит в localStorage
+// (renderer/outbox.js): окно закрыли без связи — сообщение не пропадает, его отправит список
+// сотрудников, когда связь появится, либо это же окно при следующем открытии.
 let pendingSeq = 0;
 const pendingSends = new Map();
-function addPendingSend(payload) {
+const OUTBOX_KEY = Outbox.outboxKey(me.id, type, id);
+const OUTBOX_OWNER_KEY = Outbox.ownerKey(me.id, type, id);
+function saveOutbox() {
+  Outbox.write(localStorage, OUTBOX_KEY, [...pendingSends.values()].map((p) => ({ payload: p.payload, at: p.at })));
+}
+// «Отметка хозяина»: пока окно открыто, неотправленное этого диалога отправляет только оно.
+function beatOutboxOwner() { try { localStorage.setItem(OUTBOX_OWNER_KEY, String(Date.now())); } catch { /* не критично */ } }
+beatOutboxOwner();
+setInterval(beatOutboxOwner, Outbox.OWNER_BEAT_MS);
+window.addEventListener('pagehide', () => { try { localStorage.removeItem(OUTBOX_OWNER_KEY); } catch { /* отметка протухнет сама */ } });
+
+// Оставшееся с прошлого раза: показать в ленте. Свежее уйдёт само, как только есть связь; давнее
+// (старше 12 часов) ждёт кнопки «Повторить» — отправлять его без спроса уже неуместно.
+function restoreOutbox() {
+  const now = Date.now();
+  for (const item of Outbox.read(localStorage, OUTBOX_KEY)) {
+    if (!Outbox.isFresh(item.at, now)) addPendingSend(item.payload, { at: item.at, stale: true });
+    else if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(item.payload));
+    else addPendingSend(item.payload, { at: item.at });
+  }
+  saveOutbox();
+}
+
+function addPendingSend(payload, { at = Date.now(), stale = false } = {}) {
   const n = ++pendingSeq;
   const el = document.createElement('div');
   el.className = 'msg own pending';
@@ -625,7 +653,12 @@ function addPendingSend(payload) {
   const box = document.getElementById('messages');
   box.appendChild(el);
   box.scrollTop = box.scrollHeight;
-  pendingSends.set(n, { payload, el });
+  if (stale) {
+    const when = new Date(at).toLocaleString('ru-RU', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
+    el.querySelector('.pending-state').textContent = `Не отправлено ${when}`;
+  }
+  pendingSends.set(n, { payload, el, at, stale });
+  saveOutbox();
 }
 // Есть связь — отправляем, а «черновик» убираем: настоящее сообщение придёт обратно от сервера и
 // встанет в ленту как обычно. Нет связи — так и пишем; уйдёт само при восстановлении (flushPendingSends).
@@ -636,12 +669,15 @@ function retryPendingSend(n) {
     ws.send(JSON.stringify(p.payload));
     p.el.remove();
     pendingSends.delete(n);
+    saveOutbox();
   } else {
+    p.stale = false; // человек сам нажал «Повторить» — теперь уйдёт при появлении связи
     p.el.classList.add('sending');
     p.el.querySelector('.pending-state').textContent = 'Связи пока нет — отправим, как только появится';
   }
 }
-function flushPendingSends() { [...pendingSends.keys()].forEach(retryPendingSend); }
+// Само уходит только свежее; давнее (stale) ждёт нажатия «Повторить».
+function flushPendingSends() { [...pendingSends.entries()].filter(([, p]) => !p.stale).forEach(([n]) => retryPendingSend(n)); }
 
 // Тост должен появляться НАД строкой ввода, а не поверх неё — а высота composer не фиксирована
 // (растёт с многострочным текстом), поэтому отступ считаем от его реальной высоты каждый раз.
@@ -1144,7 +1180,11 @@ wireMessageContextMenu(document.getElementById('hpMessages'));
 wireMessageToolbar(document.getElementById('messages'));
 wireMessageToolbar(document.getElementById('hpMessages'));
 
-loadHistory();
+// Неотправленное с прошлого раза показываем сразу, не дожидаясь истории: без связи она не загрузится
+// вовсе, а человек открыл чат как раз посмотреть, что с его сообщением. В конце ленты оно остаётся
+// благодаря addMessage — тот держит неотправленное последним.
+restoreOutbox();
+loadHistory().catch(() => {});
 connectWs();
 
 // Обработчики, которые раньше стояли прямо в разметке (onclick=/onsubmit=): CSP окна запрещает

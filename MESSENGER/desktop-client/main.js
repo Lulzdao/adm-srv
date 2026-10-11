@@ -12,6 +12,22 @@ const { viewerArgs, viewerCandidates, findViewer } = require('./remote');
 const { SERVER_URL, VNC_VIEWER_PATH, VNC_PORT, VNC_VIEWER_ARGS } = require('./config');
 const { autoUpdater } = require('electron-updater');
 
+// ---------- Одна копия клиента ----------
+// Клиент сидит в трее, и окна у него в этот момент нет. Двойной щелчок по ярлыку раньше запускал
+// ВТОРУЮ копию: два значка в трее, два подключения под одним сотрудником, уведомления дважды.
+// Теперь повторный запуск ничего не создаёт, а первая копия показывает свой список. Замок — на папку
+// данных, поэтому тестовый экземпляр с --user-data-dir по-прежнему запускается рядом.
+const gotInstanceLock = app.requestSingleInstanceLock();
+if (!gotInstanceLock) app.exit(0);
+else {
+  app.on('second-instance', () => {
+    if (!rosterWin || rosterWin.isDestroyed()) return;
+    if (rosterWin.isMinimized()) rosterWin.restore();
+    rosterWin.show();
+    rosterWin.focus();
+  });
+}
+
 // ---------- Доверие к корневому удостоверяющему центру организации ----------
 // Внутри клиента два независимых сетевых стека, и это ключевой момент. Окна (чат, ростер,
 // объявления) ходят через Chromium — он читает хранилище сертификатов Windows, куда корневой
@@ -1344,6 +1360,7 @@ function watchWindowHangs(win, name) {
 if (process.platform === 'win32') app.setAppUserModelId('ru.lipetskstat.iskra');
 
 app.whenReady().then(() => {
+  if (!gotInstanceLock) return; // вторая копия уже выходит — окон и трея не создаём
   createRoster();
   createTray();
   startIdleWatch();
