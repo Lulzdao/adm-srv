@@ -22,6 +22,7 @@ const { createTls } = require('./lib/tls');
 const { createRateLimits } = require('./lib/rateLimit');
 const { createReleases } = require('./lib/releases');
 const { createLogger, dayStamp, parseLogLine, LOG_VIEW_LIMIT } = require('./lib/log');
+const { sanitizeHtml, htmlToText, hasFormatting } = require('./lib/richtext');
 
 // 3103, а не 3000: «Искра» стоит на одной машине с платформой, и 3000 занят
 // платформой. Тот же порт вшит в сборку клиента (desktop-client/config.js) и
@@ -414,7 +415,7 @@ const dmHistoryDays = db.prepare(`
   FROM messages m WHERE (m.from_id = ? AND m.to_id = ?) OR (m.from_id = ? AND m.to_id = ?) GROUP BY day ORDER BY day DESC
 `);
 
-const insertBroadcast = db.prepare('INSERT INTO broadcasts (from_id, text, files_json, department_id, created_at) VALUES (?, ?, ?, ?, ?)');
+const insertBroadcast = db.prepare('INSERT INTO broadcasts (from_id, text, html, files_json, department_id, created_at) VALUES (?, ?, ?, ?, ?, ?)');
 // Какие объявления попадают в выборку. @department = NULL — обычная лента: объявления всей
 // организации плюс сообщения отделов, в которых человек состоит. @department = число — лента
 // одного отдела (окно "Сообщение отделу"); право её видеть проверяется в маршруте.
@@ -431,7 +432,7 @@ const BROADCAST_SCOPE = `(
   ))
   OR (@department IS NOT NULL AND b.department_id = @department)
 )`;
-const BROADCAST_COLUMNS = `b.id, b.text, b.created_at, b.files_json, b.department_id, d.name AS department, u.display_name AS from_user`;
+const BROADCAST_COLUMNS = `b.id, b.text, b.html, b.created_at, b.files_json, b.department_id, d.name AS department, u.display_name AS from_user`;
 const BROADCAST_FROM = `FROM broadcasts b JOIN users u ON u.id = b.from_id LEFT JOIN departments d ON d.id = b.department_id`;
 
 const recentBroadcasts = db.prepare(`
@@ -1114,8 +1115,15 @@ app.get('/api/broadcasts/days', auth, (req, res) => {
 // Объявление всей организации — по-прежнему право can_broadcast. Сообщение отделу — доступно всем:
 // новой досягаемости оно не даёт (написать каждому сотруднику отдела по одному человек и так может,
 // список людей открыт), а экономит десяток одинаковых сообщений. Отправитель везде подписан именем.
+// Текст с оформлением приходит в html (редактор в окне объявлений и в панели): сервер чистит его по
+// белому списку и сам делает из него text — клиенту в этом верить незачем. Без html — как раньше.
+const BROADCAST_HTML_MAX = 50000;
 app.post('/api/broadcast', auth, (req, res) => {
-  const text = String((req.body || {}).text || '').slice(0, 4000).trim();
+  const rawHtml = (req.body || {}).html;
+  if (typeof rawHtml === 'string' && rawHtml.length > BROADCAST_HTML_MAX) return res.status(400).json({ error: 'Объявление слишком длинное' });
+  let html = typeof rawHtml === 'string' && rawHtml.trim() ? sanitizeHtml(rawHtml) : null;
+  const text = (html !== null ? htmlToText(html) : String((req.body || {}).text || '')).slice(0, 4000).trim();
+  if (html !== null && (!text || !hasFormatting(html))) html = null;   // оформления нет — хватит текста
   const files = normalizeIncomingFiles((req.body || {}).files, req.user);
   const rawDepartment = (req.body || {}).departmentId;
   if (!text && !files.length) return res.status(400).json({ error: 'Пустая рассылка' });
@@ -1132,11 +1140,11 @@ app.post('/api/broadcast', auth, (req, res) => {
 
   const now = Date.now();
   const filesJson = files.length ? JSON.stringify(files) : null;
-  insertBroadcast.run(req.user.id, text, filesJson, department, now);
+  insertBroadcast.run(req.user.id, text, html, filesJson, department, now);
   const payload = JSON.stringify({
     type: 'broadcast',
     from_user: req.user.display_name,
-    text, files, created_at: now,
+    text, html, files, created_at: now,
     department_id: department,
     department: department ? getDepartment.get(department).name : null,
   });

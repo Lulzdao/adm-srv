@@ -472,7 +472,33 @@
   .bc-item .who { color:var(--md-primary); font-weight:600; font-size:13px; }
   .bc-item .time { color:var(--md-on-surface-variant); font-size:11px; margin-left:8px; }
   .bc-item .txt { margin-top:6px; white-space:pre-wrap; line-height:1.5; }
-  textarea#bcText { width:100%; height:96px; resize:vertical; }
+  /* Редактор рассылки (richtext.js) — как в окне объявлений клиента и в рассылках «Центра». */
+  #bcText { display:flex; min-height:170px; }
+  .rte { flex:1; display:flex; flex-direction:column; border:1px solid var(--md-outline); border-radius:var(--md-shape-s); background:var(--md-surface-container-lowest); }
+  .rte:focus-within { border-color:var(--md-primary); box-shadow:0 0 0 3px var(--md-primary-ring); }
+  .rte-bar { display:flex; flex-wrap:wrap; align-items:center; gap:2px; padding:5px 6px; border-bottom:1px solid var(--md-outline-variant); }
+  .rte-bar button { height:28px; min-width:28px; padding:0 6px; border:none; border-radius:var(--md-shape-s); background:transparent; color:var(--md-on-surface); font:inherit; font-size:13px; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; gap:3px; }
+  .rte-bar button:hover { background:var(--md-state-hover); }
+  .rte-bar button.on { background:var(--md-primary-container); color:var(--md-on-primary-container); }
+  .rte-sep { width:1px; height:18px; background:var(--md-outline-variant); margin:0 3px; }
+  .rte-bar .rte-dd { color:var(--md-on-surface-variant); font-size:12px; }
+  .rte-drop { position:relative; }
+  .rte-drop.open > .rte-dd { background:var(--md-state-hover); color:var(--md-on-surface); }
+  .rte-menu { display:none; position:absolute; top:calc(100% + 4px); left:0; z-index:30; min-width:150px; padding:4px; border:1px solid var(--md-outline-variant); border-radius:var(--md-shape-s); background:var(--md-surface-container-lowest); box-shadow:var(--md-elev-3); flex-direction:column; }
+  .rte-drop.open > .rte-menu { display:flex; }
+  .rte-menu button { justify-content:flex-start; width:100%; height:auto; min-height:30px; padding:4px 10px; white-space:nowrap; }
+  .rte-menu.rte-swatches { min-width:0; flex-direction:row; gap:6px; padding:8px; }
+  .rte-swatches button, .rte-swatches button:hover { width:22px; min-width:22px; height:22px; min-height:22px; padding:0; border-radius:50%; background:var(--c); }
+  .rte-swatches .rte-nocolor, .rte-swatches .rte-nocolor:hover { background:linear-gradient(135deg, transparent 45%, var(--md-error) 45%, var(--md-error) 55%, transparent 55%); box-shadow:inset 0 0 0 1.5px var(--md-on-surface-variant); }
+  .rte-color-a { display:inline-flex; flex-direction:column; align-items:center; font-weight:700; line-height:1; }
+  .rte-color-a i { display:block; width:13px; height:3px; border-radius:2px; margin-top:2px; }
+  .rte-area { position:relative; flex:1; min-height:110px; max-height:360px; overflow-y:auto; padding:10px 12px; color:var(--md-on-surface); line-height:1.5; outline:none; word-break:break-word; cursor:text; }
+  .rte-area.empty::before { content:attr(data-placeholder); color:var(--md-on-surface-variant); pointer-events:none; position:absolute; }
+  .rte-area ul, .rte-area ol, .bc-item .txt.rich ul, .bc-item .txt.rich ol { margin:2px 0; padding-left:22px; }
+  .rte-area [style*="rgb(1, 2, 3)"] { color:inherit !important; }
+  .rte-area a, .bc-item .txt.rich a { color:var(--md-primary); }
+  .bc-item .txt.rich { white-space:normal; }
+  .bc-item .txt.rich p { margin:0 0 6px; }
 
   /* Выбор отделов сотрудника: сотрудник может состоять сразу в нескольких, а
      <select multiple> с ctrl-кликом в таблице — ровно тот элемент, который

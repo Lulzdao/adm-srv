@@ -1364,20 +1364,42 @@ async function requestClientLog(userId, host) {
 }
 
 async function loadBroadcastFeed() {
+  broadcastEditor();
   // all=1 — панель показывает и объявления всей организации, и сообщения отдельным отделам:
   // сотрудник видит только свои, администратор по своей задаче видит всё.
   const items = await api('api/broadcasts?all=1');
   document.getElementById('bcFeed').innerHTML = items.map(b => {
     const time = new Date(b.created_at).toLocaleString('ru-RU');
     const dept = b.department ? `<span class="time">отдел: ${escapeHtml(b.department)}</span>` : '';
-    return `<div class="bc-item"><span class="who">${escapeHtml(b.from_user)}</span><span class="time">${time}</span>${dept}<div class="txt">${escapeHtml(b.text)}</div></div>`;
+    // С оформлением — очищенный HTML (richtext.js; сервер уже очистил, здесь — ещё раз), иначе текст.
+    const body = b.html ? `<div class="txt rich">${IskraRich.clean(b.html)}</div>` : `<div class="txt">${escapeHtml(b.text)}</div>`;
+    return `<div class="bc-item"><span class="who">${escapeHtml(b.from_user)}</span><span class="time">${time}</span>${dept}${body}</div>`;
   }).join('') || '<div style="color:var(--muted)">Рассылок пока не было</div>';
+  // Панель живёт в iframe «Центра»: ссылка из объявления открывается в новой вкладке, а не вместо панели.
+  document.querySelectorAll('#bcFeed .txt.rich a').forEach((link) => { link.target = '_blank'; link.rel = 'noopener noreferrer'; });
+}
+// Редактор с оформлением — тот же, что в окне объявлений клиента (richtext.js). Создаётся при первом
+// обращении: раздел «Рассылка» открывают не всегда.
+let bcEditor = null;
+function broadcastEditor() {
+  if (!bcEditor) {
+    bcEditor = IskraRich.editor(document.getElementById('bcText'), {
+      placeholder: 'Текст рассылки...',
+      askLink: () => uiPrompt('Адрес ссылки (https://… или mailto:…)', 'https://'),
+      onError: (message) => uiToast(message, { error: true }),
+      onEnterCtrl: () => sendBroadcast(),
+    });
+  }
+  return bcEditor;
 }
 async function sendBroadcast() {
-  const el = document.getElementById('bcText');
-  const text = el.value.trim();
-  if (!text) return;
-  try { await api('api/broadcast', { method: 'POST', body: JSON.stringify({ text }) }); el.value = ''; loadBroadcastFeed(); } catch (e) { showError(e); }
+  const ed = broadcastEditor();
+  if (ed.isEmpty()) return;
+  try {
+    await api('api/broadcast', { method: 'POST', body: JSON.stringify({ text: ed.text(), html: ed.html() }) });
+    ed.clear();
+    loadBroadcastFeed();
+  } catch (e) { showError(e); }
 }
 
 // Отметка присутствия по HTTP — чтобы администратор, сидящий в панели, числился в сети и у

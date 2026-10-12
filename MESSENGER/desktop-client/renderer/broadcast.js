@@ -30,10 +30,17 @@ if (departmentId) {
   // Право "Рассылки" здесь ни при чём: оно про объявление всей организации. Написать своему отделу
   // может любой — написать каждому из них по одному он и так может, список людей открыт.
   document.querySelector('#composer p').textContent = `Сообщение получат только сотрудники отдела «${departmentName}» — уведомлением на компьютер и в их ленту объявлений.`;
-  document.getElementById('text').placeholder = 'Текст сообщения отделу...';
   document.getElementById('sendBtn').textContent = 'Отправить отделу';
   document.querySelector('#dropOverlay .dtext').textContent = 'Отпустите, чтобы прикрепить к сообщению';
 }
+// Текст объявления — с оформлением, как рассылки по почте в «Центре» (см. richtext.js). Ссылку
+// спрашиваем своим окном; Ctrl+Enter — отправить.
+const rte = IskraRich.editor(document.getElementById('textBox'), {
+  placeholder: departmentId ? 'Текст сообщения отделу...' : 'Текст рассылки...',
+  askLink: () => uiPrompt('Адрес ссылки (https://… или mailto:…)', 'https://', { ok: 'Вставить ссылку' }),
+  onError: (message) => uiToast(message, { error: true }),
+  onEnterCtrl: () => send(),
+});
 document.getElementById('historyBtn').querySelector('span').innerHTML = uiIcon('history');
 document.getElementById('historyBtn').title = 'Найти рассылку по дате или по тексту';
 document.querySelector('#dropOverlay span').innerHTML = uiIcon('attach');
@@ -60,7 +67,7 @@ function setComposerOpen(open) {
   // момент старта перехода, из-за чего разворачивание визуально дёргалось/подлагивало. Двойной
   // requestAnimationFrame откладывает фокус до следующего отрисованного кадра, когда браузер уже
   // сам посчитал этот layout по расписанию, а не по требованию focus().
-  if (open) requestAnimationFrame(() => requestAnimationFrame(() => document.getElementById('text').focus()));
+  if (open) requestAnimationFrame(() => requestAnimationFrame(() => rte.focus()));
 }
 
 (async () => {
@@ -250,6 +257,15 @@ function itemWhen(ts) {
   return d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', ...(d.getFullYear() === now.getFullYear() ? {} : { year: 'numeric' }) }).replace('.', '');
 }
 
+// Оформленное объявление: чистим ещё раз (richtext.js), эмодзи — картинками по текстовым узлам, а не
+// заменой в строке разметки (иначе картинка могла бы попасть внутрь атрибута).
+function richHtml(html) {
+  const box = document.createElement('div');
+  box.innerHTML = IskraRich.clean(html);
+  if (window.twemoji) window.twemoji.parse(box, { callback: (icon, o) => o.base + icon + o.ext, base: 'emoji/', ext: '.png', className: 'twemoji' });
+  return box.innerHTML;
+}
+
 function itemHtml(b, query) {
   const time = new Date(b.created_at).toLocaleString('ru-RU');
   let filesHtml = '';
@@ -265,7 +281,10 @@ function itemHtml(b, query) {
     // провисеть в ленте часами, и токен на момент клика уже истёк бы.
     filesHtml += `<div class="file-row"><a class="file" href="#" data-url="${escapeAttr(f.url)}" data-name="${escapeAttr(f.name || 'файл')}"><span class="fi"><span class="fi-file">${uiIcon('file')}</span><span class="fi-download">${uiIcon('download')}</span><span class="fi-progress"><svg viewBox="0 0 24 24"><circle class="ring-bg" cx="12" cy="12" r="10"></circle><circle class="ring-bar" cx="12" cy="12" r="10"></circle></svg><span class="fi-pct"></span></span><span class="fi-check">${uiIcon('check')}</span></span><span class="fmeta"><span class="fn">${escapeHtml(f.name || 'файл')}</span><span class="fs">${fmtSize(f.size)}</span></span></a></div>`;
   });
-  const txtHtml = b.text ? `<div class="txt selectable" data-raw-text="${escapeAttr(b.text)}">${highlightHtml(b.text, query)}</div>` : '';
+  // С оформлением — очищенный HTML (при поиске — простой текст с подсветкой найденного), иначе текст.
+  const txtHtml = b.html && !query
+    ? `<div class="txt rich selectable" data-raw-text="${escapeAttr(b.text || '')}">${richHtml(b.html)}</div>`
+    : b.text ? `<div class="txt selectable" data-raw-text="${escapeAttr(b.text)}">${highlightHtml(b.text, query)}</div>` : '';
   // В общей ленте сообщение отделу помечаем — иначе непонятно, почему коллега его не получил.
   // В окне самого отдела метка не нужна: там всё до одного адресовано этому отделу.
   const to = b.department ? `Отдел «${escapeHtml(b.department)}»` : 'Всем сотрудникам';
@@ -330,9 +349,10 @@ async function loadFeed() {
 }
 
 async function send() {
-  const el = document.getElementById('text');
-  const text = el.value.trim();
-  if (!text && !pendingFiles.length) return;
+  const empty = rte.isEmpty();
+  if (empty && !pendingFiles.length) return;
+  const text = empty ? '' : rte.text();
+  const html = empty ? '' : rte.html();
   if (pendingFiles.some((e) => e.status === 'uploading')) return; // кнопка и так задизейблена на этот случай
   if (pendingFiles.some((e) => e.status === 'error')) { uiAlert('Уберите файлы, которые не удалось загрузить (крестик на чипе), или перетащите их заново.'); return; }
   const sendBtn = document.getElementById('sendBtn');
@@ -341,8 +361,8 @@ async function send() {
     // Файлы уже загружены на сервер (см. addPendingFiles/startUpload) — здесь просто собираем
     // сообщение из готовых { url, name, size }, повторно ничего не грузим.
     const files = pendingFiles.map((e) => e.uploaded);
-    await api('/api/broadcast', { method: 'POST', body: JSON.stringify({ text, files, departmentId }) });
-    el.value = '';
+    await api('/api/broadcast', { method: 'POST', body: JSON.stringify({ text, html, files, departmentId }) });
+    rte.clear();
     pendingFiles = [];
     renderComposerFiles();
     document.getElementById('composer').classList.remove('open');
@@ -414,6 +434,9 @@ async function getDownloadUrl(relUrl, name) {
 // Клик по файлу — скачивание через главный процесс; ПКМ — скопировать текст / сохранить файл как
 function wireFeedInteractions(container) {
   container.addEventListener('click', async (e) => {
+    // Ссылка в тексте объявления — в браузере по умолчанию (окно само никуда не переходит, см. main.js).
+    const textLink = e.target.closest('.txt a[href]');
+    if (textLink) { e.preventDefault(); desktop.openLink(textLink.getAttribute('href')); return; }
     const link = e.target.closest('a.file');
     if (!link) return;
     e.preventDefault();
