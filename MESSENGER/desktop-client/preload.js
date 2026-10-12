@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('desktop', {
   remoteConnect: (host) => ipcRenderer.invoke('remote-connect', host),
   openDepartmentBroadcast: (payload) => ipcRenderer.send('open-department-broadcast', payload),
   copyText: (text) => ipcRenderer.send('copy-text', text),
+  openLink: (url) => ipcRenderer.send('open-link', url),
   saveFileAs: (payload) => ipcRenderer.send('save-file-as', payload),
   windowAction: (action) => ipcRenderer.send('window-action', action),
   notify: (payload) => ipcRenderer.send('notify', payload),

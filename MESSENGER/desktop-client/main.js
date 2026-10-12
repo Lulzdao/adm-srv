@@ -1,6 +1,6 @@
 // Главный процесс Electron — окна, трей, уведомления, настройки, отправка и скачивание файлов
 const { TRAY_SIZES, accentColor, starPng } = require('./tray-icon');
-const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, Notification, powerMonitor, dialog, session, clipboard, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, Notification, powerMonitor, dialog, session, clipboard, screen, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
@@ -157,7 +157,7 @@ const BUILD_TRACK = require('./package.json').buildTrack || 'dev';
 // В окнах есть мост в главный процесс (preload.js → window.desktop): смена адреса сервера, скачивание,
 // журнал. Любая страница, оказавшаяся в окне, получила бы его целиком. Поэтому окно не может уйти со
 // своих страниц renderer/ (переход по ссылке, location = ...), открыть новое окно (window.open,
-// target=_blank) или встроить <webview>. Сейчас ссылок в переписке нет и текст экранируется — это
+// target=_blank) или встроить <webview>. Ссылки из объявлений окно отдаёт браузеру само (open-link), а запрет здесь —
 // вторая линия на случай, если однажды где-то ошибутся.
 const RENDERER_URL_PREFIX = require('url').pathToFileURL(path.join(__dirname, 'renderer') + path.sep).href;
 app.on('web-contents-created', (event, contents) => {
@@ -1099,6 +1099,13 @@ async function handleSaveFileAs(url, suggestedName, win) {
 
 // ПКМ по сообщению в чате/рассылках: копировать текст или сохранить файл в выбранное место
 // (не то же самое, что настройка "папка по умолчанию" — тут именно разовый выбор).
+// Ссылка из текста объявления — в браузере по умолчанию. Только http(s) и mailto: адрес пришёл из
+// чужого текста, и file://, ms-settings: и прочие схемы запускали бы на компьютере что угодно.
+ipcMain.on('open-link', (event, url) => {
+  if (typeof url !== 'string' || url.length > 2000 || !/^(https?:\/\/|mailto:)\S+$/i.test(url)) return;
+  shell.openExternal(url).catch((err) => logLocal('open_link_failed', { error: err.message }, 'WARN'));
+});
+
 ipcMain.on('copy-text', (event, text) => {
   if (typeof text !== 'string' || !text) return;
   clipboard.writeText(text);

@@ -104,3 +104,39 @@ test('по WebSocket объявление отделу приходит толь
     wsБух.close(); wsПост.close(); wsАвтор.close();
   }
 });
+
+// Объявление с оформлением: редактор присылает html, сервер чистит его по белому списку и сам делает
+// текстовую версию — по ней ищет история, её показывают уведомление и старые клиенты.
+test('оформленное объявление: html очищается, текст сервер делает сам', async () => {
+  const ws = await connect(srv.url, бухгалтер.token);
+  try {
+    const пришло = ws.next((m) => m.type === 'broadcast' && /Собрание/.test(m.text), 1500);
+    const html = '<div><b>Собрание</b> в <span style="color: #d93b3b; background: url(x)">пятницу</span></div>'
+      + '<ul><li>отчёт</li></ul><img src=x onerror="alert(1)"><script>alert(2)</script>'
+      + '<a href="javascript:alert(3)">плохая</a> <a href="https://portal.example">портал</a>';
+    assert.equal((await отправить(вещатель, { html, text: 'клиенту не верим' })).status, 200);
+    const живое = await пришло;
+    assert.match(живое.html, /<b>Собрание<\/b>/);
+    assert.match(живое.html, /style="color: #d93b3b"/, 'цвет остался, ссылка в стиле — нет');
+    assert.doesNotMatch(живое.html, /img|script|onerror|javascript|url\(/i);
+    assert.match(живое.html, /<a href="https:\/\/portal\.example">портал<\/a>/);
+    assert.match(живое.text, /^Собрание в пятницу/);
+    assert.match(живое.text, /• отчёт/);
+    assert.doesNotMatch(живое.text, /клиенту не верим/);
+
+    const r = await request(srv.url, 'GET', '/api/broadcasts?q=пятницу', { token: бухгалтер.token });
+    assert.equal(r.json.length, 1, 'поиск — по текстовой версии');
+    assert.equal(r.json[0].html, живое.html, 'в истории — тот же html');
+  } finally {
+    ws.close();
+  }
+});
+
+test('html без оформления хранится как обычный текст; пустой и слишком длинный — отказ', async () => {
+  assert.equal((await отправить(вещатель, { html: '<div>просто строка</div><div>вторая</div>' })).status, 200);
+  const r = await request(srv.url, 'GET', '/api/broadcasts?q=просто строка', { token: вещатель.token });
+  assert.equal(r.json[0].html, null);
+  assert.equal(r.json[0].text, 'просто строка\nвторая');
+  assert.equal((await отправить(вещатель, { html: '<div><b> </b><br></div>' })).status, 400, 'пустое после очистки');
+  assert.equal((await отправить(вещатель, { html: '<b>x</b>'.repeat(10000) })).status, 400, 'слишком длинное');
+});
