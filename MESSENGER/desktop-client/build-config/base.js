@@ -78,6 +78,9 @@ module.exports = {
     'remote.js',
     // Есть ли у пользователя права на установку обновления (require из main.js) — то же самое.
     'elevation.js',
+    // Обновление без прав сотрудника: запускается заданием планировщика, не из main.js (см. шапку
+    // файла). Лежит внутри app.asar рядом с package.json, config.js и policy.js, которые читает.
+    'updater.js',
     // Значок трея в цвете акцента (require из main.js) — то же самое.
     'tray-icon.js',
     'renderer/**/*',
@@ -93,5 +96,9 @@ module.exports = {
   // установщику: NSIS про asar ничего не знает и прочитать оттуда файл не может, а корень надо
   // положить в хранилище Windows ещё до первого запуска приложения. Путь на диске получается
   // $INSTDIR\resources\rosstat-root-ca.crt — он и указан в installer-common.nsh.
-  extraResources: ['rosstat-root-ca.crt'],
+  //
+  // updater/ — сценарии заданий планировщика (обновление без прав сотрудника). Тоже обычными
+  // файлами: их запускает PowerShell — установщик и планировщик Windows, — а не само приложение.
+  // На диске: $INSTDIR\resources\updater\*.ps1.
+  extraResources: ['rosstat-root-ca.crt', { from: 'updater', to: 'updater', filter: ['*.ps1'] }],
 };

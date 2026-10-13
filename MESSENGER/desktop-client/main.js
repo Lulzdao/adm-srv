@@ -8,7 +8,7 @@ const https = require('https');
 const tls = require('tls');
 const { diagnoseServer } = require('./diagnose');
 const { parseMachinePolicy } = require('./policy');
-const { detectCanElevate } = require('./elevation');
+const { detectCanElevate, updatePlan, canUpdateOnCommand } = require('./elevation');
 const { viewerArgs, viewerCandidates, launchViewer } = require('./remote');
 const { SERVER_URL, VNC_VIEWER_PATHS, VNC_PORT, VNC_VIEWER_ARGS } = require('./config');
 const { autoUpdater } = require('electron-updater');
@@ -182,9 +182,33 @@ app.on('web-contents-created', (event, contents) => {
 // elevation.js). Узнаём один раз при запуске — состав групп пользователя за сеанс не меняется.
 // true — права есть, false — нет, null — узнать не удалось (тогда ведём себя как раньше).
 // whoami — полным путём: по одному имени может найтись чужой (например, из набора Git).
-const CAN_ELEVATE = detectCanElevate(process.platform, () => require('child_process').execFileSync(
-  path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'whoami.exe'),
-  ['/groups', '/fo', 'csv', '/nh'], { timeout: 10000, windowsHide: true, encoding: 'latin1' }));
+const SYSTEM32 = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32');
+const IS_ADMIN = detectCanElevate(process.platform, () => require('child_process').execFileSync(
+  path.join(SYSTEM32, 'whoami.exe'), ['/groups', '/fo', 'csv', '/nh'], { timeout: 10000, windowsHide: true, encoding: 'latin1' }));
+
+// Без прав администратора обновление ставит задание планировщика от имени системы — его заводит
+// установщик (updater/register-tasks.ps1, что оно делает — в updater.js). Есть ли оно на этом ПК,
+// спрашиваем только тогда, когда прав нет: администратору оно не нужно.
+const UPDATE_TASK = 'Iskra\\Update';
+function systemUpdaterInstalled() {
+  try {
+    require('child_process').execFileSync(path.join(SYSTEM32, 'schtasks.exe'), ['/Query', '/TN', UPDATE_TASK],
+      { timeout: 10000, windowsHide: true, stdio: 'ignore' });
+    return true;
+  } catch { return false; }
+}
+const UPDATE_PLAN = updatePlan(IS_ADMIN, IS_ADMIN === false ? systemUpdaterInstalled() : false);
+// Что уходит серверу (adm=1|0): может ли эта машина обновиться по команде — сама или заданием.
+const CAN_ELEVATE = canUpdateOnCommand(IS_ADMIN, UPDATE_PLAN === 'task');
+
+// Просит Windows выполнить задание обновления сейчас. Оно проверит версию на сервере, поставит
+// новую и само откроет «Искру» обратно; если версия уже свежая — ничего не произойдёт.
+function runSystemUpdater() {
+  return new Promise((resolve) => {
+    require('child_process').execFile(path.join(SYSTEM32, 'schtasks.exe'), ['/Run', '/TN', UPDATE_TASK],
+      { timeout: 20000, windowsHide: true }, (err) => resolve(!err));
+  });
+}
 
 ipcMain.on('get-static-info', (event) => {
   event.returnValue = { hostname: require('os').hostname(), appVersion: app.getVersion(), buildTrack: BUILD_TRACK, canElevate: CAN_ELEVATE };
@@ -926,8 +950,13 @@ const NO_RIGHTS_TOAST = 'Обновление установится при пе
 
 function forceUpdateNow() {
   if (!app.isPackaged) return;
-  if (CAN_ELEVATE === false) {
+  if (UPDATE_PLAN === 'none') {
     logLocal('update_forced_no_rights', {}, 'WARN');
+    return;
+  }
+  if (UPDATE_PLAN === 'task') {
+    // Прав нет, но есть задание системы: обновление ставит оно, клиент сам не закрывается.
+    runSystemUpdater().then((ok) => logLocal(ok ? 'update_forced_via_task' : 'update_task_start_failed', {}, ok ? 'INFO' : 'WARN'));
     return;
   }
   logLocal('update_forced_by_admin', {}, 'INFO');
@@ -942,7 +971,10 @@ function setupUpdater() {
   if (!app.isPackaged) return;
 
   autoUpdater.autoDownload = !!settings.autoUpdate;
-  autoUpdater.autoInstallOnAppQuit = true; // скачанное встанет при следующем выходе, без вопросов
+  // Скачанное встаёт при следующем выходе, без вопросов — но только если у пользователя есть права
+  // администратора. Без них установщик при выходе лишь спросил бы пароль администратора; таким
+  // машинам версию ставит задание системы (см. UPDATE_PLAN).
+  autoUpdater.autoInstallOnAppQuit = UPDATE_PLAN === 'self';
   // electron-updater пишет тот же самый текст и сюда, и в событие 'error' ниже — уровень считаем
   // одинаково в обоих местах, иначе одна и та же причина попала бы в журнал под разной важностью.
   autoUpdater.logger = { info: () => {}, warn: () => {}, error: (m) => logLocal('updater_error', { message: String(m) }, updateErrorLevel(m)) };
@@ -1037,9 +1069,19 @@ ipcMain.on('download-update', () => { if (app.isPackaged) autoUpdater.downloadUp
 ipcMain.on('install-update', (event) => {
   // Кнопка «Перезапустить и обновить» в настройках. Без прав администратора не закрываемся — по
   // той же причине, что и по команде из панели (см. forceUpdateNow).
-  if (CAN_ELEVATE === false) {
+  if (UPDATE_PLAN === 'none') {
     logLocal('update_install_no_rights', {}, 'WARN');
     sendToWindow(BrowserWindow.fromWebContents(event.sender), 'toast', { message: NO_RIGHTS_TOAST });
+    return;
+  }
+  if (UPDATE_PLAN === 'task') {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    runSystemUpdater().then((ok) => {
+      logLocal(ok ? 'update_install_via_task' : 'update_task_start_failed', {}, ok ? 'INFO' : 'WARN');
+      sendToWindow(win, 'toast', { message: ok
+        ? 'Обновление устанавливается. «Искра» закроется на несколько секунд и откроется снова.'
+        : 'Не удалось начать обновление. Оно установится само — в 8:30 или в 13:00.' });
+    });
     return;
   }
   // isQuitting обязателен ДО quitAndInstall: иначе обработчик close у окна списка контактов

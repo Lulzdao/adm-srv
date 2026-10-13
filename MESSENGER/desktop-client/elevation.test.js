@@ -5,7 +5,21 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { hasAdminGroup, detectCanElevate } = require('./elevation');
+const { hasAdminGroup, detectCanElevate, updatePlan, canUpdateOnCommand } = require('./elevation');
+
+test('как ставится обновление по команде: сам, заданием системы или никак', () => {
+  assert.strictEqual(updatePlan(true, false), 'self');
+  assert.strictEqual(updatePlan(true, true), 'self', 'администратору задание не нужно');
+  assert.strictEqual(updatePlan(null, false), 'self', 'права неизвестны — как раньше');
+  assert.strictEqual(updatePlan(false, true), 'task');
+  assert.strictEqual(updatePlan(false, false), 'none');
+
+  // Серверу: без прав, но с заданием — обновиться по команде может.
+  assert.strictEqual(canUpdateOnCommand(true, false), true);
+  assert.strictEqual(canUpdateOnCommand(false, true), true);
+  assert.strictEqual(canUpdateOnCommand(false, false), false);
+  assert.strictEqual(canUpdateOnCommand(null, true), null);
+});
 
 const ADMIN = [
   '"Все","Хорошо известная группа","S-1-1-0","Обязательная группа, Включены по умолчанию, Включенная группа"',
