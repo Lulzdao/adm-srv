@@ -302,7 +302,7 @@ const DEFAULT_SETTINGS = {
   // настройки они не меняют: settings.json хранит все значения целиком.
   openChatOnMessage: true,   // открывать окно чата при новом сообщении (вместо/вместе с уведомлением)
   rememberWindowSize: true,  // запоминать размер окон между запусками
-  alwaysOnTop: true,         // держать окна поверх остальных
+  alwaysOnTop: false,        // держать окна поверх остальных (при установке выключено)
   hideNameInMessages: true,  // не повторять имя собеседника в каждом сообщении личного чата (по умолчанию включено)
   theme: 'light',            // 'dark' | 'light'
   accent: 'azure',           // цвет кнопок, отметок и герба: 'ember' | 'garnet' | 'pink' | 'gold' | 'jade' | 'azure' | 'violet'
