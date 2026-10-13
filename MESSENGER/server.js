@@ -1140,9 +1140,11 @@ app.post('/api/broadcast', auth, (req, res) => {
 
   const now = Date.now();
   const filesJson = files.length ? JSON.stringify(files) : null;
-  insertBroadcast.run(req.user.id, text, html, filesJson, department, now);
+  const { lastInsertRowid } = insertBroadcast.run(req.user.id, text, html, filesJson, department, now);
   const payload = JSON.stringify({
     type: 'broadcast',
+    // Номер — чтобы окно могло убрать это объявление, если администратор его удалит (broadcast_deleted).
+    id: Number(lastInsertRowid),
     from_user: req.user.display_name,
     text, html, files, created_at: now,
     department_id: department,
@@ -1418,6 +1420,36 @@ app.delete('/api/admin/files/:diskName', auth, requireCapability('can_admin'), (
   // Сообщение/рассылка, где был этот файл, никуда не денется — просто ссылка в ней перестанет
   // скачиваться. Это осознанное решение: удаляем файл с диска, а не переписываем историю.
   res.json({ ok: true });
+});
+
+// Удалить объявление (раздел «Рассылка» панели): неактуальное, ошибочное. Вместе с ним — его
+// файлы, если больше ни одно сообщение или объявление на них не ссылается (пересланный файл
+// остаётся на месте). Открытые окна объявлений и строка «Объявления» в списке убирают его сразу
+// (broadcast_deleted) — у клиентов, которые это умеют; остальные не увидят его при следующем
+// открытии окна: ленту клиент всегда берёт с сервера.
+const getBroadcast = db.prepare('SELECT id, from_id, files_json, department_id, created_at FROM broadcasts WHERE id = ?');
+const deleteBroadcastStmt = db.prepare('DELETE FROM broadcasts WHERE id = ?');
+app.delete('/api/admin/broadcasts/:id', auth, requireCapability('can_admin'), (req, res) => {
+  const id = Number(req.params.id);
+  const b = Number.isInteger(id) && id > 0 ? getBroadcast.get(id) : null;
+  if (!b) return res.status(404).json({ error: 'Объявление не найдено' });
+  let files = [];
+  try { files = b.files_json ? JSON.parse(b.files_json) : []; } catch { files = []; }
+  deleteBroadcastStmt.run(id);
+  let filesRemoved = 0;
+  for (const f of files) {
+    const diskName = String((f && f.url) || '').split('/').pop();
+    const filePath = path.join(uploadsDir, diskName);
+    if (!diskName || path.dirname(filePath) !== uploadsDir) continue;
+    const url = `/uploads/${diskName}`;
+    const quoted = JSON.stringify(url);
+    if (messagesWithFile.all({ quoted, url }).length || broadcastsWithFile.all({ quoted }).length) continue;
+    try { fs.unlinkSync(filePath); filesRemoved++; } catch { /* уже нет — не беда */ }
+  }
+  if (filesRemoved) invalidateUploadsCache();
+  logServer('INFO', 'broadcast_deleted', { adminId: req.user.id, broadcastId: id, departmentId: b.department_id, filesRemoved });
+  sendToAll(JSON.stringify({ type: 'broadcast_deleted', id }));
+  res.json({ ok: true, filesRemoved });
 });
 
 // Админ может открыть историю любого чата

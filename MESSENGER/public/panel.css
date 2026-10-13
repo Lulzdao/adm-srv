@@ -630,3 +630,7 @@ html.embedded .view > h2:first-child { display: none; }
   font-size: 13.5px; line-height: 1.45; text-align: center;
 }
 .ui-toast.error { background: var(--md-error); color: var(--md-on-error, var(--md-on-primary)); }
+
+/* Шапка объявления в разделе «Рассылка»: кто, когда, кому — и «Удалить» справа. */
+.bc-head { display:flex; align-items:center; flex-wrap:wrap; gap:2px; }
+.bc-head .bc-del { margin-left:auto; padding:5px 12px; font-size:12px; }

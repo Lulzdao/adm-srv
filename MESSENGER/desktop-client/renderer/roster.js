@@ -252,6 +252,8 @@ function connectWs() {
         openPayload: { type: data.room ? 'room' : 'dm', id: data.room || data.from_id, label, token, serverUrl },
       });
     }
+    // Объявление удалили в панели — в строке «Объявления» могло стоять именно оно.
+    if (data.type === 'broadcast_deleted') refreshBroadcastPreview();
     if (data.type === 'broadcast') {
       paintBroadcastPreview({ ...data, created_at: data.created_at || Date.now() });
       desktop.notify({
