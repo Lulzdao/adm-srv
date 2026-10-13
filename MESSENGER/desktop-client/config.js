@@ -17,11 +17,20 @@ module.exports = {
 
   // Подключение к ПК сотрудника (ПКМ по контакту у администратора): где на ПК администраторов лежит
   // просмотрщик UltraVNC и какой порт слушает его сервер на рабочих местах (PortNumber в
-  // ultravnc.ini). Диск у администраторов разный, поэтому тот же путь пробуется и на C:, D:, F:, а
-  // последним — Program Files\uvnc_s, где просмотрщик есть на каждом ПК (см. viewerCandidates в
-  // remote.js). На отдельной машине переопределяется без пересборки — vncViewerPath и vncPort в
+  // ultravnc.ini). Ищется всегда на диске C:, в Program Files и в Program Files (x86), по порядку:
+  // сначала папка администратора uvnc_support (на ПК администраторов она лежит в Program Files —
+  // проверено 2026-10-13), затем папка сервера UltraVNC uvnc_s, где просмотрщик есть почти на каждом
+  // ПК. Не запустился найденный (Windows отказала) — пробуется следующий, см. launchViewer в
+  // remote.js. Пути записаны буквально, а не через переменные окружения: 32-разрядный процесс на
+  // 64-разрядной Windows видит в %ProgramFiles% папку (x86), и «обычная» выпала бы из поиска.
+  // На отдельной машине переопределяется без пересборки — vncViewerPath и vncPort в
   // C:\ProgramData\Iskra\config.json.
-  VNC_VIEWER_PATH: 'E:\\uvnc_support\\vncviewer.exe',
+  VNC_VIEWER_PATHS: [
+    'C:\\Program Files\\uvnc_support\\vncviewer.exe',
+    'C:\\Program Files (x86)\\uvnc_support\\vncviewer.exe',
+    'C:\\Program Files\\uvnc_s\\vncviewer.exe',
+    'C:\\Program Files (x86)\\uvnc_s\\vncviewer.exe',
+  ],
   VNC_PORT: 5995,
   // Добавочные ключи просмотрщика. Серверы UltraVNC на рабочих местах принимают только шифрованное
   // соединение (UseDSMPlugin=1), а просмотрщик, запущенный с адресом в командной строке, сам плагин
