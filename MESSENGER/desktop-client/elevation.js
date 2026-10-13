@@ -29,4 +29,20 @@ function detectCanElevate(platform, run) {
   }
 }
 
-module.exports = { ADMINISTRATORS_SID, hasAdminGroup, detectCanElevate };
+// Каким путём этот клиент ставит обновление по команде (из панели или по своей кнопке):
+//   'self'  — сам, установщиком: права администратора есть (или узнать не удалось — как раньше);
+//   'task'  — прав нет, но установщик завёл задание планировщика от имени системы (Iskra\Update,
+//             см. updater.js): клиент лишь просит Windows выполнить его сейчас, не дожидаясь расписания;
+//   'none'  — прав нет и задания нет: не закрываемся, версию поставит сценарий политики при перезагрузке.
+function updatePlan(isAdmin, hasSystemUpdater) {
+  if (isAdmin !== false) return 'self';
+  return hasSystemUpdater ? 'task' : 'none';
+}
+
+// Что сообщить серверу (adm=1|0): может ли эта машина обновиться по команде. null — неизвестно.
+function canUpdateOnCommand(isAdmin, hasSystemUpdater) {
+  if (isAdmin === null) return null;
+  return updatePlan(isAdmin, hasSystemUpdater) !== 'none';
+}
+
+module.exports = { ADMINISTRATORS_SID, hasAdminGroup, detectCanElevate, updatePlan, canUpdateOnCommand };

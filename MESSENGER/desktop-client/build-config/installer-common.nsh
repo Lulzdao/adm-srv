@@ -45,4 +45,40 @@
       ${EndIf}
     ${EndIf}
   caDone:
+
+  ; -------------------------------------------------------------------------
+  ;  Задания планировщика: обновление без прав сотрудника
+  ;
+  ;  Установщик требует прав администратора, и у сотрудника без них клиент обновиться сам не
+  ;  может. Поэтому здесь, пока права есть, заводятся два задания (updater\register-tasks.ps1):
+  ;  Iskra\Update — от имени системы, дважды в день проверяет и ставит новую версию;
+  ;  Iskra\Relaunch — открывает «Искру» сотруднику обратно после установки.
+  ;  Что и откуда ставится и почему это безопасно — в шапке updater.js.
+  ;
+  ;  Не получилось — не повод срывать установку: программа работает, обновляться будет по-старому.
+  IfFileExists "$INSTDIR\resources\updater\register-tasks.ps1" 0 tasksDone
+    nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\resources\updater\register-tasks.ps1"'
+    Pop $0
+    Pop $1
+    ${If} $0 == 0
+      DetailPrint "Задания обновления заведены."
+    ${Else}
+      DetailPrint "Не удалось завести задания обновления (код $0): $1"
+    ${EndIf}
+  tasksDone:
+!macroend
+
+; Задания убираются только при настоящем удалении программы. При установке новой версии поверх
+; старой деинсталлятор тоже вызывается (с ключом --updated) — и вызывает его в том числе само
+; задание Iskra\Update, которое в этот момент выполняется: удалять его из-под себя нельзя, а новая
+; версия всё равно тут же заведёт задания заново.
+!macro customUnInstall
+  ${IfNot} ${isUpdated}
+    nsExec::ExecToStack '"$SYSDIR\schtasks.exe" /Delete /TN "Iskra\Update" /F'
+    Pop $0
+    Pop $1
+    nsExec::ExecToStack '"$SYSDIR\schtasks.exe" /Delete /TN "Iskra\Relaunch" /F'
+    Pop $0
+    Pop $1
+  ${EndIf}
 !macroend
