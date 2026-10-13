@@ -1482,10 +1482,10 @@ app.get('/api/admin/update-published', auth, requireCapability('can_admin'), (re
 
 // Кто сейчас на связи и с какой версией. Один человек может сидеть с нескольких компьютеров и
 // держать несколько окон — схлопываем по паре "сотрудник + компьютер", иначе в списке было бы по
-// строке на каждое открытое окно чата.
-app.get('/api/admin/clients', auth, requireCapability('can_admin'), (req, res) => {
+// строке на каждое открытое окно чата. sockets — подключения этой машины (в ответ панели не идут).
+function connectedMachines() {
   const byMachine = new Map();
-  for (const meta of connMeta.values()) {
+  for (const [ws, meta] of connMeta) {
     // Сама веб-панель тоже держит подключение (чтобы показывать, кто в сети), но это не рабочее
     // место: обновлять там нечего и журнала у неё нет. В списке машин она была бы только шумом.
     if (meta.hostname === ADMIN_WEB_HOSTNAME) continue;
@@ -1499,36 +1499,82 @@ app.get('/api/admin/clients', auth, requireCapability('can_admin'), (req, res) =
         hostname: meta.hostname,
         version: meta.appVersion || null,
         track: meta.buildTrack || null,
+        canElevate: meta.canElevate,
         connections: 1,
         hasLogDump: clientLogDumps.has(key),
+        sockets: [ws],
       });
     } else {
       prev.connections += 1;
+      prev.sockets.push(ws);
       // Версию берём с того подключения, которое её сообщило: у окон, открытых старым клиентом
-      // после обновления сборки, её может не быть.
+      // после обновления сборки, её может не быть. Так же — сведения о правах: их сообщает
+      // только окно списка сотрудников.
       if (!prev.version && meta.appVersion) { prev.version = meta.appVersion; prev.track = meta.buildTrack; }
+      if (prev.canElevate == null && meta.canElevate != null) prev.canElevate = meta.canElevate;
     }
   }
-  res.json([...byMachine.values()].sort((a, b) => a.user.localeCompare(b.user, 'ru')));
+  return [...byMachine.values()];
+}
+
+// Отстаёт ли машина от выложенной версии. Только когда есть с чем сравнивать: версия клиента
+// известна и для его сборки на сервере что-то выложено (то же правило, что в панели).
+function isOutdated(machine) {
+  const pub = machine.track ? publishedVersion(machine.track) : null;
+  return !!(pub && machine.version && pub.version !== machine.version);
+}
+
+app.get('/api/admin/clients', auth, requireCapability('can_admin'), (req, res) => {
+  const list = connectedMachines().map(({ sockets, ...m }) => m);
+  res.json(list.sort((a, b) => a.user.localeCompare(b.user, 'ru')));
 });
 
-// Принудительное обновление конкретной машины. Отправляем команду во все её подключения — клиент
-// скачает обновление и перезапустится сам (см. force-update в main.js десктоп-клиента).
+// ---------- Принудительное обновление ----------
+// Клиент по команде скачивает обновление и перезапускается (см. force-update в main.js клиента).
+//
+// Установщик требует прав администратора. У сотрудника без них установка не пройдёт, а клиент к
+// этому моменту уже закрыт и сам обратно не запустится — человек остаётся без мессенджера. Поэтому
+// клиент сообщает при подключении, сможет ли он поставить обновление (canElevate), и команду
+// получают только те, кто сможет. Клиенты старых версий этого не сообщают (canElevate = null).
+const NO_RIGHTS_TEXT = 'У сотрудника на этом компьютере нет прав администратора — установщик не запустится, '
+  + 'а приложение закроется. Версия обновится при перезагрузке компьютера (сценарий установки).';
+
+// Одна машина. Неизвестные права (старый клиент) не мешают: администратор выбрал машину сам и
+// видит, что делает; известное «прав нет» — отказ.
 app.post('/api/admin/force-update', auth, requireCapability('can_admin'), (req, res) => {
   const { userId, host } = req.body || {};
   const target = toUserId(userId);
   if (!target) return res.status(400).json({ error: 'Не указан сотрудник' });
+  const machines = connectedMachines().filter((m) => m.userId === target && (!host || m.hostname === host));
+  const allowed = machines.filter((m) => m.canElevate !== false);
   const out = JSON.stringify({ type: 'force-update' });
   let sent = 0;
-  for (const [ws, meta] of connMeta) {
-    if (meta.userId !== target) continue;
-    if (host && meta.hostname !== host) continue;
-    sendTo(ws, out);
-    sent += 1;
-  }
-  logServer('INFO', 'force_update_requested', { adminId: req.user.id, userId: target, host, connections: sent });
-  if (!sent) return res.status(409).json({ error: 'Этот клиент сейчас не в сети' });
+  for (const m of allowed) for (const ws of m.sockets) { sendTo(ws, out); sent += 1; }
+  logServer('INFO', 'force_update_requested', { adminId: req.user.id, userId: target, host, connections: sent, noRights: machines.length - allowed.length });
+  if (!machines.length) return res.status(409).json({ error: 'Этот клиент сейчас не в сети' });
+  if (!sent) return res.status(409).json({ error: NO_RIGHTS_TEXT });
   res.json({ ok: true, sent });
+});
+
+// Все отстающие разом. Здесь осторожнее, чем с одной машиной: команду получают только те, про
+// кого точно известно, что обновление у них встанет. Остальных считаем и называем в ответе.
+app.post('/api/admin/force-update-all', auth, requireCapability('can_admin'), (req, res) => {
+  const out = JSON.stringify({ type: 'force-update' });
+  const result = { ok: true, sent: 0, noRights: 0, unknown: 0, current: 0, skipped: [] };
+  for (const m of connectedMachines()) {
+    if (!isOutdated(m)) { result.current += 1; continue; }
+    if (m.canElevate === true) {
+      for (const ws of m.sockets) sendTo(ws, out);
+      result.sent += 1;
+      continue;
+    }
+    if (m.canElevate === false) result.noRights += 1; else result.unknown += 1;
+    result.skipped.push({ user: m.user, hostname: m.hostname, reason: m.canElevate === false ? 'noRights' : 'unknown' });
+  }
+  logServer('INFO', 'force_update_all_requested', {
+    adminId: req.user.id, sent: result.sent, noRights: result.noRights, unknown: result.unknown, current: result.current,
+  });
+  res.json(result);
 });
 
 // Запрос журнала с машины сотрудника — клиент пришлёт его на /api/client-log-file (см. выше).
@@ -1771,6 +1817,10 @@ wss.on('connection', (ws, req) => {
   // кого обновление ещё не доехало. Как и имя ПК, приходят от клиента, поэтому обрезаем по длине.
   const appVersion = (url.searchParams.get('ver') || '').slice(0, 20) || null;
   const buildTrack = (url.searchParams.get('track') || '').slice(0, 20) || null;
+  // Сможет ли клиент сам поставить обновление (есть ли у сотрудника права администратора на этом
+  // ПК): '1' — да, '0' — нет. Клиенты до 1.0.26 этого не сообщают — тогда null, «неизвестно».
+  const adm = url.searchParams.get('adm');
+  const canElevate = adm === '1' ? true : adm === '0' ? false : null;
   const user = userFromToken(token);
   if (!user) { logServer('WARN', 'ws_auth_failed', { ip: req.socket.remoteAddress }); return ws.close(); }
 
@@ -1784,7 +1834,7 @@ wss.on('connection', (ws, req) => {
 
   if (!online.has(user.id)) online.set(user.id, new Set());
   online.get(user.id).add(ws);
-  connMeta.set(ws, { userId: user.id, hostname, appVersion, buildTrack, state: 'active', lastSeen: Date.now(), idleSince: null });
+  connMeta.set(ws, { userId: user.id, hostname, appVersion, buildTrack, canElevate, state: 'active', lastSeen: Date.now(), idleSince: null });
   // Продление входа (2026-10-08): токен выдаётся на 30 дней, и клиент, который месяц не перезаходил, вылетал
   // на экран входа. Окно подключается — если его токену больше суток, сервер выдаёт свежий, окно его
   // сохраняет. Так у работающих клиентов вход не кончается никогда, а у выключенного больше 30 дней — кончается.

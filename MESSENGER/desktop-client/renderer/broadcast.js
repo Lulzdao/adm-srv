@@ -292,12 +292,20 @@ function itemHtml(b, query) {
   return `<div class="item"${b.id ? ` data-bid="${Number(b.id)}"` : ''}>${head}${txtHtml}${filesHtml ? `<div class="ifiles">${filesHtml}</div>` : ''}</div>`;
 }
 
-// Лента "сегодняшних" рассылок — обнуляется каждый день, как и в чате. Вся история доступна
+// В ленте — рассылки за последние три дня, как и в чате (см. recent.js). Вся история доступна
 // через кнопку "История" (панель с днями/месяцами + поиском), а не листанием этой ленты.
-function todayRange() {
-  const now = new Date();
-  const since = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  return { since, until: since + 24 * 3600 * 1000 };
+function recentRange() { return Recent.range(new Date()); }
+
+// Строка вверху ленты: здесь только последние дни, остальное — в «Истории». Она же и кнопка.
+function ensureHistoryHint(feed) {
+  if (feed.querySelector('.history-hint')) return;
+  const hint = document.createElement('button');
+  hint.type = 'button';
+  hint.className = 'history-hint';
+  hint.textContent = Recent.HINT;
+  hint.title = 'Найти рассылку по дате или по тексту';
+  hint.onclick = () => openHistoryPanel();
+  feed.insertBefore(hint, feed.firstChild);
 }
 
 // Разделитель "Новые объявления" раньше появлялся только для живых WS-сообщений, пока окно было
@@ -314,7 +322,7 @@ let maxKnownBroadcastId = getLastSeenId(); // растёт по мере отр�
 function unreadDividerHtml() { return `<div class="unread-divider" id="unreadDivider"><span>Новые</span></div>`; }
 
 async function loadFeed() {
-  const { since, until } = todayRange();
+  const { since, until } = recentRange();
   let items;
   try {
     items = await api(`/api/broadcasts?since=${since}&until=${until}${deptQuery}`);
@@ -331,7 +339,8 @@ async function loadFeed() {
   const lastSeenId = getLastSeenId();
   const firstUnreadIndex = lastSeenId ? items.findIndex((b) => b.id > lastSeenId) : -1;
   feed.innerHTML = items.map((b, i) => (i === firstUnreadIndex ? unreadDividerHtml() : '') + itemHtml(b)).join('')
-    || '<div class="empty">Сегодня рассылок пока не было</div>';
+    || `<div class="empty">За последние ${Recent.DAYS} дня рассылок не было.<br>Более ранние — по кнопке «История»</div>`;
+  if (items.length) ensureHistoryHint(feed);
   hasUnreadDivider = firstUnreadIndex !== -1;
   items.forEach((b) => { if (b.id > maxKnownBroadcastId) maxKnownBroadcastId = b.id; });
   // Тот же замкнутый круг, что был в личных сообщениях (см. chat.html): если метку никто раньше не
@@ -602,6 +611,7 @@ function addLiveBroadcast(b) {
   const feed = document.getElementById('feed');
   feed.querySelector('.empty')?.remove();
   feed.classList.remove('empty-state');
+  ensureHistoryHint(feed);
 
   // Показываем полоску безусловно, при любой живой рассылке, независимо от фокуса окна.
   if (!hasUnreadDivider) {
@@ -660,7 +670,9 @@ function connectWs() {
   ws = new WebSocket(`${wsUrl}?token=${token}&host=${encodeURIComponent(desktop.hostname)}`
     // Версия и сборка — чтобы администратор в веб-панели видел, у кого что установлено, и
     // мог понять, до кого обновление ещё не доехало (см. /api/admin/clients в server.js).
-    + `&ver=${encodeURIComponent(desktop.appVersion)}&track=${encodeURIComponent(desktop.buildTrack)}`);
+    + `&ver=${encodeURIComponent(desktop.appVersion)}&track=${encodeURIComponent(desktop.buildTrack)}`
+    // Есть ли у пользователя права поставить обновление — панель не шлёт «обновись» тем, у кого их нет.
+    + `&adm=${desktop.canElevate === true ? 1 : desktop.canElevate === false ? 0 : ''}`);
   ws.onopen = async () => {
     clearTimeout(wsLostTimer);
     wsLostTimer = null;

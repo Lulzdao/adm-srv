@@ -178,3 +178,9 @@ body {
    -webkit-app-region: no-drag сюда НЕ добавлять: с ним при некоторой прокрутке окно переставало
    перетаскиваться за шапку (drag-регионы плохо дружат с элементами внутри overflow:auto). */
 .selectable, .selectable * { user-select: text; }
+
+/* Строка вверху ленты чата и объявлений: «здесь последние три дня, раньше — в „Истории“» (recent.js).
+   Она же кнопка, открывающая «Историю». -webkit-app-region не задаём — причина та же, что у .selectable. */
+.history-hint { align-self: center; flex: none; margin: 2px 0 8px; padding: 4px 12px; border: 0; border-radius: 20px;
+  background: transparent; color: var(--muted); font: inherit; font-size: 10.5px; line-height: 1.35; text-align: center; cursor: pointer; }
+.history-hint:hover { color: var(--accent); text-decoration: underline; }

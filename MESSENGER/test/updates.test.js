@@ -102,6 +102,63 @@ test('«обновись» отдаёт только администратор 
   }
 });
 
+// Установщик требует прав администратора: у сотрудника без них клиент по команде закрылся бы и не
+// обновился. Клиент сообщает о правах при подключении (adm=1|0), старые клиенты — нет.
+test('«обновись» одной машине: без прав администратора — отказ, права неизвестны — как раньше', async () => {
+  const безПрав = await connect(srv.url, сотрудник.token, { host: 'PC-USER', ver: '1.0.0', track: 'win10', adm: '0' });
+  const старый = await connect(srv.url, другой.token, { host: 'PC-OLD', ver: '1.0.0', track: 'win10' });
+  try {
+    const пришло = (ws) => ws.next((m) => m.type === 'force-update', 800).then(() => true, () => false);
+
+    const ждёмБезПрав = пришло(безПрав);
+    const r = await request(srv.url, 'POST', '/api/admin/force-update', { token: admin.token, body: { userId: сотрудник.id, host: 'PC-USER' } });
+    assert.equal(r.status, 409, r.text);
+    assert.match(r.json.error, /нет прав администратора/);
+    assert.equal(await ждёмБезПрав, false, 'команда не ушла');
+
+    const ждёмСтарый = пришло(старый);
+    const r2 = await request(srv.url, 'POST', '/api/admin/force-update', { token: admin.token, body: { userId: другой.id, host: 'PC-OLD' } });
+    assert.equal(r2.status, 200, r2.text);
+    assert.equal(await ждёмСтарый, true, 'старому клиенту команда уходит, как раньше');
+  } finally { безПрав.close(); старый.close(); }
+});
+
+test('«обновить всех отстающих»: только тем, у кого есть права; остальные названы в ответе', async () => {
+  const третий = await makeUser(srv.url, admin.token, 'третий');
+  const четвёртый = await makeUser(srv.url, admin.token, 'четвёртый');
+  // Выложено: win10 — 2.0.0, win7 — 1.2.3 (см. before).
+  const сПравами = await connect(srv.url, сотрудник.token, { host: 'PC-ADMIN', ver: '1.9.0', track: 'win10', adm: '1' });
+  const сПравами2 = await connect(srv.url, сотрудник.token, { host: 'PC-ADMIN', ver: '1.9.0', track: 'win10', adm: '1' }); // второе окно той же машины
+  const безПрав = await connect(srv.url, другой.token, { host: 'PC-USER', ver: '1.2.0', track: 'win7', adm: '0' });
+  const старый = await connect(srv.url, третий.token, { host: 'PC-OLD', ver: '1.0.0', track: 'win10' });
+  const свежий = await connect(srv.url, четвёртый.token, { host: 'PC-NEW', ver: '2.0.0', track: 'win10', adm: '1' });
+  const все = [сПравами, сПравами2, безПрав, старый, свежий];
+  try {
+    await new Promise((r) => setTimeout(r, 200));
+    const пришло = (ws) => ws.next((m) => m.type === 'force-update', 800).then(() => true, () => false);
+
+    assert.equal((await request(srv.url, 'POST', '/api/admin/force-update-all', { token: другой.token, body: {} })).status, 403);
+
+    const ждём = все.map(пришло);
+    const r = await request(srv.url, 'POST', '/api/admin/force-update-all', { token: admin.token, body: {} });
+    assert.equal(r.status, 200, r.text);
+    assert.deepEqual(
+      { sent: r.json.sent, noRights: r.json.noRights, unknown: r.json.unknown, current: r.json.current },
+      { sent: 1, noRights: 1, unknown: 1, current: 1 },
+      'считаются машины, а не окна'
+    );
+    assert.deepEqual(r.json.skipped.map((s) => `${s.hostname}:${s.reason}`).sort(), ['PC-OLD:unknown', 'PC-USER:noRights']);
+    assert.deepEqual(await Promise.all(ждём), [true, true, false, false, false],
+      'команда — обоим окнам машины с правами; без прав, старому и уже обновлённому — нет');
+
+    // В списке клиентов права видны — по ним панель подписывает строки и выключает кнопку.
+    const list = await request(srv.url, 'GET', '/api/admin/clients', { token: admin.token });
+    const byHost = Object.fromEntries(list.json.map((c) => [c.hostname, c.canElevate]));
+    assert.deepEqual(byHost, { 'PC-ADMIN': true, 'PC-USER': false, 'PC-OLD': null, 'PC-NEW': true });
+    assert.ok(list.json.every((c) => !('sockets' in c)), 'подключения в ответ не попадают');
+  } finally { все.forEach((ws) => ws.close()); }
+});
+
 test('клиенты и их версии в панели — только администратору', async () => {
   const ws = await connect(srv.url, сотрудник.token);
   try {

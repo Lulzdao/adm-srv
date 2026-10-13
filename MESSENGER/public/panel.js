@@ -1304,17 +1304,34 @@ async function loadClients() {
   try {
     await loadPublishedVersions();
     const clients = await api('api/admin/clients');
-    document.getElementById('clientsSummary').textContent =
-      clients.length ? `Машин на связи: ${clients.length}` : '';
+    // Устаревшей считаем только тогда, когда есть с чем сравнивать: и версия клиента известна,
+    // и на сервере что-то выложено для его трека.
+    const publishedFor = (c) => (c.track && publishedCache[c.track] ? publishedCache[c.track].version : null);
+    const isOutdated = (c) => { const pub = publishedFor(c); return !!(pub && c.version && pub !== c.version); };
+    const behind = clients.filter(isOutdated);
+    // Обновить всех можно тех, про кого известно, что права есть (canElevate === true).
+    const canUpdateNow = behind.filter(c => c.canElevate === true).length;
+    document.getElementById('clientsSummary').textContent = clients.length
+      ? `Машин на связи: ${clients.length}` + (behind.length ? ` · отстают: ${behind.length}, из них обновятся по команде: ${canUpdateNow}` : ' · все на выложенной версии')
+      : '';
+    const allBtn = document.getElementById('forceUpdateAllBtn');
+    allBtn.disabled = !canUpdateNow;
+    allBtn.title = canUpdateNow ? '' : (behind.length ? 'Среди отстающих нет машин, где обновление можно поставить по команде' : 'Отстающих нет');
     body.innerHTML = clients.map(c => {
-      // Устаревшей считаем только тогда, когда есть с чем сравнивать: и версия клиента известна,
-      // и на сервере что-то выложено для его трека.
-      const pub = c.track && publishedCache[c.track] ? publishedCache[c.track].version : null;
-      const outdated = pub && c.version && pub !== c.version;
+      const pub = publishedFor(c);
+      const outdated = isOutdated(c);
+      // Права на установку сообщает сам клиент (с версии 1.0.26): нет прав — команду не шлём.
+      const noRights = c.canElevate === false;
+      const rightsNote = !outdated ? ''
+        : noRights ? '<div style="color:var(--muted); font-size:11px;">нет прав администратора — обновится при перезагрузке ПК</div>'
+        : c.canElevate == null ? '<div style="color:var(--muted); font-size:11px;">права неизвестны (старый клиент) — только по одной</div>'
+        : '';
       const verCell = c.version
-        ? `${escapeHtml(c.version)}${outdated ? ` <span style="color:var(--warn)">→ ${escapeHtml(pub)}</span>` : ''}`
+        ? `${escapeHtml(c.version)}${outdated ? ` <span style="color:var(--warn)">→ ${escapeHtml(pub)}</span>` : ''}${rightsNote}`
         : '<span style="color:var(--muted)">—</span>';
       const trackLabel = { win7: 'Windows 7 / 8.1', win10: 'Windows 10+', dev: 'из исходников' }[c.track] || '—';
+      const updateOff = !outdated ? ' disabled title="Версия уже актуальна"'
+        : noRights ? ' disabled title="Нет прав администратора: установщик не запустится, а приложение закроется"' : '';
       return `<tr>
         <td>${escapeHtml(c.user)}</td>
         <td>${escapeHtml(c.hostname)}</td>
@@ -1322,7 +1339,7 @@ async function loadClients() {
         <td style="color:var(--muted)">${escapeHtml(trackLabel)}</td>
         <td class="row-flex">
           <button class="action" data-uid="${c.userId}" data-host="${escapeHtml(c.hostname)}"
-            onclick="forceUpdate(this.dataset.uid, this.dataset.host)"${outdated ? '' : ' disabled title="Версия уже актуальна"'}>Обновить</button>
+            onclick="forceUpdate(this.dataset.uid, this.dataset.host)"${updateOff}>Обновить</button>
           <button class="action ghost" data-uid="${c.userId}" data-host="${escapeHtml(c.hostname)}"
             onclick="requestClientLog(this.dataset.uid, this.dataset.host)">Журнал</button>
         </td>
@@ -1336,6 +1353,23 @@ async function forceUpdate(userId, host) {
   try {
     await api('api/admin/force-update', { method: 'POST', body: JSON.stringify({ userId: Number(userId), host }) });
     uiToast('Команда отправлена. Обновление займёт некоторое время — список можно обновить позже.', { duration: 5000 });
+  } catch (e) { showError(e); }
+}
+
+// Все отстающие разом. Сервер сам решает, кому отправить: только тем, у кого есть права поставить
+// обновление, — остальных называет в ответе.
+async function forceUpdateAll() {
+  const ok = await uiConfirm(
+    'Запустить обновление на всех отстающих машинах? Приложение у этих сотрудников перезапустится через 15 секунд после загрузки. '
+    + 'Команду получат только те, у кого есть права администратора на своём компьютере.',
+    { title: 'Обновить всех отстающих', ok: 'Обновить всех' });
+  if (!ok) return;
+  try {
+    const r = await api('api/admin/force-update-all', { method: 'POST', body: '{}' });
+    const parts = [`Команда отправлена: ${r.sent}`];
+    if (r.noRights) parts.push(`без прав администратора (обновятся при перезагрузке ПК): ${r.noRights}`);
+    if (r.unknown) parts.push(`старый клиент, права неизвестны (обновите по одной): ${r.unknown}`);
+    uiToast(parts.join(' · '), { duration: 9000 });
   } catch (e) { showError(e); }
 }
 

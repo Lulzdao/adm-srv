@@ -150,8 +150,10 @@ async function upload(url, token, name, content = 'содержимое файл
  * WebSocket-подключение как у клиента. send(msg) — отправить, next(pred) — дождаться входящего
  * сообщения, подходящего под условие (по умолчанию — любого).
  */
-async function connect(url, token) {
-  const ws = new WebSocket(`${url.replace('http', 'ws')}/?token=${encodeURIComponent(token)}&host=test`);
+// client — что клиент сообщает о себе при подключении: { host, ver, track, adm } (всё необязательно).
+async function connect(url, token, client = {}) {
+  const about = Object.entries({ host: 'test', ...client }).map(([k, v]) => `&${k}=${encodeURIComponent(v)}`).join('');
+  const ws = new WebSocket(`${url.replace('http', 'ws')}/?token=${encodeURIComponent(token)}${about}`);
   const inbox = [];
   const waiters = [];
   ws.on('message', (data) => {
