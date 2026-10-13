@@ -257,8 +257,14 @@
           «Журнал» запросит с машины её локальный файл ошибок: туда попадает то, чего нет в общих
           логах — падения окон и сбои обновления.
         </p>
+        <p style="color:var(--muted); font-size:12px; margin:0 0 10px;">
+          «Обновить всех отстающих» отправит ту же команду сразу всем, у кого версия старее выложенной —
+          но только тем, у кого на компьютере есть права администратора: без них установщик не
+          запустится, а приложение закроется. Остальные получат версию при перезагрузке компьютера.
+        </p>
         <div class="row-flex" style="margin-bottom:10px;">
           <button class="action" onclick="loadClients()">Обновить список</button>
+          <button class="action" id="forceUpdateAllBtn" onclick="forceUpdateAll()" disabled>Обновить всех отстающих</button>
           <span id="clientsSummary" style="color:var(--muted); font-size:12px;"></span>
         </div>
         <table>

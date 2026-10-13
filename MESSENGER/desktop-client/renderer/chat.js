@@ -306,9 +306,32 @@ function unreadDividerHtml() { return `<div class="unread-divider" id="unreadDiv
 // пикселей округления при дробном масштабе интерфейса (см. uiScale).
 function isNearBottom(box) { return box.scrollHeight - box.scrollTop - box.clientHeight < 60; }
 
+// День последнего показанного сообщения — по нему ставится разделитель дня (см. addMessage).
+let lastShownDay = null;
+
+// Строка вверху ленты: здесь только последние дни, остальное — в «Истории». Она же и кнопка.
+function ensureHistoryHint() {
+  const box = document.getElementById('messages');
+  if (box.querySelector('.history-hint')) return;
+  const hint = document.createElement('button');
+  hint.type = 'button';
+  hint.className = 'history-hint';
+  hint.textContent = Recent.HINT;
+  hint.title = 'Открыть историю переписки';
+  hint.onclick = () => openHistoryPanel();
+  box.insertBefore(hint, box.firstChild);
+}
+
 function addMessage(m) {
   const box = document.getElementById('messages');
   const incoming = m.from_id !== me.id;
+  // В ленте окна — последние три дня (остальное — в «Истории»). Перед первым сообщением каждого дня —
+  // разделитель; он же появится сам, если окно открыто через полночь и пришло сообщение нового дня.
+  const day = Recent.dayKey(m.created_at);
+  if (day !== lastShownDay) {
+    lastShownDay = day;
+    box.insertAdjacentHTML('beforeend', `<div class="day-sep">${escapeHtml(Recent.dayLabel(m.created_at, new Date()))}</div>`);
+  }
   // Личный чат: "непрочитано" — то, что говорит СЕРВЕР (read_at ещё не проставлен у входящего
   // сообщения), а не локальная метка "докуда я долистал" в localStorage. Раньше использовалась
   // только метка — и она в принципе не знает о сообщениях, которые пришли ДО самого первого
@@ -323,11 +346,6 @@ function addMessage(m) {
   if (isUnread && !hasUnreadDivider) {
     box.insertAdjacentHTML('beforeend', unreadDividerHtml());
     hasUnreadDivider = true;
-  }
-  // В ленте окна — только сегодняшние сообщения (остальное — в «Истории»); плашка сверху говорит об этом прямо.
-  if (!box.querySelector('.day-sep')) {
-    const today = new Date().toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
-    box.insertAdjacentHTML('afterbegin', `<div class="day-sep">Сегодня, ${today}</div>`);
   }
   const div = document.createElement('div');
   div.innerHTML = bubbleHtml(m);
@@ -371,16 +389,13 @@ document.getElementById('messages').addEventListener('scroll', () => {
 // осталось бы непрочитанным до случайного клика.
 window.addEventListener('focus', scheduleUnreadClear);
 
-// Чат "очищается" визуально каждый день — при обычном открытии показываем только сегодняшние
-// сообщения; вся остальная переписка никуда не пропадает и доступна через кнопку "История".
-function todayRange() {
-  const now = new Date();
-  const since = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  return { since, until: since + 24 * 3600 * 1000 };
-}
+// В ленте окна — переписка за последние три дня (см. recent.js); вся остальная никуда не пропадает
+// и доступна через кнопку "История".
+function recentRange() { return Recent.range(new Date()); }
 
 async function loadHistory() {
-  const { since, until } = todayRange();
+  ensureHistoryHint();
+  const { since, until } = recentRange();
   const q = `since=${since}&until=${until}`;
   const items = type === 'room' ? await api(`/api/history/room/${id}?${q}`) : await api(`/api/history/dm/${id}?${q}`);
   items.forEach(addMessage);
@@ -399,11 +414,11 @@ let wsLostTimer = null; // см. showOfflineBar в ui-kit.js
 let wsReconnectDelay = 2000; // экспоненциальный бэкофф между попытками (см. onclose ниже)
 let wsEverOpened = false;    // первое подключение — не «восстановление»: дозагружать нечего
 
-// Связь вернулась после обрыва: сервер пропущенное не досылает, поэтому перечитываем сегодняшнюю
+// Связь вернулась после обрыва: сервер пропущенное не досылает, поэтому перечитываем показанную
 // переписку и дорисовываем то, чего в окне ещё нет (по id) — пришедшее за время обрыва.
 async function resyncHistoryAfterReconnect() {
   try {
-    const { since, until } = todayRange();
+    const { since, until } = recentRange();
     const q = `since=${since}&until=${until}`;
     const items = type === 'room' ? await api(`/api/history/room/${id}?${q}`) : await api(`/api/history/dm/${id}?${q}`);
     const box = document.getElementById('messages');
@@ -416,7 +431,9 @@ function connectWs() {
   ws = new WebSocket(`${wsUrl}?token=${token}&host=${encodeURIComponent(desktop.hostname)}`
     // Версия и сборка — чтобы администратор в веб-панели видел, у кого что установлено, и
     // мог понять, до кого обновление ещё не доехало (см. /api/admin/clients в server.js).
-    + `&ver=${encodeURIComponent(desktop.appVersion)}&track=${encodeURIComponent(desktop.buildTrack)}`);
+    + `&ver=${encodeURIComponent(desktop.appVersion)}&track=${encodeURIComponent(desktop.buildTrack)}`
+    // Есть ли у пользователя права поставить обновление — панель не шлёт «обновись» тем, у кого их нет.
+    + `&adm=${desktop.canElevate === true ? 1 : desktop.canElevate === false ? 0 : ''}`);
   // У этого окна своё отдельное подключение к серверу — если оно не будет сообщать свой статус,
   // сервер посчитает его вечно "активным" и это перекроет настоящий статус AFK от окна ростера
   // (баг, который был: "Отошёл" не появлялся, пока открыто хоть одно окно чата). Статус на момент

@@ -8,6 +8,7 @@ const https = require('https');
 const tls = require('tls');
 const { diagnoseServer } = require('./diagnose');
 const { parseMachinePolicy } = require('./policy');
+const { detectCanElevate } = require('./elevation');
 const { viewerArgs, viewerCandidates, launchViewer } = require('./remote');
 const { SERVER_URL, VNC_VIEWER_PATHS, VNC_PORT, VNC_VIEWER_ARGS } = require('./config');
 const { autoUpdater } = require('electron-updater');
@@ -177,8 +178,16 @@ app.on('web-contents-created', (event, contents) => {
 // Что окнам нужно знать о себе синхронно, в момент открытия соединения (см. preload.js): имя ПК,
 // версия, трек сборки. Раньше preload читал это сам через require('os') и package.json — из-за
 // этого окна работали без песочницы (sandbox: false). Теперь отвечает главный процесс.
+// Сможет ли клиент сам поставить обновление: установщик требует прав администратора (см.
+// elevation.js). Узнаём один раз при запуске — состав групп пользователя за сеанс не меняется.
+// true — права есть, false — нет, null — узнать не удалось (тогда ведём себя как раньше).
+// whoami — полным путём: по одному имени может найтись чужой (например, из набора Git).
+const CAN_ELEVATE = detectCanElevate(process.platform, () => require('child_process').execFileSync(
+  path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'whoami.exe'),
+  ['/groups', '/fo', 'csv', '/nh'], { timeout: 10000, windowsHide: true, encoding: 'latin1' }));
+
 ipcMain.on('get-static-info', (event) => {
-  event.returnValue = { hostname: require('os').hostname(), appVersion: app.getVersion(), buildTrack: BUILD_TRACK };
+  event.returnValue = { hostname: require('os').hostname(), appVersion: app.getVersion(), buildTrack: BUILD_TRACK, canElevate: CAN_ELEVATE };
 });
 
 // GPU/аппаратное ускорение Chromium на Windows 7 нестабильно (устаревшие/неполные драйверы DirectX,
@@ -315,6 +324,8 @@ const DEFAULT_SETTINGS = {
   serverUrlOverride: null,   // переопределяет SERVER_URL из config.js без пересборки — см. Ctrl+S на экране входа
   autoUpdate: true,          // сама качать вышедшие обновления (ставятся при выходе) — см. setupUpdater
   autoStart: true,           // запускаться при входе в Windows — см. applyAutoStart
+  singleOpenDept: true,      // в списке все отделы свёрнуты, открыт только один — см. renderer/depts.js.
+                             // Включено по умолчанию; ключ новый, поэтому включится и у тех, кто уже пользуется клиентом
   lastSeenVersion: null,     // версия на предыдущем запуске — чтобы показать "обновлено до X" один раз после установки
 };
 
@@ -907,8 +918,18 @@ function shortUpdateError(err) {
 // например, когда нужно срочно раскатить исправление.
 let forceInstallAfterDownload = false;
 
+// Без прав администратора установщик не запустится, а клиент к этому моменту уже закрыт и сам не
+// вернётся — человек остался бы без мессенджера. Поэтому в таком случае не закрываемся вовсе:
+// версию поставит сценарий установки при перезагрузке компьютера. Сервер таким машинам команду и
+// не шлёт (см. force-update в server.js) — здесь вторая проверка, на случай старого сервера.
+const NO_RIGHTS_TOAST = 'Обновление установится при перезагрузке компьютера: для установки сейчас нужны права администратора.';
+
 function forceUpdateNow() {
   if (!app.isPackaged) return;
+  if (CAN_ELEVATE === false) {
+    logLocal('update_forced_no_rights', {}, 'WARN');
+    return;
+  }
   logLocal('update_forced_by_admin', {}, 'INFO');
   forceInstallAfterDownload = true;
   autoUpdater.autoDownload = true;
@@ -1013,7 +1034,14 @@ ipcMain.handle('read-local-log', () => {
   catch { return '(локальный журнал пуст или недоступен)'; }
 });
 ipcMain.on('download-update', () => { if (app.isPackaged) autoUpdater.downloadUpdate().catch(() => {}); }); // ошибка — через событие 'error'
-ipcMain.on('install-update', () => {
+ipcMain.on('install-update', (event) => {
+  // Кнопка «Перезапустить и обновить» в настройках. Без прав администратора не закрываемся — по
+  // той же причине, что и по команде из панели (см. forceUpdateNow).
+  if (CAN_ELEVATE === false) {
+    logLocal('update_install_no_rights', {}, 'WARN');
+    sendToWindow(BrowserWindow.fromWebContents(event.sender), 'toast', { message: NO_RIGHTS_TOAST });
+    return;
+  }
   // isQuitting обязателен ДО quitAndInstall: иначе обработчик close у окна списка контактов
   // отменит закрытие и спрячет окно в трей (см. createRoster), приложение не выйдет,
   // и установка не начнётся.

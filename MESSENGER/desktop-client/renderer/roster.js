@@ -4,7 +4,9 @@ let me = JSON.parse(localStorage.getItem('me') || 'null');
 let serverUrl = ''; // подтягивается из config.js через главный процесс — см. init() внизу файла
 let mode = 'login';
 let ws, presence = {}, usersCache = [];
-let collapsedDepts = new Set(JSON.parse(localStorage.getItem('collapsedDepts') || '[]'));
+// Свёрнутые отделы: обычный выбор (запоминается) и режим «по одному» из настроек — см. depts.js.
+const deptState = Depts.createState(JSON.parse(localStorage.getItem('collapsedDepts') || '[]'), false);
+desktop.getSettings().then((s) => { if (s.singleOpenDept) { Depts.setSingle(deptState, true); renderList(); } });
 let searchQuery = '';
 
 function displayNameOf(u) { return u.display_name || u.username; }
@@ -207,7 +209,9 @@ function connectWs() {
   ws = new WebSocket(`${wsUrl}?token=${token}&host=${encodeURIComponent(desktop.hostname)}`
     // Версия и сборка — чтобы администратор в веб-панели видел, у кого что установлено, и
     // мог понять, до кого обновление ещё не доехало (см. /api/admin/clients в server.js).
-    + `&ver=${encodeURIComponent(desktop.appVersion)}&track=${encodeURIComponent(desktop.buildTrack)}`);
+    + `&ver=${encodeURIComponent(desktop.appVersion)}&track=${encodeURIComponent(desktop.buildTrack)}`
+    // Есть ли у пользователя права поставить обновление — панель не шлёт «обновись» тем, у кого их нет.
+    + `&adm=${desktop.canElevate === true ? 1 : desktop.canElevate === false ? 0 : ''}`);
   // Реальный статус на момент подключения, а не всегда "в сети" — иначе новое WS-подключение
   // (например, при открытии окна чата) на пару секунд перебивало настоящий AFK-статус человека,
   // пока не придёт очередной 15-секундный тик с исправлением.
@@ -444,6 +448,7 @@ const PP_CHECKBOX_IDS = [
   ['ppRememberWindowSize', 'rememberWindowSize'],
   ['ppAlwaysOnTop', 'alwaysOnTop'],
   ['ppAutoStart', 'autoStart'],
+  ['ppSingleOpenDept', 'singleOpenDept'],
   ['ppHideNames', 'hideNameInMessages'],
   ['ppAutoUpdate', 'autoUpdate'],
 ];
@@ -520,6 +525,8 @@ function closeProfilePanel() {
 PP_CHECKBOX_IDS.forEach(([id, key]) => {
   document.getElementById(id).addEventListener('change', (e) => desktop.setSettings({ [key]: e.target.checked }));
 });
+// «Открывать отделы по одному» действует сразу: список за панелью настроек перестраивается.
+document.getElementById('ppSingleOpenDept').addEventListener('change', (e) => { Depts.setSingle(deptState, e.target.checked); renderList(); });
 document.getElementById('ppThemeDark').onclick = () => { desktop.setSettings({ theme: 'dark' }); paintProfileTheme('dark'); };
 document.querySelectorAll('#ppAccent button').forEach((b) => {
   b.onclick = () => { desktop.setSettings({ accent: b.dataset.accent }); paintProfileAccent(b.dataset.accent); };
@@ -567,17 +574,24 @@ function deptOnlineCount(users) {
 // Разворачивает/сворачивает отдел на месте (без renderList() — тот сносит и пересоздаёт весь DOM,
 // из-за чего анимация была бы не на чём проигрывать). section.nextElementSibling — это .dept-rows,
 // они всегда идут парой в этом порядке, см. их создание в renderList() ниже.
-function toggleDept(key, section) {
-  const willCollapse = !collapsedDepts.has(key);
-  if (willCollapse) collapsedDepts.add(key); else collapsedDepts.delete(key);
-  localStorage.setItem('collapsedDepts', JSON.stringify([...collapsedDepts]));
+// В режиме «по одному» щелчок меняет сразу два отдела: новый открывается, прежний сворачивается.
+function toggleDept(key) {
+  const changes = Depts.toggle(deptState, key);
+  // Запоминается только обычный выбор; в режиме «по одному» он не меняется (см. depts.js).
+  if (!deptState.single) localStorage.setItem('collapsedDepts', JSON.stringify([...deptState.collapsed]));
 
-  const rows = section.nextElementSibling;
-  if (!rows || !rows.classList.contains('dept-rows')) { renderList(); return; } // подстраховка на случай рассинхрона разметки
+  for (const change of changes) {
+    const section = [...document.querySelectorAll('#list .section[data-dept]')].find((el) => el.dataset.dept === change.key);
+    const rows = section && section.nextElementSibling;
+    if (!rows || !rows.classList.contains('dept-rows')) { renderList(); return; } // подстраховка на случай рассинхрона разметки
 
-  section.classList.toggle('collapsed', willCollapse);
-  section.title = willCollapse ? 'Показать сотрудников отдела' : 'Скрыть сотрудников отдела';
-  animateDeptRows(rows, willCollapse);
+    section.classList.toggle('collapsed', change.collapsed);
+    section.title = deptSectionTitle(change.collapsed, section.dataset.broadcast === '1');
+    animateDeptRows(rows, change.collapsed);
+  }
+}
+function deptSectionTitle(collapsed, canBroadcast) {
+  return (collapsed ? 'Показать сотрудников отдела' : 'Скрыть сотрудников отдела') + (canBroadcast ? ' · ПКМ — написать всему отделу' : '');
 }
 
 function animateDeptRows(rows, collapsing) {
@@ -884,13 +898,12 @@ function renderList() {
 
   for (const key of orderedKeys) {
     const users = groups.get(key);
-    const collapsed = collapsedDepts.has(key);
+    const collapsed = Depts.isCollapsed(deptState, key);
     const section = document.createElement('div');
     section.className = 'section' + (collapsed ? ' collapsed' : '');
     section.dataset.dept = key;
-    section.title = collapsed ? 'Показать сотрудников отдела' : 'Скрыть сотрудников отдела';
     section.innerHTML = `<span class="chev">${uiIcon('chevron')}</span><span class="stitle">${escapeHtml(key)}</span><span class="scount">${deptOnlineCount(users)}</span>`;
-    section.onclick = () => toggleDept(key, section);
+    section.onclick = () => toggleDept(key);
     // ПКМ по отделу — «Сообщение всему отделу». У псевдо-отдела "Без отдела" адресатов нет как
     // группы, поэтому меню там не появляется вовсе, а не появляется неработающим.
     const dept = deptsCache.find((d) => d.name === key);
@@ -902,8 +915,9 @@ function renderList() {
           { label: `Сообщение всему отделу «${dept.name}»`, icon: 'megaphone', onClick: () => desktop.openDepartmentBroadcast(payload) },
         ]);
       };
-      section.title += ' · ПКМ — написать всему отделу';
+      section.dataset.broadcast = '1';
     }
+    section.title = deptSectionTitle(collapsed, !!dept);
     list.appendChild(section);
 
     const rowsWrap = document.createElement('div');

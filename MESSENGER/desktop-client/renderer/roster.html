@@ -105,6 +105,10 @@
           <span class="t">Запускать при входе в Windows</span>
           <span class="pp-switch"><input type="checkbox" id="ppAutoStart"><span class="pp-switch-track"></span></span>
         </label>
+        <label class="pp-row" title="В списке сотрудников все отделы свёрнуты, открыт может быть только один: открыли другой — прежний свернётся сам.">
+          <span class="t">Открывать отделы по одному</span>
+          <span class="pp-switch"><input type="checkbox" id="ppSingleOpenDept"><span class="pp-switch-track"></span></span>
+        </label>
         <label class="pp-row" title="Не повторять имя собеседника в каждом сообщении личного чата — только в шапке окна.">
           <span class="t">Скрывать имя в сообщениях</span>
           <span class="pp-switch"><input type="checkbox" id="ppHideNames"><span class="pp-switch-track"></span></span>
@@ -146,6 +150,7 @@
 
 <script src="ui-kit.js"></script>
 <script src="outbox.js"></script>
+<script src="depts.js"></script>
 <script src="roster.js"></script>
 </body>
 </html>

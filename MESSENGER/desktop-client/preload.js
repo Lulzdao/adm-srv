@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld('desktop', {
   hostname: STATIC.hostname,
   appVersion: STATIC.appVersion,
   buildTrack: STATIC.buildTrack,
+  // Сможет ли клиент сам поставить обновление (права администратора): true / false / null — неизвестно.
+  canElevate: STATIC.canElevate,
   openChat: (payload) => ipcRenderer.send('open-chat', payload),
   openBroadcast: (payload) => ipcRenderer.send('open-broadcast', payload),
   // Действия меню по ПКМ. Само меню рисует окно (uiContextMenu в ui-kit.js) — системное меню

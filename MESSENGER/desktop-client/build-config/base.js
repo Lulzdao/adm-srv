@@ -76,6 +76,8 @@ module.exports = {
     'policy.js',
     // Подключение к ПК сотрудника через UltraVNC (require из main.js) — то же самое.
     'remote.js',
+    // Есть ли у пользователя права на установку обновления (require из main.js) — то же самое.
+    'elevation.js',
     // Значок трея в цвете акцента (require из main.js) — то же самое.
     'tray-icon.js',
     'renderer/**/*',
