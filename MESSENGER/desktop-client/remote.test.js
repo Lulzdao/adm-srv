@@ -5,27 +5,53 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { isRemoteHost, remoteHostsOf, viewerArgs, viewerCandidates, findViewer } = require('./remote');
+const { isRemoteHost, remoteHostsOf, viewerArgs, viewerCandidates, findViewer, launchViewer } = require('./remote');
 
-test('просмотрщик ищется на нескольких дисках и в папке сервера UltraVNC', () => {
-  const list = viewerCandidates(null, 'E:\\uvnc_support\\vncviewer.exe', ['C:\\Program Files', 'C:\\Program Files', undefined, 'C:\\Program Files (x86)']);
+test('просмотрщик ищется только на диске C: — и в Program Files, и в Program Files (x86)', () => {
+  const { VNC_VIEWER_PATHS } = require('./config');
+  const list = viewerCandidates(null, VNC_VIEWER_PATHS);
   assert.deepStrictEqual(list, [
-    'E:\\uvnc_support\\vncviewer.exe',
-    'C:\\uvnc_support\\vncviewer.exe',
-    'D:\\uvnc_support\\vncviewer.exe',
-    'F:\\uvnc_support\\vncviewer.exe',
+    'C:\\Program Files\\uvnc_support\\vncviewer.exe',
+    'C:\\Program Files (x86)\\uvnc_support\\vncviewer.exe',
     'C:\\Program Files\\uvnc_s\\vncviewer.exe',
     'C:\\Program Files (x86)\\uvnc_s\\vncviewer.exe',
-  ], 'путь из сборки первым, без повторов');
+  ], 'сначала папка администратора, потом папка сервера UltraVNC');
+  assert.ok(list.every((p) => /^C:\\Program Files( \(x86\))?\\/.test(p)), 'другие диски и папки не просматриваются');
 
-  // У коллеги папка на C:, у другого её нет вовсе — берётся та, что есть на каждом ПК.
-  assert.strictEqual(findViewer(list, (p) => p.startsWith('C:\\uvnc_support')), 'C:\\uvnc_support\\vncviewer.exe');
+  // Берётся первый найденный.
+  assert.strictEqual(findViewer(list, (p) => p.includes('uvnc_support')), 'C:\\Program Files\\uvnc_support\\vncviewer.exe');
   assert.strictEqual(findViewer(list, (p) => p.includes('uvnc_s\\')), 'C:\\Program Files\\uvnc_s\\vncviewer.exe');
+  assert.strictEqual(findViewer(list, (p) => p.includes('(x86)\\uvnc_s\\')), 'C:\\Program Files (x86)\\uvnc_s\\vncviewer.exe');
   assert.strictEqual(findViewer(list, () => false), null);
+
+  assert.deepStrictEqual(viewerCandidates(null, ['C:\\a.exe', 'c:\\A.exe', '', undefined]), ['C:\\a.exe'], 'без повторов и пустых');
+});
+
+test('просмотрщик не запустился — пробуется следующий; отказы и отсутствующие пути возвращаются', async () => {
+  const list = ['C:\\a\\v.exe', 'C:\\b\\v.exe', 'C:\\c\\v.exe', 'C:\\d\\v.exe'];
+  const started = [];
+  const start = (p) => { started.push(p); return p.startsWith('C:\\b') ? Promise.reject(new Error(`spawn ${p} EACCES`)) : Promise.resolve(); };
+
+  // a нет, b есть, но Windows отказала (как на ПК с Windows 10), c запускается; до d дело не доходит.
+  let r = await launchViewer(list, (p) => !p.startsWith('C:\\a'), start);
+  assert.strictEqual(r.viewer, 'C:\\c\\v.exe');
+  assert.deepStrictEqual(r.missing, ['C:\\a\\v.exe']);
+  assert.deepStrictEqual(r.failed, [{ path: 'C:\\b\\v.exe', message: 'spawn C:\\b\\v.exe EACCES' }]);
+  assert.deepStrictEqual(started, ['C:\\b\\v.exe', 'C:\\c\\v.exe']);
+
+  // Есть только тот, что не запускается.
+  r = await launchViewer(list, (p) => p.startsWith('C:\\b'), start);
+  assert.strictEqual(r.viewer, null);
+  assert.strictEqual(r.failed.length, 1);
+  assert.strictEqual(r.missing.length, 3);
+
+  // Нет нигде.
+  r = await launchViewer(list, () => false, start);
+  assert.deepStrictEqual([r.viewer, r.failed.length, r.missing.length], [null, 0, 4]);
 });
 
 test('путь из политики — единственный: другой файл вместо него не берётся', () => {
-  const list = viewerCandidates('D:\\Tools\\vncviewer.exe', 'E:\\uvnc_support\\vncviewer.exe', ['C:\\Program Files']);
+  const list = viewerCandidates('D:\\Tools\\vncviewer.exe', ['C:\\uvnc_support\\vncviewer.exe', 'C:\\Program Files\\uvnc_s\\vncviewer.exe']);
   assert.deepStrictEqual(list, ['D:\\Tools\\vncviewer.exe']);
   assert.strictEqual(findViewer(list, (p) => p.startsWith('C:')), null);
 });

@@ -8,8 +8,8 @@ const https = require('https');
 const tls = require('tls');
 const { diagnoseServer } = require('./diagnose');
 const { parseMachinePolicy } = require('./policy');
-const { viewerArgs, viewerCandidates, findViewer } = require('./remote');
-const { SERVER_URL, VNC_VIEWER_PATH, VNC_PORT, VNC_VIEWER_ARGS } = require('./config');
+const { viewerArgs, viewerCandidates, launchViewer } = require('./remote');
+const { SERVER_URL, VNC_VIEWER_PATHS, VNC_PORT, VNC_VIEWER_ARGS } = require('./config');
 const { autoUpdater } = require('electron-updater');
 
 // ---------- Одна копия клиента ----------
@@ -1049,11 +1049,9 @@ ipcMain.on('send-file-to', (event, payload) => { handleSendFile(payload); });
 // администратора здесь не проверяется: пункт меню — удобство, а не допуск, и скрытый пункт никого
 // не защищает. Защищаем другое — чтобы окно не могло запустить что-то кроме просмотрщика и не с тем,
 // что является именем ПК: имя сообщает клиент сотрудника, то есть оно чужое (см. remote.js).
-ipcMain.handle('remote-connect', (event, host) => {
+ipcMain.handle('remote-connect', async (event, host) => {
   if (BrowserWindow.fromWebContents(event.sender) !== rosterWin) return { ok: false, error: 'Недоступно из этого окна.' };
-  const candidates = viewerCandidates(machinePolicy.vncViewerPath, VNC_VIEWER_PATH,
-    [process.env.ProgramFiles, process.env.ProgramW6432, process.env['ProgramFiles(x86)']]);
-  const viewer = findViewer(candidates, (p) => fs.existsSync(p));
+  const candidates = viewerCandidates(machinePolicy.vncViewerPath, VNC_VIEWER_PATHS);
   let args;
   try {
     args = viewerArgs(host, machinePolicy.vncPort || VNC_PORT, machinePolicy.vncViewerArgs || VNC_VIEWER_ARGS);
@@ -1061,26 +1059,35 @@ ipcMain.handle('remote-connect', (event, host) => {
     logLocal('remote_connect_bad_host', { host: String(host).slice(0, 100) }, 'WARN');
     return { ok: false, error: 'Имя этого компьютера не похоже на имя ПК — подключение не запущено.' };
   }
-  if (!viewer) {
-    logLocal('remote_connect_no_viewer', { tried: candidates }, 'WARN');
-    return { ok: false, error: `Не найден просмотрщик UltraVNC. Искали здесь:\n${candidates.join('\n')}\n\nДругой путь задаётся строкой vncViewerPath в ${MACHINE_POLICY_PATH}.` };
-  }
-  return new Promise((resolve) => {
-    // Без оболочки (shell): аргументы уходят программе как есть, собрать из них команду нельзя.
-    // Рабочая папка — папка просмотрщика: там он ищет плагин шифрования и свои настройки.
-    // detached + unref — просмотрщик живёт сам по себе и не закрывается вместе с «Искрой».
+  // Без оболочки (shell): аргументы уходят программе как есть, собрать из них команду нельзя.
+  // Рабочая папка — папка просмотрщика: там он ищет плагин шифрования и свои настройки.
+  // detached + unref — просмотрщик живёт сам по себе и не закрывается вместе с «Искрой».
+  const start = (viewer) => new Promise((resolve, reject) => {
     const child = require('child_process').spawn(viewer, args, { cwd: path.dirname(viewer), detached: true, stdio: 'ignore' });
-    child.once('error', (err) => {
-      logLocal('remote_connect_failed', { host, viewer, message: err.message });
-      resolve({ ok: false, error: `Не удалось запустить просмотрщик UltraVNC: ${err.message}` });
-    });
-    child.once('spawn', () => {
-      child.unref();
-      // В журнал сервера (раздел «Логи»): кто и к какому ПК подключался из «Искры».
-      logLocal('remote_connect', { host }, 'INFO');
-      resolve({ ok: true });
-    });
+    child.once('error', reject);
+    child.once('spawn', () => { child.unref(); resolve(); });
   });
+  const { viewer, missing, failed } = await launchViewer(candidates, (p) => fs.existsSync(p), start);
+  // Отказы пишем и тогда, когда запустился следующий по списку: иначе про негодный файл никто не узнает.
+  for (const f of failed) logLocal('remote_connect_failed', { host, viewer: f.path, message: f.message });
+  if (viewer) {
+    // В журнал сервера (раздел «Логи»): кто и к какому ПК подключался из «Искры».
+    logLocal('remote_connect', { host, viewer }, 'INFO');
+    return { ok: true };
+  }
+  const hint = `\n\nДругой путь задаётся строкой vncViewerPath в ${MACHINE_POLICY_PATH}.`;
+  if (!failed.length) {
+    logLocal('remote_connect_no_viewer', { tried: candidates }, 'WARN');
+    return { ok: false, error: `Не найден просмотрщик UltraVNC. Искали здесь:\n${candidates.join('\n')}${hint}` };
+  }
+  // EACCES — Windows не дала запустить файл: права на него или запрет антивируса (контроль программ).
+  const denied = failed.some((f) => /EACCES|EPERM/.test(f.message));
+  return {
+    ok: false,
+    error: 'Не удалось запустить просмотрщик UltraVNC:\n' + failed.map((f) => `${f.path} — ${f.message}`).join('\n')
+      + (denied ? '\n\nWindows запретила запуск: проверьте права на файл и не блокирует ли его антивирус.' : '')
+      + (missing.length ? `\n\nВ других местах его нет:\n${missing.join('\n')}` : '') + hint,
+  };
 });
 
 // Одноразовое переопределение пути сохранения — см. will-download в app.whenReady() ниже.

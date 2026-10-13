@@ -26,22 +26,15 @@ function viewerArgs(host, port, extraArgs) {
   return ['-connect', `${host}:${port}`, ...(extraArgs || [])];
 }
 
-// Где искать просмотрщик, по порядку. Папка у администраторов одна и та же, а диск — разный: у кого
-// E:, у кого C:. Поэтому путь из сборки пробуется на нескольких дисках, а последним идёт папка
-// сервера UltraVNC (Program Files\uvnc_s): она есть на каждом ПК, и просмотрщик с плагином
-// шифрования в ней тоже лежит.
+// Где искать просмотрщик, по порядку: пути из сборки (VNC_VIEWER_PATHS в config.js — все на диске
+// C:, включая папку сервера UltraVNC в Program Files и в Program Files (x86)).
 //
 // Путь из машинной политики — единственный: администратор назвал его явно, и молча брать вместо
 // него другой файл нельзя.
-const DRIVES = ['C', 'D', 'E', 'F'];
-function viewerCandidates(policyPath, defaultPath, programFilesDirs) {
+function viewerCandidates(policyPath, defaultPaths) {
   if (policyPath) return [policyPath];
-  const list = [defaultPath];
-  const tail = /^[a-z]:(\\.+)$/i.exec(defaultPath || '');
-  if (tail) for (const d of DRIVES) list.push(`${d}:${tail[1]}`);
-  for (const pf of programFilesDirs || []) if (pf) list.push(`${pf}\\uvnc_s\\vncviewer.exe`);
   const seen = new Set();
-  return list.filter((p) => p && !seen.has(p.toLowerCase()) && seen.add(p.toLowerCase()));
+  return (defaultPaths || []).filter((p) => p && !seen.has(p.toLowerCase()) && seen.add(p.toLowerCase()));
 }
 
 // Первый существующий из кандидатов или null. exists — (путь) => boolean.
@@ -50,4 +43,25 @@ function findViewer(candidates, exists) {
   return null;
 }
 
-module.exports = { isRemoteHost, remoteHostsOf, viewerArgs, viewerCandidates, findViewer };
+// Запускает первый просмотрщик, который запустится. Файл может лежать на месте и не запускаться:
+// на одном из ПК Windows отвечала EACCES на просмотрщик из папки сервера (2026-10-13) — права на
+// файл или запрет антивируса, с нашей стороны не различить. Поэтому отказ — не конец: пробуем
+// следующий путь из списка.
+//   exists — (путь) => boolean;  start — (путь) => Promise, отклоняется, если запустить не удалось.
+// Возвращает { viewer } или { viewer: null, missing: [...], failed: [{ path, message }] }.
+async function launchViewer(candidates, exists, start) {
+  const missing = [];
+  const failed = [];
+  for (const p of candidates) {
+    if (!exists(p)) { missing.push(p); continue; }
+    try {
+      await start(p);
+      return { viewer: p, missing, failed };
+    } catch (err) {
+      failed.push({ path: p, message: String((err && err.message) || err) });
+    }
+  }
+  return { viewer: null, missing, failed };
+}
+
+module.exports = { isRemoteHost, remoteHostsOf, viewerArgs, viewerCandidates, findViewer, launchViewer };
