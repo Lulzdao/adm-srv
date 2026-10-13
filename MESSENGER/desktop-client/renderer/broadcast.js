@@ -289,7 +289,7 @@ function itemHtml(b, query) {
   // В окне самого отдела метка не нужна: там всё до одного адресовано этому отделу.
   const to = b.department ? `Отдел «${escapeHtml(b.department)}»` : 'Всем сотрудникам';
   const head = `<div class="ihead"><div class="ini">${escapeHtml(initialsOf(b.from_user))}</div><div class="iwho"><div class="who">${escapeHtml(b.from_user)}</div><div class="to">${to}</div></div><span class="time" title="${time}">${itemWhen(b.created_at)}</span></div>`;
-  return `<div class="item">${head}${txtHtml}${filesHtml ? `<div class="ifiles">${filesHtml}</div>` : ''}</div>`;
+  return `<div class="item"${b.id ? ` data-bid="${Number(b.id)}"` : ''}>${head}${txtHtml}${filesHtml ? `<div class="ifiles">${filesHtml}</div>` : ''}</div>`;
 }
 
 // Лента "сегодняшних" рассылок — обнуляется каждый день, как и в чате. Вся история доступна
@@ -619,6 +619,13 @@ function addLiveBroadcast(b) {
   }
 }
 
+function removeBroadcast(id) {
+  if (!id) return;
+  document.querySelectorAll(`.item[data-bid="${id}"]`).forEach((el) => el.remove());
+  // Лента опустела — перечитываем: покажется «пока ничего нет» и уйдёт полоска «новые».
+  if (!document.querySelector('#feed .item')) loadFeed();
+}
+
 function clearUnreadDivider() {
   if (!hasUnreadDivider) return;
   clearTimeout(unreadClearTimer);
@@ -669,6 +676,8 @@ function connectWs() {
     const data = JSON.parse(e.data);
     if (data.type === 'token' && data.token) { token = data.token; return; } // сервер продлил вход
     if (data.type === 'broadcast') addLiveBroadcast(data);
+    // Администратор удалил объявление — убираем его из ленты и из открытой истории.
+    if (data.type === 'broadcast_deleted') removeBroadcast(Number(data.id));
   };
   ws.onclose = () => {
     if (window.appShuttingDown) return; // выключается ПК — не переподключаемся и не показываем «нет связи»

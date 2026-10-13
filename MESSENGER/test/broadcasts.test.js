@@ -2,7 +2,9 @@
 
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
-const { startServer, request, login, makeUser, connect, ADMIN } = require('./helpers/server');
+const fs = require('node:fs');
+const path = require('node:path');
+const { startServer, request, login, makeUser, connect, upload, ADMIN } = require('./helpers/server');
 
 // ============================================================================
 //  Объявления: кто что видит и кто что может отправить
@@ -139,4 +141,48 @@ test('html без оформления хранится как обычный т
   assert.equal(r.json[0].text, 'просто строка\nвторая');
   assert.equal((await отправить(вещатель, { html: '<div><b> </b><br></div>' })).status, 400, 'пустое после очистки');
   assert.equal((await отправить(вещатель, { html: '<b>x</b>'.repeat(10000) })).status, 400, 'слишком длинное');
+});
+
+test('удаление объявления: только администратор; пропадает из лент, окна узнают сразу', async () => {
+  const ws = await connect(srv.url, бухгалтер.token);
+  try {
+    assert.equal((await отправить(вещатель, { text: 'устаревшее объявление' })).status, 200);
+    const live = await ws.next((m) => m.type === 'broadcast' && m.text === 'устаревшее объявление');
+    assert.ok(Number.isInteger(live.id) && live.id > 0, 'в живом объявлении есть номер — по нему окно его потом уберёт');
+
+    const del = (кто, id) => request(srv.url, 'DELETE', `/api/admin/broadcasts/${id}`, { token: кто && кто.token });
+    assert.equal((await del(null, live.id)).status, 401);
+    assert.equal((await del(вещатель, live.id)).status, 403, 'право рассылки — не право удалять');
+    assert.equal((await del(admin, 999999)).status, 404);
+    assert.equal((await del(admin, 'abc')).status, 404);
+
+    assert.equal((await del(admin, live.id)).status, 200);
+    const gone = await ws.next((m) => m.type === 'broadcast_deleted');
+    assert.equal(gone.id, live.id);
+    assert.ok(!(await лента(бухгалтер)).includes('устаревшее объявление'));
+    assert.ok(!(await лента(admin, '?all=1')).includes('устаревшее объявление'));
+    assert.equal((await del(admin, live.id)).status, 404, 'второй раз удалять нечего');
+  } finally { ws.close(); }
+});
+
+test('удаление объявления удаляет его файлы, если они больше нигде не встречаются', async () => {
+  const свой = await upload(srv.url, вещатель.token, 'только в объявлении.txt');
+  const общий = await upload(srv.url, вещатель.token, 'и в переписке.txt');
+  // Тот же файл переслан и личным сообщением — его удалять нельзя.
+  const ws = await connect(srv.url, вещатель.token);
+  try {
+    ws.send({ type: 'send', to: бухгалтер.id, text: 'держи файл', files: [общий] });
+    await ws.next((m) => m.type === 'message' && m.text === 'держи файл');
+  } finally { ws.close(); }
+  assert.equal((await отправить(вещатель, { text: 'с вложениями', files: [свой, общий] })).status, 200);
+  const items = (await request(srv.url, 'GET', '/api/broadcasts?all=1', { token: admin.token })).json;
+  const b = items.find((x) => x.text === 'с вложениями');
+
+  const onDisk = (f) => fs.existsSync(path.join(srv.dir, 'uploads', f.url.split('/').pop()));
+  assert.ok(onDisk(свой) && onDisk(общий));
+  const r = await request(srv.url, 'DELETE', `/api/admin/broadcasts/${b.id}`, { token: admin.token });
+  assert.equal(r.status, 200);
+  assert.equal(r.json.filesRemoved, 1);
+  assert.equal(onDisk(свой), false, 'файл только из объявления удалён');
+  assert.equal(onDisk(общий), true, 'файл из переписки остался');
 });

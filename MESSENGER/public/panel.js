@@ -1373,10 +1373,26 @@ async function loadBroadcastFeed() {
     const dept = b.department ? `<span class="time">отдел: ${escapeHtml(b.department)}</span>` : '';
     // С оформлением — очищенный HTML (richtext.js; сервер уже очистил, здесь — ещё раз), иначе текст.
     const body = b.html ? `<div class="txt rich">${IskraRich.clean(b.html)}</div>` : `<div class="txt">${escapeHtml(b.text)}</div>`;
-    return `<div class="bc-item"><span class="who">${escapeHtml(b.from_user)}</span><span class="time">${time}</span>${dept}${body}</div>`;
+    const files = (b.files || []).length ? `<span class="time">📎 ${(b.files || []).length}</span>` : '';
+    return `<div class="bc-item"><div class="bc-head"><span class="who">${escapeHtml(b.from_user)}</span><span class="time">${time}</span>${dept}${files}`
+      + `<button class="action danger bc-del" data-id="${Number(b.id)}" title="Удалить объявление у всех">Удалить</button></div>${body}</div>`;
   }).join('') || '<div style="color:var(--muted)">Рассылок пока не было</div>';
   // Панель живёт в iframe «Центра»: ссылка из объявления открывается в новой вкладке, а не вместо панели.
   document.querySelectorAll('#bcFeed .txt.rich a').forEach((link) => { link.target = '_blank'; link.rel = 'noopener noreferrer'; });
+  document.querySelectorAll('#bcFeed .bc-del').forEach((btn) => { btn.onclick = () => deleteBroadcast(Number(btn.dataset.id)); });
+}
+
+// Удалить неактуальное объявление: пропадает у всех — в окнах объявлений и в строке «Объявления».
+async function deleteBroadcast(id) {
+  const ok = await uiConfirm('Объявление пропадёт у всех сотрудников. Прикреплённые к нему файлы тоже удалятся, если их нет в других сообщениях. Восстановить будет нельзя.',
+    { title: 'Удалить объявление', ok: 'Удалить', danger: true });
+  if (!ok) return;
+  try {
+    await api(`api/admin/broadcasts/${id}`, { method: 'DELETE' });
+    uiToast('Объявление удалено');
+    loadBroadcastFeed();
+    loadFiles();
+  } catch (e) { showError(e); }
 }
 // Редактор с оформлением — тот же, что в окне объявлений клиента (richtext.js). Создаётся при первом
 // обращении: раздел «Рассылка» открывают не всегда.
