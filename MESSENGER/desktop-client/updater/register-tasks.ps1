@@ -43,7 +43,8 @@ $runByUsers = 'D:(A;;FA;;;SY)(A;;FA;;;BA)(A;;GRGX;;;BU)'
 function Update-TaskXml([bool]$withSecurity) {
 	$security = ''
 	if ($withSecurity) { $security = "<SecurityDescriptor>$runByUsers</SecurityDescriptor>" }
-	$arguments = Escape-Xml ('-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $updateScript + '"')
+	# -InputFormat None — PowerShell 2.0 (Windows 7) с -File без консоли иначе может ждать ввода вечно.
+	$arguments = Escape-Xml ('-InputFormat None -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $updateScript + '"')
 	return @"
 <?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
@@ -95,6 +96,7 @@ function Update-TaskXml([bool]$withSecurity) {
 }
 
 # Группа «Пользователи» — задание выполняется в сеансе того, кто вошёл, с его правами.
+# --hidden — «запущена сама»: с настройкой «Запускать свёрнутой» окно не откроется (см. main.js).
 # Без ограничения по времени: запущенная им «Искра» работает, пока её не закроют.
 $relaunchXml = @"
 <?xml version="1.0" encoding="UTF-16"?>
@@ -124,6 +126,7 @@ $relaunchXml = @"
   <Actions Context="Author">
     <Exec>
       <Command>$(Escape-Xml $exe.FullName)</Command>
+      <Arguments>--hidden</Arguments>
       <WorkingDirectory>$(Escape-Xml $Root)</WorkingDirectory>
     </Exec>
   </Actions>

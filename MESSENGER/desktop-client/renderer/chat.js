@@ -720,6 +720,14 @@ function send() {
 // Enter — отправляет сообщение; Shift+Enter — переносит строку (для этого поле ввода и сделано
 // textarea, а не обычным input, у которого многострочный текст в принципе невозможен).
 const textEl = document.getElementById('text');
+// Окно стало активным, а в нём ничего не выбрано — курсор в поле ввода: можно сразу печатать.
+// Если человек уже стоит в другом поле (поиск в истории, подпись к файлу), не трогаем.
+function focusComposer() {
+  const active = document.activeElement;
+  if (!active || active === document.body || active === document.documentElement) textEl.focus();
+}
+window.addEventListener('focus', focusComposer);
+focusComposer();
 textEl.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
   if (e.key === 'Escape' && replyingTo) { e.preventDefault(); clearReplyingTo(); }

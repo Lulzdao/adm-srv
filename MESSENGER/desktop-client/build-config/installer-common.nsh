@@ -56,8 +56,12 @@
   ;  Что и откуда ставится и почему это безопасно — в шапке updater.js.
   ;
   ;  Не получилось — не повод срывать установку: программа работает, обновляться будет по-старому.
+  ;
+  ;  -InputFormat None обязателен. nsExec отдаёт PowerShell трубы вместо консоли, и PowerShell 2.0
+  ;  (Windows 7) с -File ждёт ввода из этой трубы бесконечно: задания не заводились, установщик
+  ;  висел до перезагрузки, а вместе с ним и сценарий политики, который его запустил (2026-10-14).
   IfFileExists "$INSTDIR\resources\updater\register-tasks.ps1" 0 tasksDone
-    nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\resources\updater\register-tasks.ps1"'
+    nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -InputFormat None -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\resources\updater\register-tasks.ps1"'
     Pop $0
     Pop $1
     ${If} $0 == 0

@@ -147,6 +147,9 @@
           </span>
           <button class="action" onclick="loadHistory()">Показать</button>
           <button class="action ghost" onclick="exportHistory()">Экспорт в .txt</button>
+          <!-- Скрытая кнопка: лента всех последних сообщений всех сотрудников. Не видна, пока на неё
+               не навести; каждое открытие ленты пишется в журнал сервера (admin_all_messages_viewed). -->
+          <button class="hist-secret" id="histAllBtn" onclick="loadAllHistory()" title="Все последние сообщения" aria-label="Все последние сообщения">⋯</button>
         </div>
         <div id="histMessages"></div>
         <div class="row-flex" id="histMoreRow" style="display:none; margin-top:8px;">

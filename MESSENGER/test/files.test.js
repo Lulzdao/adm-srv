@@ -22,7 +22,8 @@ before(async () => {
   admin = await login(srv.url, ADMIN.username, ADMIN.password);
   const д = await request(srv.url, 'POST', '/api/admin/departments', { token: admin.token, body: { name: 'Отдел тестовый' } });
   отдел = д.json.id;
-  автор = await makeUser(srv.url, admin.token, 'автор');
+  // Автор — сотрудник отдела: писать отделу могут только его сотрудники (решение 2026-10-14).
+  автор = await makeUser(srv.url, admin.token, 'автор', { department_ids: [отдел] });
   собеседник = await makeUser(srv.url, admin.token, 'собеседник');
   посторонний = await makeUser(srv.url, admin.token, 'посторонний');
   коллега = await makeUser(srv.url, admin.token, 'коллега', { department_ids: [отдел] });
