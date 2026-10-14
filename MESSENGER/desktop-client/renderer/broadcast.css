@@ -143,3 +143,10 @@
   #dropOverlay.active { display: flex; }
   #dropOverlay svg { width: 34px; height: 34px; color: var(--accent); }
   #dropOverlay .dtext { font-size: 14px; font-weight: 700; color: var(--text); }
+
+/* Правка своего объявления: карандаш — только при наведении на карточку, как кнопки у сообщений в чате. */
+.item .item-edit { display: none; width: 24px; height: 24px; border: none; border-radius: 7px; background: transparent; color: var(--muted); cursor: pointer; align-items: center; justify-content: center; padding: 0; flex: none; }
+.item.own:hover .item-edit { display: flex; }
+.item .item-edit:hover { background: var(--hover); color: var(--text); }
+/* «изменено» у исправленного объявления — как в Telegram, курсивом перед временем. */
+.item .ihead .time .edited { font-style: italic; }

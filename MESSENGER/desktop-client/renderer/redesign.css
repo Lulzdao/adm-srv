@@ -93,7 +93,7 @@ body:has(#auth) #wcMax { display: none; }
 .section .group-add-btn { width: 22px; height: 22px; border-radius: 7px; }
 .row { padding: 8px; border-radius: var(--radius-m); gap: 10px; }
 .row + .row { margin-top: 0; }
-.row:hover, .row.unread { background: var(--panel); }
+.row:hover, .row.unread, .row.selected { background: var(--panel); }
 .row .rt { flex: 1; min-width: 0; }
 .row .n { font-weight: 500; }
 .row .sub { font-size: 10.5px; color: var(--muted); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

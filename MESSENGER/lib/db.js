@@ -165,6 +165,9 @@ function openDatabase(DB_FILE, { logServer }) {
       // оригиналом. Снимок делает сервер (не клиент) при отправке — источник истины один.
       if (!cols.includes('reply_to_id')) db.exec('ALTER TABLE messages ADD COLUMN reply_to_id INTEGER');
       if (!cols.includes('reply_snapshot')) db.exec('ALTER TABLE messages ADD COLUMN reply_snapshot TEXT');
+      // Когда отправитель последний раз исправил сообщение (NULL — не исправлял). По нему у сообщения
+      // пишется «изменено», как в Telegram. Прежний текст не храним — так же, как Telegram.
+      if (!cols.includes('edited_at')) db.exec('ALTER TABLE messages ADD COLUMN edited_at INTEGER');
     }
     {
       const cols = db.prepare("PRAGMA table_info(broadcasts)").all().map((c) => c.name);
@@ -177,6 +180,8 @@ function openDatabase(DB_FILE, { logServer }) {
       // без оформления (и все прежние): показывается text. text при этом всегда есть — текстовая версия
       // для поиска, уведомлений и клиентов, которые HTML не понимают.
       if (!cols.includes('html')) db.exec('ALTER TABLE broadcasts ADD COLUMN html TEXT');
+      // То же для объявлений: когда автор его исправил (см. edited_at у messages).
+      if (!cols.includes('edited_at')) db.exec('ALTER TABLE broadcasts ADD COLUMN edited_at INTEGER');
     }
     // Кто загрузил файл. Нужен для права на скачивание (см. canAccessFile): раньше токен на скачивание
     // выдавался на любой файл любому вошедшему, и знания имени файла на диске хватало, чтобы открыть
