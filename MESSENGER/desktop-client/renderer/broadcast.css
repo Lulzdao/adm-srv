@@ -20,7 +20,10 @@
     transition: opacity .2s ease, transform .2s ease, border-color .2s ease;
   }
   #composer.open { opacity: 1; transform: translateY(0); pointer-events: auto; border-top-color: var(--accent); }
-  #composer p { margin: 0 0 8px; color: var(--muted); font-size: 12px; flex-shrink: 0; }
+  /* Только подсказка над редактором (прямой потомок #composer). Раньше было «#composer p» — и серый
+     мелкий шрифт доставался всем абзацам внутри поля ввода: текст, вставленный из Word (он идёт
+     абзацами <p>), становился серым (замечено 2026-10-14). */
+  #composer > p { margin: 0 0 8px; color: var(--muted); font-size: 12px; flex-shrink: 0; }
   textarea { flex: 1; min-height: 70px; width: 100%; resize: none; background: var(--panel-2); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 10px; font-size: 13px; font-family: inherit; }
   textarea:focus { outline: none; border-color: var(--accent); }
   #composerRow2 { display: flex; gap: 8px; margin-top: 8px; flex-shrink: 0; }

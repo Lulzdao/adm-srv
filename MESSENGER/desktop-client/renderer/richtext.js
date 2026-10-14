@@ -86,6 +86,35 @@
     return box.innerHTML;
   }
 
+  // ---------- Вставка: серый «из шаблона» — не цвет ----------
+  // Word и почта явно пишут оттенки серого: «Текст 1, светлее 25%» (#404040), #595959, «Авто» как
+  // windowtext… Человек их не выбирал, а в объявлении текст выходил серым (жалоба 2026-10-14).
+  // Поэтому при вставке оттенки от чёрного до белого убираем — текст становится обычного цвета
+  // окна (и в тёмной теме читается). Настоящие цвета — красный, синий и т. п. — остаются.
+  const NEUTRAL_NAMES = /^(black|white|gray|grey|silver|gainsboro|whitesmoke|dimgr[ae]y|darkgr[ae]y|lightgr[ae]y|slategr[ae]y|windowtext|buttontext|canvastext|graytext|currentcolor|inherit|initial|auto)$/i;
+  function isNeutralColor(v) {
+    v = String(v || '').trim().toLowerCase();
+    if (!v) return false;
+    if (NEUTRAL_NAMES.test(v)) return true;
+    let r, g, b;
+    let m = /^#([0-9a-f]{3})$/.exec(v);
+    if (m) [r, g, b] = m[1].split('').map((c) => parseInt(c + c, 16));
+    else if ((m = /^#([0-9a-f]{6})([0-9a-f]{2})?$/.exec(v))) [r, g, b] = [0, 2, 4].map((i) => parseInt(m[1].slice(i, i + 2), 16));
+    else if ((m = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/.exec(v))) [r, g, b] = [m[1], m[2], m[3]].map(Number);
+    else return false;
+    return Math.max(r, g, b) - Math.min(r, g, b) <= 12; // все три почти равны — оттенок серого
+  }
+  function dropNeutralColors(html) {
+    const tpl = document.createElement('template');
+    tpl.innerHTML = html;
+    tpl.content.querySelectorAll('[style], font[color]').forEach((el) => {
+      if (el.style && isNeutralColor(el.style.color)) el.style.removeProperty('color');
+      if (el.hasAttribute('color') && isNeutralColor(el.getAttribute('color'))) el.removeAttribute('color');
+      if (el.getAttribute('style') === '') el.removeAttribute('style');
+    });
+    return tpl.innerHTML;
+  }
+
   // ---------- Редактор ----------
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const svg = (inner, w = 15) => `<svg width="${w}" height="${w}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
@@ -236,7 +265,7 @@
       if (!dt) return;
       e.preventDefault();
       const html = dt.getData('text/html');
-      if (html) document.execCommand('insertHTML', false, clean(html.replace(/^[\s\S]*<!--StartFragment-->|<!--EndFragment-->[\s\S]*$/g, '')));
+      if (html) document.execCommand('insertHTML', false, dropNeutralColors(clean(html.replace(/^[\s\S]*<!--StartFragment-->|<!--EndFragment-->[\s\S]*$/g, ''))));
       else document.execCommand('insertText', false, dt.getData('text/plain'));
       remember(); changed();
     });
@@ -262,5 +291,5 @@
     };
   }
 
-  window.IskraRich = { editor, clean, FONTS, SIZES, COLORS };
+  window.IskraRich = { editor, clean, isNeutralColor, dropNeutralColors, FONTS, SIZES, COLORS };
 })();
