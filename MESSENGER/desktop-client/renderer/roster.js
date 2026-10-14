@@ -622,7 +622,7 @@ function applyReachability(row, u, p) {
   row.classList.toggle('unreachable', !reachable);
   row.title = buildTooltip(p.state, p.idleSince, p.hosts, p.since)
     + (reachable ? '' : '\nСейчас недоступен для сообщений и файлов — подключён только через веб-панель администратора');
-  row.onclick = reachable ? () => desktop.openChat(chatPayload) : null;
+  makeSelectable(row, `u:${u.id}`, reachable ? () => desktop.openChat(chatPayload) : null);
   // Меню собирается в момент щелчка, а не здесь: право администратора могли выдать или снять, пока
   // строка уже нарисована (см. refreshMe).
   row.oncontextmenu = (e) => {
@@ -681,6 +681,28 @@ function presenceSub(p) {
   if (!p.idleSince) return 'Отошёл';
   const mins = Math.max(1, Math.round((Date.now() - p.idleSince) / 60000));
   return `Отошёл · ${mins < 60 ? `${mins} мин` : `${Math.floor(mins / 60)} ч`}`;
+}
+
+// ---------- Один щелчок — выделить, двойной — открыть чат ----------
+// Как в проводнике: одиночный щелчок только выделяет строку (та же подсветка, что при наведении),
+// чат открывается двойным щелчком или клавишей Enter. Раньше чат открывался с одного щелчка —
+// окна открывались случайно, при попытке просто показать на человека. Выделение помним по ключу:
+// список перерисовывается при каждом обновлении присутствия, и подсветка не должна пропадать.
+let selectedRowKey = null;
+function makeSelectable(row, key, open) {
+  row.dataset.selkey = key;
+  row.classList.toggle('selected', selectedRowKey === key);
+  row.onclick = () => selectRow(key);
+  row.ondblclick = open ? (e) => { e.preventDefault(); open(); } : null;
+}
+function selectRow(key) {
+  selectedRowKey = key;
+  for (const r of document.querySelectorAll('#list .row[data-selkey]')) r.classList.toggle('selected', r.dataset.selkey === key);
+}
+function openSelectedRow() {
+  const row = selectedRowKey && document.querySelector(`#list .row[data-selkey="${selectedRowKey}"]`);
+  if (row && row.ondblclick) { row.ondblclick(new Event('dblclick')); return true; }
+  return false;
 }
 
 function makeUserRow(u) {
@@ -748,7 +770,7 @@ function makeGroupRow(g) {
   row.dataset.gid = g.id;
   row.title = g.name;
   row.innerHTML = `<div class="badge-icon">${uiIcon('group')}</div><div class="n">${escapeHtml(g.name)}</div><button type="button" class="group-manage-btn" title="Управление группой">${uiIcon('gear')}</button><span class="gcount" title="Участников">${g.member_count || ''}</span><span class="unread-badge"></span>`;
-  row.onclick = () => desktop.openChat({ type: 'room', id: `group:${g.id}`, label: g.name, token, serverUrl });
+  makeSelectable(row, `g:${g.id}`, () => desktop.openChat({ type: 'room', id: `group:${g.id}`, label: g.name, token, serverUrl }));
   row.querySelector('.group-manage-btn').onclick = (e) => { e.stopPropagation(); openGroupModal({ mode: 'manage', group: g }); };
   return row;
 }
@@ -1051,6 +1073,11 @@ document.addEventListener('keydown', (e) => {
     searchQuery = ''; setSearchActive(false); renderList();
     return;
   }
+  if (e.key === 'Enter') { if (openSelectedRow()) e.preventDefault(); return; }
+  // Курсор уже в строке поиска — правку ведёт само поле (обработчик 'input' выше). Иначе Backspace
+  // по выделенному тексту стирал одну последнюю букву, а набранная буква дописывалась в конец
+  // вместо замены выделения: здесь searchQuery правится вслепую, без учёта выделения и курсора.
+  if (active && active.id === 'searchInput') return;
   if (e.key === 'Backspace') {
     e.preventDefault(); // иначе на пустом searchQuery Electron может воспринять Backspace как "назад"
     if (!searchQuery) return;

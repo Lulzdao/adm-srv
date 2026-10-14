@@ -80,6 +80,7 @@ function setComposerOpen(open) {
   btn.addEventListener('click', () => {
     if (document.getElementById('historyPanel').classList.contains('visible')) closeHistoryPanel();
     const open = !document.getElementById('composer').classList.contains('open');
+    if (!open) cancelBroadcastEdit();
     setComposerOpen(open);
     if (open) hideFeedSmoothly(); else showFeedSmoothly();
   });
@@ -266,6 +267,18 @@ function richHtml(html) {
   return box.innerHTML;
 }
 
+// «изменено» перед временем — как в Telegram; точное время правки — в подсказке.
+function editedMarkHtml(editedAt) {
+  if (!editedAt) return '';
+  const when = new Date(editedAt).toLocaleString('ru-RU', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
+  return `<span class="edited" title="Изменено ${escapeAttr(when)}">изменено</span> `;
+}
+function txtHtmlOf(b, query) {
+  return b.html && !query
+    ? `<div class="txt rich selectable" data-raw-text="${escapeAttr(b.text || '')}">${richHtml(b.html)}</div>`
+    : b.text ? `<div class="txt selectable" data-raw-text="${escapeAttr(b.text)}">${highlightHtml(b.text, query)}</div>` : '';
+}
+
 function itemHtml(b, query) {
   const time = new Date(b.created_at).toLocaleString('ru-RU');
   let filesHtml = '';
@@ -282,14 +295,15 @@ function itemHtml(b, query) {
     filesHtml += `<div class="file-row"><a class="file" href="#" data-url="${escapeAttr(f.url)}" data-name="${escapeAttr(f.name || 'файл')}"><span class="fi"><span class="fi-file">${uiIcon('file')}</span><span class="fi-download">${uiIcon('download')}</span><span class="fi-progress"><svg viewBox="0 0 24 24"><circle class="ring-bg" cx="12" cy="12" r="10"></circle><circle class="ring-bar" cx="12" cy="12" r="10"></circle></svg><span class="fi-pct"></span></span><span class="fi-check">${uiIcon('check')}</span></span><span class="fmeta"><span class="fn">${escapeHtml(f.name || 'файл')}</span><span class="fs">${fmtSize(f.size)}</span></span></a></div>`;
   });
   // С оформлением — очищенный HTML (при поиске — простой текст с подсветкой найденного), иначе текст.
-  const txtHtml = b.html && !query
-    ? `<div class="txt rich selectable" data-raw-text="${escapeAttr(b.text || '')}">${richHtml(b.html)}</div>`
-    : b.text ? `<div class="txt selectable" data-raw-text="${escapeAttr(b.text)}">${highlightHtml(b.text, query)}</div>` : '';
+  const txtHtml = txtHtmlOf(b, query);
   // В общей ленте сообщение отделу помечаем — иначе непонятно, почему коллега его не получил.
   // В окне самого отдела метка не нужна: там всё до одного адресовано этому отделу.
   const to = b.department ? `Отдел «${escapeHtml(b.department)}»` : 'Всем сотрудникам';
-  const head = `<div class="ihead"><div class="ini">${escapeHtml(initialsOf(b.from_user))}</div><div class="iwho"><div class="who">${escapeHtml(b.from_user)}</div><div class="to">${to}</div></div><span class="time" title="${time}">${itemWhen(b.created_at)}</span></div>`;
-  return `<div class="item"${b.id ? ` data-bid="${Number(b.id)}"` : ''}>${head}${txtHtml}${filesHtml ? `<div class="ifiles">${filesHtml}</div>` : ''}</div>`;
+  // Своё объявление можно исправить (карандаш при наведении и пункт меню), у исправленного — «изменено».
+  const own = me && b.from_id === me.id && b.id;
+  const editBtn = own ? `<button type="button" class="item-edit" title="Изменить">${uiIcon('pencil')}</button>` : '';
+  const head = `<div class="ihead"><div class="ini">${escapeHtml(initialsOf(b.from_user))}</div><div class="iwho"><div class="who">${escapeHtml(b.from_user)}</div><div class="to">${to}</div></div>${editBtn}<span class="time" title="${time}">${editedMarkHtml(b.edited_at)}${itemWhen(b.created_at)}</span></div>`;
+  return `<div class="item${own ? ' own' : ''}"${b.id ? ` data-bid="${Number(b.id)}"` : ''}${own && b.html ? ` data-html="${escapeAttr(b.html)}"` : ''}>${head}${txtHtml}${filesHtml ? `<div class="ifiles">${filesHtml}</div>` : ''}</div>`;
 }
 
 // В ленте — рассылки за последние три дня, как и в чате (см. recent.js). Вся история доступна
@@ -357,7 +371,53 @@ async function loadFeed() {
   feed.scrollTop = feed.scrollHeight; // сразу показываем самую свежую рассылку, а не листаем сверху
 }
 
+// ---------- Правка своего объявления ----------
+// Форма та же, что для нового: текст объявления подставляется в редактор, кнопка — «Сохранить».
+// Файлы при правке не меняются (как в Telegram у подписи к файлам), поэтому скрепка прячется.
+let editingBroadcastId = null;
+function startBroadcastEdit(itemEl) {
+  const txt = itemEl.querySelector('.txt');
+  editingBroadcastId = Number(itemEl.dataset.bid);
+  if (itemEl.dataset.html) rte.setHtml(itemEl.dataset.html);
+  else rte.setHtml(escapeHtml(txt ? txt.dataset.rawText || '' : '').replace(/\n/g, '<br>'));
+  pendingFiles = [];
+  renderComposerFiles();
+  paintComposerMode();
+  if (document.getElementById('historyPanel').classList.contains('visible')) closeHistoryPanel();
+  setComposerOpen(true);
+  hideFeedSmoothly();
+}
+function cancelBroadcastEdit() {
+  if (!editingBroadcastId) return;
+  editingBroadcastId = null;
+  rte.clear();
+  paintComposerMode();
+}
+const composerDefaults = {
+  hint: document.querySelector('#composer p').textContent,
+  send: document.getElementById('sendBtn').textContent,
+};
+function paintComposerMode() {
+  const editing = !!editingBroadcastId;
+  document.querySelector('#composer p').textContent = editing ? 'Изменение объявления: у всех получателей текст заменится, рядом появится «изменено». Файлы не меняются.' : composerDefaults.hint;
+  document.getElementById('sendBtn').textContent = editing ? 'Сохранить' : composerDefaults.send;
+  document.getElementById('attachBtn').style.display = editing ? 'none' : '';
+}
+// Исправленное объявление (WS 'broadcast_edited') — новый текст и «изменено» в ленте и в истории.
+function applyBroadcastEdit(d) {
+  document.querySelectorAll(`.item[data-bid="${Number(d.id)}"]`).forEach((el) => {
+    const old = el.querySelector('.txt');
+    const fresh = txtHtmlOf({ text: d.text, html: d.html });
+    if (old) old.outerHTML = fresh;
+    else el.querySelector('.ihead').insertAdjacentHTML('afterend', fresh);
+    if (el.classList.contains('own')) { if (d.html) el.dataset.html = d.html; else delete el.dataset.html; }
+    const time = el.querySelector('.ihead .time');
+    if (time) { time.querySelector('.edited')?.remove(); time.insertAdjacentHTML('afterbegin', editedMarkHtml(d.edited_at)); }
+  });
+}
+
 async function send() {
+  if (editingBroadcastId) { await saveBroadcastEdit(); return; }
   const empty = rte.isEmpty();
   if (empty && !pendingFiles.length) return;
   const text = empty ? '' : rte.text();
@@ -382,6 +442,20 @@ async function send() {
     // Живое обновление придёт по тому же WS, что и всем остальным (эхо собственного отправленного
     // сообщения) — отдельно перезапрашивать ленту не нужно, иначе будет два одинаковых пузыря.
   } catch (e) { uiAlert(e.message); } finally { sendBtn.disabled = pendingFiles.some((e) => e.status === 'uploading'); }
+}
+
+async function saveBroadcastEdit() {
+  const empty = rte.isEmpty();
+  const sendBtn = document.getElementById('sendBtn');
+  sendBtn.disabled = true;
+  try {
+    await api(`/api/broadcast/${editingBroadcastId}`, { method: 'PATCH', body: JSON.stringify({ text: empty ? '' : rte.text(), html: empty ? '' : rte.html() }) });
+    cancelBroadcastEdit();
+    setComposerOpen(false);
+    showFeedSmoothly();
+    uiToast('Объявление исправлено');
+    // Новый текст придёт по WS (broadcast_edited) — всем получателям и этому окну тоже.
+  } catch (e) { uiAlert(e.message); } finally { sendBtn.disabled = false; }
 }
 
 // Кольцо прогресса скачивания на карточке файла: пусто -> проценты -> галочка (как в окне чата)
@@ -443,6 +517,8 @@ async function getDownloadUrl(relUrl, name) {
 // Клик по файлу — скачивание через главный процесс; ПКМ — скопировать текст / сохранить файл как
 function wireFeedInteractions(container) {
   container.addEventListener('click', async (e) => {
+    const editBtn = e.target.closest('.item-edit');
+    if (editBtn) { e.preventDefault(); startBroadcastEdit(editBtn.closest('.item')); return; }
     // Ссылка в тексте объявления — в браузере по умолчанию (окно само никуда не переходит, см. main.js).
     const textLink = e.target.closest('.txt a[href]');
     if (textLink) { e.preventDefault(); desktop.openLink(textLink.getAttribute('href')); return; }
@@ -475,7 +551,10 @@ function wireFeedInteractions(container) {
     const txtEl = e.target.closest('.txt');
     if (txtEl) {
       e.preventDefault();
-      uiContextMenu(e.clientX, e.clientY, [{ label: 'Копировать текст', icon: 'copy', onClick: () => desktop.copyText(txtEl.dataset.rawText || '') }]);
+      const items = [{ label: 'Копировать текст', icon: 'copy', onClick: () => desktop.copyText(txtEl.dataset.rawText || '') }];
+      const ownItem = txtEl.closest('.item.own[data-bid]');
+      if (ownItem) items.push({ label: 'Изменить', icon: 'pencil', onClick: () => startBroadcastEdit(ownItem) });
+      uiContextMenu(e.clientX, e.clientY, items);
     }
   });
 }
@@ -690,6 +769,8 @@ function connectWs() {
     if (data.type === 'broadcast') addLiveBroadcast(data);
     // Администратор удалил объявление — убираем его из ленты и из открытой истории.
     if (data.type === 'broadcast_deleted') removeBroadcast(Number(data.id));
+    // Автор исправил объявление — заменяем текст и ставим «изменено».
+    if (data.type === 'broadcast_edited') applyBroadcastEdit(data);
   };
   ws.onclose = () => {
     if (window.appShuttingDown) return; // выключается ПК — не переподключаемся и не показываем «нет связи»
