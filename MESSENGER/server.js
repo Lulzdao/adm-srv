@@ -1686,6 +1686,22 @@ function sweepWebPresence() {
 }
 setInterval(sweepWebPresence, PRESENCE_SWEEP_MS).unref();
 
+// ---------- Короткий обрыв — не «вышел из сети» ----------
+// Соединение клиента рвётся и без того, чтобы человек уходил: сеть моргнула, промежуточное
+// оборудование (прокси, межсетевой экран) закрыло долгое соединение. Клиент переподключается сам
+// через пару секунд, но коллеги успевали увидеть «не в сети → в сети» — статусы моргали, причём у
+// целой группы сразу, если связь рвалась у неё одновременно. Поэтому последнее соединение человека,
+// закрывшись, ещё OFFLINE_GRACE_MS держит его прежний статус; вернулся за это время — никто ничего
+// не заметил, не вернулся — уходит «не в сети», как раньше. Переопределяется PRESENCE_GRACE_MS (мс).
+const graceEnv = process.env.PRESENCE_GRACE_MS;
+const OFFLINE_GRACE_MS = graceEnv !== undefined && graceEnv !== '' && Number(graceEnv) >= 0 ? Number(graceEnv) : 20000;
+const recentlyGone = new Map(); // userId -> { until, state, idleSince, hosts: [...] }
+
+// Обрыв связи — закрытие без прощания (1006) или с ошибкой. Обычные закрытия (окно чата закрыли,
+// клиент вышел) не пишем: их тысячи, и они ничего не говорят. Адрес — чтобы было видно, общая ли
+// у оборвавшихся подсеть (например, все за одним прокси).
+const NORMAL_CLOSE_CODES = new Set([1000, 1001, 1005]);
+
 // Отправка в сокет всегда через это, а не ws.send() напрямую. Между обрывом связи и событием
 // 'close' сокет какое-то время ещё числится в connMeta, но писать в него уже нельзя — а рассылок
 // "всем подключённым" здесь много, и попасть в этот промежуток тем легче, чем больше людей онлайн.
@@ -1756,7 +1772,14 @@ function presenceSnapshot() {
     }
   }
 
+  // Только что потерявшие связь — с прежним статусом, пока не вышел срок (см. OFFLINE_GRACE_MS).
   const now = Date.now();
+  for (const [userId, gone] of recentlyGone) {
+    if (onlineByUser.has(userId) && onlineByUser.get(userId).hosts.size) { recentlyGone.delete(userId); continue; }
+    if (gone.until <= now) { recentlyGone.delete(userId); continue; }
+    if (!onlineByUser.has(userId)) onlineByUser.set(userId, { state: gone.state, hosts: new Set(gone.hosts), idleSince: gone.idleSince });
+  }
+
   const result = {};
   for (const uid of getAllUserIds()) {
     const entry = onlineByUser.get(uid);
@@ -1866,10 +1889,27 @@ wss.on('connection', (ws, req) => {
     }
   });
 
-  ws.on('close', () => {
+  const openedAt = Date.now();
+  const ip = req.socket.remoteAddress;
+  ws.on('close', (code) => {
+    const meta = connMeta.get(ws);
     online.get(user.id)?.delete(ws);
-    if (online.get(user.id)?.size === 0) online.delete(user.id);
+    const lastOne = online.get(user.id)?.size === 0;
+    if (lastOne) online.delete(user.id);
     connMeta.delete(ws);
+    if (!NORMAL_CLOSE_CODES.has(code)) {
+      logServer('WARN', 'ws_dropped', { userId: user.id, hostname, ip, code, aliveSec: Math.round((Date.now() - openedAt) / 1000) });
+    }
+    // Последнее соединение человека — держим его статус ещё немного: вдруг сейчас переподключится.
+    if (lastOne && meta && OFFLINE_GRACE_MS > 0) {
+      recentlyGone.set(user.id, {
+        until: Date.now() + OFFLINE_GRACE_MS,
+        state: meta.state === 'idle' ? 'idle' : 'active',
+        idleSince: meta.state === 'idle' ? meta.idleSince : null,
+        hosts: [meta.hostname || 'неизвестный ПК'],
+      });
+      setTimeout(broadcastPresence, OFFLINE_GRACE_MS + 50).unref();
+    }
     broadcastPresence();
   });
 });
@@ -2033,6 +2073,18 @@ function handleClientMessage(ws, user, msg) {
       targets.forEach((c) => sendTo(c, out));
     }
 }
+
+// ---------- Не занят ли сервер ----------
+// Сервер — один процесс: пока он занят чем-то тяжёлым (большой поиск по переписке, разбор файла),
+// он не отвечает никому. Раз в секунду смотрим, насколько опоздал таймер; опоздание больше двух
+// секунд пишем в журнал — по нему видно, была ли нагрузка в момент, когда «что-то тормозило».
+const LOOP_CHECK_MS = 1000;
+let loopExpected = Date.now() + LOOP_CHECK_MS;
+setInterval(() => {
+  const lag = Date.now() - loopExpected;
+  if (lag > 2000) logServer('WARN', 'event_loop_lag', { lagMs: lag, connections: connMeta.size });
+  loopExpected = Date.now() + LOOP_CHECK_MS;
+}, LOOP_CHECK_MS).unref();
 
 // Подстраховка: если клиент отвалился без close-события, считаем его оффлайн через таймаут
 setInterval(() => {
