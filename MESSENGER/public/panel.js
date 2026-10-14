@@ -206,6 +206,9 @@ function activateView(name) {
   // держать опрос постоянно незачем.
   if (name === 'users') startPresencePolling();
   else stopPresencePolling();
+  // «Нагрузка» обновляется сама, только пока раздел открыт.
+  if (name === 'load') startLoadPolling();
+  else stopLoadPolling();
 }
 
 document.querySelectorAll('.nav-item').forEach(item => {
@@ -1556,3 +1559,106 @@ async function startDash() {
 
 if (token && me) startDash();
 else tellPlatform({ type: 'auth', loggedIn: false });
+
+// ---------- «Нагрузка» ----------
+// Что и сколько проходит через сервер (GET api/admin/load, см. lib/metrics.js). Графики — простой
+// SVG своими руками: библиотеку графиков на закрытый контур не подтянуть, а здесь нужны только линии.
+let loadTimer = null;
+function startLoadPolling() {
+  loadLoad();
+  clearInterval(loadTimer);
+  loadTimer = setInterval(loadLoad, 15000);
+}
+function stopLoadPolling() { clearInterval(loadTimer); loadTimer = null; }
+document.getElementById('loadRange').addEventListener('change', loadLoad);
+
+function fmtBytes(n) {
+  if (!n) return '0';
+  if (n < 1024) return n + ' Б';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(n < 10 * 1024 ? 1 : 0) + ' КБ';
+  if (n < 1024 * 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + ' МБ';
+  return (n / 1024 / 1024 / 1024).toFixed(2) + ' ГБ';
+}
+function fmtNum(n) { return Number(n || 0).toLocaleString('ru-RU'); }
+
+// Линии по минутам. series — [{t, …}], keys — [{key, cls}]; scale — во что переводить значение.
+// Пустые минуты (сервер в это время не работал) — разрыв линии, а не ноль.
+function drawChart(boxId, series, keys, { scale = (v) => v, warnAt = null, unit = '' } = {}) {
+  const box = document.getElementById(boxId);
+  if (!box) return;
+  const W = Math.max(200, box.clientWidth || 600), H = Math.max(80, box.clientHeight || 120);
+  const padL = 44, padB = 18, padT = 6, padR = 6;
+  const vals = [];
+  for (const p of series) for (const k of keys) if (p[k.key] != null) vals.push(scale(p[k.key]));
+  let max = Math.max(1, ...vals, warnAt || 0);
+  const mag = Math.pow(10, Math.floor(Math.log10(max)));
+  max = Math.ceil(max / mag) * mag; // круглая верхняя граница
+  const x = (i) => padL + (series.length <= 1 ? 0 : (i / (series.length - 1)) * (W - padL - padR));
+  const y = (v) => padT + (1 - v / max) * (H - padT - padB);
+  let svg = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">`;
+  for (const v of [0, max / 2, max]) {
+    svg += `<line class="axis" x1="${padL}" x2="${W - padR}" y1="${y(v)}" y2="${y(v)}"/>`;
+    svg += `<text class="lbl" x="${padL - 6}" y="${y(v) + 3}" text-anchor="end">${escapeHtml(fmtNum(Math.round(v)))}${unit}</text>`;
+  }
+  if (warnAt != null && warnAt <= max) svg += `<line class="warn-line" x1="${padL}" x2="${W - padR}" y1="${y(warnAt)}" y2="${y(warnAt)}"/>`;
+  for (const k of keys) {
+    let d = '';
+    let pen = false;
+    series.forEach((p, i) => {
+      if (p[k.key] == null) { pen = false; return; }
+      d += `${pen ? 'L' : 'M'}${x(i).toFixed(1)},${y(scale(p[k.key])).toFixed(1)} `;
+      pen = true;
+    });
+    if (d) svg += `<path class="ln ${k.cls}" d="${d}"/>`;
+  }
+  // Подписи времени: начало, середина, конец.
+  const tl = (p) => new Date(p.t).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  if (series.length) {
+    const mid = Math.floor((series.length - 1) / 2);
+    svg += `<text class="lbl" x="${padL}" y="${H - 4}">${tl(series[0])}</text>`;
+    svg += `<text class="lbl" x="${x(mid)}" y="${H - 4}" text-anchor="middle">${tl(series[mid])}</text>`;
+    svg += `<text class="lbl" x="${W - padR}" y="${H - 4}" text-anchor="end">${tl(series[series.length - 1])}</text>`;
+  }
+  box.innerHTML = svg + '</svg>';
+}
+
+async function loadLoad() {
+  const minutes = document.getElementById('loadRange').value;
+  let d;
+  try { d = await api(`api/admin/load?minutes=${minutes}`); }
+  catch (e) { document.getElementById('loadStamp').textContent = 'Ошибка: ' + e.message; return; }
+  const t = d.totals;
+  const period = { 60: 'за час', 360: 'за 6 часов', 1440: 'за сутки' }[minutes] || '';
+  const card = (v, l, bad) => `<div class="card"><div class="v${bad ? ' bad' : ''}">${escapeHtml(String(v))}</div><div class="l">${escapeHtml(l)}</div></div>`;
+  document.getElementById('loadCards').innerHTML = [
+    card(fmtNum(d.now.connections), `подключений сейчас (людей: ${fmtNum(d.now.users)})`),
+    card(fmtNum(t.requests), `запросов ${period}, в среднем ${d.avgMs} мс`),
+    card(fmtBytes(t.bytesIn + t.wsBytesIn), `к серверу ${period}`),
+    card(fmtBytes(t.bytesOut + t.wsBytesOut), `от сервера ${period}`),
+    card(fmtNum(t.wsIn + t.wsOut), `сообщений по линиям ${period}`),
+    card(fmtNum(t.drops), `обрывов связи ${period}`, t.drops > 0),
+    card(fmtNum(t.err5), `ошибок сервера (5xx) ${period}`, t.err5 > 0),
+    card(`${d.now.rssMb} МБ`, `память процесса (пик ${t.maxRssMb} МБ)`),
+    card(`${t.maxLagMs} мс`, `наибольшая задержка ${period}`, t.maxLagMs > 2000),
+  ].join('');
+
+  drawChart('loadChartTraffic', d.series, [{ key: 'bytesIn', cls: 'in' }, { key: 'bytesOut', cls: 'out' }], { scale: (v) => v / 1024 });
+  drawChart('loadChartRequests', d.series, [{ key: 'requests', cls: 'one' }]);
+  drawChart('loadChartConnections', d.series, [{ key: 'connections', cls: 'one' }]);
+  drawChart('loadChartLag', d.series, [{ key: 'lagMaxMs', cls: 'one' }], { warnAt: 2000 });
+  drawChart('loadChartCpu', d.series, [{ key: 'cpuPct', cls: 'one' }], { unit: '%' });
+
+  document.getElementById('loadGroups').innerHTML = d.groups.map((g) => `<tr>
+      <td>${escapeHtml(g.name)}</td><td>${fmtNum(g.count)}</td><td>${fmtBytes(g.bytesIn)}</td><td>${fmtBytes(g.bytesOut)}</td>
+      <td>${fmtNum(g.avgMs)}</td><td>${fmtNum(Math.round(g.msMax))}</td>
+      <td${g.err ? ' style="color:var(--danger)"' : ''}>${fmtNum(g.err)}</td></tr>`).join('')
+    || '<tr><td colspan="7" style="color:var(--muted)">Запросов не было</td></tr>';
+  const dirLabel = { in: 'от клиентов', out: 'клиентам' };
+  document.getElementById('loadWs').innerHTML = d.wsTypes.map((w) => `<tr>
+      <td>${escapeHtml(dirLabel[w.dir] || w.dir)}</td><td>${escapeHtml(w.type)}</td><td>${fmtNum(w.count)}</td><td>${fmtBytes(w.bytes)}</td></tr>`).join('')
+    || '<tr><td colspan="4" style="color:var(--muted)">Сообщений не было</td></tr>';
+  document.getElementById('loadClients').innerHTML = d.clients.map((c) => `<tr>
+      <td>${escapeHtml(c.name)}</td><td>${fmtBytes(c.bytesIn + c.bytesOut)}</td><td>${fmtNum(c.requests)}</td><td>${fmtNum(c.wsMessages)}</td></tr>`).join('')
+    || '<tr><td colspan="4" style="color:var(--muted)">Пока никого</td></tr>';
+  document.getElementById('loadStamp').textContent = `обновлено ${new Date().toLocaleTimeString('ru-RU')} · ${fmtUptime(d.now.uptimeSec).toLowerCase()}`;
+}
