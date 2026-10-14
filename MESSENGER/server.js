@@ -23,6 +23,9 @@ const { createRateLimits } = require('./lib/rateLimit');
 const { createReleases } = require('./lib/releases');
 const { createLogger, dayStamp, parseLogLine, LOG_VIEW_LIMIT } = require('./lib/log');
 const { sanitizeHtml, htmlToText, hasFormatting } = require('./lib/richtext');
+const { createMetrics, hourSummary } = require('./lib/metrics');
+// Нагрузка: что и сколько проходит через сервер (раздел «Нагрузка» панели, сводка в журнал раз в час).
+const metrics = createMetrics();
 
 // 3103, а не 3000: «Искра» стоит на одной машине с платформой, и 3000 занят
 // платформой. Тот же порт вшит в сборку клиента (desktop-client/config.js) и
@@ -466,6 +469,27 @@ const departmentsCount = db.prepare('SELECT COUNT(*) AS c FROM departments');
 
 // ---------- HTTP API ----------
 const app = express();
+// Учёт каждого HTTP-запроса для раздела «Нагрузка» — первым, чтобы видеть и статику, и раздачу
+// обновлений. Считается по закрытию ответа ('close' — и при обрыве скачивания посередине). Размеры —
+// по заголовкам Content-Length: у потоковых ответов без него трафик не учтётся, но таких у нас нет.
+// Клиент — сотрудник, если запрос был со входом, иначе адрес (так видно, кто качает обновления).
+app.use((req, res, next) => {
+  const started = process.hrtime.bigint();
+  res.once('close', () => {
+    const ms = Number(process.hrtime.bigint() - started) / 1e6;
+    const ip = String(req.ip || '').replace(/^::ffff:/, '');
+    metrics.http({
+      method: req.method,
+      url: req.originalUrl || req.url,
+      status: res.statusCode,
+      bytesIn: Number(req.headers['content-length']) || 0,
+      bytesOut: Number(res.getHeader('content-length')) || 0,
+      ms,
+      clientKey: req.user ? (req.user.display_name || req.user.username) : `адрес ${ip}`,
+    });
+  });
+  next();
+});
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -1762,7 +1786,9 @@ function savePresence(userId, state, since, idleSince, hosts) {
 // прерывать рассылку остальным.
 function sendTo(ws, payload) {
   if (!ws || ws.readyState !== ws.OPEN) return;
-  try { ws.send(payload); } catch { /* сокет закрылся между проверкой и отправкой */ }
+  try { ws.send(payload); } catch { /* сокет закрылся между проверкой и отправкой */ return; }
+  const meta = connMeta.get(ws);
+  metrics.ws('out', payload, meta && meta.name);
 }
 function sendToAll(payload) {
   for (const ws of connMeta.keys()) sendTo(ws, payload);
@@ -1947,7 +1973,8 @@ wss.on('connection', (ws, req) => {
   // «отошёл» с тем же моментом, пока клиент не прислал свой статус. Иначе после переподключения он
   // на долю секунды становился «в сети», и отсчёт «отошёл с» начинался заново.
   const idleSince = lastIdleSince.get(user.id) || null;
-  connMeta.set(ws, { userId: user.id, hostname, appVersion, buildTrack, canElevate, state: idleSince ? 'idle' : 'active', lastSeen: Date.now(), idleSince });
+  connMeta.set(ws, { userId: user.id, name: user.display_name, hostname, appVersion, buildTrack, canElevate, state: idleSince ? 'idle' : 'active', lastSeen: Date.now(), idleSince });
+  metrics.wsConnect();
   // Продление входа (2026-10-08): токен выдаётся на 30 дней, и клиент, который месяц не перезаходил, вылетал
   // на экран входа. Окно подключается — если его токену больше суток, сервер выдаёт свежий, окно его
   // сохраняет. Так у работающих клиентов вход не кончается никогда, а у выключенного больше 30 дней — кончается.
@@ -1962,6 +1989,7 @@ wss.on('connection', (ws, req) => {
   broadcastPresence();
 
   ws.on('message', (raw) => {
+    metrics.ws('in', raw, user.display_name);
     let msg;
     try { msg = JSON.parse(raw); } catch { return; }
     // Всё тело обработчика — под try: исключение здесь ничем не перехватывается и убивает процесс.
@@ -1987,6 +2015,7 @@ wss.on('connection', (ws, req) => {
     const lastOne = online.get(user.id)?.size === 0;
     if (lastOne) online.delete(user.id);
     connMeta.delete(ws);
+    metrics.wsClose(!NORMAL_CLOSE_CODES.has(code));
     if (!NORMAL_CLOSE_CODES.has(code)) {
       logServer('WARN', 'ws_dropped', { userId: user.id, hostname, ip, code, aliveSec: Math.round((Date.now() - openedAt) / 1000) });
     }
@@ -2172,11 +2201,50 @@ function handleClientMessage(ws, user, msg) {
 // секунд пишем в журнал — по нему видно, была ли нагрузка в момент, когда «что-то тормозило».
 const LOOP_CHECK_MS = 1000;
 let loopExpected = Date.now() + LOOP_CHECK_MS;
+// Тот же ежесекундный таймер снимает показатели «на сейчас» для раздела «Нагрузка»: подключения,
+// люди на связи, опоздание таймера; раз в 10 секунд — память и загрузка процессора самим процессом.
+let cpuPrev = process.cpuUsage();
+let cpuPrevAt = Date.now();
+let loopTicks = 0;
 setInterval(() => {
-  const lag = Date.now() - loopExpected;
+  const lag = Math.max(0, Date.now() - loopExpected);
   if (lag > 2000) logServer('WARN', 'event_loop_lag', { lagMs: lag, connections: connMeta.size });
   loopExpected = Date.now() + LOOP_CHECK_MS;
+  const gauges = { connections: connMeta.size, users: online.size, lagMaxMs: lag };
+  if (++loopTicks % 10 === 0) {
+    const usage = process.cpuUsage(cpuPrev);
+    const elapsedMs = Date.now() - cpuPrevAt;
+    cpuPrev = process.cpuUsage(); cpuPrevAt = Date.now();
+    const mem = process.memoryUsage();
+    gauges.cpuPct = elapsedMs > 0 ? Math.round((usage.user + usage.system) / 1000 / elapsedMs * 100) : 0;
+    gauges.rssMb = Math.round(mem.rss / 1024 / 1024);
+    gauges.heapMb = Math.round(mem.heapUsed / 1024 / 1024);
+  }
+  metrics.gauges(gauges);
 }, LOOP_CHECK_MS).unref();
+
+// Раз в час — сводка нагрузки за прошедший час в журнал: в памяти хранятся только последние сутки,
+// а по журналу видна и история за прошлые дни (раздел «Логи», событие load_summary).
+setInterval(() => logServer('INFO', 'load_summary', hourSummary(metrics.summary(60))), 60 * 60 * 1000).unref();
+
+// Раздел «Нагрузка» панели: сводка за последние ?minutes= минут (по умолчанию час, не больше суток).
+app.get('/api/admin/load', auth, requireCapability('can_admin'), (req, res) => {
+  const minutes = Math.min(24 * 60, Math.max(5, Number(req.query.minutes) || 60));
+  const s = metrics.summary(minutes);
+  const mem = process.memoryUsage();
+  res.json({
+    ...s,
+    groups: s.groups.slice(0, 40),
+    clients: s.clients.slice(0, 20),
+    now: {
+      connections: connMeta.size,
+      users: online.size,
+      rssMb: Math.round(mem.rss / 1024 / 1024),
+      heapMb: Math.round(mem.heapUsed / 1024 / 1024),
+      uptimeSec: Math.round(process.uptime()),
+    },
+  });
+});
 
 // ---------- Не дать промежуточному оборудованию закрыть соединение ----------
 // Журнал 2026-10-14: у клиентов, которые ходят через прокси (адрес 10.148.130.87), соединение

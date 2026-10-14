@@ -643,3 +643,21 @@ html.embedded .view > h2:first-child { display: none; }
 /* «Клиенты»: прежние версии свёрнуты под строкой с кнопкой. */
 #releasesBody tr.release-old.collapsed { display:none; }
 #releasesBody tr.release-toggle td { padding-top:4px; padding-bottom:4px; }
+
+/* «Нагрузка»: графики — простой SVG без библиотек (на закрытом контуре их не подтянуть). */
+.load-chart { width:100%; height:160px; }
+.load-chart.small { height:110px; }
+.load-chart svg { width:100%; height:100%; display:block; overflow:visible; }
+.load-chart .axis { stroke:var(--md-outline-variant); stroke-width:1; }
+.load-chart .lbl { fill:var(--md-on-surface-variant); font-size:10px; }
+.load-chart .ln { fill:none; stroke-width:1.6; stroke-linejoin:round; }
+.load-chart .ln.in, .load-legend .lg-in { stroke:var(--md-primary); background:var(--md-primary); }
+.load-chart .ln.out, .load-legend .lg-out { stroke:var(--amber); background:var(--amber); }
+.load-chart .ln.one { stroke:var(--md-primary); }
+.load-chart .warn-line { stroke:var(--danger); stroke-dasharray:4 3; stroke-width:1; }
+.load-legend { font-size:12px; font-weight:400; color:var(--md-on-surface-variant); margin-left:12px; }
+.load-legend i { display:inline-block; width:12px; height:3px; border-radius:2px; vertical-align:middle; margin:0 4px 0 10px; }
+.load-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:16px; }
+.load-grid .panel { margin-bottom:0; }
+#view-load .load-grid { margin-bottom:16px; }
+#loadCards .card .v.bad { color:var(--danger); }
