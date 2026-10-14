@@ -65,7 +65,9 @@
   .msg:hover .msg-toolbar { display: flex; }
   .mt-btn { width: 24px; height: 24px; border: none; background: transparent; border-radius: 6px; color: var(--muted); cursor: pointer; display: flex; align-items: center; justify-content: center; }
   .mt-btn:hover { background: var(--hover); color: var(--text); }
-  .mt-btn svg { width: 14px; height: 14px; }
+  /* Значки 18 при кнопке 24 (были 14): мелкие значки было трудно разглядеть (решение 2026-10-14 — кнопку не увеличивать). */
+  .mt-btn { padding: 0; }
+  .mt-btn svg { width: 18px; height: 18px; flex: none; }
 
   /* Цитата сообщения, на которое отвечают (см. replyQuoteHtml) — клик прокручивает к оригиналу. */
   .reply-quote { display: flex; gap: 7px; margin-bottom: 4px; padding: 3px 8px; border-radius: 6px; background: var(--hover); cursor: pointer; }
