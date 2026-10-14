@@ -179,6 +179,8 @@ async function connect(url, token, client = {}) {
       });
     },
     close: () => ws.close(),
+    // Обрыв без прощания — как у выдернутого кабеля: сервер видит закрытие с кодом 1006.
+    terminate: () => ws.terminate(),
   };
 }
 
