@@ -1702,6 +1702,27 @@ const recentlyGone = new Map(); // userId -> { until, state, idleSince, hosts: [
 // у оборвавшихся подсеть (например, все за одним прокси).
 const NORMAL_CLOSE_CODES = new Set([1000, 1001, 1005]);
 
+// ---------- Статус переживает перезапуск службы ----------
+// «В сети с», «отошёл с», «не в сети с» раньше жили только в памяти процесса, и после перезапуска
+// службы — в том числе при каждом обновлении сервера — отсчёт у всех начинался заново. Теперь
+// статус и момент его смены пишутся в базу (presence_state) при каждой смене и читаются при запуске.
+//
+// После перезапуска клиенты переподключаются не мгновенно (до 10 секунд между попытками), поэтому
+// те, кто был в сети, ещё STARTUP_GRACE_MS числятся с прежним статусом — так же, как при коротком
+// обрыве (см. recentlyGone): вернулся за это время — отсчёт продолжается, а не начинается заново.
+// Переопределяется PRESENCE_STARTUP_GRACE_MS (мс).
+const startupGraceEnv = process.env.PRESENCE_STARTUP_GRACE_MS;
+const STARTUP_GRACE_MS = startupGraceEnv !== undefined && startupGraceEnv !== '' && Number(startupGraceEnv) >= 0 ? Number(startupGraceEnv) : 60000;
+const lastIdleSince = new Map(); // userId -> с какого момента человек «отошёл» (пока он «отошёл»)
+const savePresenceStmt = db.prepare(`
+  INSERT INTO presence_state (user_id, state, since, idle_since, hosts) VALUES (?, ?, ?, ?, ?)
+  ON CONFLICT(user_id) DO UPDATE SET state = excluded.state, since = excluded.since, idle_since = excluded.idle_since, hosts = excluded.hosts
+`);
+function savePresence(userId, state, since, idleSince, hosts) {
+  try { savePresenceStmt.run(userId, state, since, idleSince || null, JSON.stringify(hosts || [])); }
+  catch (err) { logServer('WARN', 'presence_save_failed', { userId, message: err.message }); }
+}
+
 // Отправка в сокет всегда через это, а не ws.send() напрямую. Между обрывом связи и событием
 // 'close' сокет какое-то время ещё числится в connMeta, но писать в него уже нельзя — а рассылок
 // "всем подключённым" здесь много, и попасть в этот промежуток тем легче, чем больше людей онлайн.
@@ -1739,6 +1760,32 @@ function invalidateUserIdsCache() { allUserIdsCache = null; }
 // пользователя) статуса. Живёт в памяти процесса (не в БД), поэтому переживает переподключения
 // конкретных WS, но не перезапуск сервера — после рестарта отсчёт для всех начнётся заново.
 const statusSince = new Map();
+
+// Статусы с прошлого запуска (см. «Статус переживает перезапуск службы» выше).
+(function restorePresence() {
+  const now = Date.now();
+  let rows = [];
+  try { rows = db.prepare('SELECT user_id, state, since, idle_since, hosts FROM presence_state').all(); }
+  catch (err) { logServer('WARN', 'presence_restore_failed', { message: err.message }); }
+  let restored = 0;
+  for (const r of rows) {
+    if (!['active', 'idle', 'offline'].includes(r.state) || !Number.isFinite(r.since)) continue;
+    statusSince.set(r.user_id, { state: r.state, since: r.since });
+    if (r.state === 'idle' && r.idle_since) lastIdleSince.set(r.user_id, r.idle_since);
+    if (r.state !== 'offline' && STARTUP_GRACE_MS > 0) {
+      let hosts = [];
+      try { hosts = JSON.parse(r.hosts || '[]'); } catch { /* испорчено — без имён ПК */ }
+      recentlyGone.set(r.user_id, {
+        until: now + STARTUP_GRACE_MS,
+        state: r.state,
+        idleSince: r.state === 'idle' ? r.idle_since : null,
+        hosts: Array.isArray(hosts) && hosts.length ? hosts.map(String) : ['неизвестный ПК'],
+      });
+      restored += 1;
+    }
+  }
+  if (restored) setTimeout(() => broadcastPresence(), STARTUP_GRACE_MS + 50).unref();
+})();
 
 function presenceSnapshot() {
   const onlineByUser = new Map(); // не путать с внешней online (userId -> Set(ws) для маршрутизации)
@@ -1784,8 +1831,15 @@ function presenceSnapshot() {
   for (const uid of getAllUserIds()) {
     const entry = onlineByUser.get(uid);
     const state = entry ? entry.state : 'offline';
+    // «Отошёл с» — помним, пока человек отошёл: переподключившееся окно продолжит отсчёт, а не
+    // начнёт его заново (см. status в handleClientMessage).
+    if (state === 'idle') { if (entry.idleSince) lastIdleSince.set(uid, entry.idleSince); }
+    else lastIdleSince.delete(uid);
     const prev = statusSince.get(uid);
-    if (!prev || prev.state !== state) statusSince.set(uid, { state, since: now });
+    if (!prev || prev.state !== state) {
+      statusSince.set(uid, { state, since: now });
+      savePresence(uid, state, now, state === 'idle' ? entry.idleSince : null, entry ? [...entry.hosts] : []);
+    }
     result[uid] = {
       state,
       hosts: entry ? [...entry.hosts] : [],
@@ -1857,7 +1911,11 @@ wss.on('connection', (ws, req) => {
 
   if (!online.has(user.id)) online.set(user.id, new Set());
   online.get(user.id).add(ws);
-  connMeta.set(ws, { userId: user.id, hostname, appVersion, buildTrack, canElevate, state: 'active', lastSeen: Date.now(), idleSince: null });
+  // Новое соединение начинает с прежнего статуса человека: если он числится «отошёл», то и окно —
+  // «отошёл» с тем же моментом, пока клиент не прислал свой статус. Иначе после переподключения он
+  // на долю секунды становился «в сети», и отсчёт «отошёл с» начинался заново.
+  const idleSince = lastIdleSince.get(user.id) || null;
+  connMeta.set(ws, { userId: user.id, hostname, appVersion, buildTrack, canElevate, state: idleSince ? 'idle' : 'active', lastSeen: Date.now(), idleSince });
   // Продление входа (2026-10-08): токен выдаётся на 30 дней, и клиент, который месяц не перезаходил, вылетал
   // на экран входа. Окно подключается — если его токену больше суток, сервер выдаёт свежий, окно его
   // сохраняет. Так у работающих клиентов вход не кончается никогда, а у выключенного больше 30 дней — кончается.
@@ -1936,7 +1994,9 @@ function handleClientMessage(ws, user, msg) {
       const meta = connMeta.get(ws);
       if (meta) {
         const newState = msg.state === 'idle' ? 'idle' : 'active';
-        if (newState === 'idle' && meta.state !== 'idle') meta.idleSince = Date.now(); // момент перехода в AFK
+        // Момент перехода в AFK. Если человек уже числится «отошёл» (окно переподключилось после
+        // обрыва или перезапуска службы) — прежний момент, иначе отсчёт начинался бы заново.
+        if (newState === 'idle' && meta.state !== 'idle') meta.idleSince = lastIdleSince.get(user.id) || Date.now();
         if (newState === 'active') meta.idleSince = null;
         meta.state = newState;
         meta.lastSeen = Date.now();
@@ -2085,6 +2145,24 @@ setInterval(() => {
   if (lag > 2000) logServer('WARN', 'event_loop_lag', { lagMs: lag, connections: connMeta.size });
   loopExpected = Date.now() + LOOP_CHECK_MS;
 }, LOOP_CHECK_MS).unref();
+
+// ---------- Не дать промежуточному оборудованию закрыть соединение ----------
+// Журнал 2026-10-14: у клиентов, которые ходят через прокси (адрес 10.148.130.87), соединение
+// рвалось каждые 9–13 секунд (ws_dropped, код 1006) — прокси закрывает подключение, по которому
+// какое-то время ничего не шло, а клиент шлёт свой статус раз в 15 секунд. Отсюда моргание статусов.
+// Поэтому сервер сам раз в WS_PING_MS шлёт по каждому соединению служебный ping: это несколько байт,
+// клиент (Chromium) отвечает на него сам, без нашего кода — работает и с уже установленными
+// клиентами. Переопределяется WS_PING_MS (мс), 0 — выключить.
+const pingEnv = process.env.WS_PING_MS;
+const WS_PING_MS = pingEnv !== undefined && pingEnv !== '' && Number(pingEnv) >= 0 ? Number(pingEnv) : 5000;
+if (WS_PING_MS > 0) {
+  setInterval(() => {
+    for (const ws of connMeta.keys()) {
+      if (ws.readyState !== ws.OPEN) continue;
+      try { ws.ping(); } catch { /* сокет закрылся между проверкой и отправкой */ }
+    }
+  }, WS_PING_MS).unref();
+}
 
 // Подстраховка: если клиент отвалился без close-события, считаем его оффлайн через таймаут
 setInterval(() => {
