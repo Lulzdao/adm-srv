@@ -947,7 +947,13 @@ function sendUpdateState(state) {
 // (сервер недоступен, сертификат не признан) — настоящая ошибка.
 function updateErrorLevel(err) {
   const raw = String((err && (err.stack || err.message)) || err);
-  return /\b404\b|latest\.yml|Cannot find .*\.yml/i.test(raw) ? 'WARN' : 'ERROR';
+  if (/\b404\b|latest\.yml|Cannot find .*\.yml/i.test(raw)) return 'WARN';
+  // «Не вышло скачать по кускам — качаю целиком» — не сбой: загрузка продолжается. Так бывает у
+  // каждой машины при первом обновлении после установки политикой или вручную: куски берутся из
+  // прежнего установщика в кэше, а его там ещё нет. В журнале 2026-10-14 это было красной строкой
+  // с каждой машины.
+  if (/Cannot download differentially, fallback to full download/i.test(raw)) return 'INFO';
+  return 'ERROR';
 }
 
 function shortUpdateError(err) {
@@ -989,12 +995,17 @@ function forceUpdateNow() {
   checkForUpdates();
 }
 
+// Ставит ли клиент обновление сам. Нет — значит у сотрудника нет прав администратора, и клиент
+// обновление только проверяет: качать установщик в профиль незачем, его не поставить. Версию
+// ставит задание системы (UPDATE_PLAN 'task') или сценарий политики ('none').
+function canSelfInstall() { return UPDATE_PLAN === 'self'; }
+
 function setupUpdater() {
   // В режиме разработки (npm start) обновляться неоткуда и незачем: app-update.yml появляется
   // только в собранном приложении, и electron-updater без него бросает ошибку.
   if (!app.isPackaged) return;
 
-  autoUpdater.autoDownload = !!settings.autoUpdate;
+  autoUpdater.autoDownload = canSelfInstall() && !!settings.autoUpdate;
   // Скачанное встаёт при следующем выходе, без вопросов — но только если у пользователя есть права
   // администратора. Без них установщик при выходе лишь спросил бы пароль администратора; таким
   // машинам версию ставит задание системы (см. UPDATE_PLAN).
@@ -1068,7 +1079,7 @@ function checkForUpdates() {
     // файл целиком. Итог был — «Cannot download differentially, fallback to full download» и все
     // 200 МБ установщика на каждое рабочее место при каждом обновлении (проверено на пилоте 2026-09-30).
     autoUpdater.setFeedURL({ provider: 'generic', url: updateFeedUrl(), useMultipleRangeRequest: false });
-    autoUpdater.autoDownload = !!settings.autoUpdate;
+    autoUpdater.autoDownload = canSelfInstall() && !!settings.autoUpdate;
     // Обещание отвергается при той же ошибке, о которой уже сообщило событие 'error' (с уровнем и
     // понятным текстом, см. setupUpdater). Без .catch оно всплывало ещё раз — как main_unhandled_rejection
     // с уровнем ERROR при каждом запуске, пока на сервере нет файлов обновления.
@@ -1085,11 +1096,25 @@ ipcMain.on('check-updates', () => checkForUpdates());
 ipcMain.on('force-update', () => forceUpdateNow());
 // Администратор запросил журнал этой машины из веб-панели. Отдаём его ростеру — отправить на
 // сервер может только он, токен есть лишь у него.
+// «Журнал» из панели: журнал клиента и — следом — хвост журнала задания обновления
+// (C:\ProgramData\Iskra\updater.log): иначе, чтобы понять, почему не обновилось, приходилось идти на машину.
+const UPDATER_LOG_PATH = path.join(process.env.ProgramData || 'C:\\ProgramData', 'Iskra', 'updater.log');
 ipcMain.handle('read-local-log', () => {
-  try { return fs.readFileSync(LOG_PATH, 'utf8'); }
-  catch { return '(локальный журнал пуст или недоступен)'; }
+  let text;
+  try { text = fs.readFileSync(LOG_PATH, 'utf8'); }
+  catch { text = '(локальный журнал пуст или недоступен)'; }
+  let updater;
+  try { updater = fs.readFileSync(UPDATER_LOG_PATH, 'utf8').split(/\r?\n/).filter(Boolean).slice(-60).join('\n'); }
+  catch { updater = '(журнала задания обновления нет — задание ни разу не запускалось или его нет на этом ПК)'; }
+  return `${text}\n\n===== Задание обновления (${UPDATER_LOG_PATH}), последние строки =====\n${updater}\n`;
 });
-ipcMain.on('download-update', () => { if (app.isPackaged) autoUpdater.downloadUpdate().catch(() => {}); }); // ошибка — через событие 'error'
+ipcMain.on('download-update', (event) => {
+  if (!app.isPackaged) return;
+  // Без прав администратора кнопка «Скачать» делает то же, что «Перезапустить и обновить»: просит
+  // задание системы поставить обновление (см. install-update ниже).
+  if (!canSelfInstall()) { ipcMain.emit('install-update', event); return; }
+  autoUpdater.downloadUpdate().catch(() => {}); // ошибка — через событие 'error'
+});
 ipcMain.on('install-update', (event) => {
   // Кнопка «Перезапустить и обновить» в настройках. Без прав администратора не закрываемся — по
   // той же причине, что и по команде из панели (см. forceUpdateNow).
@@ -1337,7 +1362,7 @@ ipcMain.on('set-settings', (event, partial) => {
   if ('autoStart' in partial) applyAutoStart();
   // Включили автообновление — начинаем качать уже найденное, не дожидаясь следующей проверки.
   if ('autoUpdate' in partial && app.isPackaged) {
-    autoUpdater.autoDownload = !!settings.autoUpdate;
+    autoUpdater.autoDownload = canSelfInstall() && !!settings.autoUpdate;
     if (settings.autoUpdate && updateState.state === 'available') autoUpdater.downloadUpdate().catch(() => {}); // ошибка — через 'error'
   }
   // Тема (и в перспективе другие настройки внешнего вида) должны применяться сразу во всех открытых
