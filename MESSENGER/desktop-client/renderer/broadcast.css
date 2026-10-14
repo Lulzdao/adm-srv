@@ -148,5 +148,6 @@
 .item .item-edit { display: none; width: 24px; height: 24px; border: none; border-radius: 7px; background: transparent; color: var(--muted); cursor: pointer; align-items: center; justify-content: center; padding: 0; flex: none; }
 .item.own:hover .item-edit { display: flex; }
 .item .item-edit:hover { background: var(--hover); color: var(--text); }
+.item .item-edit svg { width: 18px; height: 18px; flex: none; }
 /* «изменено» у исправленного объявления — как в Telegram, курсивом перед временем. */
 .item .ihead .time .edited { font-style: italic; }

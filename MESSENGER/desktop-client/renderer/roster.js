@@ -684,16 +684,20 @@ function presenceSub(p) {
 }
 
 // ---------- Один щелчок — выделить, двойной — открыть чат ----------
-// Как в проводнике: одиночный щелчок только выделяет строку (та же подсветка, что при наведении),
-// чат открывается двойным щелчком или клавишей Enter. Раньше чат открывался с одного щелчка —
-// окна открывались случайно, при попытке просто показать на человека. Выделение помним по ключу:
+// Первый щелчок только выделяет строку (та же подсветка, что при наведении), щелчок по уже
+// выделенной — открывает чат, как бы ни было долго между ними; двойной щелчок — это то же самое,
+// выделить и открыть. Ещё открывает Enter. Раньше чат открывался с одного щелчка — окна
+// открывались случайно, при попытке просто показать на человека. Выделение помним по ключу:
 // список перерисовывается при каждом обновлении присутствия, и подсветка не должна пропадать.
 let selectedRowKey = null;
 function makeSelectable(row, key, open) {
   row.dataset.selkey = key;
   row.classList.toggle('selected', selectedRowKey === key);
-  row.onclick = () => selectRow(key);
-  row.ondblclick = open ? (e) => { e.preventDefault(); open(); } : null;
+  row.openChat = open; // нет — сотрудник недоступен для сообщений, строку можно только выделить
+  row.onclick = () => {
+    if (selectedRowKey === key && open) open();
+    else selectRow(key);
+  };
 }
 function selectRow(key) {
   selectedRowKey = key;
@@ -701,7 +705,7 @@ function selectRow(key) {
 }
 function openSelectedRow() {
   const row = selectedRowKey && document.querySelector(`#list .row[data-selkey="${selectedRowKey}"]`);
-  if (row && row.ondblclick) { row.ondblclick(new Event('dblclick')); return true; }
+  if (row && row.openChat) { row.openChat(); return true; }
   return false;
 }
 
