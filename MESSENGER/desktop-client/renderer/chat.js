@@ -193,11 +193,11 @@ function bubbleHtml(m, { withDate, query, card } = {}) {
 
   // Время сообщения — один и тот же узел, который живёт либо рядом с текстом/файлами, либо в
   // строке реакций, если она есть (см. placeTime и ".msg .reactions-bar .time" в стилях).
-  const timeEl = card ? '' : `<span class="time">${stamp}${tick}</span>`;
+  const timeEl = card ? '' : `<span class="time">${editedMarkHtml(m.edited_at)}${stamp}${tick}</span>`;
   const reactions = m.reactions || [];
   const inlineTime = reactions.length ? '' : timeEl;
   const head = card
-    ? `<div class="hhead"><span class="hwho${own ? ' me' : ''}" title="${own ? '' : escapeHtml(m.from_user)}">${own ? 'Вы' : escapeHtml(shortFio(m.from_user))}</span><span class="hwhen">${stamp}</span></div>`
+    ? `<div class="hhead"><span class="hwho${own ? ' me' : ''}" title="${own ? '' : escapeHtml(m.from_user)}">${own ? 'Вы' : escapeHtml(shortFio(m.from_user))}</span><span class="hwhen">${editedMarkHtml(m.edited_at)}${stamp}</span></div>`
     : `<div class="who">${escapeHtml(m.from_user)}</div>`;
 
   let body = '';
@@ -219,10 +219,44 @@ function bubbleHtml(m, { withDate, query, card } = {}) {
     }).join('');
     body += `<div class="files-block">${cards}</div><div class="files-time">${inlineTime}</div>`;
   }
-  const toolbar = `<div class="msg-toolbar"><button type="button" class="mt-btn mt-react" data-mid="${m.id}" title="Реакция">${uiIcon('emoji')}</button><button type="button" class="mt-btn mt-reply" data-mid="${m.id}" title="Ответить">${uiIcon('reply')}</button></div>`;
+  // «Изменить» — только у своих сообщений с текстом (как в Telegram; файлы не меняются).
+  const editBtn = own && m.text ? `<button type="button" class="mt-btn mt-edit" data-mid="${m.id}" title="Изменить">${uiIcon('pencil')}</button>` : '';
+  const toolbar = `<div class="msg-toolbar"><button type="button" class="mt-btn mt-react" data-mid="${m.id}" title="Реакция">${uiIcon('emoji')}</button><button type="button" class="mt-btn mt-reply" data-mid="${m.id}" title="Ответить">${uiIcon('reply')}</button>${editBtn}</div>`;
   // has-files — пузырь с карточками файлов: у него свои поля (карточка почти вплотную к краям).
   const cls = `msg${own ? ' own' : ''}${card ? ' hcard' : ''}${files.length ? ' has-files' : ''}`;
   return `<div class="${cls}" data-ts="${m.created_at}" data-id="${m.id}">${toolbar}${card ? head : ''}${replyQuoteHtml(m)}${card ? '' : head}${body}${reactionsMarkup(m.id, reactions, timeEl)}</div>`;
+}
+
+// «изменено» перед временем — как в Telegram; точное время правки — во всплывающей подсказке.
+function editedMarkHtml(editedAt) {
+  if (!editedAt) return '';
+  const when = new Date(editedAt).toLocaleString('ru-RU', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
+  return `<span class="edited" title="Изменено ${escapeAttr(when)}">изменено</span> `;
+}
+
+// Отправитель исправил сообщение (WS 'message_edited'): новый текст и «изменено» — в уже
+// отрисованной карточке, и в ленте, и в панели истории. Узел времени переносим, а не рисуем
+// заново: на нём галочка прочтения (см. applyReactions).
+function applyEdit(msgEl, text, editedAt) {
+  const timeNode = msgEl.querySelector('.time');
+  if (timeNode) timeNode.remove();
+  let txt = msgEl.querySelector('.txt');
+  if (text) {
+    if (!txt) {
+      txt = document.createElement('div');
+      txt.className = 'txt selectable';
+      msgEl.insertBefore(txt, msgEl.querySelector('.files-block') || msgEl.querySelector('.reactions-bar'));
+    }
+    txt.dataset.rawText = text;
+    txt.innerHTML = highlightHtml(text, '');
+  } else if (txt) {
+    txt.remove();
+  }
+  const mark = msgEl.querySelector('.edited');
+  if (mark) mark.outerHTML = editedMarkHtml(editedAt).trim();
+  else if (timeNode) timeNode.insertAdjacentHTML('afterbegin', editedMarkHtml(editedAt));
+  else { const when = msgEl.querySelector('.hwhen'); if (when) when.insertAdjacentHTML('afterbegin', editedMarkHtml(editedAt)); }
+  if (timeNode) placeTime(msgEl, timeNode);
 }
 
 // Цитата сообщения, на которое отвечают — снимок автора/текста сделан на сервере в момент отправки
@@ -481,6 +515,10 @@ function connectWs() {
       });
       return;
     }
+    if (data.type === 'message_edited') {
+      document.querySelectorAll(`#messages [data-id="${data.id}"], #hpMessages [data-id="${data.id}"]`).forEach((el) => applyEdit(el, data.text, data.edited_at));
+      return;
+    }
     if (data.type !== 'message') return;
     const belongs = type === 'room' ? data.room === id : (data.from_id === id || data.to_id === id);
     if (belongs) { hideTypingIndicator(); addMessage(data); } // раз сообщение пришло — печатать закончил
@@ -557,7 +595,47 @@ function paintReplyBanner() {
   el.querySelector('.rb-text').textContent = replyingTo.text;
 }
 function clearReplyingTo() { replyingTo = null; paintReplyBanner(); }
+
+// ---------- Правка своего сообщения ----------
+// Как в Telegram: текст сообщения переносится в поле ввода, над ним — полоска «Изменение
+// сообщения» (та же, что у ответа). Enter — сохранить, Esc — отменить. Ответ и правка не
+// совмещаются: начали одно — другое снимается.
+let editingId = null;
+function paintEditBanner(original) {
+  const el = document.getElementById('replyBanner');
+  el.classList.toggle('editing', !!editingId);
+  if (!editingId) { paintReplyBanner(); return; }
+  el.style.display = 'flex';
+  el.querySelector('.rb-name').textContent = 'Изменение сообщения';
+  el.querySelector('.rb-text').textContent = original;
+}
+function startEdit(mid) {
+  const el = document.querySelector(`#messages .msg.own[data-id="${mid}"] .txt, #hpMessages .msg.own[data-id="${mid}"] .txt`);
+  const original = el ? el.dataset.rawText || '' : '';
+  if (!original) return;
+  replyingTo = null;
+  editingId = mid;
+  paintEditBanner(original);
+  textEl.value = original;
+  textEl.style.height = 'auto';
+  textEl.style.height = Math.min(textEl.scrollHeight, 120) + 'px';
+  textEl.focus();
+  textEl.setSelectionRange(original.length, original.length);
+}
+function cancelEdit() {
+  if (!editingId) return;
+  editingId = null;
+  paintEditBanner();
+  textEl.value = '';
+  textEl.style.height = 'auto';
+}
+// ↑ в пустом поле — исправить своё последнее сообщение (как в Telegram).
+function editLastOwn() {
+  const own = [...document.querySelectorAll('#messages .msg.own[data-id]')].filter((el) => el.querySelector('.txt'));
+  if (own.length) startEdit(Number(own[own.length - 1].dataset.id));
+}
 function startReplyTo(mid) {
+  cancelEdit();
   const el = document.querySelector(`#messages [data-id="${mid}"], #hpMessages [data-id="${mid}"]`);
   if (!el) return;
   const from_user = el.querySelector('.who')?.textContent || label;
@@ -566,7 +644,7 @@ function startReplyTo(mid) {
   paintReplyBanner();
   textEl.focus();
 }
-document.getElementById('rbClose').addEventListener('click', clearReplyingTo);
+document.getElementById('rbClose').addEventListener('click', () => { if (editingId) cancelEdit(); else clearReplyingTo(); });
 
 // ---------- Реакции ----------
 function toggleReaction(mid, emoji) {
@@ -613,6 +691,8 @@ function wireMessageToolbar(container) {
     if (reactBtn) { e.stopPropagation(); openQuickReact(reactBtn); return; }
     const replyBtn = e.target.closest('.mt-reply');
     if (replyBtn) { e.stopPropagation(); startReplyTo(Number(replyBtn.dataset.mid)); return; }
+    const editBtn = e.target.closest('.mt-edit');
+    if (editBtn) { e.stopPropagation(); startEdit(Number(editBtn.dataset.mid)); return; }
     const pill = e.target.closest('.reaction-pill');
     if (pill) { e.stopPropagation(); toggleReaction(Number(pill.dataset.mid), pill.dataset.emoji); return; }
     const quote = e.target.closest('.reply-quote');
@@ -708,6 +788,13 @@ function send() {
   const input = document.getElementById('text');
   const text = input.value.trim();
   if (!text) return;
+  if (editingId) {
+    // Текст не поменяли — просто выходим из правки: «изменено» без изменений ни к чему.
+    const el = document.querySelector(`#messages [data-id="${editingId}"] .txt, #hpMessages [data-id="${editingId}"] .txt`);
+    if (!el || el.dataset.rawText !== text) sendPayload({ type: 'edit', id: editingId, text });
+    cancelEdit();
+    return;
+  }
   const payload = type === 'room' ? { type: 'send', room: id, text } : { type: 'send', to: id, text };
   if (replyingTo) payload.replyTo = replyingTo.id;
   sendPayload(payload);
@@ -730,7 +817,9 @@ window.addEventListener('focus', focusComposer);
 focusComposer();
 textEl.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+  if (e.key === 'Escape' && editingId) { e.preventDefault(); cancelEdit(); return; }
   if (e.key === 'Escape' && replyingTo) { e.preventDefault(); clearReplyingTo(); }
+  if (e.key === 'ArrowUp' && !textEl.value && !editingId) { e.preventDefault(); editLastOwn(); }
 });
 textEl.addEventListener('input', () => {
   textEl.style.height = 'auto';
@@ -1196,7 +1285,10 @@ function wireMessageContextMenu(container) {
     const txtEl = e.target.closest('.txt');
     if (txtEl) {
       e.preventDefault();
-      uiContextMenu(e.clientX, e.clientY, [{ label: 'Копировать текст', icon: 'copy', onClick: () => desktop.copyText(txtEl.dataset.rawText || '') }]);
+      const items = [{ label: 'Копировать текст', icon: 'copy', onClick: () => desktop.copyText(txtEl.dataset.rawText || '') }];
+      const ownMsg = txtEl.closest('.msg.own[data-id]');
+      if (ownMsg) items.push({ label: 'Изменить', icon: 'pencil', onClick: () => startEdit(Number(ownMsg.dataset.id)) });
+      uiContextMenu(e.clientX, e.clientY, items);
     }
   });
 }

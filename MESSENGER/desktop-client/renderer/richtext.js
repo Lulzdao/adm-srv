@@ -256,6 +256,8 @@
       text: () => area.innerText.replace(/ /g, ' ').trim(),
       isEmpty,
       clear() { area.innerHTML = ''; saved = null; changed(); },
+      // Подставить готовое (правка объявления): html чистится тем же белым списком, что и при вставке.
+      setHtml(html) { area.innerHTML = clean(html); saved = null; changed(); },
       focus: () => area.focus(),
     };
   }

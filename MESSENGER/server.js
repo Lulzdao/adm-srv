@@ -350,6 +350,9 @@ const getMessageForReply = db.prepare('SELECT id, from_id, to_id, room, text FRO
 // Реакции — WS-обработчик 'react' ниже: чей маршрут (комната/личка) у сообщения, узнаём отдельным
 // запросом, чтобы разослать обновление тем же адресатам, что и само сообщение.
 const getMessageRoute = db.prepare('SELECT id, from_id, to_id, room FROM messages WHERE id = ?');
+// Правка своего сообщения (WS 'edit'): files_json — чтобы сообщение с файлами можно было оставить без текста.
+const getMessageForEdit = db.prepare('SELECT id, from_id, to_id, room, files_json, file_url FROM messages WHERE id = ?');
+const updateMessageText = db.prepare('UPDATE messages SET text = ?, edited_at = ? WHERE id = ?');
 const getUserReactionOnMessage = db.prepare('SELECT emoji FROM message_reactions WHERE message_id = ? AND user_id = ?');
 const deleteReaction = db.prepare('DELETE FROM message_reactions WHERE message_id = ? AND user_id = ?');
 const upsertReaction = db.prepare(`
@@ -364,17 +367,17 @@ const upsertReaction = db.prepare(`
 // ещё, и предлагает "Показать ещё"/подгружает при прокрутке вверх; иначе это был последний кусок.
 const HISTORY_PAGE_SIZE = 200;
 const roomHistoryAll = db.prepare(`
-  SELECT m.id, m.text, m.created_at, m.from_id, m.file_url, m.file_name, m.file_size, m.files_json, m.reply_to_id, m.reply_snapshot, u.display_name AS from_user
+  SELECT m.id, m.text, m.created_at, m.from_id, m.file_url, m.file_name, m.file_size, m.files_json, m.reply_to_id, m.reply_snapshot, m.edited_at, u.display_name AS from_user
   FROM messages m JOIN users u ON u.id = m.from_id
   WHERE m.room = ? AND m.id < ? ORDER BY m.id DESC LIMIT ${HISTORY_PAGE_SIZE}
 `);
 const roomHistoryRange = db.prepare(`
-  SELECT m.id, m.text, m.created_at, m.from_id, m.file_url, m.file_name, m.file_size, m.files_json, m.reply_to_id, m.reply_snapshot, u.display_name AS from_user
+  SELECT m.id, m.text, m.created_at, m.from_id, m.file_url, m.file_name, m.file_size, m.files_json, m.reply_to_id, m.reply_snapshot, m.edited_at, u.display_name AS from_user
   FROM messages m JOIN users u ON u.id = m.from_id
   WHERE m.room = ? AND m.created_at >= ? AND m.created_at < ? ORDER BY m.id ASC
 `);
 const roomHistorySearch = db.prepare(`
-  SELECT m.id, m.text, m.created_at, m.from_id, m.file_url, m.file_name, m.file_size, m.files_json, m.reply_to_id, m.reply_snapshot, u.display_name AS from_user
+  SELECT m.id, m.text, m.created_at, m.from_id, m.file_url, m.file_name, m.file_size, m.files_json, m.reply_to_id, m.reply_snapshot, m.edited_at, u.display_name AS from_user
   FROM messages m JOIN users u ON u.id = m.from_id
   WHERE m.room = ? AND m.id < ? AND lower_ru(m.text) LIKE '%' || lower_ru(?) || '%' ORDER BY m.id DESC LIMIT ${HISTORY_PAGE_SIZE}
 `);
@@ -384,19 +387,19 @@ const roomHistoryDays = db.prepare(`
 `);
 
 const dmHistoryAll = db.prepare(`
-  SELECT m.id, m.text, m.created_at, m.from_id, m.to_id, m.read_at, m.file_url, m.file_name, m.file_size, m.files_json, m.reply_to_id, m.reply_snapshot, u.display_name AS from_user
+  SELECT m.id, m.text, m.created_at, m.from_id, m.to_id, m.read_at, m.file_url, m.file_name, m.file_size, m.files_json, m.reply_to_id, m.reply_snapshot, m.edited_at, u.display_name AS from_user
   FROM messages m JOIN users u ON u.id = m.from_id
   WHERE ((m.from_id = ? AND m.to_id = ?) OR (m.from_id = ? AND m.to_id = ?)) AND m.id < ?
   ORDER BY m.id DESC LIMIT ${HISTORY_PAGE_SIZE}
 `);
 const dmHistoryRange = db.prepare(`
-  SELECT m.id, m.text, m.created_at, m.from_id, m.to_id, m.read_at, m.file_url, m.file_name, m.file_size, m.files_json, m.reply_to_id, m.reply_snapshot, u.display_name AS from_user
+  SELECT m.id, m.text, m.created_at, m.from_id, m.to_id, m.read_at, m.file_url, m.file_name, m.file_size, m.files_json, m.reply_to_id, m.reply_snapshot, m.edited_at, u.display_name AS from_user
   FROM messages m JOIN users u ON u.id = m.from_id
   WHERE ((m.from_id = ? AND m.to_id = ?) OR (m.from_id = ? AND m.to_id = ?)) AND m.created_at >= ? AND m.created_at < ?
   ORDER BY m.id ASC
 `);
 const dmHistorySearch = db.prepare(`
-  SELECT m.id, m.text, m.created_at, m.from_id, m.to_id, m.read_at, m.file_url, m.file_name, m.file_size, m.files_json, m.reply_to_id, m.reply_snapshot, u.display_name AS from_user
+  SELECT m.id, m.text, m.created_at, m.from_id, m.to_id, m.read_at, m.file_url, m.file_name, m.file_size, m.files_json, m.reply_to_id, m.reply_snapshot, m.edited_at, u.display_name AS from_user
   FROM messages m JOIN users u ON u.id = m.from_id
   WHERE ((m.from_id = ? AND m.to_id = ?) OR (m.from_id = ? AND m.to_id = ?)) AND m.id < ? AND lower_ru(m.text) LIKE '%' || lower_ru(?) || '%'
   ORDER BY m.id DESC LIMIT ${HISTORY_PAGE_SIZE}
@@ -432,7 +435,7 @@ const BROADCAST_SCOPE = `(
   ))
   OR (@department IS NOT NULL AND b.department_id = @department)
 )`;
-const BROADCAST_COLUMNS = `b.id, b.text, b.html, b.created_at, b.files_json, b.department_id, d.name AS department, u.display_name AS from_user`;
+const BROADCAST_COLUMNS = `b.id, b.from_id, b.text, b.html, b.created_at, b.edited_at, b.files_json, b.department_id, d.name AS department, u.display_name AS from_user`;
 const BROADCAST_FROM = `FROM broadcasts b JOIN users u ON u.id = b.from_id LEFT JOIN departments d ON d.id = b.department_id`;
 
 const recentBroadcasts = db.prepare(`
@@ -1150,6 +1153,7 @@ app.post('/api/broadcast', auth, (req, res) => {
     type: 'broadcast',
     // Номер — чтобы окно могло убрать это объявление, если администратор его удалит (broadcast_deleted).
     id: Number(lastInsertRowid),
+    from_id: req.user.id, // своё объявление окно автора позволяет исправить
     from_user: req.user.display_name,
     text, html, files, created_at: now,
     department_id: department,
@@ -1166,6 +1170,44 @@ app.post('/api/broadcast', auth, (req, res) => {
     sendToAll(payload);
   }
   res.json({ ok: true });
+});
+
+// Правка объявления его автором — как правка сообщения: тот же разбор текста и оформления, что при
+// отправке, у объявления появляется «изменено». Файлы не меняются. Право писать проверяем заново:
+// у автора его могли забрать, и тогда исправлять разосланное он уже не должен.
+const updateBroadcastText = db.prepare('UPDATE broadcasts SET text = ?, html = ?, edited_at = ? WHERE id = ?');
+const getBroadcastForEdit = db.prepare('SELECT id, from_id, files_json, department_id FROM broadcasts WHERE id = ?');
+app.patch('/api/broadcast/:id', auth, (req, res) => {
+  const id = Number(req.params.id);
+  const b = Number.isInteger(id) && id > 0 ? getBroadcastForEdit.get(id) : null;
+  if (!b) return res.status(404).json({ error: 'Объявление не найдено' });
+  if (b.from_id !== req.user.id) return res.status(403).json({ error: 'Исправить объявление может только его автор' });
+  if (b.department_id) {
+    if (!isDepartmentMember.get(req.user.id, b.department_id) && !req.user.can_broadcast && !req.user.can_admin) {
+      return res.status(403).json({ error: 'Написать отделу могут только его сотрудники' });
+    }
+  } else if (!req.user.can_broadcast) {
+    return res.status(403).json({ error: 'Нет права на рассылку всей организации' });
+  }
+  const rawHtml = (req.body || {}).html;
+  if (typeof rawHtml === 'string' && rawHtml.length > BROADCAST_HTML_MAX) return res.status(400).json({ error: 'Объявление слишком длинное' });
+  let html = typeof rawHtml === 'string' && rawHtml.trim() ? sanitizeHtml(rawHtml) : null;
+  const text = (html !== null ? htmlToText(html) : String((req.body || {}).text || '')).slice(0, 4000).trim();
+  if (html !== null && (!text || !hasFormatting(html))) html = null;
+  const hasFiles = !!(b.files_json && b.files_json !== '[]');
+  if (!text && !hasFiles) return res.status(400).json({ error: 'Пустое объявление' });
+  const now = Date.now();
+  updateBroadcastText.run(text, html, now, id);
+  const payload = JSON.stringify({ type: 'broadcast_edited', id, text, html, edited_at: now });
+  if (b.department_id) {
+    const recipients = new Set(listUserIdsInDepartment.all(b.department_id).map((r) => r.user_id));
+    recipients.add(req.user.id);
+    for (const userId of recipients) sendToUser(userId, payload);
+  } else {
+    sendToAll(payload);
+  }
+  logServer('INFO', 'broadcast_edited', { fromId: req.user.id, broadcastId: id, departmentId: b.department_id });
+  res.json({ ok: true, id, text, html, edited_at: now });
 });
 
 // ---------- Админка ----------
@@ -1463,7 +1505,7 @@ app.delete('/api/admin/broadcasts/:id', auth, requireCapability('can_admin'), (r
 // переписка организации разом, поэтому каждое открытие ленты пишется в журнал: кто смотрел.
 const allMessagesRecent = db.prepare(`
   SELECT m.id, m.text, m.created_at, m.from_id, m.to_id, m.room, m.file_url, m.file_name, m.file_size, m.files_json,
-         m.reply_to_id, m.reply_snapshot, u.display_name AS from_user, t.display_name AS to_user, g.name AS group_name
+         m.reply_to_id, m.reply_snapshot, m.edited_at, u.display_name AS from_user, t.display_name AS to_user, g.name AS group_name
   FROM messages m
   JOIN users u ON u.id = m.from_id
   LEFT JOIN users t ON t.id = m.to_id
@@ -2111,6 +2153,33 @@ function handleClientMessage(ws, user, msg) {
         const targets = new Set([...(online.get(target.to_id) || []), ...(online.get(target.from_id) || [])]);
         targets.forEach((c) => sendTo(c, out));
       }
+      return;
+    }
+
+    // Правка своего сообщения — как в Telegram: исправить может только отправитель, у сообщения
+    // появляется «изменено». Рассылается тем же адресатам, что и само сообщение (см. 'react' выше).
+    // Ответы, которые цитируют это сообщение, хранят свой снимок текста (reply_snapshot) — их не трогаем.
+    if (msg.type === 'edit') {
+      const messageId = toUserId(msg.id); // тот же критерий: целое положительное
+      const target = messageId ? getMessageForEdit.get(messageId) : null;
+      if (!target || target.from_id !== user.id) return;
+      // Писать туда отправитель должен мочь и сейчас: из группы его могли исключить.
+      if (isGroupRoom(target.room) && !isGroupMemberStmt.get(groupIdFromRoom(target.room), user.id)) return;
+      const text = typeof msg.text === 'string' ? msg.text.slice(0, 4000).trim() : '';
+      const hasFiles = !!(target.files_json && target.files_json !== '[]') || !!target.file_url;
+      if (!text && !hasFiles) return;
+      const now = Date.now();
+      updateMessageText.run(text, now, messageId);
+      const out = JSON.stringify({ type: 'message_edited', id: messageId, text, edited_at: now });
+      if (isGroupRoom(target.room)) {
+        for (const uid of groupMemberIds(groupIdFromRoom(target.room))) sendToUser(uid, out);
+      } else if (target.room) {
+        sendToAll(out);
+      } else {
+        const targets = new Set([...(online.get(target.to_id) || []), ...(online.get(target.from_id) || [])]);
+        targets.forEach((c) => sendTo(c, out));
+      }
+      logServer('INFO', 'message_edited', { userId: user.id, messageId });
       return;
     }
 
