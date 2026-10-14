@@ -364,6 +364,7 @@ async function loadFeed() {
   // проставляем метку на максимальный ID из уже загруженного сейчас (то, что уже видно, по
   // умолчанию считается прочитанным) — а всё, что придёт позже, уже корректно покажет разделитель.
   if (!lastSeenId) setLastSeenId(maxKnownBroadcastId);
+  markSeenIfFocused();
   // Без этого флага сработавшее от этой строки событие 'scroll' принималось бы за настоящую
   // прокрутку пользователя и сразу запускало 3-секундный таймер скрытия полоски — именно поэтому
   // разделитель пропадал сам через 3 секунды после открытия окна, без единого клика.
@@ -702,11 +703,32 @@ function addLiveBroadcast(b) {
   wrap.innerHTML = itemHtml(b);
   feed.appendChild(wrap.firstElementChild);
   if (b.id > maxKnownBroadcastId) maxKnownBroadcastId = b.id;
+  markSeenIfFocused();
   if (!document.getElementById('historyPanel').classList.contains('visible')) {
     programmaticScroll = true;
     feed.scrollTop = feed.scrollHeight;
   }
 }
+
+// Объявления, показанные в окне на виду, — просмотрены, сразу. Метку «последнее увиденное» берёт
+// и список сотрудников при запуске (seedMissedUnread в roster.js): раньше она ставилась только
+// снятием полоски «Новые» по щелчку или прокрутке, и после обновления клиента прочитанные
+// объявления снова считались новыми (жалоба 2026-10-14). Полоска «Новые» живёт по-прежнему.
+// Окно открылось само по новому сообщению (настройка «Открывать чат при новом сообщении», см.
+// notify в main.js). Windows делает его активным, но человек мог отойти от компьютера — поэтому
+// такое окно отмечает «прочитано» только после его действия в окне: щелчок (в том числе по
+// крестику), клавиша, прокрутка колёсиком — или когда он ушёл в другое окно и вернулся.
+let userEngaged = params.get('autoOpened') !== '1';
+let windowWasBlurred = false;
+function engage() { if (userEngaged) return; userEngaged = true; markSeenIfFocused(); }
+['mousedown', 'keydown', 'wheel'].forEach((ev) => window.addEventListener(ev, engage, true));
+window.addEventListener('blur', () => { windowWasBlurred = true; });
+window.addEventListener('focus', () => { if (windowWasBlurred) engage(); });
+function markSeenIfFocused() {
+  if (!userEngaged || !document.hasFocus() || document.visibilityState !== 'visible') return;
+  if (maxKnownBroadcastId > getLastSeenId()) setLastSeenId(maxKnownBroadcastId);
+}
+window.addEventListener('focus', markSeenIfFocused);
 
 function removeBroadcast(id) {
   if (!id) return;
