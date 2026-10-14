@@ -78,10 +78,14 @@ async function startServer({ files = {}, env: extraEnv = {} } = {}) {
   delete env.JWT_SECRET;
   for (const k of ['TLS_PFX', 'TLS_PFX_PASSWORD', 'TLS_CERT', 'TLS_KEY']) delete env[k];
 
-  const proc = spawn(process.execPath, ['server.js'], { cwd: dir, env, stdio: ['ignore', 'pipe', 'pipe'] });
+  let proc;
   let log = '';
-  proc.stdout.on('data', (d) => { log += d; });
-  proc.stderr.on('data', (d) => { log += d; });
+  const launch = () => {
+    proc = spawn(process.execPath, ['server.js'], { cwd: dir, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    proc.stdout.on('data', (d) => { log += d; });
+    proc.stderr.on('data', (d) => { log += d; });
+  };
+  launch();
 
   const secure = Object.keys(files).some((f) => f.split(path.sep).join('/') === 'certs/server.pfx');
   const url = secure ? `https://localhost:${port}` : `http://127.0.0.1:${port}`;
@@ -96,6 +100,16 @@ async function startServer({ files = {}, env: extraEnv = {} } = {}) {
     url,
     dir,
     log: () => log,
+    // Перезапуск службы: тот же каталог (та же база), тот же порт — как после обновления сервера.
+    async restart() {
+      if (proc.exitCode === null) {
+        const exited = new Promise((r) => proc.once('exit', r));
+        proc.kill();
+        await exited;
+      }
+      launch();
+      await waitForPing(url, proc, () => log);
+    },
     async stop() {
       if (proc.exitCode === null) {
         const exited = new Promise((r) => proc.once('exit', r));

@@ -18,7 +18,7 @@ const { startServer, login, makeUser, connect, ADMIN } = require('./helpers/serv
 const GRACE = 700;
 let srv, admin, наблюдатель, сотрудник;
 before(async () => {
-  srv = await startServer({ env: { PRESENCE_GRACE_MS: String(GRACE) } });
+  srv = await startServer({ env: { PRESENCE_GRACE_MS: String(GRACE), WS_PING_MS: '300' } });
   admin = await login(srv.url, ADMIN.username, ADMIN.password);
   наблюдатель = await makeUser(srv.url, admin.token, 'наблюдатель');
   сотрудник = await makeUser(srv.url, admin.token, 'сотрудник');
@@ -80,6 +80,20 @@ test('отошедший остаётся «отошёл», а не превра
     клиент.terminate();
     assert.equal(await lastState(смотрит, сотрудник.id, GRACE / 2), 'idle');
   } finally { смотрит.close(); }
+});
+
+// Прокси закрывал соединения, по которым ~10 секунд ничего не шло. Сервер шлёт ping чаще (в тестах —
+// раз в 300 мс): по соединению постоянно что-то идёт, даже если клиент молчит.
+test('сервер сам шлёт ping по каждому соединению', async () => {
+  const pinged = await new Promise((resolve, reject) => {
+    const WebSocket = require(path.join(__dirname, '..', 'node_modules', 'ws'));
+    const ws = new WebSocket(`${srv.url.replace('http', 'ws')}/?token=${encodeURIComponent(сотрудник.token)}&host=PC-PING`);
+    let count = 0;
+    ws.on('ping', () => { count += 1; if (count === 2) { ws.close(); resolve(true); } });
+    ws.on('error', reject);
+    setTimeout(() => { ws.close(); resolve(false); }, 3000);
+  });
+  assert.equal(pinged, true, 'за 3 секунды пришло хотя бы два ping');
 });
 
 test('обрыв записывается в журнал сервера, обычное закрытие окна — нет', async () => {
