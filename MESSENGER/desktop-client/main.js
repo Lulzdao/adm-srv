@@ -1,6 +1,5 @@
 // Главный процесс Electron — окна, трей, уведомления, настройки, отправка и скачивание файлов
 const { TRAY_SIZES, accentColor, starPng } = require('./tray-icon');
-const { dropStaleWindowSizes } = require('./window-sizes');
 const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, Notification, powerMonitor, dialog, session, clipboard, screen, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -373,8 +372,7 @@ function migrateLegacySettings() {
 
 function loadSettings() {
   migrateLegacySettings();
-  // dropStaleWindowSizes — размеры окон от прежней «Искры» не берём (см. window-sizes.js).
-  try { return { ...DEFAULT_SETTINGS, ...dropStaleWindowSizes(JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf8'))) }; }
+  try { return { ...DEFAULT_SETTINGS, ...JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf8')) }; }
   catch { return { ...DEFAULT_SETTINGS }; }
 }
 function saveSettings() {
@@ -512,7 +510,8 @@ function attachSizePersistence(win, key) {
     if (isQuitting) return; // при завершении сеанса Windows сама двигает/сворачивает окна — не пишем
     if (!settings.rememberWindowSize) return;
     // Свёрнутое, развёрнутое на весь экран или скрытое окно не запоминаем: у свёрнутого Windows
-    // отдаёт координаты -32000, а «во весь экран» — не размер, который человек выбирал.
+    // отдаёт координаты -32000, а «во весь экран» — не размер, который человек выбирал: развернул
+    // чат, закрыл — и все следующие чаты открывались обычным окном размером во весь экран.
     if (win.isDestroyed() || win.isMinimized() || win.isMaximized() || !win.isVisible()) return;
     const { width, height, x, y } = win.getBounds();
     settings[key] = { width, height, x, y };

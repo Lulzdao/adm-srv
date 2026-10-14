@@ -83,8 +83,6 @@ module.exports = {
     'updater.js',
     // Значок трея в цвете акцента (require из main.js) — то же самое.
     'tray-icon.js',
-    // Сброс размеров окон, запомненных прежней «Искрой» (require из main.js) — то же самое.
-    'window-sizes.js',
     'renderer/**/*',
     'tray-icon.ico',
     'tray-icon-fallback.png', // запасной вариант, если .ico не декодируется — см. createTray в main.js
