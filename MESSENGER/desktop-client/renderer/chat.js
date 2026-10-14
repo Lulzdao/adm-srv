@@ -393,6 +393,33 @@ function addMessage(m) {
   if (incoming && m.created_at > maxKnownTs) maxKnownTs = m.created_at;
   programmaticScroll = true;
   box.scrollTop = box.scrollHeight;
+  if (incoming) reportReadIfSeen();
+}
+
+// ---------- «Прочитано» — серверу сразу, как только окно на виду ----------
+// Значки непрочитанного после перезапуска клиента (обновление, выключение ПК) берутся с сервера
+// (seedMissedUnread в roster.js). Раньше «прочитано» уходило серверу только вместе со снятием
+// полоски «Новые сообщения» — по щелчку или прокрутке и через 3 секунды. Пришло сообщение в
+// открытое окно, человек прочитал его глазами и закрыл окно (или закрыл раньше 3 секунд) — на
+// сервере оно оставалось непрочитанным, и после обновления снова горело (жалоба 2026-10-14).
+// Теперь: окно в фокусе — всё, что в нём показано, прочитано, сразу. Полоска живёт по-прежнему.
+// Окно, открывшееся само по новому сообщению и не получившее фокус, прочитанным не считается.
+let readReportedTs = 0;
+// Окно открылось само по новому сообщению (настройка «Открывать чат при новом сообщении», см.
+// notify в main.js). Windows делает его активным, но человек мог отойти от компьютера — поэтому
+// такое окно отмечает «прочитано» только после его действия в окне: щелчок (в том числе по
+// крестику), клавиша, прокрутка колёсиком — или когда он ушёл в другое окно и вернулся.
+let userEngaged = params.get('autoOpened') !== '1';
+let windowWasBlurred = false;
+function engage() { if (userEngaged) return; userEngaged = true; reportReadIfSeen(); }
+['mousedown', 'keydown', 'wheel'].forEach((ev) => window.addEventListener(ev, engage, true));
+window.addEventListener('blur', () => { windowWasBlurred = true; });
+window.addEventListener('focus', () => { if (windowWasBlurred) engage(); });
+function reportReadIfSeen() {
+  if (type !== 'dm' || maxKnownTs <= readReportedTs) return;
+  if (!userEngaged || !document.hasFocus() || document.visibilityState !== 'visible') return;
+  readReportedTs = maxKnownTs;
+  sendPayload({ type: 'read', peer: id, upTo: maxKnownTs });
 }
 
 function clearUnreadDivider() {
@@ -405,7 +432,7 @@ function clearUnreadDivider() {
   // Тем же сигналом (клик/скролл, спустя те же 3 секунды) сообщаем серверу, что сообщения собеседника
   // до maxKnownTs прочитаны — см. markDmRead в server.js. Только для личных чатов: в общей комнате
   // "прочитано кем-то одним" не имеет смысла, галочек там нет (см. readTickHtml).
-  if (type === 'dm') sendPayload({ type: 'read', peer: id, upTo: maxKnownTs });
+  if (type === 'dm' && maxKnownTs > readReportedTs) { readReportedTs = maxKnownTs; sendPayload({ type: 'read', peer: id, upTo: maxKnownTs }); }
 }
 function scheduleUnreadClear() {
   if (!hasUnreadDivider) return;
@@ -422,6 +449,7 @@ document.getElementById('messages').addEventListener('scroll', () => {
 // не перезапускается (страница не перезагружается), поэтому без отдельного слушателя это тоже
 // осталось бы непрочитанным до случайного клика.
 window.addEventListener('focus', scheduleUnreadClear);
+window.addEventListener('focus', () => reportReadIfSeen());
 
 // В ленте окна — переписка за последние три дня (см. recent.js); вся остальная никуда не пропадает
 // и доступна через кнопку "История".
@@ -441,6 +469,7 @@ async function loadHistory() {
   // сообщения и правда ещё не прочитаны. scheduleUnreadClear() — тот же путь, что у клика/скролла,
   // с той же трёхсекундной паузой (разделитель успевает мелькнуть, а не исчезает мгновенно).
   scheduleUnreadClear();
+  reportReadIfSeen();
 }
 
 let ws, wsReadyQueue = [];

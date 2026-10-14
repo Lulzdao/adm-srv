@@ -1401,7 +1401,9 @@ ipcMain.on('notify', (event, payload) => {
     // разворачиваем (не выдёргиваем человека из работы), а отмечаем и мигаем кнопкой.
     const existing = namedWins.get(key);
     const minimized = existing && !existing.isDestroyed() && existing.isMinimized();
-    const win = minimized ? existing : createWindow(key, file, openPayload, winSize);
+    // autoOpened — окно знает, что открылось само: Windows делает его активным, но человек мог и не
+    // смотреть, поэтому «прочитано» оно отмечает только после его действия (см. reportReadIfSeen).
+    const win = minimized ? existing : createWindow(key, file, { ...openPayload, autoOpened: '1' }, winSize);
     if (!win.isFocused()) { markUnread(openPayload); callAttention(win); } // фокус окна снимет отметку
     return;
   }
