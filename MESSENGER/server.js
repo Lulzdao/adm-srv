@@ -1134,6 +1134,11 @@ app.post('/api/broadcast', auth, (req, res) => {
     if (!Number.isInteger(department) || department <= 0 || !getDepartment.get(department)) {
       return res.status(400).json({ error: 'Такого отдела нет' });
     }
+    // Решение 2026-10-14: писать отделу могут только его сотрудники. Любому отделу — тот, у кого
+    // есть хотя бы одно из прав: «Рассылки» или «Админка». Раньше отделу мог написать кто угодно.
+    if (!isDepartmentMember.get(req.user.id, department) && !req.user.can_broadcast && !req.user.can_admin) {
+      return res.status(403).json({ error: 'Написать отделу могут только его сотрудники' });
+    }
   } else if (!req.user.can_broadcast) {
     return res.status(403).json({ error: 'Нет права на рассылку всей организации' });
   }
@@ -1453,6 +1458,33 @@ app.delete('/api/admin/broadcasts/:id', auth, requireCapability('can_admin'), (r
 });
 
 // Админ может открыть историю любого чата
+// Лента всех последних сообщений — личных, групп и общей комнаты вперемешку, новые снизу, по 200
+// (?before= — более ранние). Открывается скрытой кнопкой в разделе «Переписки» панели. Это вся
+// переписка организации разом, поэтому каждое открытие ленты пишется в журнал: кто смотрел.
+const allMessagesRecent = db.prepare(`
+  SELECT m.id, m.text, m.created_at, m.from_id, m.to_id, m.room, m.file_url, m.file_name, m.file_size, m.files_json,
+         m.reply_to_id, m.reply_snapshot, u.display_name AS from_user, t.display_name AS to_user, g.name AS group_name
+  FROM messages m
+  JOIN users u ON u.id = m.from_id
+  LEFT JOIN users t ON t.id = m.to_id
+  LEFT JOIN groups g ON m.room LIKE 'group:%' AND g.id = CAST(substr(m.room, 7) AS INTEGER)
+  WHERE m.id < ? ORDER BY m.id DESC LIMIT ${HISTORY_PAGE_SIZE}
+`);
+// Где написано — подпись для ленты: кому лично, в какую группу или в общую комнату.
+function messagePlace(row) {
+  if (row.to_id) return `лично → ${row.to_user || '#' + row.to_id}`;
+  if (row.room === 'general') return 'общая комната';
+  if (isGroupRoom(row.room)) return `группа «${row.group_name || row.room}»`;
+  return row.room || '';
+}
+app.get('/api/admin/history/all', auth, requireCapability('can_admin'), (req, res) => {
+  if (!req.query.before) logServer('INFO', 'admin_all_messages_viewed', { adminId: req.user.id, username: req.user.username, ip: req.ip });
+  res.json(allMessagesRecent.all(beforeId(req)).reverse().map((row) => {
+    const { to_user, group_name, ...rest } = row;
+    return { ...normalizeRow(rest), place: messagePlace(row) };
+  }));
+});
+
 app.get('/api/admin/history/room/:room', auth, requireCapability('can_admin'), (req, res) => {
   res.json(roomHistoryAll.all(req.params.room, beforeId(req)).reverse().map(normalizeRow));
 });

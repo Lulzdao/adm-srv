@@ -794,7 +794,9 @@ function renderHistoryBox(items) {
     // экранирования имя вида "<img src=x onerror=...>" выполнялось бы прямо здесь, в открытой
     // сессии администратора, — то есть любой сотрудник мог получить доступ к панели, просто
     // переименовавшись и дождавшись, когда админ откроет переписку.
-    return `<div class="m"><b>${escapeHtml(m.from_user)}:</b> ${escapeHtml(m.text)}${files}<span class="t">${time}</span></div>`;
+    // place — где написано (только в ленте всех сообщений): «лично → Иванов», «группа «…»».
+    const place = m.place ? `<span class="p">${escapeHtml(m.place)}</span>` : '';
+    return `<div class="m">${place}<b>${escapeHtml(m.from_user)}:</b> ${escapeHtml(m.text)}${files}<span class="t">${time}</span></div>`;
   }).join('') || 'Сообщений пока нет';
 }
 
@@ -817,6 +819,23 @@ async function loadHistory() {
     renderHistoryBox(items);
     document.getElementById('histMoreRow').style.display = lastHistory.hasMore ? 'flex' : 'none';
   } catch (e) { box.innerHTML = 'Ошибка: ' + e.message; }
+}
+
+// Скрытая кнопка «⋯» в «Переписках»: все последние сообщения всех сотрудников одной лентой — личные,
+// группы и общая комната. Дальше листается той же кнопкой «Показать более ранние» и выгружается тем
+// же «Экспорт в .txt». Сервер пишет каждое открытие ленты в журнал.
+async function loadAllHistory() {
+  const box = document.getElementById('histMessages');
+  box.innerHTML = 'Загрузка...';
+  document.getElementById('histMoreRow').style.display = 'none';
+  try {
+    const path = 'api/admin/history/all';
+    const items = await api(path);
+    lastHistory = { type: 'all', path, items, oldestId: items.length ? items[0].id : null, hasMore: items.length === 200 };
+    renderHistoryBox(items);
+    box.scrollTop = box.scrollHeight; // новые — внизу
+    document.getElementById('histMoreRow').style.display = lastHistory.hasMore ? 'flex' : 'none';
+  } catch (e) { box.innerHTML = 'Ошибка: ' + escapeHtml(e.message); }
 }
 
 async function loadMoreHistory() {
@@ -844,7 +863,7 @@ async function loadMoreHistory() {
 
 function exportHistory() {
   if (!lastHistory.items.length) { uiAlert('Сначала откройте переписку'); return; }
-  const lines = lastHistory.items.map(m => `[${new Date(m.created_at).toLocaleString('ru-RU')}] ${m.from_user}: ${m.text}`);
+  const lines = lastHistory.items.map(m => `[${new Date(m.created_at).toLocaleString('ru-RU')}] ${m.place ? `(${m.place}) ` : ''}${m.from_user}: ${m.text}`);
   const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -1101,15 +1120,31 @@ async function loadPublishedVersions() {
 // ---------- Версии клиента: список, скачивание, откат, удаление, выкладка (lib/releases.js) ----------
 const TRACK_LABEL = { win7: 'Windows 7 / 8.1', win10: 'Windows 10+' };
 
+// Версий со временем набирается много, а смотрят обычно на текущую. Поэтому у каждой сборки видна
+// строка текущей версии, а остальные свёрнуты под кнопкой «Показать прежние версии». Если текущей у
+// сборки нет (ничего не выложено как текущее) — её версии видны все.
+let releasesExpanded = false;
+let lastReleasesData = null;
+function toggleOldReleases() {
+  releasesExpanded = !releasesExpanded;
+  if (lastReleasesData) renderReleases(lastReleasesData);
+}
+
 function renderReleases(data) {
+  lastReleasesData = data;
   const rows = [];
+  let hiddenCount = 0;
   for (const track of ['win10', 'win7']) {
-    for (const v of (data[track] && data[track].versions) || []) {
+    const versions = (data[track] && data[track].versions) || [];
+    const hasCurrent = versions.some((x) => x.current);
+    for (const v of versions) {
+      const old = hasCurrent && !v.current;
+      if (old) hiddenCount += 1;
       const badge = v.current
         ? ' <span style="color:var(--online, #2e7d32); font-weight:600;">текущая</span>'
         : '';
       const noMap = v.hasBlockmap ? '' : ' <span style="color:var(--warn)" title="Нет файла .blockmap: с этой версии клиенты скачают следующую целиком">без карты блоков</span>';
-      rows.push(`<tr>
+      rows.push(`<tr${old ? ` class="release-old${releasesExpanded ? '' : ' collapsed'}"` : ''}>
         <td style="color:var(--muted)">${TRACK_LABEL[track]}</td>
         <td><b>${escapeHtml(v.version)}</b>${badge}${noMap}</td>
         <td>${fmtSize(v.size)}</td>
@@ -1121,6 +1156,11 @@ function renderReleases(data) {
         </td>
       </tr>`);
     }
+  }
+  if (hiddenCount) {
+    rows.push(`<tr class="release-toggle"><td colspan="5">
+      <button class="action ghost" onclick="toggleOldReleases()">${releasesExpanded ? 'Свернуть прежние версии' : `Показать прежние версии (${hiddenCount})`}</button>
+    </td></tr>`);
   }
   document.getElementById('releasesBody').innerHTML = rows.join('')
     || '<tr><td colspan="5" style="color:var(--muted)">Версий на сервере пока нет</td></tr>';

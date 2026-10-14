@@ -348,6 +348,7 @@ const DEFAULT_SETTINGS = {
   serverUrlOverride: null,   // переопределяет SERVER_URL из config.js без пересборки — см. Ctrl+S на экране входа
   autoUpdate: true,          // сама качать вышедшие обновления (ставятся при выходе) — см. setupUpdater
   autoStart: true,           // запускаться при входе в Windows — см. applyAutoStart
+  startMinimized: true,      // запущенная сама (вход в Windows, после обновления) — сразу в трей, без окна; см. LAUNCHED_AUTOMATICALLY
   singleOpenDept: true,      // в списке все отделы свёрнуты, открыт только один — см. renderer/depts.js.
                              // Включено по умолчанию; ключ новый, поэтому включится и у тех, кто уже пользуется клиентом
   lastSeenVersion: null,     // версия на предыдущем запуске — чтобы показать "обновлено до X" один раз после установки
@@ -386,10 +387,16 @@ let settings = loadSettings();
 // Выставляем при каждом старте, а не только при смене настройки: у тех, кто поставил «Искру» до
 // появления настройки, записи ещё нет, а в settings.json нет и ключа — значит, действует умолчание.
 // Только в собранном приложении: при запуске из исходников в автозагрузку попал бы голый electron.exe.
+// --hidden — «запущена сама, а не человеком»: так её запускают автозагрузка Windows (args ниже) и
+// задание IskraRelaunch после обновления. С включённой настройкой «Запускать свёрнутой» окно со
+// списком тогда не открывается: «Искра» ждёт в трее, а сообщения и объявления приходят как обычно —
+// уведомлением или окном чата. Ярлык человек запускает без ключа — и окно открывается.
+const LAUNCHED_AUTOMATICALLY = process.argv.includes('--hidden');
+
 function applyAutoStart() {
   if (process.platform !== 'win32' || !app.isPackaged) return;
   try {
-    app.setLoginItemSettings({ openAtLogin: !!settings.autoStart, path: process.execPath });
+    app.setLoginItemSettings({ openAtLogin: !!settings.autoStart, path: process.execPath, args: ['--hidden'] });
   } catch (err) {
     logLocal('autostart_failed', { message: String((err && err.message) || err) });
   }
@@ -625,10 +632,24 @@ function sizeKeyForFile(file) {
   return map[file] || null;
 }
 
-function createWindow(key, file, payload, size) {
+// Окно, открытое самим человеком (двойной щелчок, меню, щелчок по уведомлению), должно сразу
+// стать активным, а курсор — стоять в поле ввода: иначе начатая фраза уходила в никуда, пока не
+// щёлкнешь по окну (жалоба 2026-10-14). Окна, которые открываются сами по новому сообщению
+// (настройка «Открывать чат при новом сообщении»), так не делаем — они не должны выхватывать
+// клавиатуру у человека, который печатает в другой программе.
+function activateWindow(win) {
+  if (!win || win.isDestroyed()) return;
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+  win.webContents.focus();
+}
+
+function createWindow(key, file, payload, size, { activate = false } = {}) {
   const existing = namedWins.get(key);
   if (existing && !existing.isDestroyed()) {
-    existing.show(); // show() и так фокусирует — на случай, если окно почему-то было скрыто
+    if (activate) activateWindow(existing);
+    else existing.show(); // show() и так фокусирует — на случай, если окно почему-то было скрыто
     clearUnreadForWindow(file, payload);
     return existing;
   }
@@ -659,7 +680,7 @@ function createWindow(key, file, payload, size) {
   win.webContents.on('did-finish-load', () => win.webContents.setZoomFactor(settings.uiScale || 1));
   const qs = new URLSearchParams(payload).toString();
   win.loadFile(path.join(__dirname, 'renderer', file), { search: qs });
-  win.once('ready-to-show', () => win.show());
+  win.once('ready-to-show', () => { if (activate) activateWindow(win); else win.show(); });
   // Имя для журнала берём из файла страницы: переменной с типом окна здесь нет,
   // а администратору по логу нужно понимать, что именно зависло.
   watchWindowHangs(win, file.includes('chat') ? 'чат' : file.includes('broadcast') ? 'рассылка' : file);
@@ -712,7 +733,10 @@ function createRoster() {
   // См. комментарий в createWindow() — setZoomFactor до навигации не переживает загрузку страницы.
   rosterWin.webContents.on('did-finish-load', () => rosterWin.webContents.setZoomFactor(settings.uiScale || 1));
   rosterWin.loadFile(path.join(__dirname, 'renderer', 'roster.html'));
-  rosterWin.once('ready-to-show', () => rosterWin.show());
+  // Запущена сама и настройка «Запускать свёрнутой» включена — окна не показываем, сидим в трее.
+  // Если вход ещё не выполнен, окно всё равно покажет сам список (window-action 'show'): иначе
+  // человек не узнал бы, что надо войти.
+  rosterWin.once('ready-to-show', () => { if (!(LAUNCHED_AUTOMATICALLY && settings.startMinimized)) rosterWin.show(); });
   watchWindowHangs(rosterWin, 'список сотрудников');
   attachSizePersistence(rosterWin, 'rosterSize');
   attachWindowStateEvents(rosterWin);
@@ -861,7 +885,7 @@ function httpPostBuffer(urlStr, buffer, headers) {
 async function handleSendFile(payload) {
   const result = await dialog.showOpenDialog(rosterWin, { properties: ['openFile', 'multiSelections'] });
   if (result.canceled || !result.filePaths.length) return;
-  const win = createWindow(`${payload.type}:${payload.id}`, 'chat.html', payload);
+  const win = createWindow(`${payload.type}:${payload.id}`, 'chat.html', payload, undefined, { activate: true });
   const whenReady = () => new Promise((resolve) => {
     if (win.webContents.isLoading()) win.webContents.once('did-finish-load', resolve);
     else resolve();
@@ -1095,11 +1119,11 @@ ipcMain.on('install-update', (event) => {
 });
 
 ipcMain.on('open-chat', (event, payload) => {
-  createWindow(`${payload.type}:${payload.id}`, 'chat.html', payload);
+  createWindow(`${payload.type}:${payload.id}`, 'chat.html', payload, undefined, { activate: true });
 });
 
 ipcMain.on('open-broadcast', (event, payload) => {
-  createWindow('broadcast', 'broadcast.html', payload, BROADCAST_DEFAULT_SIZE);
+  createWindow('broadcast', 'broadcast.html', payload, BROADCAST_DEFAULT_SIZE, { activate: true });
 });
 
 // ПКМ по отделу в списке контактов → «Сообщение всему отделу». Окно то же самое, что у объявлений
@@ -1107,7 +1131,7 @@ ipcMain.on('open-broadcast', (event, payload) => {
 // адресатов, см. departmentId. Ключ окна свой на каждый отдел, чтобы окна разных отделов и общие
 // объявления не подменяли друг друга. Само меню рисует окно (uiContextMenu в ui-kit.js).
 ipcMain.on('open-department-broadcast', (event, payload) => {
-  createWindow(`broadcast:dept:${payload.departmentId}`, 'broadcast.html', payload, BROADCAST_DEFAULT_SIZE);
+  createWindow(`broadcast:dept:${payload.departmentId}`, 'broadcast.html', payload, BROADCAST_DEFAULT_SIZE, { activate: true });
 });
 
 // ПКМ по сотруднику → «Отправить файл…».
@@ -1203,6 +1227,8 @@ ipcMain.on('window-action', (event, action) => {
   // Настоящий выход из приложения (не сворачивание в трей) — например, кнопка "Выйти" в диалоге
   // о потере соединения с сервером: продолжать сидеть в трее без связи с сервером бессмысленно.
   if (action === 'quit') { isQuitting = true; app.quit(); }
+  // Список сотрудников просит показать себя: вход не выполнен, а окно запущено свёрнутым (см. createRoster).
+  if (action === 'show' && win === rosterWin && !win.isVisible()) win.show();
 });
 
 // Скачивание прикреплённого файла: через главный процесс, а не обычной навигацией по ссылке —
@@ -1358,7 +1384,7 @@ ipcMain.on('notify', (event, payload) => {
   if (!settings.notifications) return;
   const n = new Notification({ title, body });
   n.on('click', () => {
-    if (openPayload) createWindow(key, file, openPayload, winSize);
+    if (openPayload) createWindow(key, file, openPayload, winSize, { activate: true });
     else { rosterWin.show(); rosterWin.focus(); }
   });
   n.show();

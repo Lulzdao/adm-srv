@@ -448,6 +448,7 @@ const PP_CHECKBOX_IDS = [
   ['ppRememberWindowSize', 'rememberWindowSize'],
   ['ppAlwaysOnTop', 'alwaysOnTop'],
   ['ppAutoStart', 'autoStart'],
+  ['ppStartMinimized', 'startMinimized'],
   ['ppSingleOpenDept', 'singleOpenDept'],
   ['ppHideNames', 'hideNameInMessages'],
   ['ppAutoUpdate', 'autoUpdate'],
@@ -907,7 +908,11 @@ function renderList() {
     // ПКМ по отделу — «Сообщение всему отделу». У псевдо-отдела "Без отдела" адресатов нет как
     // группы, поэтому меню там не появляется вовсе, а не появляется неработающим.
     const dept = deptsCache.find((d) => d.name === key);
-    if (dept) {
+    // Пункт меню — только тем, кому сервер разрешит отправить (см. POST /api/broadcast): сотрудникам
+    // этого отдела, а любому отделу — тому, у кого есть право «Рассылки» или «Админка».
+    const canWriteDept = dept && (myDepartmentIds().includes(dept.id) || !!me.can_broadcast || !!me.can_admin);
+    if (dept && !canWriteDept) section.oncontextmenu = (e) => e.preventDefault();
+    if (canWriteDept) {
       section.oncontextmenu = (e) => {
         e.preventDefault();
         const payload = { departmentId: dept.id, departmentName: dept.name, token, serverUrl, me: JSON.stringify(me) };
@@ -917,7 +922,7 @@ function renderList() {
       };
       section.dataset.broadcast = '1';
     }
-    section.title = deptSectionTitle(collapsed, !!dept);
+    section.title = deptSectionTitle(collapsed, !!canWriteDept);
     list.appendChild(section);
 
     const rowsWrap = document.createElement('div');
@@ -934,6 +939,13 @@ let deptsCache = [];     // они же целиком — id нужен для 
 // Отделы сотрудника: массив имён, пусто — "Без отдела". Сервер отдаёт departments массивом; поле
 // department (первый отдел строкой) он присылает для совместимости, и если клиент окажется новее
 // сервера, работать будем по нему.
+// Номера отделов, в которых состоит сам пользователь. Берём из списка сотрудников (он свежий и
+// обновляется сам), а не из me: в me сразу после входа отделов ещё нет.
+function myDepartmentIds() {
+  const self = usersCache.find((u) => u.id === me.id) || me;
+  return Array.isArray(self.departments) ? self.departments.map((d) => d.id) : [];
+}
+
 function departmentKeysOf(u) {
   const names = Array.isArray(u.departments) ? u.departments.map((d) => d.name).filter(Boolean) : [];
   if (names.length) return names;
@@ -1283,6 +1295,8 @@ document.addEventListener('keydown', (e) => {
   connectionInfo = await desktop.getConnectionInfo();
   refreshConnectionIndicator();
   if (token && me) startApp();
+  // Не вошли — окно должно быть видно, даже если «Искру» запустили свёрнутой в трей.
+  else desktop.windowAction('show');
 })();
 
 // Обработчики, которые раньше стояли прямо в разметке (onclick=/onsubmit=): CSP окна запрещает
