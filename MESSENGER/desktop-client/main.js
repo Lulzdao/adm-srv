@@ -627,8 +627,10 @@ function hookSessionEnd(win) {
 
 // Ключ в settings.json для запоминания размера окна — свой на каждый тип окна (чат, рассылки),
 // не только на чат, как было раньше.
-// Окно объявлений по умолчанию — 574×423 (так настроил пользователь 2026-10-08; было 420×520). Чат — 380×520.
+// Окно объявлений по умолчанию — 574×423 (так настроил пользователь 2026-10-08; было 420×520).
+// Чат — такой же (решение 2026-10-14; было 380×520): у сотрудников он открывался узким.
 const BROADCAST_DEFAULT_SIZE = { width: 574, height: 423, minWidth: 360, minHeight: 400 };
+const CHAT_DEFAULT_SIZE = { width: 574, height: 423 };
 
 function sizeKeyForFile(file) {
   const map = { 'chat.html': 'chatSize', 'broadcast.html': 'broadcastSize' };
@@ -656,6 +658,7 @@ function createWindow(key, file, payload, size, { activate = false } = {}) {
     clearUnreadForWindow(file, payload);
     return existing;
   }
+  if (!size && file === 'chat.html') size = CHAT_DEFAULT_SIZE;
   const sizeKey = sizeKeyForFile(file);
   const saved = sizeKey && settings.rememberWindowSize ? settings[sizeKey] : null;
   const width = saved?.width || size?.width || 380;
