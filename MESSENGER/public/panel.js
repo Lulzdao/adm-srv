@@ -1348,10 +1348,30 @@ const UPDATE_PLAN_LABEL = {
   task: 'заданием системы (8:30 и 13:00)',
   none: 'только при перезагрузке ПК (задания нет)',
 };
-function updaterCell(u) {
+// «1.0.29» < «1.0.30»: сравниваем числами, не строками.
+function versionAtLeast(a, b) {
+  const pa = String(a || '').split('.').map(Number), pb = String(b || '').split('.').map(Number);
+  for (let i = 0; i < 3; i++) { if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) > (pb[i] || 0); }
+  return true;
+}
+// installed — какая версия стоит на машине сейчас (клиент сообщает её при подключении).
+function updaterCell(u, installed) {
   if (!u) return '<span style="color:var(--muted)">—</span>';
   const plan = UPDATE_PLAN_LABEL[u.plan] || '';
   const l = u.last;
+  // Задание пишет только своё. Версию могли поставить и мимо него — сценарий политики при
+  // перезагрузке или сам клиент. Тогда его последняя запись («скачано 1.0.29, не поставлено») —
+  // пройденная история, а не проблема: на машине уже та же версия или новее (жалоба 2026-10-15 —
+  // жёлтое «не поставлено» у машины с актуальной 1.0.30).
+  // То же для «проверено — актуальная 1.0.29» на машине, где уже 1.0.30.
+  const settled = l && l.version && installed && versionAtLeast(installed, l.version)
+    && (l.state === 'downloaded' || l.state === 'install-failed' || (l.state === 'current' && installed !== l.version));
+  if (settled) {
+    const when = l.at ? new Date(l.at).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+    const was = { downloaded: `скачало ${escapeHtml(l.version)}`, 'install-failed': `не смогло поставить ${escapeHtml(l.version)}`, current: `проверило: была актуальной ${escapeHtml(l.version)}` }[l.state];
+    return `<div style="font-size:12.5px">актуальная — поставлена при перезагрузке или самим клиентом</div>`
+      + `<div style="color:var(--muted); font-size:11px;">задание ранее ${was}${when ? ` · ${escapeHtml(when)}` : ''}${plan ? ` · ${escapeHtml(plan)}` : ''}</div>`;
+  }
   const when = l && l.at ? new Date(l.at).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
   let what = '<span style="color:var(--muted)">задание ещё не запускалось</span>';
   if (l) {
@@ -1407,7 +1427,7 @@ async function loadClients() {
         <td>${escapeHtml(c.user)}</td>
         <td>${escapeHtml(c.hostname)}</td>
         <td>${verCell}</td>
-        <td>${updaterCell(c.updater)}</td>
+        <td>${updaterCell(c.updater, c.version)}</td>
         <td style="color:var(--muted)">${escapeHtml(trackLabel)}</td>
         <td class="row-flex">
           <button class="action" data-uid="${c.userId}" data-host="${escapeHtml(c.hostname)}"
