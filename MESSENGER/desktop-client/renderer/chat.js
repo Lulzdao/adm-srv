@@ -655,8 +655,7 @@ function cancelEdit() {
   if (!editingId) return;
   editingId = null;
   paintEditBanner();
-  textEl.value = '';
-  textEl.style.height = 'auto';
+  setComposerText(readDraft()); // был черновик до правки — возвращаем его
 }
 // ↑ в пустом поле — исправить своё последнее сообщение (как в Telegram).
 function editLastOwn() {
@@ -828,6 +827,7 @@ function send() {
   if (replyingTo) payload.replyTo = replyingTo.id;
   sendPayload(payload);
   clearReplyingTo();
+  saveDraft('');
   input.value = '';
   input.style.height = 'auto'; // сброс авто-роста после отправки — снова однострочное поле
   lastTypingSentAt = 0; // следующее нажатие клавиши для НОВОГО сообщения не должно ждать throttle
@@ -853,8 +853,45 @@ textEl.addEventListener('keydown', (e) => {
 textEl.addEventListener('input', () => {
   textEl.style.height = 'auto';
   textEl.style.height = Math.min(textEl.scrollHeight, 120) + 'px';
+  if (!editingId) saveDraftSoon(); // текст правки — не черновик
   sendTyping();
 });
+
+// ---------- Черновик ----------
+// Набранное, но не отправленное остаётся, если закрыть окно чата: при следующем открытии этого
+// диалога оно снова в поле ввода (решение 2026-10-15). Хранится в localStorage окна — на этом ПК,
+// отдельно для каждого сотрудника и диалога. Старше 30 дней — выбрасывается.
+const DRAFT_KEY = `chatDraft:${me.id}:${type}:${id}`;
+const DRAFT_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+function readDraft() {
+  try {
+    const d = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null');
+    if (d && typeof d.text === 'string' && Date.now() - d.at < DRAFT_MAX_AGE_MS) return d.text;
+  } catch { /* испорченная запись — как будто черновика нет */ }
+  return '';
+}
+function saveDraft(text) {
+  try {
+    if (text && text.trim()) localStorage.setItem(DRAFT_KEY, JSON.stringify({ text, at: Date.now() }));
+    else localStorage.removeItem(DRAFT_KEY);
+  } catch { /* хранилище недоступно — черновик просто не сохранится */ }
+}
+let draftTimer = null;
+function saveDraftSoon() {
+  clearTimeout(draftTimer);
+  draftTimer = setTimeout(() => saveDraft(textEl.value), 400);
+}
+// Окно закрывают сразу после набора — дописываем то, что не успело уйти по таймеру.
+window.addEventListener('pagehide', () => { if (!editingId && draftTimer) { clearTimeout(draftTimer); saveDraft(textEl.value); } });
+function setComposerText(text) {
+  textEl.value = text || '';
+  textEl.style.height = 'auto';
+  if (textEl.value) {
+    textEl.style.height = Math.min(textEl.scrollHeight, 120) + 'px';
+    textEl.setSelectionRange(textEl.value.length, textEl.value.length);
+  }
+}
+setComposerText(readDraft());
 
 // Базовый набор эмодзи (как в разделе "часто используемые" на iPhone) — не полный юникодный
 // список, а компактная сетка самых ходовых смайликов/жестов для рабочей переписки.
