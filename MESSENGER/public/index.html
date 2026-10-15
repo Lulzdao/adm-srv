@@ -280,7 +280,7 @@
           «Журнал» этой машины.
         </p>
         <table>
-          <thead><tr><th>Сотрудник</th><th>Компьютер</th><th>Версия</th><th>Обновление</th><th>Сборка</th><th>Действия</th></tr></thead>
+          <thead><tr><th class="sort-th" data-sort="user" onclick="sortClientsBy('user')">Сотрудник<span class="sort-mark"></span></th><th class="sort-th" data-sort="hostname" onclick="sortClientsBy('hostname')">Компьютер<span class="sort-mark"></span></th><th>Версия</th><th>Обновление</th><th>Сборка</th><th>Действия</th></tr></thead>
           <tbody id="clientsBody"></tbody>
         </table>
       </div>
