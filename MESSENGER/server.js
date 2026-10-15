@@ -2318,6 +2318,38 @@ setInterval(() => {
   metrics.gauges(gauges);
 }, LOOP_CHECK_MS).unref();
 
+// Нагрузка переживает перезапуск службы (решение пользователя 2026-10-15): при запуске — последние
+// сутки из базы, дальше раз в минуту изменившиеся минуты пишутся обратно, при остановке — тоже.
+// Пропасть может только последняя минута, если процесс убьют без остановки.
+const saveMetricMinute = db.prepare('INSERT INTO metrics_minutes (t, data) VALUES (?, ?) ON CONFLICT(t) DO UPDATE SET data = excluded.data');
+const pruneMetricMinutes = db.prepare('DELETE FROM metrics_minutes WHERE t < ?');
+try {
+  const since = Date.now() - 24 * 60 * 60 * 1000;
+  const rows = db.prepare('SELECT data FROM metrics_minutes WHERE t >= ? ORDER BY t').all(since);
+  const loaded = metrics.load(rows.map((r) => { try { return JSON.parse(r.data); } catch { return null; } }));
+  if (loaded) logServer('INFO', 'load_history_restored', { minutes: loaded });
+} catch (err) {
+  logServer('WARN', 'load_history_restore_failed', { message: String(err && err.message) });
+}
+function saveMetrics() {
+  try {
+    const list = metrics.takeDirty();
+    if (!list.length) return;
+    transaction(() => {
+      for (const b of list) saveMetricMinute.run(b.t, JSON.stringify(b));
+      pruneMetricMinutes.run(Date.now() - 24 * 60 * 60 * 1000 - 60 * 1000);
+    })();
+  } catch (err) {
+    logServer('WARN', 'load_history_save_failed', { message: String(err && err.message) });
+  }
+}
+// METRICS_SAVE_MS — только для тестов: им не ждать минуту.
+setInterval(saveMetrics, Number(process.env.METRICS_SAVE_MS) || 60 * 1000).unref();
+// Остановка службы (NSSM шлёт Ctrl+C) — дописываем последнюю минуту и выходим.
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGBREAK']) {
+  process.once(sig, () => { saveMetrics(); process.exit(0); });
+}
+
 // Раз в час — сводка нагрузки за прошедший час в журнал: в памяти хранятся только последние сутки,
 // а по журналу видна и история за прошлые дни (раздел «Логи», событие load_summary).
 setInterval(() => logServer('INFO', 'load_summary', hourSummary(metrics.summary(60))), 60 * 60 * 1000).unref();

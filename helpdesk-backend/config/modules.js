@@ -76,8 +76,6 @@ module.exports = [
       { id: "files", label: "Файлы", sub: "" },
       { id: "updates", label: "Клиенты", sub: "" },
       { id: "tls", label: "Сертификат", sub: "" },
-      { id: "load", label: "Нагрузка", sub: "" },
-      { id: "logs", label: "Логи", sub: "" },
     ],
   },
 ];

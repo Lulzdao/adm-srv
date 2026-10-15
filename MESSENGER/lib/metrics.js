@@ -12,6 +12,10 @@
 // трафик считается и по клиентам — по сотруднику, а для запросов без входа (раздача обновлений) —
 // по адресу.
 //
+// Минуты переживают перезапуск службы: сервер раз в минуту и при остановке сохраняет изменившиеся
+// минуты в базу (таблица metrics_minutes), а при запуске загружает последние сутки обратно (см.
+// dirty/exportBuckets/importBuckets ниже и сохранение в server.js). Решение пользователя 2026-10-15.
+//
 // Всё здесь — простые счётчики: одна запись — несколько прибавлений к числам. Стоимость ничтожна
 // по сравнению с самой обработкой запроса.
 
@@ -60,8 +64,24 @@ function bump(map, key, limit, init) {
   return e;
 }
 
+// Минута ↔ простой объект для хранения: Map-ы — списками пар.
+function bucketToJson(b) {
+  return { t: b.t, http: b.http, ws: b.ws, gauges: b.gauges, groups: [...b.groups], wsTypes: [...b.wsTypes], clients: [...b.clients] };
+}
+function bucketFromJson(o) {
+  const b = emptyBucket(Number(o.t));
+  Object.assign(b.http, o.http || {});
+  Object.assign(b.ws, o.ws || {});
+  Object.assign(b.gauges, o.gauges || {});
+  for (const [k, v] of o.groups || []) b.groups.set(k, v);
+  for (const [k, v] of o.wsTypes || []) b.wsTypes.set(k, v);
+  for (const [k, v] of o.clients || []) b.clients.set(k, v);
+  return b;
+}
+
 function createMetrics({ now = () => Date.now() } = {}) {
   const buckets = new Map(); // начало минуты → bucket
+  const dirty = new Set();   // минуты, изменившиеся с прошлого сохранения
 
   function bucket() {
     const t = Math.floor(now() / MINUTE) * MINUTE;
@@ -72,6 +92,7 @@ function createMetrics({ now = () => Date.now() } = {}) {
       const oldest = t - KEEP_MINUTES * MINUTE;
       for (const k of buckets.keys()) if (k <= oldest) buckets.delete(k);
     }
+    dirty.add(t);
     return b;
   }
 
@@ -110,6 +131,26 @@ function createMetrics({ now = () => Date.now() } = {}) {
     gauges(g) {
       const b = bucket().gauges;
       for (const k of Object.keys(g)) if (typeof g[k] === 'number' && g[k] > b[k]) b[k] = g[k];
+    },
+    // Изменившиеся с прошлого раза минуты — для сохранения в базу. Отметки снимаются.
+    takeDirty() {
+      const out = [];
+      for (const t of dirty) { const b = buckets.get(t); if (b) out.push(bucketToJson(b)); }
+      dirty.clear();
+      return out;
+    },
+    // Загрузить сохранённые минуты (после перезапуска). Старше суток — пропускаются; минута,
+    // которая уже считается в памяти, не затирается.
+    load(list) {
+      const oldest = Math.floor(now() / MINUTE) * MINUTE - KEEP_MINUTES * MINUTE;
+      let loaded = 0;
+      for (const o of list || []) {
+        const t = Number(o && o.t);
+        if (!Number.isFinite(t) || t <= oldest || buckets.has(t)) continue;
+        buckets.set(t, bucketFromJson(o));
+        loaded += 1;
+      }
+      return loaded;
     },
     // Сводка за последние minutes минут (не больше суток).
     summary(minutes = 60) {

@@ -88,3 +88,37 @@ test('раздел «Нагрузка»: сервер считает запро�
     assert.equal((await request(srv.url, 'GET', '/api/admin/load', { token: анна.token })).status, 403);
   } finally { ws.close(); }
 });
+
+// --- Нагрузка переживает перезапуск службы ---
+test('минуты отдаются на сохранение и загружаются обратно; старше суток — нет', () => {
+  let t = Date.UTC(2026, 9, 15, 10, 0, 0);
+  const a = createMetrics({ now: () => t });
+  a.http({ method: 'GET', url: '/api/users', status: 200, bytesOut: 500, ms: 3, clientKey: 'Анна' });
+  a.ws('in', '{"type":"status"}', 'Анна');
+  const saved = JSON.parse(JSON.stringify(a.takeDirty())); // как через базу: в JSON и обратно
+  assert.equal(saved.length, 1);
+  assert.equal(a.takeDirty().length, 0, 'отметки сняты');
+
+  const b = createMetrics({ now: () => t + 5 * MINUTE });
+  assert.equal(b.load([...saved, { t: t - 25 * 60 * MINUTE }]), 1, 'старше суток не грузится');
+  const s = b.summary(60);
+  assert.equal(s.totals.requests, 1);
+  assert.equal(s.groups[0].name, 'GET /api/users');
+  assert.equal(s.clients[0].name, 'Анна');
+  assert.equal(s.wsTypes[0].type, 'status');
+});
+
+test('сервер после перезапуска помнит нагрузку', async () => {
+  const s2 = await startServer({ env: { METRICS_SAVE_MS: '200' } });
+  try {
+    const adm = await login(s2.url, ADMIN.username, ADMIN.password);
+    for (let i = 0; i < 5; i++) await request(s2.url, 'GET', '/api/users', { token: adm.token });
+    await new Promise((r) => setTimeout(r, 700)); // сохранение успело пройти
+    await s2.restart();
+    const adm2 = await login(s2.url, ADMIN.username, ADMIN.password);
+    const r = await request(s2.url, 'GET', '/api/admin/load?minutes=60', { token: adm2.token });
+    const users = r.json.groups.find((g) => g.name === 'GET /api/users');
+    assert.ok(users && users.count >= 5, `запросы до перезапуска на месте: ${JSON.stringify(users)}`);
+    assert.match(s2.log(), /load_history_restored/);
+  } finally { await s2.stop(); }
+});
