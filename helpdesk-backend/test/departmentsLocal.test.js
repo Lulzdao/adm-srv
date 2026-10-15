@@ -31,7 +31,7 @@ function names(localContent) {
 }
 
 test("без departments.local.js — встроенный список", () => {
-  assert.deepEqual(JSON.parse(names()), ["ИТ", "ХОЗ", "ЕГРПО"]);
+  assert.deepEqual(JSON.parse(names()), ["ИТ", "ИТ208", "ХОЗ", "ЕГРПО"]);
 });
 
 test("departments.local.js есть — список целиком из него (так переживает обновление)", () => {
