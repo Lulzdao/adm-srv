@@ -659,10 +659,18 @@ html.embedded .view > h2:first-child { display: none; }
 .load-legend i { display:inline-block; width:12px; height:3px; border-radius:2px; vertical-align:middle; margin:0 4px 0 10px; }
 .load-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:16px; }
 .load-grid .panel { margin-bottom:0; }
-#view-load .load-grid { margin-bottom:16px; }
+#ov-load .load-grid { margin-bottom:16px; }
 #loadCards .card .v.bad { color:var(--danger); }
 
 /* «Клиенты»: заголовки, по которым сортируется таблица. */
 .sort-th { cursor:pointer; user-select:none; white-space:nowrap; }
 .sort-th:hover { color:var(--md-on-surface); }
 .sort-th.sorted { color:var(--md-primary); }
+
+/* «Обзор»: переключатель «Нагрузка / Логи» и его вкладки. */
+.ov-tabs { display:inline-flex; gap:2px; padding:3px; margin:6px 0 14px; border-radius:var(--md-shape-m, 12px); background:var(--md-surface-container-low); }
+.ov-tab { border:none; background:transparent; color:var(--md-on-surface-variant); font:inherit; font-size:13.5px; font-weight:600; padding:7px 18px; border-radius:var(--md-shape-s, 8px); cursor:pointer; }
+.ov-tab:hover { color:var(--md-on-surface); }
+.ov-tab.on { background:var(--md-primary); color:var(--md-on-primary, #fff); }
+.ov-pane { display:none; }
+.ov-pane.on { display:block; }

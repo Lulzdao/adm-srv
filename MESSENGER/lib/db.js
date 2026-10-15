@@ -199,6 +199,14 @@ function openDatabase(DB_FILE, { logServer }) {
     // том числе при обновлении сервера — отсчёт у всех начинался заново. Пишется только при смене
     // статуса, то есть редко. hosts — JSON-массив имён ПК, чтобы после перезапуска, пока клиенты
     // переподключаются, человек не выглядел «недоступным для сообщений».
+    // Нагрузка на сервер по минутам за последние сутки (lib/metrics.js): чтобы раздел «Нагрузка»
+    // не начинался с нуля после перезапуска службы. data — минута целиком, JSON; старше суток удаляется.
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS metrics_minutes (
+        t INTEGER PRIMARY KEY,
+        data TEXT NOT NULL
+      );
+    `);
     db.exec(`
       CREATE TABLE IF NOT EXISTS presence_state (
         user_id INTEGER PRIMARY KEY,

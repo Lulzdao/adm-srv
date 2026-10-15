@@ -46,8 +46,6 @@
       <div class="nav-item" data-view="files">Файлы</div>
       <div class="nav-item" data-view="updates">Клиенты</div>
       <div class="nav-item" data-view="tls">Сертификат</div>
-      <div class="nav-item" data-view="load">Нагрузка</div>
-      <div class="nav-item" data-view="logs">Логи</div>
     </div>
     <div class="mm-user">
       <div class="mm-user-text">
@@ -70,6 +68,92 @@
       <div class="panel">
         <h3>Сервер</h3>
         <div id="statUptime" style="color:var(--muted); font-size:13px;">—</div>
+      </div>
+
+      <!-- Нагрузка и логи — здесь же, в «Обзоре», переключателем (решение пользователя 2026-10-15;
+           раньше были отдельными разделами меню). -->
+      <div class="ov-tabs" role="tablist">
+        <button type="button" class="ov-tab" data-ov="load" onclick="showOverviewTab('load')">Нагрузка</button>
+        <button type="button" class="ov-tab" data-ov="logs" onclick="showOverviewTab('logs')">Логи</button>
+      </div>
+      <div class="ov-pane" id="ov-load">
+      <p style="color:var(--muted); font-size:12.5px; margin:0 0 14px;">
+        Что и сколько проходит через сервер: запросы, трафик, сообщения по постоянным линиям, подключения,
+        занятость процесса. Сервер считает это сам, по минутам, за последние сутки — и сохраняет: после
+        перезапуска службы всё на месте. Раз в час сводка уходит в журнал — вкладка «Логи», событие
+        <code>load_summary</code>. Обновляется само каждые 15 секунд, пока вкладка открыта.
+      </p>
+      <div class="row-flex" style="margin-bottom:12px;">
+        <select id="loadRange">
+          <option value="60">Последний час</option>
+          <option value="360">6 часов</option>
+          <option value="1440">Сутки</option>
+        </select>
+        <button class="action ghost" onclick="loadLoad()">Обновить</button>
+        <span id="loadStamp" style="color:var(--muted); font-size:12px;"></span>
+      </div>
+      <div class="cards" id="loadCards"></div>
+      <div class="panel">
+        <h3>Трафик, КБ в минуту <span class="load-legend"><i class="lg-in"></i>к серверу <i class="lg-out"></i>от сервера</span></h3>
+        <div id="loadChartTraffic" class="load-chart"></div>
+      </div>
+      <div class="load-grid">
+        <div class="panel"><h3>Запросов в минуту</h3><div id="loadChartRequests" class="load-chart small"></div></div>
+        <div class="panel"><h3>Подключений (окон клиентов)</h3><div id="loadChartConnections" class="load-chart small"></div></div>
+        <div class="panel"><h3>Задержка сервера, мс <span style="color:var(--muted); font-weight:400; font-size:12px;">(больше 2000 — был занят)</span></h3><div id="loadChartLag" class="load-chart small"></div></div>
+        <div class="panel"><h3>Процессор, %</h3><div id="loadChartCpu" class="load-chart small"></div></div>
+      </div>
+      <div class="panel">
+        <h3>Запросы — что и сколько</h3>
+        <table>
+          <thead><tr><th>Запрос</th><th>Сколько</th><th>К серверу</th><th>От сервера</th><th>Среднее, мс</th><th>Дольше всего, мс</th><th>Ошибок</th></tr></thead>
+          <tbody id="loadGroups"></tbody>
+        </table>
+      </div>
+      <div class="load-grid">
+        <div class="panel">
+          <h3>Сообщения по постоянным линиям</h3>
+          <table>
+            <thead><tr><th>Направление</th><th>Тип</th><th>Сколько</th><th>Объём</th></tr></thead>
+            <tbody id="loadWs"></tbody>
+          </table>
+        </div>
+        <div class="panel">
+          <h3>Кто больше всех грузит сервер</h3>
+          <table>
+            <thead><tr><th>Клиент</th><th>Трафик</th><th>Запросов</th><th>Сообщений</th></tr></thead>
+            <tbody id="loadClients"></tbody>
+          </table>
+        </div>
+      </div>
+      </div>
+      <div class="ov-pane" id="ov-logs">
+      <div class="panel">
+        <p style="color:var(--muted); font-size:12.5px; margin:0 0 10px;">
+          Входы/выходы, срабатывания защиты от подбора пароля и ошибки сервера — плюс ошибки,
+          присланные с рабочих мест сотрудников (сбои в приложении на их ПК). Хранится по дням в
+          файлах на сервере (папка logs/), здесь — только просмотр.
+        </p>
+        <div class="row-flex">
+          <input type="date" id="logsDay">
+          <select id="logsType">
+            <option value="all">Сервер и клиенты</option>
+            <option value="server">Только сервер</option>
+            <option value="client">Только клиенты</option>
+          </select>
+          <select id="logsLevel">
+            <option value="all">Все уровни</option>
+            <option value="ERROR">Только ошибки</option>
+            <option value="WARN">Предупреждения и ошибки</option>
+          </select>
+          <button class="action" onclick="loadLogs()">Показать</button>
+          <span id="logsSummary" style="color:var(--muted); font-size:12px;"></span>
+        </div>
+        <table style="margin-top:12px;">
+          <thead><tr><th style="width:80px">Время</th><th style="width:70px">Уровень</th><th style="width:60px">Откуда</th><th style="width:150px">Событие</th><th>Подробности</th></tr></thead>
+          <tbody id="logsBody"></tbody>
+        </table>
+      </div>
       </div>
     </div>
 
@@ -343,89 +427,6 @@
           удалением этой переменной. Что именно действует сейчас — написано выше.
         </p>
         <button class="action danger" onclick="removeTls()">Удалить из хранилища</button>
-      </div>
-    </div>
-
-    <div class="view" id="view-load">
-      <h2>Нагрузка на сервер</h2>
-      <p style="color:var(--muted); font-size:12.5px; margin:-6px 0 14px;">
-        Что и сколько проходит через сервер: запросы, трафик, сообщения по постоянным линиям, подключения,
-        занятость процесса. Сервер считает это сам, по минутам, за последние сутки (после перезапуска
-        службы — заново); раз в час сводка уходит в «Логи» — событие <code>load_summary</code>.
-        Обновляется само каждые 15 секунд, пока раздел открыт.
-      </p>
-      <div class="row-flex" style="margin-bottom:12px;">
-        <select id="loadRange">
-          <option value="60">Последний час</option>
-          <option value="360">6 часов</option>
-          <option value="1440">Сутки</option>
-        </select>
-        <button class="action ghost" onclick="loadLoad()">Обновить</button>
-        <span id="loadStamp" style="color:var(--muted); font-size:12px;"></span>
-      </div>
-      <div class="cards" id="loadCards"></div>
-      <div class="panel">
-        <h3>Трафик, КБ в минуту <span class="load-legend"><i class="lg-in"></i>к серверу <i class="lg-out"></i>от сервера</span></h3>
-        <div id="loadChartTraffic" class="load-chart"></div>
-      </div>
-      <div class="load-grid">
-        <div class="panel"><h3>Запросов в минуту</h3><div id="loadChartRequests" class="load-chart small"></div></div>
-        <div class="panel"><h3>Подключений (окон клиентов)</h3><div id="loadChartConnections" class="load-chart small"></div></div>
-        <div class="panel"><h3>Задержка сервера, мс <span style="color:var(--muted); font-weight:400; font-size:12px;">(больше 2000 — был занят)</span></h3><div id="loadChartLag" class="load-chart small"></div></div>
-        <div class="panel"><h3>Процессор, %</h3><div id="loadChartCpu" class="load-chart small"></div></div>
-      </div>
-      <div class="panel">
-        <h3>Запросы — что и сколько</h3>
-        <table>
-          <thead><tr><th>Запрос</th><th>Сколько</th><th>К серверу</th><th>От сервера</th><th>Среднее, мс</th><th>Дольше всего, мс</th><th>Ошибок</th></tr></thead>
-          <tbody id="loadGroups"></tbody>
-        </table>
-      </div>
-      <div class="load-grid">
-        <div class="panel">
-          <h3>Сообщения по постоянным линиям</h3>
-          <table>
-            <thead><tr><th>Направление</th><th>Тип</th><th>Сколько</th><th>Объём</th></tr></thead>
-            <tbody id="loadWs"></tbody>
-          </table>
-        </div>
-        <div class="panel">
-          <h3>Кто больше всех грузит сервер</h3>
-          <table>
-            <thead><tr><th>Клиент</th><th>Трафик</th><th>Запросов</th><th>Сообщений</th></tr></thead>
-            <tbody id="loadClients"></tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-
-    <div class="view" id="view-logs">
-      <h2>Логи</h2>
-      <div class="panel">
-        <p style="color:var(--muted); font-size:12.5px; margin:0 0 10px;">
-          Входы/выходы, срабатывания защиты от подбора пароля и ошибки сервера — плюс ошибки,
-          присланные с рабочих мест сотрудников (сбои в приложении на их ПК). Хранится по дням в
-          файлах на сервере (папка logs/), здесь — только просмотр.
-        </p>
-        <div class="row-flex">
-          <input type="date" id="logsDay">
-          <select id="logsType">
-            <option value="all">Сервер и клиенты</option>
-            <option value="server">Только сервер</option>
-            <option value="client">Только клиенты</option>
-          </select>
-          <select id="logsLevel">
-            <option value="all">Все уровни</option>
-            <option value="ERROR">Только ошибки</option>
-            <option value="WARN">Предупреждения и ошибки</option>
-          </select>
-          <button class="action" onclick="loadLogs()">Показать</button>
-          <span id="logsSummary" style="color:var(--muted); font-size:12px;"></span>
-        </div>
-        <table style="margin-top:12px;">
-          <thead><tr><th style="width:80px">Время</th><th style="width:70px">Уровень</th><th style="width:60px">Откуда</th><th style="width:150px">Событие</th><th>Подробности</th></tr></thead>
-          <tbody id="logsBody"></tbody>
-        </table>
       </div>
     </div>
 

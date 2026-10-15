@@ -175,17 +175,25 @@ function tellPlatform(msg) {
 
 const VIEW_NAMES = [...document.querySelectorAll('.nav-item')].map((i) => i.dataset.view);
 let pendingView = null;
+// «Нагрузка» и «Логи» были отдельными разделами — теперь вкладки «Обзора». Старое имя раздела
+// (из закладки #logs или из меню «Центра» прежней версии) открывает «Обзор» на нужной вкладке.
+let overviewTab = (() => { try { return localStorage.getItem('overviewTab') === 'logs' ? 'logs' : 'load'; } catch { return 'load'; } })();
+function aliasView(v) {
+  if (v === 'load' || v === 'logs') { overviewTab = v; return 'overview'; }
+  return v;
+}
 function viewFromHash() {
-  const v = decodeURIComponent(location.hash.replace(/^#/, ''));
+  const v = aliasView(decodeURIComponent(location.hash.replace(/^#/, '')));
   return VIEW_NAMES.includes(v) ? v : null;
 }
 
 window.addEventListener('message', (e) => {
   if (!EMBEDDED || e.origin !== location.origin || e.source !== window.parent || !e.data || e.data.to !== 'module') return;
-  if (e.data.type === 'open' && VIEW_NAMES.includes(e.data.view)) {
+  const view = e.data.type === 'open' ? aliasView(e.data.view) : null;
+  if (view && VIEW_NAMES.includes(view)) {
     // До входа раздел запоминаем — откроется сразу после него.
-    if (document.getElementById('dash').classList.contains('active')) activateView(e.data.view);
-    else pendingView = e.data.view;
+    if (document.getElementById('dash').classList.contains('active')) activateView(view);
+    else pendingView = view;
   }
 });
 
@@ -194,6 +202,7 @@ window.addEventListener('message', (e) => {
 // Пока это жило внутри onclick, опрос присутствия при загрузке не запускался
 // вовсе — статусы появлялись, только если уйти на другую вкладку и вернуться.
 function activateView(name) {
+  name = aliasView(name);
   tellPlatform({ type: 'view', view: name });
   document.querySelectorAll('.nav-item').forEach(i => i.classList.toggle('active', i.dataset.view === name));
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === 'view-' + name));
@@ -206,9 +215,19 @@ function activateView(name) {
   // держать опрос постоянно незачем.
   if (name === 'users') startPresencePolling();
   else stopPresencePolling();
-  // «Нагрузка» обновляется сама, только пока раздел открыт.
-  if (name === 'load') startLoadPolling();
+  // «Обзор»: открытая вкладка — «Нагрузка» (обновляется сама, пока на виду) или «Логи».
+  if (name === 'overview') showOverviewTab(overviewTab);
   else stopLoadPolling();
+}
+
+// Вкладка «Обзора». Выбор запоминается в этом браузере.
+function showOverviewTab(tab) {
+  overviewTab = tab === 'logs' ? 'logs' : 'load';
+  try { localStorage.setItem('overviewTab', overviewTab); } catch { /* не запомнится — не беда */ }
+  document.querySelectorAll('.ov-tab').forEach((b) => b.classList.toggle('on', b.dataset.ov === overviewTab));
+  document.querySelectorAll('.ov-pane').forEach((p) => p.classList.toggle('on', p.id === 'ov-' + overviewTab));
+  if (overviewTab === 'load') startLoadPolling();
+  else { stopLoadPolling(); loadLogs(); }
 }
 
 document.querySelectorAll('.nav-item').forEach(item => {
