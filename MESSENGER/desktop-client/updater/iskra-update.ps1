@@ -42,10 +42,23 @@ $updater = Join-Path $Root 'resources\app.asar\updater.js'
 if (-not $exe) { Write-Log "no program exe in $Root"; exit 1 }
 
 # --- 1. узнать и скачать ---
+# Через Start-Process с ожиданием и выводом в файл, а не «& программа»: «Искра» — оконная программа,
+# и при вызове через & PowerShell её не дожидается и вывода не получает (проверено 2026-10-15 —
+# 0 строк, код выхода пустой). Из-за этого задание до 1.0.30 скачивало установщик, но не ставило
+# ни разу: сценарий решал «ставить нечего» и выходил. Start-Process есть и в PowerShell 2.0.
+$out = Join-Path $env:SystemRoot ('Temp\iskra-update-out-' + [guid]::NewGuid().ToString('N') + '.txt')
+$lines = @()
+$prepareCode = -1
 $env:ELECTRON_RUN_AS_NODE = '1'
-$lines = @(& $exe.FullName $updater 2>$null)
-$prepareCode = $LASTEXITCODE
+try {
+	$p = Start-Process -FilePath $exe.FullName -ArgumentList ('"' + $updater + '"') -RedirectStandardOutput $out -Wait -PassThru -WindowStyle Hidden
+	$prepareCode = $p.ExitCode
+	$lines = @(Get-Content -LiteralPath $out -ErrorAction SilentlyContinue)
+} catch {
+	Write-Log ("could not start updater: {0}" -f $_.Exception.Message)
+}
 Remove-Item Env:\ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $out -Force -ErrorAction SilentlyContinue
 
 $info = @{}
 foreach ($line in $lines) {
@@ -53,6 +66,8 @@ foreach ($line in $lines) {
 	$at = $text.IndexOf('=')
 	if ($at -gt 0) { $info[$text.Substring(0, $at)] = $text.Substring($at + 1) }
 }
+# Ответа нет вовсе — это не «ставить нечего», а сбой: пишем, иначе снова ничего не узнать.
+if (-not $info.ContainsKey('update')) { Write-Log ("updater gave no answer, exit code {0}" -f $prepareCode) }
 if ($info['update'] -ne '1') { exit $prepareCode }
 
 $installer = $info['installer']

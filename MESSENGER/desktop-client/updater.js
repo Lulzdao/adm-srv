@@ -172,15 +172,24 @@ function trustAnchors(policy) {
   const anchors = [...tls.rootCertificates];
   try { anchors.push(fs.readFileSync(path.join(__dirname, 'rosstat-root-ca.crt'), 'utf8')); } catch { /* файла нет */ }
   for (const pem of policy.extraCa || []) anchors.push(pem);
+  // -InputFormat None и закрытый ввод: PowerShell 2.0 (Windows 7) иначе может ждать ввода до тайм-аута
+  // (та же ловушка, что в установщике до 1.0.28). Тайм-аут с запасом: первый запуск PowerShell от
+  // имени системы на старой машине сразу после входа бывает долгим.
+  let fromStore = 0;
   try {
     const out = execFileSync(path.join(SYSTEM_ROOT, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
-      ['-NoProfile', '-NonInteractive', '-Command', 'Get-ChildItem Cert:\\LocalMachine\\Root | ForEach-Object { [Convert]::ToBase64String($_.RawData) }'],
-      { timeout: 20000, windowsHide: true, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
+      ['-NoProfile', '-NonInteractive', '-InputFormat', 'None', '-Command', 'Get-ChildItem Cert:\\LocalMachine\\Root | ForEach-Object { [Convert]::ToBase64String($_.RawData) }'],
+      { timeout: 60000, windowsHide: true, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
     for (const line of String(out).split(/\r?\n/)) {
       const body = line.trim().match(/.{1,64}/g);
-      if (body) anchors.push(`-----BEGIN CERTIFICATE-----\n${body.join('\n')}\n-----END CERTIFICATE-----\n`);
+      if (body) { anchors.push(`-----BEGIN CERTIFICATE-----\n${body.join('\n')}\n-----END CERTIFICATE-----\n`); fromStore += 1; }
     }
-  } catch { /* хранилище не прочиталось — остаются корень из сборки и политика */ }
+  } catch (err) {
+    // Хранилище не прочиталось — остаются корень из сборки и политика. Пишем почему: на Windows 7
+    // задание падало с «self signed certificate in certificate chain» (2026-10-15).
+    log(`windows root store unreadable: ${String((err && err.message) || err).split('\n')[0]}`);
+  }
+  if (!fromStore) log('windows root store: 0 certificates');
   return anchors;
 }
 
