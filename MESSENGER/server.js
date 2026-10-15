@@ -1577,6 +1577,20 @@ app.get('/api/admin/history/all', auth, requireCapability('can_admin'), (req, re
   }));
 });
 
+// Все группы — для «Переписок» панели: администратор открывает переписку любой группы. Раньше там
+// был только пункт «Общая комната» — один общий чат первых версий, который в клиенте давно заменили
+// группами. generalMessages — есть ли что смотреть в той комнате: пункт показывается, только если да.
+const listAllGroups = db.prepare(`
+  SELECT g.id, g.name,
+         (SELECT COUNT(*) FROM group_members m WHERE m.group_id = g.id) AS member_count,
+         (SELECT COUNT(*) FROM messages WHERE room = 'group:' || g.id) AS messages
+  FROM groups g ORDER BY g.name
+`);
+const countGeneralMessages = db.prepare("SELECT COUNT(*) AS c FROM messages WHERE room = 'general'");
+app.get('/api/admin/groups', auth, requireCapability('can_admin'), (req, res) => {
+  res.json({ groups: listAllGroups.all(), generalMessages: countGeneralMessages.get().c });
+});
+
 app.get('/api/admin/history/room/:room', auth, requireCapability('can_admin'), (req, res) => {
   res.json(roomHistoryAll.all(req.params.room, beforeId(req)).reverse().map(normalizeRow));
 });

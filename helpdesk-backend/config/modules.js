@@ -72,7 +72,6 @@ module.exports = [
       { id: "users", label: "Пользователи", sub: "" },
       { id: "depts", label: "Отделы", sub: "" },
       { id: "history", label: "Переписки", sub: "" },
-      { id: "broadcast", label: "Рассылка", sub: "" },
       { id: "files", label: "Файлы", sub: "" },
       { id: "updates", label: "Клиенты", sub: "" },
       { id: "tls", label: "Сертификат", sub: "" },

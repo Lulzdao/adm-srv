@@ -674,3 +674,5 @@ html.embedded .view > h2:first-child { display: none; }
 .ov-tab.on { background:var(--md-primary); color:var(--md-on-primary, #fff); }
 .ov-pane { display:none; }
 .ov-pane.on { display:block; }
+.hist-pane { display:none; }
+.hist-pane.on { display:block; }

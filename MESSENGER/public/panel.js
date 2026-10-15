@@ -40,6 +40,7 @@
     function open() {
       menu.innerHTML = '';
       Array.prototype.forEach.call(sel.options, function (opt, i) {
+        if (opt.hidden) return; // скрытый пункт (например, «Общая комната» без сообщений) — не показываем
         var row = document.createElement('div');
         row.className = 'select-option' + (i === sel.selectedIndex ? ' selected' : '');
         row.textContent = opt.textContent;
@@ -178,8 +179,11 @@ let pendingView = null;
 // «Нагрузка» и «Логи» были отдельными разделами — теперь вкладки «Обзора». Старое имя раздела
 // (из закладки #logs или из меню «Центра» прежней версии) открывает «Обзор» на нужной вкладке.
 let overviewTab = (() => { try { return localStorage.getItem('overviewTab') === 'logs' ? 'logs' : 'load'; } catch { return 'load'; } })();
+// «Рассылка» — вкладка раздела «Переписки» (решение пользователя 2026-10-15).
+let historyTab = (() => { try { return localStorage.getItem('historyTab') === 'broadcast' ? 'broadcast' : 'chats'; } catch { return 'chats'; } })();
 function aliasView(v) {
   if (v === 'load' || v === 'logs') { overviewTab = v; return 'overview'; }
+  if (v === 'broadcast') { historyTab = 'broadcast'; return 'history'; }
   return v;
 }
 function viewFromHash() {
@@ -218,13 +222,24 @@ function activateView(name) {
   // «Обзор»: открытая вкладка — «Нагрузка» (обновляется сама, пока на виду) или «Логи».
   if (name === 'overview') showOverviewTab(overviewTab);
   else stopLoadPolling();
+  if (name === 'history') showHistoryTab(historyTab);
+}
+
+// Вкладка раздела «Переписки»: сами переписки или рассылка всем. Выбор запоминается.
+function showHistoryTab(tab) {
+  historyTab = tab === 'broadcast' ? 'broadcast' : 'chats';
+  try { localStorage.setItem('historyTab', historyTab); } catch { /* не запомнится — не беда */ }
+  document.querySelectorAll('.hist-tab').forEach((b) => b.classList.toggle('on', b.dataset.ht === historyTab));
+  document.querySelectorAll('.hist-pane').forEach((p) => p.classList.toggle('on', p.id === 'ht-' + historyTab));
+  if (historyTab === 'broadcast') broadcastEditor();
+  else loadAdminGroups();
 }
 
 // Вкладка «Обзора». Выбор запоминается в этом браузере.
 function showOverviewTab(tab) {
   overviewTab = tab === 'logs' ? 'logs' : 'load';
   try { localStorage.setItem('overviewTab', overviewTab); } catch { /* не запомнится — не беда */ }
-  document.querySelectorAll('.ov-tab').forEach((b) => b.classList.toggle('on', b.dataset.ov === overviewTab));
+  document.querySelectorAll('.ov-tab[data-ov]').forEach((b) => b.classList.toggle('on', b.dataset.ov === overviewTab));
   document.querySelectorAll('.ov-pane').forEach((p) => p.classList.toggle('on', p.id === 'ov-' + overviewTab));
   if (overviewTab === 'load') startLoadPolling();
   else { stopLoadPolling(); loadLogs(); }
@@ -798,7 +813,26 @@ async function deleteDept(id) {
 document.getElementById('histType').onchange = (e) => {
   const isDm = e.target.value === 'dm';
   document.getElementById('histDm').hidden = !isDm;
+  document.getElementById('histGroup').hidden = e.target.value !== 'group';
 };
+
+// Список групп для «Переписок»: все группы организации — администратор смотрит любую. Старая
+// «Общая комната» видна в списке, только если в ней остались сообщения.
+async function loadAdminGroups() {
+  try {
+    const r = await api('api/admin/groups');
+    const sel = document.getElementById('histGroupId');
+    const keep = sel.value;
+    sel.innerHTML = r.groups.length
+      ? r.groups.map((g) => `<option value="${g.id}">${escapeHtml(g.name)} · ${g.member_count} чел., сообщений: ${g.messages}</option>`).join('')
+      : '<option value="">Групп пока нет</option>';
+    if (keep && r.groups.some((g) => String(g.id) === keep)) sel.value = keep;
+    const general = document.querySelector('#histType option[value="room"]');
+    general.hidden = !r.generalMessages;
+    general.textContent = `Общая комната (старая) · сообщений: ${r.generalMessages}`;
+    sel.dispatchEvent(new Event('change')); // подпись видимого списка — по выбранному пункту
+  } catch { /* список не загрузился — останется прежний */ }
+}
 
 // Экранируем И кавычки тоже: без них значение, попавшее в атрибут (например value="..." в списке
 // сотрудников), закрывало атрибут своей кавычкой и дальше писало уже разметку — то есть обычного
@@ -831,6 +865,10 @@ async function loadHistory() {
     let path;
     if (type === 'room') {
       path = 'api/admin/history/room/general';
+    } else if (type === 'group') {
+      const gid = document.getElementById('histGroupId').value;
+      if (!gid) { box.innerHTML = 'Выберите группу'; return; }
+      path = `api/admin/history/room/${encodeURIComponent('group:' + gid)}`;
     } else {
       const u1 = document.getElementById('histUser1').value, u2 = document.getElementById('histUser2').value;
       if (!u1 || !u2 || u1 === u2) { box.innerHTML = 'Выберите двух разных сотрудников'; return; }
