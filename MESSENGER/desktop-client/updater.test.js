@@ -19,14 +19,16 @@ const ymlFor = (version, file, body, size = body.length) =>
 // Сервер обновлений в миниатюре: отдаёт то, что лежит в files, и считает обращения.
 async function feed(files) {
   const hits = [];
+  const hosts = [];
   const server = http.createServer((req, res) => {
     hits.push(req.url);
+    hosts.push(req.headers['x-iskra-host']);
     const body = files[req.url];
     if (body === undefined) { res.writeHead(404); res.end('нет'); return; }
     res.writeHead(200); res.end(body);
   });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
-  return { url: `http://127.0.0.1:${server.address().port}`, hits, close: () => new Promise((r) => server.close(r)) };
+  return { url: `http://127.0.0.1:${server.address().port}`, hits, hosts, close: () => new Promise((r) => server.close(r)) };
 }
 const tempDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'iskra-updater-test-'));
 
@@ -75,6 +77,7 @@ test('версия на сервере не новее — ничего не к�
     assert.deepStrictEqual(r, { update: false, published: '1.0.26', installed: '1.0.26' });
     assert.deepStrictEqual(srv.hits, ['/updates/win10/latest.yml'], 'за установщиком не ходили');
     assert.strictEqual(made, 0, 'папку под загрузку не создавали');
+    assert.deepStrictEqual(srv.hosts, [os.hostname()], 'задание называет свой ПК (видно в «Нагрузке» панели)');
   } finally { await srv.close(); }
 });
 

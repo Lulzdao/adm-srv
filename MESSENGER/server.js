@@ -476,8 +476,34 @@ const app = express();
 // обновлений. Считается по закрытию ответа ('close' — и при обрыве скачивания посередине). Размеры —
 // по заголовкам Content-Length: у потоковых ответов без него трафик не учтётся, но таких у нас нет.
 // Клиент — сотрудник, если запрос был со входом, иначе адрес (так видно, кто качает обновления).
+// Кто качает без входа — это задание обновления на машине сотрудника (работает от имени системы,
+// входа в «Искру» у него нет). Чтобы в «Нагрузке» был виден ПК, а не только адрес: задание 1.0.30+
+// само называет себя заголовком X-Iskra-Host, а для прежних версий имя узнаём по адресу через DNS
+// (обратная запись домена). Поиск — в фоне, с запасом на сутки; до ответа строка подписана адресом.
+const dns = require('dns');
+const HOST_BY_IP_TTL_MS = 24 * 60 * 60 * 1000;
+const hostByIp = new Map(); // ip → { name, at }
+function lookupHostName(ip) {
+  const c = hostByIp.get(ip);
+  if (c && Date.now() - c.at < HOST_BY_IP_TTL_MS) return;
+  if (hostByIp.size > 5000) hostByIp.clear(); // защита от разрастания: адресов в сети столько не бывает
+  hostByIp.set(ip, { name: c ? c.name : null, at: Date.now() });
+  try {
+    dns.reverse(ip, (err, names) => {
+      if (!err && names && names[0]) hostByIp.set(ip, { name: names[0].split('.')[0].toUpperCase(), at: Date.now() });
+    });
+  } catch { /* не адрес — подпишем адресом */ }
+}
+function anonymousClientLabel(req, ip) {
+  const hinted = String(req.headers['x-iskra-host'] || '').trim();
+  if (/^[A-Za-z0-9._-]{1,63}$/.test(hinted)) return `ПК ${hinted.toUpperCase()}`;
+  const c = hostByIp.get(ip);
+  return c && c.name ? `ПК ${c.name}` : `адрес ${ip}`;
+}
 app.use((req, res, next) => {
   const started = process.hrtime.bigint();
+  const reqIp = String(req.ip || '').replace(/^::ffff:/, '');
+  if (!req.headers.authorization && !req.headers['x-iskra-host']) lookupHostName(reqIp);
   res.once('close', () => {
     const ms = Number(process.hrtime.bigint() - started) / 1e6;
     const ip = String(req.ip || '').replace(/^::ffff:/, '');
@@ -488,7 +514,7 @@ app.use((req, res, next) => {
       bytesIn: Number(req.headers['content-length']) || 0,
       bytesOut: Number(res.getHeader('content-length')) || 0,
       ms,
-      clientKey: req.user ? (req.user.display_name || req.user.username) : `адрес ${ip}`,
+      clientKey: req.user ? (req.user.display_name || req.user.username) : anonymousClientLabel(req, ip),
     });
   });
   next();
