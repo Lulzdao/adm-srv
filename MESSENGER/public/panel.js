@@ -1341,9 +1341,36 @@ async function publishRelease() {
   }
 }
 
+// Колонка «Обновление»: как машина получает новую версию и что последнее сделало задание
+// обновления (клиент 1.0.30+ сообщает это сам, см. updater-status.js в клиенте).
+const UPDATE_PLAN_LABEL = {
+  self: 'ставит сам (есть права администратора)',
+  task: 'заданием системы (8:30 и 13:00)',
+  none: 'только при перезагрузке ПК (задания нет)',
+};
+function updaterCell(u) {
+  if (!u) return '<span style="color:var(--muted)">—</span>';
+  const plan = UPDATE_PLAN_LABEL[u.plan] || '';
+  const l = u.last;
+  const when = l && l.at ? new Date(l.at).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+  let what = '<span style="color:var(--muted)">задание ещё не запускалось</span>';
+  if (l) {
+    const v = escapeHtml(l.version || '');
+    what = {
+      installed: `<span style="color:var(--online)">поставлено ${v}</span>`,
+      current: `проверено — актуальная ${v}`,
+      downloaded: `<span style="color:var(--warn)">скачано ${v}, не поставлено</span>`,
+      'install-failed': `<span style="color:var(--danger)">установка ${v} не прошла: ${escapeHtml(l.detail || '')}</span>`,
+      error: `<span style="color:var(--danger)">ошибка: ${escapeHtml(l.detail || '')}</span>`,
+    }[l.state] || escapeHtml(l.state || '');
+  }
+  return `<div style="font-size:12.5px">${what}${when ? ` <span style="color:var(--muted)">· ${escapeHtml(when)}</span>` : ''}</div>`
+    + (plan ? `<div style="color:var(--muted); font-size:11px;">${escapeHtml(plan)}</div>` : '');
+}
+
 async function loadClients() {
   const body = document.getElementById('clientsBody');
-  body.innerHTML = '<tr><td colspan="5">Загрузка...</td></tr>';
+  body.innerHTML = '<tr><td colspan="6">Загрузка...</td></tr>';
   try {
     await loadPublishedVersions();
     const clients = await api('api/admin/clients');
@@ -1360,7 +1387,8 @@ async function loadClients() {
     const allBtn = document.getElementById('forceUpdateAllBtn');
     allBtn.disabled = !canUpdateNow;
     allBtn.title = canUpdateNow ? '' : (behind.length ? 'Среди отстающих нет машин, где обновление можно поставить по команде' : 'Отстающих нет');
-    body.innerHTML = clients.map(c => {
+    const onlyBehind = document.getElementById('clientsOnlyBehind').checked;
+    body.innerHTML = clients.filter((c) => !onlyBehind || isOutdated(c)).map(c => {
       const pub = publishedFor(c);
       const outdated = isOutdated(c);
       // Права на установку сообщает сам клиент (с версии 1.0.26): нет прав — команду не шлём.
@@ -1379,6 +1407,7 @@ async function loadClients() {
         <td>${escapeHtml(c.user)}</td>
         <td>${escapeHtml(c.hostname)}</td>
         <td>${verCell}</td>
+        <td>${updaterCell(c.updater)}</td>
         <td style="color:var(--muted)">${escapeHtml(trackLabel)}</td>
         <td class="row-flex">
           <button class="action" data-uid="${c.userId}" data-host="${escapeHtml(c.hostname)}"
@@ -1387,8 +1416,8 @@ async function loadClients() {
             onclick="requestClientLog(this.dataset.uid, this.dataset.host)">Журнал</button>
         </td>
       </tr>`;
-    }).join('') || '<tr><td colspan="5" style="color:var(--muted)">Сейчас никто не подключён</td></tr>';
-  } catch (e) { body.innerHTML = `<tr><td colspan="5">Ошибка: ${escapeHtml(e.message)}</td></tr>`; }
+    }).join('') || `<tr><td colspan="6" style="color:var(--muted)">${onlyBehind && clients.length ? 'Отстающих нет' : 'Сейчас никто не подключён'}</td></tr>`;
+  } catch (e) { body.innerHTML = `<tr><td colspan="6">Ошибка: ${escapeHtml(e.message)}</td></tr>`; }
 }
 
 async function forceUpdate(userId, host) {

@@ -269,10 +269,18 @@
         <div class="row-flex" style="margin-bottom:10px;">
           <button class="action" onclick="loadClients()">Обновить список</button>
           <button class="action" id="forceUpdateAllBtn" onclick="forceUpdateAll()" disabled>Обновить всех отстающих</button>
+          <label style="font-size:12.5px; display:flex; align-items:center; gap:6px;">
+            <input type="checkbox" id="clientsOnlyBehind" onchange="loadClients()"> Только отстающие
+          </label>
           <span id="clientsSummary" style="color:var(--muted); font-size:12px;"></span>
         </div>
+        <p style="color:var(--muted); font-size:12px; margin:0 0 10px;">
+          «Обновление» — как машина получает новую версию и что последнее сделало задание обновления
+          (сообщает клиент с версии 1.0.30). «Скачано, не поставлено» и «ошибка» — повод посмотреть
+          «Журнал» этой машины.
+        </p>
         <table>
-          <thead><tr><th>Сотрудник</th><th>Компьютер</th><th>Версия</th><th>Сборка</th><th>Действия</th></tr></thead>
+          <thead><tr><th>Сотрудник</th><th>Компьютер</th><th>Версия</th><th>Обновление</th><th>Сборка</th><th>Действия</th></tr></thead>
           <tbody id="clientsBody"></tbody>
         </table>
       </div>

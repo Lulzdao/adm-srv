@@ -204,6 +204,17 @@ async function resyncAfterReconnect() {
     }
   } catch { /* связь снова пропала — следующее восстановление попробует ещё раз */ }
 }
+// Как обновляется эта машина и что последнее сделало задание обновления — серверу, для панели
+// «Клиенты» (колонка «Обновление»). При подключении и раз в полчаса: задание срабатывает в 8:30 и
+// 13:00, и свежий итог должен доехать до панели, не дожидаясь переподключения.
+async function sendUpdaterStatus() {
+  try {
+    const status = await desktop.getUpdaterStatus();
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'client-status', updater: status }));
+  } catch { /* старый главный процесс или журнал недоступен — колонка останется пустой */ }
+}
+setInterval(sendUpdaterStatus, 30 * 60 * 1000);
+
 function connectWs() {
   const wsUrl = serverUrl.replace(/^http/, 'ws');
   ws = new WebSocket(`${wsUrl}?token=${token}&host=${encodeURIComponent(desktop.hostname)}`
@@ -226,6 +237,7 @@ function connectWs() {
     if (wsEverOpened) resyncAfterReconnect();
     wsEverOpened = true;
     sendClosedOutboxes();
+    sendUpdaterStatus();
   };
   ws.onmessage = (e) => {
     const data = JSON.parse(e.data);

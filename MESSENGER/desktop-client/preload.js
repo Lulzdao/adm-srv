@@ -53,6 +53,7 @@ contextBridge.exposeInMainWorld('desktop', {
   // Обновление, запущенное администратором из веб-панели: качает и ставит без вопросов.
   forceUpdate: () => ipcRenderer.send('force-update'),
   readLocalLog: () => ipcRenderer.invoke('read-local-log'),
+  getUpdaterStatus: () => ipcRenderer.invoke('get-updater-status'),
   // Событие главного процесса (сбой обновления, падение окна), которое ростер пересылает на сервер:
   // токен для обращения к серверу есть только у него. См. logLocal в main.js.
   onReportToServer: (cb) => ipcRenderer.on('report-to-server', (event, payload) => cb(payload)),
