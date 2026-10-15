@@ -1388,6 +1388,24 @@ function updaterCell(u, installed) {
     + (plan ? `<div style="color:var(--muted); font-size:11px;">${escapeHtml(plan)}</div>` : '');
 }
 
+// Сортировка «Клиентов» по щелчку на заголовке «Сотрудник» или «Компьютер»; повторный щелчок — в
+// обратном порядке. Выбор запоминается в этом браузере. Имена ПК сравниваются с учётом чисел:
+// P48-209 раньше P48-1000.
+let clientsSort = { key: 'user', dir: 1 };
+try { const saved = JSON.parse(localStorage.getItem('clientsSort') || 'null'); if (saved && ['user', 'hostname'].includes(saved.key)) clientsSort = { key: saved.key, dir: saved.dir === -1 ? -1 : 1 }; } catch { /* нет — по сотруднику */ }
+function sortClientsBy(key) {
+  clientsSort = clientsSort.key === key ? { key, dir: -clientsSort.dir } : { key, dir: 1 };
+  try { localStorage.setItem('clientsSort', JSON.stringify(clientsSort)); } catch { /* не запомнится — не беда */ }
+  loadClients();
+}
+function paintClientsSort() {
+  document.querySelectorAll('#view-updates .sort-th').forEach((th) => {
+    const on = th.dataset.sort === clientsSort.key;
+    th.classList.toggle('sorted', on);
+    th.querySelector('.sort-mark').textContent = on ? (clientsSort.dir === 1 ? ' ↑' : ' ↓') : '';
+  });
+}
+
 async function loadClients() {
   const body = document.getElementById('clientsBody');
   body.innerHTML = '<tr><td colspan="6">Загрузка...</td></tr>';
@@ -1408,6 +1426,10 @@ async function loadClients() {
     allBtn.disabled = !canUpdateNow;
     allBtn.title = canUpdateNow ? '' : (behind.length ? 'Среди отстающих нет машин, где обновление можно поставить по команде' : 'Отстающих нет');
     const onlyBehind = document.getElementById('clientsOnlyBehind').checked;
+    const k = clientsSort.key;
+    clients.sort((a, b) => clientsSort.dir * String(a[k] || '').localeCompare(String(b[k] || ''), 'ru', { numeric: true, sensitivity: 'base' })
+      || String(a.user).localeCompare(String(b.user), 'ru'));
+    paintClientsSort();
     body.innerHTML = clients.filter((c) => !onlyBehind || isOutdated(c)).map(c => {
       const pub = publishedFor(c);
       const outdated = isOutdated(c);

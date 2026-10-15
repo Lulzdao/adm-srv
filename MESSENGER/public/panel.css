@@ -661,3 +661,8 @@ html.embedded .view > h2:first-child { display: none; }
 .load-grid .panel { margin-bottom:0; }
 #view-load .load-grid { margin-bottom:16px; }
 #loadCards .card .v.bad { color:var(--danger); }
+
+/* «Клиенты»: заголовки, по которым сортируется таблица. */
+.sort-th { cursor:pointer; user-select:none; white-space:nowrap; }
+.sort-th:hover { color:var(--md-on-surface); }
+.sort-th.sorted { color:var(--md-primary); }
