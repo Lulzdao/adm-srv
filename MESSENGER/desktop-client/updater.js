@@ -85,7 +85,9 @@ function resolveServerUrl(policy, builtIn) {
 function get(url, ca) {
   return new Promise((resolve, reject) => {
     const lib = url.startsWith('https:') ? https : http;
-    const req = lib.get(url, { ca, timeout: REQUEST_TIMEOUT_MS }, (res) => {
+    // X-Iskra-Host — имя ПК: в разделе «Нагрузка» панели видно, какая машина качает обновление
+    // (задание работает от имени системы, без входа, и иначе там был бы только адрес).
+    const req = lib.get(url, { ca, timeout: REQUEST_TIMEOUT_MS, headers: { 'X-Iskra-Host': os.hostname() } }, (res) => {
       if (res.statusCode !== 200) { res.resume(); reject(new Error(`сервер ответил ${res.statusCode} на ${url}`)); return; }
       resolve(res);
     });

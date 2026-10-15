@@ -122,3 +122,13 @@ test('сервер после перезапуска помнит нагрузк
     assert.match(s2.log(), /load_history_restored/);
   } finally { await s2.stop(); }
 });
+
+test('кто качает без входа: задание 1.0.30 называет свой ПК — в «Нагрузке» имя, а не адрес', async () => {
+  await request(srv.url, 'GET', '/updates/win10/latest.yml', { headers: { 'X-Iskra-Host': 'p48-312-ceu' } });
+  await request(srv.url, 'GET', '/updates/win10/latest.yml', { headers: { 'X-Iskra-Host': 'bad name <script>' } });
+  await new Promise((r) => setTimeout(r, 200));
+  const r = await request(srv.url, 'GET', '/api/admin/load?minutes=10', { token: admin.token });
+  const names = r.json.clients.map((c) => c.name);
+  assert.ok(names.includes('ПК P48-312-CEU'), names.join(', '));
+  assert.ok(!names.some((n) => n.includes('<script>')), 'чужое «имя» в подпись не попадает');
+});
