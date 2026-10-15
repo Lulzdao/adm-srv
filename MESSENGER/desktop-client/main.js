@@ -1,5 +1,6 @@
 // Главный процесс Electron — окна, трей, уведомления, настройки, отправка и скачивание файлов
 const { TRAY_SIZES, accentColor, starPng } = require('./tray-icon');
+const { parseUpdaterLog } = require('./updater-status');
 const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, Notification, powerMonitor, dialog, session, clipboard, screen, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -1113,6 +1114,23 @@ ipcMain.handle('read-local-log', () => {
   try { updater = fs.readFileSync(UPDATER_LOG_PATH, 'utf8').split(/\r?\n/).filter(Boolean).slice(-60).join('\n'); }
   catch { updater = '(журнала задания обновления нет — задание ни разу не запускалось или его нет на этом ПК)'; }
   return `${text}\n\n===== Задание обновления (${UPDATER_LOG_PATH}), последние строки =====\n${updater}\n`;
+});
+// Состояние обновления этой машины для панели «Клиенты»: как она обновляется (сама / заданием /
+// только при перезагрузке) и что последнее сделало задание (см. updater-status.js). Окно списка
+// отправляет это серверу при подключении и раз в полчаса.
+ipcMain.handle('get-updater-status', () => {
+  let last = null;
+  try {
+    const fd = fs.openSync(UPDATER_LOG_PATH, 'r');
+    try {
+      const size = fs.fstatSync(fd).size;
+      const len = Math.min(size, 64 * 1024); // хвоста хватает: последнее событие — в конце
+      const buf = Buffer.alloc(len);
+      fs.readSync(fd, buf, 0, len, size - len);
+      last = parseUpdaterLog(buf.toString('utf8'));
+    } finally { fs.closeSync(fd); }
+  } catch { /* журнала нет — задание ни разу не запускалось */ }
+  return { plan: UPDATE_PLAN, last };
 });
 ipcMain.on('download-update', (event) => {
   if (!app.isPackaged) return;

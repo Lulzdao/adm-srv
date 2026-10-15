@@ -1600,6 +1600,7 @@ function connectedMachines() {
         canElevate: meta.canElevate,
         connections: 1,
         hasLogDump: clientLogDumps.has(key),
+        updater: meta.updater || null,
         sockets: [ws],
       });
     } else {
@@ -1610,6 +1611,8 @@ function connectedMachines() {
       // только окно списка сотрудников.
       if (!prev.version && meta.appVersion) { prev.version = meta.appVersion; prev.track = meta.buildTrack; }
       if (prev.canElevate == null && meta.canElevate != null) prev.canElevate = meta.canElevate;
+      // Состояние обновления присылает только окно списка — берём с того подключения, где оно есть.
+      if (!prev.updater && meta.updater) prev.updater = meta.updater;
     }
   }
   return [...byMachine.values()];
@@ -2092,6 +2095,29 @@ function toRoom(v) {
 
 function handleClientMessage(ws, user, msg) {
     if (!msg || typeof msg !== 'object') return;
+
+    // Состояние обновления машины (клиент 1.0.30+, окно списка): для панели «Клиенты». Берём только
+    // известные поля и короткие строки — это показывается администратору как есть.
+    if (msg.type === 'client-status') {
+      const meta = connMeta.get(ws);
+      const u = msg.updater && typeof msg.updater === 'object' ? msg.updater : null;
+      if (meta && u) {
+        const str = (v, n) => (typeof v === 'string' ? v.slice(0, n) : null);
+        const last = u.last && typeof u.last === 'object' ? u.last : null;
+        meta.updater = {
+          plan: ['self', 'task', 'none'].includes(u.plan) ? u.plan : null,
+          last: last ? {
+            state: str(last.state, 20),
+            version: str(last.version, 20),
+            from: str(last.from, 20),
+            detail: str(last.detail, 200),
+            at: Number.isFinite(last.at) ? last.at : null,
+          } : null,
+          reportedAt: Date.now(),
+        };
+      }
+      return;
+    }
 
     if (msg.type === 'status') {
       const meta = connMeta.get(ws);
