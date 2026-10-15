@@ -8,7 +8,7 @@
 //   data-theme="light"     — светлая: белая боковая панель; data-theme="dark" — тёмная; цветная (по
 //                            умолчанию) — без атрибута. Имя "dark" слушают модули: Сертвивер, журнал
 //                            звонков и панель «Искры» держат в своих стилях правила для html[data-theme="dark"];
-//   data-accent="…"        — акцент, только в цветной теме (Лазурь — по умолчанию, без атрибута). Цвета — themes.css.
+//   data-accent="…"        — акцент (Лазурь — по умолчанию, без атрибута). Сами цвета — themes.css.
 //
 // Ключи хранилища:
 //   center.mode, center.accent             — действующие в этом браузере сейчас (их же читают модули,
@@ -69,8 +69,9 @@
   function apply(c) {
     var el = document.documentElement;
     if (c.mode === DEFAULT_MODE) el.removeAttribute('data-theme'); else el.setAttribute('data-theme', c.mode);
-    // Акцент — только у цветной темы; светлая и тёмная — как были, голубые (выбор акцента при этом помнится).
-    if (c.mode !== DEFAULT_MODE || c.accent === DEFAULT_ACCENT) el.removeAttribute('data-accent'); else el.setAttribute('data-accent', c.accent);
+    // Акцент — во всех трёх темах (решение пользователя 2026-10-15; с 9 по 15 октября был только у
+    // цветной, светлая и тёмная оставались голубыми).
+    if (c.accent === DEFAULT_ACCENT) el.removeAttribute('data-accent'); else el.setAttribute('data-accent', c.accent);
   }
   function save(c) {
     if (user) { write('center.mode:' + user, c.mode); write('center.accent:' + user, c.accent); }
