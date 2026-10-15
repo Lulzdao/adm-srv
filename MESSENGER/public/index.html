@@ -42,7 +42,6 @@
       <div class="nav-item" data-view="users">Пользователи</div>
       <div class="nav-item" data-view="depts">Отделы</div>
       <div class="nav-item" data-view="history">Переписки</div>
-      <div class="nav-item" data-view="broadcast">Рассылка</div>
       <div class="nav-item" data-view="files">Файлы</div>
       <div class="nav-item" data-view="updates">Клиенты</div>
       <div class="nav-item" data-view="tls">Сертификат</div>
@@ -217,12 +216,24 @@
 
     <div class="view" id="view-history">
       <h2>Переписки</h2>
+      <!-- Переписки и рассылка — один раздел, переключателем (решение пользователя 2026-10-15). -->
+      <div class="ov-tabs" role="tablist">
+        <button type="button" class="ov-tab hist-tab" data-ht="chats" onclick="showHistoryTab('chats')">Переписки</button>
+        <button type="button" class="ov-tab hist-tab" data-ht="broadcast" onclick="showHistoryTab('broadcast')">Рассылка</button>
+      </div>
+      <div class="hist-pane" id="ht-chats">
       <div class="panel">
         <div class="row-flex">
           <select id="histType">
-            <option value="room">Общая комната</option>
+            <option value="group">Группа</option>
             <option value="dm">Личная переписка</option>
+            <!-- Общий чат первых версий (в клиенте его давно нет) — пункт появляется, только если
+                 в нём остались сообщения (см. loadAdminGroups). -->
+            <option value="room" hidden>Общая комната (старая)</option>
           </select>
+          <span id="histGroup" class="row-flex">
+            <select id="histGroupId"></select>
+          </span>
           <!-- Выбор двух сотрудников — только для личной переписки. Прячется вся обёртка:
                видимую часть списка рисует скрипт «Выпадающий список» рядом с select, и
                display:none на самом select её не прятал — висели два пустых списка. -->
@@ -240,6 +251,18 @@
         <div class="row-flex" id="histMoreRow" style="display:none; margin-top:8px;">
           <button class="action ghost" onclick="loadMoreHistory()" id="histMoreBtn">Показать более ранние</button>
         </div>
+      </div>
+      </div>
+      <div class="hist-pane" id="ht-broadcast">
+      <div class="panel">
+        <p style="color:var(--muted); font-size:12.5px; margin:0 0 10px;">Сообщение придёт всем сотрудникам сразу — уведомлением на компьютер и в историю рассылок.</p>
+        <div id="bcText"></div>
+        <div style="margin-top:8px;"><button class="action" onclick="sendBroadcast()">Отправить всем</button></div>
+      </div>
+      <div class="panel">
+        <h3>Лента рассылок</h3>
+        <div id="bcFeed"></div>
+      </div>
       </div>
     </div>
 
@@ -427,19 +450,6 @@
           удалением этой переменной. Что именно действует сейчас — написано выше.
         </p>
         <button class="action danger" onclick="removeTls()">Удалить из хранилища</button>
-      </div>
-    </div>
-
-    <div class="view" id="view-broadcast">
-      <h2>Рассылка всем</h2>
-      <div class="panel">
-        <p style="color:var(--muted); font-size:12.5px; margin:0 0 10px;">Сообщение придёт всем сотрудникам сразу — уведомлением на компьютер и в историю рассылок.</p>
-        <div id="bcText"></div>
-        <div style="margin-top:8px;"><button class="action" onclick="sendBroadcast()">Отправить всем</button></div>
-      </div>
-      <div class="panel">
-        <h3>Лента рассылок</h3>
-        <div id="bcFeed"></div>
       </div>
     </div>
   </div>
