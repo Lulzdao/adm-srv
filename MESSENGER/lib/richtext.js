@@ -134,7 +134,11 @@ function sanitizeHtml(html) {
 
 /** Текстовая версия — для поиска, уведомлений Windows и клиентов, которые HTML не показывают. */
 function htmlToText(html) {
+  // Строка, начатая блоком сразу после текста («<b>Заголовок</b><div>Текст</div>» — так редактор
+  // пишет вторую строку), — с новой строки, иначе «ЗаголовокТекст». Метка \u0001 ставится на начало
+  // блока и превращается в перенос, только если перед ней не перенос.
   return decode(String(html || '')
+    .replace(/<(div|p|h[1-6]|blockquote)(\s[^>]*)?>/gi, '\u0001')
     .replace(/<br\s*\/?>/gi, '\n')
     .replace(/<li[^>]*>/gi, '• ')
     .replace(/<(ul|ol)[^>]*>/gi, '\n')
@@ -144,6 +148,8 @@ function htmlToText(html) {
     .replace(/<hr[^>]*>/gi, '\n———\n')
     .replace(/<a\s[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, (all, href, label) => (label.replace(/<[^>]*>/g, '').trim() === decode(href) ? label : `${label} (${href})`))
     .replace(/<[^>]*>/g, ''))
+    .replace(/([^\n\u0001])\u0001/g, '$1\n')
+    .replace(/\u0001/g, '')
     .replace(/ /g, ' ')
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')

@@ -30,3 +30,12 @@ test('белый список тегов у клиента и у сервера 
   };
   assert.deepEqual(tags(read('desktop-client/renderer/richtext.js')), tags(read('lib/richtext.js')));
 });
+
+test('текстовая версия: строка редактора после текста — с новой строки, без лишних пустых', () => {
+  const { htmlToText } = require('../lib/richtext');
+  // Так редактор пишет «жирный заголовок, Enter, текст»: первая строка без блока, дальше — <div>.
+  assert.equal(htmlToText('<span style="font-weight: bold">Собрание</span><div>В пятницу</div><div><ul><li>отчёты</li></ul></div>'),
+    'Собрание\nВ пятницу\n\n• отчёты');
+  assert.equal(htmlToText('<div>Раз</div><div>Два</div>'), 'Раз\nДва');
+  assert.equal(htmlToText('<p>Абзац</p><p>Ещё</p>'), 'Абзац\n\nЕщё');
+});
