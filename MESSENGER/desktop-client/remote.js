@@ -64,4 +64,25 @@ async function launchViewer(candidates, exists, start) {
   return { viewer: null, missing, failed };
 }
 
-module.exports = { isRemoteHost, remoteHostsOf, viewerArgs, viewerCandidates, findViewer, launchViewer };
+// Вход по учётной записи Windows (MS-Logon UltraVNC) без окна просмотрщика: логин и пароль уходят ему
+// ключами -user и -password — так он подключается сразу. Одного -user просмотрщик не принимает
+// (проверено на UltraVNC 1.4.3.1: окно входа остаётся пустым), поэтому только парой.
+// Логин по умолчанию — учётка, под которой администратор вошёл в Windows: ДОМЕН\логин.
+function defaultVncUser(env) {
+  const user = String((env && env.USERNAME) || '').trim();
+  const domain = String((env && env.USERDOMAIN) || '').trim();
+  return user ? (domain ? `${domain}\\${user}` : user) : '';
+}
+
+// Логин и пароль — аргументами программы (без оболочки, но всё же): без управляющих символов и кавычек,
+// разумной длины. Пробелы и русские буквы в логине допустимы — такие учётки бывают.
+const CONTROL_RE = /[\u0000-\u001f\u007f"]/;
+function credentialArgs(user, password) {
+  const u = typeof user === 'string' ? user.trim() : '';
+  const p = typeof password === 'string' ? password : '';
+  if (!u || u.length > 104 || CONTROL_RE.test(u)) throw new Error('недопустимый логин');
+  if (!p || p.length > 128 || CONTROL_RE.test(p)) throw new Error('недопустимый пароль');
+  return ['-user', u, '-password', p];
+}
+
+module.exports = { isRemoteHost, remoteHostsOf, viewerArgs, viewerCandidates, findViewer, launchViewer, defaultVncUser, credentialArgs };

@@ -238,6 +238,10 @@ function connectWs() {
     wsEverOpened = true;
     sendClosedOutboxes();
     sendUpdaterStatus();
+    // Права и имя — свежие при каждом подключении: при запуске me берётся из сохранённого с прошлого
+    // входа, а событие users-changed о правах, выданных, пока клиент был закрыт, уже не придёт
+    // (выдали «администратора» — пункта «Подключиться к ПК» не было до перезахода).
+    refreshMe();
   };
   ws.onmessage = (e) => {
     const data = JSON.parse(e.data);
@@ -648,6 +652,13 @@ function applyReachability(row, u, p) {
     if (me.can_admin) {
       for (const host of remoteHostsOf(p.hosts)) {
         items.push({ label: `Подключиться к ПК: ${host}`, icon: 'monitor', onClick: () => connectToPc(host) });
+        // Пароль запомнен — подключение идёт без вопросов; войти иначе (другой логин, сменился пароль) — отсюда.
+        if (vncLoginSaved) items.push({ label: 'Подключиться под другой учёткой…', icon: 'monitor', onClick: () => connectToPc(host, true) });
+      }
+      // Просмотрщик сам решает, подошёл ли пароль, — «Искра» об отказе не узнаёт и запоминает и неверный.
+      // Отсюда его можно сбросить, не выходя из «Искры».
+      if (vncLoginSaved && remoteHostsOf(p.hosts).length) {
+        items.push({ label: 'Забыть пароль подключения', icon: 'x', onClick: () => { desktop.remoteForgetLogin(); vncLoginSaved = false; uiToast('Пароль подключения к ПК забыт'); } });
       }
     }
     uiContextMenu(e.clientX, e.clientY, items);
@@ -661,9 +672,62 @@ function remoteHostsOf(hosts) {
   return [...new Set((hosts || []).filter((h) => typeof h === 'string' && REMOTE_HOST_RE.test(h)))];
 }
 
-async function connectToPc(host) {
-  const res = await desktop.remoteConnect(host);
+// Вход в UltraVNC по учётке Windows: логин подставлен (учётка, под которой вошли в Windows), пароль
+// вводится здесь — просмотрщик получает оба и подключается без своего окна входа (см. remote-connect
+// в main.js). Пароль хранит главный процесс и только в памяти; сюда он не возвращается.
+let vncLoginSaved = false;
+async function connectToPc(host, askAgain = false) {
+  const info = await desktop.remoteLoginInfo();
+  let res;
+  if (info.disabled) {
+    res = await desktop.remoteConnect(host);
+  } else if (info.saved && !askAgain) {
+    res = await desktop.remoteConnect(host, { useSaved: true });
+  } else {
+    const login = await askVncLogin(host, info.user);
+    if (!login) return;
+    res = await desktop.remoteConnect(host, login);
+    if (res.ok) vncLoginSaved = login.remember;
+  }
   if (!res.ok) uiAlert(res.error, 'Подключение к ПК');
+}
+
+function askVncLogin(host, user) {
+  return new Promise((resolve) => {
+    const field = 'width:100%; padding:9px 11px; margin:4px 0 10px; background:var(--panel-2); border:1px solid var(--border); border-radius:8px; color:var(--text); font-size:13px; font-family:inherit;';
+    const overlay = document.createElement('div');
+    overlay.className = 'ui-modal-overlay';
+    const box = document.createElement('div');
+    box.className = 'ui-modal-box';
+    box.innerHTML = `
+      <div class="ui-modal-title">Подключение к ${escapeHtml(host)}</div>
+      <div class="ui-modal-msg" style="margin-bottom:10px">Учётная запись Windows для входа в UltraVNC.</div>
+      <label style="font-size:12px; color:var(--muted)">Логин</label>
+      <input id="vncUser" style="${field}" spellcheck="false" autocomplete="off">
+      <label style="font-size:12px; color:var(--muted)">Пароль</label>
+      <input id="vncPass" type="password" style="${field}" autocomplete="off">
+      <label style="display:flex; align-items:center; gap:7px; font-size:12.5px; margin:2px 0 14px; cursor:pointer">
+        <input id="vncRemember" type="checkbox"> Помнить пароль до выхода из «Искры»</label>
+      <div class="ui-modal-actions">
+        <button class="ui-btn-ghost" id="vncCancel">Отмена</button>
+        <button class="ui-btn-primary" id="vncOk">Подключиться</button>
+      </div>`;
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+    const userEl = box.querySelector('#vncUser');
+    const passEl = box.querySelector('#vncPass');
+    userEl.value = user || '';
+    (userEl.value ? passEl : userEl).focus();
+    const close = (val) => { passEl.value = ''; overlay.remove(); resolve(val); };
+    const ok = () => {
+      if (!userEl.value.trim()) { userEl.focus(); return; }
+      if (!passEl.value) { passEl.focus(); return; }
+      close({ user: userEl.value.trim(), password: passEl.value, remember: box.querySelector('#vncRemember').checked });
+    };
+    box.querySelector('#vncCancel').onclick = () => close(null);
+    box.querySelector('#vncOk').onclick = ok;
+    box.addEventListener('keydown', (e) => { if (e.key === 'Enter') ok(); if (e.key === 'Escape') close(null); });
+  });
 }
 
 // ---------- Непрочитанные — состояние хранит и считает главный процесс (main.js), здесь только отрисовка ----------

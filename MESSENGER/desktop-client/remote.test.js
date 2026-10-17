@@ -86,3 +86,16 @@ test('просмотрщику уходит имя с портом и добав
   assert.throws(() => viewerArgs('-listen', 5995), /недопустимое имя/);
   assert.throws(() => viewerArgs('pc & calc', 5995), /недопустимое имя/);
 });
+
+// Вход по учётке Windows без окна просмотрщика: логин и пароль — парой ключей -user/-password.
+test('логин по умолчанию — учётка Windows ДОМЕН\\логин; логин и пароль уходят просмотрщику парой', () => {
+  const { defaultVncUser, credentialArgs } = require('./remote');
+  assert.strictEqual(defaultVncUser({ USERNAME: 'ivanov', USERDOMAIN: 'ROSSTAT' }), 'ROSSTAT\\ivanov');
+  assert.strictEqual(defaultVncUser({ USERNAME: 'ivanov' }), 'ivanov');
+  assert.strictEqual(defaultVncUser({}), '');
+  assert.deepStrictEqual(credentialArgs(' ROSSTAT\\ivanov ', 'p@ss word'), ['-user', 'ROSSTAT\\ivanov', '-password', 'p@ss word']);
+  assert.deepStrictEqual(credentialArgs('ПК-7\\Артем', 'х'), ['-user', 'ПК-7\\Артем', '-password', 'х'], 'русские буквы в логине — можно');
+  for (const [u, p] of [['', 'x'], ['a', ''], ['a"b', 'x'], ['a', 'x"y'], ['a\nb', 'x'], ['a', 'x\u0000'], ['a'.repeat(105), 'x'], ['a', 'x'.repeat(129)]]) {
+    assert.throws(() => credentialArgs(u, p), `${JSON.stringify(u)} / ${JSON.stringify(p)}`);
+  }
+});

@@ -10,7 +10,7 @@ const tls = require('tls');
 const { diagnoseServer } = require('./diagnose');
 const { parseMachinePolicy } = require('./policy');
 const { detectCanElevate, updatePlan, canUpdateOnCommand } = require('./elevation');
-const { viewerArgs, viewerCandidates, launchViewer } = require('./remote');
+const { viewerArgs, viewerCandidates, launchViewer, defaultVncUser, credentialArgs } = require('./remote');
 const { SERVER_URL, VNC_VIEWER_PATHS, VNC_PORT, VNC_VIEWER_ARGS } = require('./config');
 const { autoUpdater } = require('electron-updater');
 
@@ -1192,7 +1192,20 @@ ipcMain.on('send-file-to', (event, payload) => { handleSendFile(payload); });
 // администратора здесь не проверяется: пункт меню — удобство, а не допуск, и скрытый пункт никого
 // не защищает. Защищаем другое — чтобы окно не могло запустить что-то кроме просмотрщика и не с тем,
 // что является именем ПК: имя сообщает клиент сотрудника, то есть оно чужое (см. remote.js).
-ipcMain.handle('remote-connect', async (event, host) => {
+// Вход в UltraVNC по учётке Windows без окна просмотрщика (решение пользователя 2026-10-15): «Искра»
+// спрашивает пароль своим окном, логин подставлен — учётка, под которой администратор вошёл в Windows.
+// «Помнить до выхода» — пароль только в памяти этого процесса: на диск не пишется, при выходе из
+// учётки «Искры» и закрытии программы забывается. Политика vncAutoLogin: false — как раньше, окно
+// входа показывает сам просмотрщик.
+let savedVncLogin = null; // { user, password }
+ipcMain.handle('remote-login-info', (event) => {
+  if (BrowserWindow.fromWebContents(event.sender) !== rosterWin) return { disabled: true };
+  if (machinePolicy.vncAutoLogin === false) return { disabled: true };
+  return { user: (savedVncLogin && savedVncLogin.user) || defaultVncUser(process.env), saved: !!savedVncLogin };
+});
+ipcMain.on('remote-forget-login', () => { savedVncLogin = null; });
+
+ipcMain.handle('remote-connect', async (event, host, login) => {
   if (BrowserWindow.fromWebContents(event.sender) !== rosterWin) return { ok: false, error: 'Недоступно из этого окна.' };
   const candidates = viewerCandidates(machinePolicy.vncViewerPath, VNC_VIEWER_PATHS);
   let args;
@@ -1201,6 +1214,16 @@ ipcMain.handle('remote-connect', async (event, host) => {
   } catch {
     logLocal('remote_connect_bad_host', { host: String(host).slice(0, 100) }, 'WARN');
     return { ok: false, error: 'Имя этого компьютера не похоже на имя ПК — подключение не запущено.' };
+  }
+  // Логин и пароль: введённые сейчас или запомненные. В журналы пароль не попадает — пишется только
+  // имя ПК и путь просмотрщика.
+  if (login && machinePolicy.vncAutoLogin !== false) {
+    const cred = login.useSaved ? savedVncLogin : { user: login.user, password: login.password };
+    if (!cred) return { ok: false, error: 'Пароль не запомнен — введите его.' };
+    try { args = args.concat(credentialArgs(cred.user, cred.password)); } catch (err) {
+      return { ok: false, error: err.message === 'недопустимый логин' ? 'Логин не подходит: без кавычек и спецсимволов.' : 'Пароль не подходит: без кавычек и спецсимволов.' };
+    }
+    if (!login.useSaved) savedVncLogin = login.remember ? { user: cred.user.trim(), password: cred.password } : null;
   }
   // Без оболочки (shell): аргументы уходят программе как есть, собрать из них команду нельзя.
   // Рабочая папка — папка просмотрщика: там он ищет плагин шифрования и свои настройки.
@@ -1396,6 +1419,7 @@ ipcMain.on('set-settings', (event, partial) => {
 
 // Выход из аккаунта: чистим localStorage ростера, закрываем все окна кроме него, возвращаем на экран входа
 ipcMain.on('logout', () => {
+  savedVncLogin = null; // запомненный пароль подключения к ПК — не для того, кто войдёт следующим
   for (const win of namedWins.values()) { if (!win.isDestroyed()) win.close(); }
   if (rosterWin && !rosterWin.isDestroyed()) {
     rosterWin.webContents.executeJavaScript('localStorage.clear(); location.reload();');
