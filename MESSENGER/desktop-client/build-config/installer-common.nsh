@@ -70,6 +70,27 @@
       DetailPrint "Не удалось завести задания обновления (код $0): $1"
     ${EndIf}
   tasksDone:
+
+  ; -------------------------------------------------------------------------
+  ;  Средство удалённого доступа (UltraVNC)
+  ;
+  ;  install-uvnc.ps1 заводит службу из $INSTDIR\resources\uvnc, настраивает её (порт, шифрование,
+  ;  вход по учётной записи Windows, пароль, Ctrl+Alt+Del, брандмауэр) и убирает прежнюю установку
+  ;  из C:\Program Files\uvnc_s. Подробности и настройки из машинной политики — в шапке сценария.
+  ;
+  ;  Не получилось — не повод срывать установку: «Искра» работает и без удалённого доступа.
+  ;  -InputFormat None — как и у заданий обновления, иначе PowerShell 2.0 на Windows 7 ждёт ввод.
+  IfFileExists "$INSTDIR\resources\uvnc\install-uvnc.ps1" 0 uvncDone
+    DetailPrint "Настраиваем средство удалённого доступа..."
+    nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -InputFormat None -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\resources\uvnc\install-uvnc.ps1"'
+    Pop $0
+    Pop $1
+    ${If} $0 == 0
+      DetailPrint "Средство удалённого доступа настроено."
+    ${Else}
+      DetailPrint "Не удалось настроить средство удалённого доступа (код $0): $1"
+    ${EndIf}
+  uvncDone:
 !macroend
 
 ; Задания убираются только при настоящем удалении программы. При установке новой версии поверх
@@ -84,5 +105,11 @@
     nsExec::ExecToStack '"$SYSDIR\schtasks.exe" /Delete /TN "Iskra\Relaunch" /F'
     Pop $0
     Pop $1
+    ; Средство удалённого доступа снимаем только при настоящем удалении «Искры», не при обновлении.
+    IfFileExists "$INSTDIR\resources\uvnc\install-uvnc.ps1" 0 uvncRemoved
+      nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -InputFormat None -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\resources\uvnc\install-uvnc.ps1" -Uninstall'
+      Pop $0
+      Pop $1
+    uvncRemoved:
   ${EndIf}
 !macroend

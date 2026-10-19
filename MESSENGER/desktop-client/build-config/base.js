@@ -102,5 +102,10 @@ module.exports = {
   // updater/ — сценарии заданий планировщика (обновление без прав сотрудника). Тоже обычными
   // файлами: их запускает PowerShell — установщик и планировщик Windows, — а не само приложение.
   // На диске: $INSTDIR\resources\updater\*.ps1.
-  extraResources: ['rosstat-root-ca.crt', { from: 'updater', to: 'updater', filter: ['*.ps1'] }],
+  //
+  // uvnc/ — средство удалённого доступа (UltraVNC, наша сборка: клавиши по скан-коду удалённого ПК).
+  // Обычными файлами в $INSTDIR\resources\uvnc; разворачивает и настраивает их install-uvnc.ps1,
+  // который вызывает customInstall (см. installer-common.nsh). Из них приложение запускает только
+  // просмотрщик vncviewer.exe (подключение к ПК).
+  extraResources: ['rosstat-root-ca.crt', { from: 'updater', to: 'updater', filter: ['*.ps1'] }, { from: 'uvnc', to: 'uvnc' }],
 };
