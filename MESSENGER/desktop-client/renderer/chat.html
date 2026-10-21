@@ -8,6 +8,7 @@
 <title>Чат</title>
 <link rel="stylesheet" href="theme.css">
 <link rel="stylesheet" href="chat.css">
+<link rel="stylesheet" href="group-modal.css">
 <link rel="stylesheet" href="redesign.css">
 </head>
 <body>
@@ -17,6 +18,7 @@
     <div class="who-text"><div class="n" id="label"></div><div class="hsub" id="labelSub"></div></div>
   </div>
   <div id="tbExtra" style="-webkit-app-region:no-drag; display:flex; gap:2px; margin-left:auto;">
+    <button class="icon-btn" id="groupBtn" hidden><span></span>Настройки</button>
     <button class="icon-btn" id="historyBtn"><span></span>История</button>
   </div>
   <div class="wctl">
@@ -61,6 +63,7 @@
 <script src="outbox.js"></script>
 <script src="recent.js"></script>
 <script src="twemoji.min.js"></script>
+<script src="group-modal.js"></script>
 <script src="chat.js"></script>
 </body>
 </html>
