@@ -46,12 +46,18 @@ if (-not $exe) { Write-Log "no program exe in $Root"; exit 1 }
 # и при вызове через & PowerShell её не дожидается и вывода не получает (проверено 2026-10-15 —
 # 0 строк, код выхода пустой). Из-за этого задание до 1.0.30 скачивало установщик, но не ставило
 # ни разу: сценарий решал «ставить нечего» и выходил. Start-Process есть и в PowerShell 2.0.
+# -NoNewWindow, а не -WindowStyle Hidden: в PowerShell 2.0 (Windows 7) -WindowStyle вместе с
+# -RedirectStandardOutput не принимается («Parameter set cannot be resolved»), и в 1.0.30 задание
+# на всех Windows 7 падало, не начав (проверено 2026-10-21 через powershell -Version 2). Окна и так
+# нет: задание работает от имени системы, а программа запущена как node (ELECTRON_RUN_AS_NODE).
 $out = Join-Path $env:SystemRoot ('Temp\iskra-update-out-' + [guid]::NewGuid().ToString('N') + '.txt')
 $lines = @()
 $prepareCode = -1
+$started = $false
 $env:ELECTRON_RUN_AS_NODE = '1'
 try {
-	$p = Start-Process -FilePath $exe.FullName -ArgumentList ('"' + $updater + '"') -RedirectStandardOutput $out -Wait -PassThru -WindowStyle Hidden
+	$p = Start-Process -FilePath $exe.FullName -ArgumentList ('"' + $updater + '"') -RedirectStandardOutput $out -Wait -PassThru -NoNewWindow
+	$started = $true
 	$prepareCode = $p.ExitCode
 	$lines = @(Get-Content -LiteralPath $out -ErrorAction SilentlyContinue)
 } catch {
@@ -67,7 +73,9 @@ foreach ($line in $lines) {
 	if ($at -gt 0) { $info[$text.Substring(0, $at)] = $text.Substring($at + 1) }
 }
 # Ответа нет вовсе — это не «ставить нечего», а сбой: пишем, иначе снова ничего не узнать.
-if (-not $info.ContainsKey('update')) { Write-Log ("updater gave no answer, exit code {0}" -f $prepareCode) }
+# Не запустилась вовсе — причина уже в журнале строкой выше; вторая строка её бы заслонила
+# в панели «Клиенты» (там видна последняя значимая строка).
+if ($started -and -not $info.ContainsKey('update')) { Write-Log ("updater gave no answer, exit code {0}" -f $prepareCode) }
 if ($info['update'] -ne '1') { exit $prepareCode }
 
 $installer = $info['installer']
