@@ -218,9 +218,9 @@ body:has(#messages) .wintitlebar, body:has(#feed) .wintitlebar { height: 52px; p
 .wintitlebar .hsub:empty { display: none; }
 .wintitlebar .hsub.typing { color: var(--online); }
 #tbExtra { align-items: center; gap: 4px !important; }
-#historyBtn, #composeBtn { height: 30px; padding: 0 10px; border-radius: var(--radius-s); background: var(--panel-2); color: var(--text); font-size: 12px; font-weight: 500; font-family: inherit; }
-#historyBtn svg { width: 15px; height: 15px; }
-#historyBtn > span, #composeBtn > span { display: flex; }
+#historyBtn, #groupBtn, #composeBtn { height: 30px; padding: 0 10px; border-radius: var(--radius-s); background: var(--panel-2); color: var(--text); font-size: 12px; font-weight: 500; font-family: inherit; }
+#historyBtn svg, #groupBtn svg { width: 15px; height: 15px; }
+#historyBtn > span, #groupBtn > span, #composeBtn > span { display: flex; }
 #historyBtn.active, #historyBtn.active:hover { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
 body:has(#messages) .wctl { margin-left: 4px; }
 body:has(#messages) #presencePanel { top: 56px; border-radius: var(--radius-l); }
