@@ -34,9 +34,9 @@
       ? `<label class="gm-member" data-name="${escapeHtml(nameOf(u).toLowerCase())}"><input type="checkbox" data-uid="${u.id}"${current.has(u.id) ? ' checked' : ''}><span class="n">${escapeHtml(nameOf(u))}</span></label>`
       : `<div class="gm-member-name" data-name="${escapeHtml(nameOf(u).toLowerCase())}">${escapeHtml(nameOf(u))}</div>`;
     box.innerHTML = `
-      <div class="ui-modal-title">${uiIcon('group')} ${mode === 'create' ? 'Новая группа' : escapeHtml(group.name)}</div>
+      <div class="ui-modal-title">${uiIcon('group')}<span class="gm-title" title="${mode === 'create' ? '' : escapeHtml(group.name)}">${mode === 'create' ? 'Новая группа' : escapeHtml(group.name)}</span></div>
       ${canManage ? `<div class="gm-field"><label>Название</label><input type="text" id="gmName" maxlength="80" value="${mode === 'manage' ? escapeHtml(group.name) : ''}" placeholder="Например, Отдел статистики"></div>` : ''}
-      <div class="gm-field">
+      <div class="gm-field gm-field-members">
         <label id="gmCount"></label>
         <input type="text" id="gmSearch" class="gm-search" placeholder="Поиск сотрудника" autocomplete="off">
         <div class="${canManage ? 'gm-members' : 'gm-readonly-members'}" id="gmList">${shown.map(rowHtml).join('')}
