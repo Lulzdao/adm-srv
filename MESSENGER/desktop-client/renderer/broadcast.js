@@ -773,7 +773,9 @@ function connectWs() {
     // мог понять, до кого обновление ещё не доехало (см. /api/admin/clients в server.js).
     + `&ver=${encodeURIComponent(desktop.appVersion)}&track=${encodeURIComponent(desktop.buildTrack)}`
     // Есть ли у пользователя права поставить обновление — панель не шлёт «обновись» тем, у кого их нет.
-    + `&adm=${desktop.canElevate === true ? 1 : desktop.canElevate === false ? 0 : ''}`);
+    + `&adm=${desktop.canElevate === true ? 1 : desktop.canElevate === false ? 0 : ''}`
+    // Статусы «в сети» этому окну не нужны — сервер их сюда не шлёт.
+    + '&presence=none');
   ws.onopen = async () => {
     clearTimeout(wsLostTimer);
     wsLostTimer = null;

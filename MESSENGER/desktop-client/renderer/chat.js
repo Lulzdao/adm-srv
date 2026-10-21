@@ -589,7 +589,9 @@ function connectWs() {
     // мог понять, до кого обновление ещё не доехало (см. /api/admin/clients в server.js).
     + `&ver=${encodeURIComponent(desktop.appVersion)}&track=${encodeURIComponent(desktop.buildTrack)}`
     // Есть ли у пользователя права поставить обновление — панель не шлёт «обновись» тем, у кого их нет.
-    + `&adm=${desktop.canElevate === true ? 1 : desktop.canElevate === false ? 0 : ''}`);
+    + `&adm=${desktop.canElevate === true ? 1 : desktop.canElevate === false ? 0 : ''}`
+    // Статусы — полный список при подключении, дальше только изменившиеся (см. mergePresence в ui-kit.js).
+    + '&presence=delta');
   // У этого окна своё отдельное подключение к серверу — если оно не будет сообщать свой статус,
   // сервер посчитает его вечно "активным" и это перекроет настоящий статус AFK от окна ростера
   // (баг, который был: "Отошёл" не появлялся, пока открыто хоть одно окно чата). Статус на момент
@@ -611,10 +613,12 @@ function connectWs() {
   ws.onmessage = (e) => {
     const data = JSON.parse(e.data);
     if (data.type === 'token' && data.token) { token = data.token; return; } // сервер продлил вход
-    if (data.type === 'presence' && groupId) { presenceAll = data.users || {}; paintGroupHeader(); }
+    if (isPresenceMessage(data)) presenceAll = mergePresence(presenceAll, data);
+    if (isPresenceMessage(data) && groupId) paintGroupHeader();
     if (data.type === 'groups-changed' && groupId) loadGroup();
-    if (data.type === 'presence' && type === 'dm') {
-      const p = data.users[id];
+    // Частичная рассылка без собеседника — у него ничего не поменялось.
+    if (isPresenceMessage(data) && type === 'dm' && (data.type === 'presence' || id in (data.users || {}))) {
+      const p = presenceAll[id];
       const state = p ? p.state : 'offline';
       document.getElementById('statusDot').className = 'dot ' + state;
       document.getElementById('statusDot').title = statusTitle(state, p?.idleSince, p?.since);

@@ -17,6 +17,21 @@
     return hosts.some((h) => h !== window.ADMIN_WEB_HOSTNAME);
   };
 
+  // Статусы «в сети» (1.0.31): при подключении сервер присылает полный список (presence), дальше —
+  // только изменившихся (presence-delta; null — учётку удалили). Раньше при каждой смене статуса
+  // любого сотрудника каждому окну уходил список на всех (~11 КБ) — около 3 ГБ в сутки.
+  // Окно подписывается на это ключом presence=delta в адресе подключения (см. connectWs).
+  // Возвращает полный список: { id сотрудника: { state, hosts, idleSince, since } }.
+  window.mergePresence = (current, data) => {
+    if (data.type === 'presence') return data.users || {};
+    const next = Object.assign({}, current || {});
+    for (const [uid, p] of Object.entries(data.users || {})) {
+      if (p) next[uid] = p; else delete next[uid];
+    }
+    return next;
+  };
+  window.isPresenceMessage = (data) => data.type === 'presence' || data.type === 'presence-delta';
+
   // Строка "с какого момента действует текущий статус" для тултипа — server.js присылает since
   // в presence (момент последней смены агрегированного статуса пользователя). Используется и в
   // ростере (buildTooltip), и в шапке окна чата (статус собеседника).

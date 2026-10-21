@@ -222,7 +222,9 @@ function connectWs() {
     // мог понять, до кого обновление ещё не доехало (см. /api/admin/clients в server.js).
     + `&ver=${encodeURIComponent(desktop.appVersion)}&track=${encodeURIComponent(desktop.buildTrack)}`
     // Есть ли у пользователя права поставить обновление — панель не шлёт «обновись» тем, у кого их нет.
-    + `&adm=${desktop.canElevate === true ? 1 : desktop.canElevate === false ? 0 : ''}`);
+    + `&adm=${desktop.canElevate === true ? 1 : desktop.canElevate === false ? 0 : ''}`
+    // Статусы — полный список при подключении, дальше только изменившиеся (см. mergePresence в ui-kit.js).
+    + '&presence=delta');
   // Реальный статус на момент подключения, а не всегда "в сети" — иначе новое WS-подключение
   // (например, при открытии окна чата) на пару секунд перебивало настоящий AFK-статус человека,
   // пока не придёт очередной 15-секундный тик с исправлением.
@@ -243,7 +245,7 @@ function connectWs() {
     const data = JSON.parse(e.data);
     // Сервер продлил вход (токену больше суток) — сохраняем: с ним же откроются окна и следующий запуск.
     if (data.type === 'token' && data.token) { token = data.token; localStorage.setItem('token', token); return; }
-    if (data.type === 'presence') { presence = data.users; updatePresenceOnly(); }
+    if (isPresenceMessage(data)) { presence = mergePresence(presence, data); updatePresenceOnly(); }
     // Команды администратора из веб-панели. Выполняет их главный процесс — окно только передаёт.
     if (data.type === 'force-update') { desktop.forceUpdate(); return; }
     if (data.type === 'send-log') { sendLocalLogToServer(); return; }

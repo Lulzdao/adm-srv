@@ -1998,12 +1998,31 @@ function presenceSnapshot() {
 // размером со список всех пользователей, каждый — всем 200 адресатам: трафик растёт как квадрат
 // численности, хотя сам статус почти всегда не меняется. Сравниваем с прошлым снимком и молчим,
 // если он тот же — рассылка идёт только когда кто-то реально появился, отошёл или отключился.
+//
+// Но и реальная смена у одного человека рассылала список на всех (~11 КБ) каждому окну: журнал
+// 2026-10-21 — 126 МБ в час, около 3 ГБ в сутки. Теперь подключения с presence=delta (клиент 1.0.31+,
+// веб-панель) получают только изменившихся — сотню-другую байт; null — учётку удалили. Полный список
+// им уходит один раз, при подключении. Клиентам до 1.0.31 — по-прежнему полный список.
 let lastPresencePayload = null;
+let lastPresenceByUser = {}; // id → JSON статуса из прошлой рассылки: с чем сравнивать
 function broadcastPresence() {
-  const payload = JSON.stringify({ type: 'presence', users: presenceSnapshot() });
+  const users = presenceSnapshot();
+  const payload = JSON.stringify({ type: 'presence', users });
   if (payload === lastPresencePayload) return;
   lastPresencePayload = payload;
-  sendToAll(payload);
+  const changed = {};
+  const byUser = {};
+  for (const [uid, p] of Object.entries(users)) {
+    byUser[uid] = JSON.stringify(p);
+    if (lastPresenceByUser[uid] !== byUser[uid]) changed[uid] = p;
+  }
+  for (const uid of Object.keys(lastPresenceByUser)) if (!(uid in byUser)) changed[uid] = null;
+  lastPresenceByUser = byUser;
+  const delta = JSON.stringify({ type: 'presence-delta', users: changed });
+  for (const [ws, meta] of connMeta) {
+    if (meta.presenceMode === 'none') continue;
+    sendTo(ws, meta.presenceMode === 'delta' ? delta : payload);
+  }
 }
 
 // Оповещаем всех подключённых клиентов, что список пользователей/отделов/ролей изменился —
@@ -2040,6 +2059,11 @@ wss.on('connection', (ws, req) => {
   // Сможет ли клиент сам поставить обновление (есть ли у сотрудника права администратора на этом
   // ПК): '1' — да, '0' — нет. Клиенты до 1.0.26 этого не сообщают — тогда null, «неизвестно».
   const adm = url.searchParams.get('adm');
+  // Как присылать статусы «в сети» (см. broadcastPresence): 'delta' — полный список при подключении,
+  // дальше только изменившиеся (клиент 1.0.31+, веб-панель); 'none' — не присылать (окно рассылки);
+  // без ключа — как раньше, полный список при каждой смене (клиенты до 1.0.31).
+  const presenceParam = url.searchParams.get('presence');
+  const presenceMode = presenceParam === 'delta' || presenceParam === 'none' ? presenceParam : 'full';
   const canElevate = adm === '1' ? true : adm === '0' ? false : null;
   const user = userFromToken(token);
   if (!user) { logServer('WARN', 'ws_auth_failed', { ip: req.socket.remoteAddress }); return ws.close(); }
@@ -2058,7 +2082,7 @@ wss.on('connection', (ws, req) => {
   // «отошёл» с тем же моментом, пока клиент не прислал свой статус. Иначе после переподключения он
   // на долю секунды становился «в сети», и отсчёт «отошёл с» начинался заново.
   const idleSince = lastIdleSince.get(user.id) || null;
-  connMeta.set(ws, { userId: user.id, name: user.display_name, hostname, appVersion, buildTrack, canElevate, state: idleSince ? 'idle' : 'active', lastSeen: Date.now(), idleSince });
+  connMeta.set(ws, { userId: user.id, name: user.display_name, hostname, appVersion, buildTrack, canElevate, presenceMode, state: idleSince ? 'idle' : 'active', lastSeen: Date.now(), idleSince });
   metrics.wsConnect();
   // Продление входа (2026-10-08): токен выдаётся на 30 дней, и клиент, который месяц не перезаходил, вылетал
   // на экран входа. Окно подключается — если его токену больше суток, сервер выдаёт свежий, окно его
@@ -2070,7 +2094,7 @@ wss.on('connection', (ws, req) => {
   // Снимок присутствия этому сокету — обязательно отдельно от broadcastPresence(): та теперь молчит,
   // когда снимок не изменился (см. её комментарий), а при втором подключении с того же ПК он и не
   // меняется — новое окно осталось бы вообще без списка, кто сейчас в сети.
-  sendTo(ws, JSON.stringify({ type: 'presence', users: presenceSnapshot() }));
+  if (presenceMode !== 'none') sendTo(ws, JSON.stringify({ type: 'presence', users: presenceSnapshot() }));
   broadcastPresence();
 
   ws.on('message', (raw) => {

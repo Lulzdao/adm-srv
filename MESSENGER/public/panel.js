@@ -1644,11 +1644,15 @@ function connectPresenceWs() {
   // refreshAll раз в 30 секунд — без сокета панель теряет только мгновенность этой цифры.
   if (location.pathname.startsWith('/modules/')) return;
   const wsUrl = location.origin.replace(/^http/, 'ws');
-  const ws = new WebSocket(`${wsUrl}?token=${token}&host=${encodeURIComponent('Веб-панель администратора')}`);
+  // presence=delta: полный список статусов при подключении, дальше только изменившиеся.
+  const ws = new WebSocket(`${wsUrl}?token=${token}&host=${encodeURIComponent('Веб-панель администратора')}&presence=delta`);
+  let users = {};
   ws.onmessage = (e) => {
     const data = JSON.parse(e.data);
-    if (data.type === 'presence') {
-      const online = new Set(Object.entries(data.users).filter(([, v]) => v.state !== 'offline').map(([k]) => k));
+    if (data.type === 'presence' || data.type === 'presence-delta') {
+      if (data.type === 'presence') users = data.users || {};
+      else for (const [k, v] of Object.entries(data.users || {})) { if (v) users[k] = v; else delete users[k]; }
+      const online = new Set(Object.entries(users).filter(([, v]) => v.state !== 'offline').map(([k]) => k));
       document.getElementById('statOnline').textContent = online.size;
     }
   };
