@@ -22,6 +22,21 @@
 !define ORG_CA_THUMBPRINT "1a50a3d446b4b531dfbc94814151842d479f2941"
 !define ORG_CA_FILE "$INSTDIR\resources\rosstat-root-ca.crt"
 
+; Остановить службу удалённого доступа до замены файлов. При обновлении «Искры» служба uvnc_service
+; работает из $INSTDIR\resources\uvnc, и её winvnc.exe был бы занят — новый файл не записался бы.
+; Вызывается из customInit обеих сборок (до распаковки файлов). На первой установке службы ещё нет
+; в этой папке (она из старой uvnc_s) — остановка просто ничего не делает.
+!macro StopUvncForUpdate
+  nsExec::ExecToStack '"$SYSDIR\sc.exe" stop uvnc_service'
+  Pop $0
+  Pop $1
+  Sleep 1500
+  nsExec::ExecToStack '"$SYSDIR\taskkill.exe" /F /IM winvnc.exe'
+  Pop $0
+  Pop $1
+  Sleep 500
+!macroend
+
 !macro customInstall
   IfFileExists "${ORG_CA_FILE}" 0 caDone
     ; -verifystore возвращает 0, только если сертификат с таким отпечатком в хранилище есть.

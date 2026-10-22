@@ -47,20 +47,32 @@ function Log([string]$text) {
 }
 
 function Run([string]$exe, [string]$args) {
-	# Запуск без окна, ждём завершения, код возврата — в $LASTEXITCODE.
-	$p = New-Object System.Diagnostics.ProcessStartInfo
-	$p.FileName = $exe
-	$p.Arguments = $args
-	$p.UseShellExecute = $false
-	$p.CreateNoWindow = $true
-	$p.RedirectStandardOutput = $true
-	$p.RedirectStandardError = $true
-	$proc = [System.Diagnostics.Process]::Start($p)
-	$out = $proc.StandardOutput.ReadToEnd()
-	$proc.StandardError.ReadToEnd() | Out-Null
-	$proc.WaitForExit()
-	$global:LASTEXITCODE = $proc.ExitCode
-	return $out
+	# Запуск без окна, ждём завершения, код возврата — в $LASTEXITCODE. Вывод — во временный файл:
+	# читать stdout и stderr процесса через ReadToEnd по очереди в PowerShell 2.0 опасно (если дочерний
+	# процесс заполнит один буфер, пока мы ждём другой, — взаимная блокировка). Через файл этого нет.
+	$tmp = [System.IO.Path]::GetTempFileName()
+	try {
+		$proc = Start-Process -FilePath $exe -ArgumentList $args -NoNewWindow -Wait -PassThru -RedirectStandardOutput $tmp -RedirectStandardError ($tmp + '.err')
+		$global:LASTEXITCODE = $proc.ExitCode
+		$out = ''
+		if (Test-Path $tmp) { $out = [System.IO.File]::ReadAllText($tmp) }
+		return $out
+	} catch {
+		$global:LASTEXITCODE = 1
+		return ''
+	} finally {
+		Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+		Remove-Item -LiteralPath ($tmp + '.err') -Force -ErrorAction SilentlyContinue
+	}
+}
+
+function RunApp([string]$exe, [string]$args) {
+	# Для winvnc.exe (GUI-приложение): запуск без перенаправления вывода. С перенаправлением
+	# (как в Run) регистрация службы через -install у GUI-приложения не срабатывала.
+	try {
+		$proc = Start-Process -FilePath $exe -ArgumentList $args -NoNewWindow -Wait -PassThru
+		$global:LASTEXITCODE = $proc.ExitCode
+	} catch { $global:LASTEXITCODE = 1 }
 }
 
 function Stop-Service-If-Any {
@@ -160,11 +172,37 @@ if ($group -ne '') {
 	if (Test-Path $mslogon) { Run $mslogon ('/i /o "' + $aclFile + '"') | Out-Null; Log ('группа доступа: ' + $group) }
 }
 
-# 6. Служба из папки «Искры».
-Run $winvnc '-install' | Out-Null
-Start-Sleep -Milliseconds 500
-Run $sc ('config ' + $svc + ' start= auto') | Out-Null
-Run $sc ('start ' + $svc) | Out-Null
+# 6. Служба uvnc_service должна указывать на winvnc.exe из папки «Искры».
+#    Прежде тут служба удалялась и создавалась заново через winvnc -install, но это ненадёжно:
+#    удаление ЗАПУЩЕННОЙ службы уходит в состояние «помечена к удалению» (пока открыт хоть один
+#    её хэндл), и новая служба с тем же именем в этот момент не создаётся — путь так и остаётся
+#    прежним (на uvnc_s). Поэтому поступаем иначе: останавливаем службу и точечно переписываем её
+#    путь (ImagePath) и тип запуска прямо в реестре — без удаления и без кавычечных мучений
+#    sc config. Если службы ещё нет (чистая машина без прежней UltraVNC) — создаём её родным
+#    winvnc -install, он сразу запишет верный путь.
+$svcKey = 'HKLM:\SYSTEM\CurrentControlSet\Services\' + $svc
+Run $sc ('stop ' + $svc) | Out-Null
+Get-Process winvnc -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+# Ждём, пока служба действительно остановится (иначе net start ниже упрётся в «ещё останавливается»).
+for ($i = 0; $i -lt 20; $i++) {
+	$q = Run $sc ('query ' + $svc)
+	if ($q -match 'STOPPED' -or $q -notmatch 'STATE') { break }
+	Start-Sleep -Milliseconds 500
+}
+if (-not (Test-Path $svcKey)) {
+	RunApp $winvnc '-install'
+	Start-Sleep -Milliseconds 1000
+}
+# Путь к exe службы требует кавычек (в пути есть пробелы), плюс аргумент -service.
+$imagePath = '"' + $winvnc + '" -service'
+Set-ItemProperty -Path $svcKey -Name 'ImagePath' -Value $imagePath -ErrorAction SilentlyContinue
+Set-ItemProperty -Path $svcKey -Name 'Start' -Value 2 -ErrorAction SilentlyContinue
+Log ('путь службы: ' + $imagePath)
+# Запуск через net start, а не sc start: sc start возвращает управление сразу (служба ещё
+# поднимается), и следующая за этим проверка порта могла увидеть службу ещё не слушающей.
+# net start ждёт, пока служба действительно запустится, и возвращает ненулевой код при ошибке.
+$net = Join-Path $env:SystemRoot 'System32\net.exe'
+Run $net ('start ' + $svc) | Out-Null
 
 # 7. Правило брандмауэра на порт 5995 (при политике vncAllowFrom — только с этих адресов).
 Run $netsh 'advfirewall firewall delete rule name="Iskra Remote Access"' | Out-Null

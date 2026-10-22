@@ -17,7 +17,9 @@ contextBridge.exposeInMainWorld('desktop', {
   // Windows оформить под «Искру» нельзя; здесь только то, что делает главный процесс.
   sendFileTo: (payload) => ipcRenderer.send('send-file-to', payload),
   // Подключение к ПК сотрудника через UltraVNC — только у администратора, см. remote-connect в main.js.
-  remoteConnect: (host) => ipcRenderer.invoke('remote-connect', host),
+  remoteConnect: (host, login) => ipcRenderer.invoke('remote-connect', host, login),
+  remoteLoginInfo: () => ipcRenderer.invoke('remote-login-info'),
+  remoteForgetLogin: () => ipcRenderer.send('remote-forget-login'),
   openDepartmentBroadcast: (payload) => ipcRenderer.send('open-department-broadcast', payload),
   copyText: (text) => ipcRenderer.send('copy-text', text),
   openLink: (url) => ipcRenderer.send('open-link', url),
