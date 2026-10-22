@@ -222,7 +222,9 @@ function connectWs() {
     // мог понять, до кого обновление ещё не доехало (см. /api/admin/clients в server.js).
     + `&ver=${encodeURIComponent(desktop.appVersion)}&track=${encodeURIComponent(desktop.buildTrack)}`
     // Есть ли у пользователя права поставить обновление — панель не шлёт «обновись» тем, у кого их нет.
-    + `&adm=${desktop.canElevate === true ? 1 : desktop.canElevate === false ? 0 : ''}`);
+    + `&adm=${desktop.canElevate === true ? 1 : desktop.canElevate === false ? 0 : ''}`
+    // Статусы — полный список при подключении, дальше только изменившиеся (см. mergePresence в ui-kit.js).
+    + '&presence=delta');
   // Реальный статус на момент подключения, а не всегда "в сети" — иначе новое WS-подключение
   // (например, при открытии окна чата) на пару секунд перебивало настоящий AFK-статус человека,
   // пока не придёт очередной 15-секундный тик с исправлением.
@@ -243,7 +245,7 @@ function connectWs() {
     const data = JSON.parse(e.data);
     // Сервер продлил вход (токену больше суток) — сохраняем: с ним же откроются окна и следующий запуск.
     if (data.type === 'token' && data.token) { token = data.token; localStorage.setItem('token', token); return; }
-    if (data.type === 'presence') { presence = data.users; updatePresenceOnly(); }
+    if (isPresenceMessage(data)) { presence = mergePresence(presence, data); updatePresenceOnly(); }
     // Команды администратора из веб-панели. Выполняет их главный процесс — окно только передаёт.
     if (data.type === 'force-update') { desktop.forceUpdate(); return; }
     if (data.type === 'send-log') { sendLocalLogToServer(); return; }
@@ -847,99 +849,23 @@ function makeGroupRow(g) {
 }
 
 // ---------- Создание/управление группой — одна модалка на оба случая ----------
-// mode: 'create' — название + чек-лист участников из usersCache, создатель добавляется сам.
-// mode: 'manage' — если canManageGroup(group): та же форма, предзаполненная текущими участниками,
-// плюс "Удалить группу"; иначе — только список участников для чтения и кнопка "Покинуть группу"
-// (выйти может любой, без специальных прав).
+// Само окно — в group-modal.js (оно же открывается шестерёнкой в окне чата группы).
+// mode: 'create' — название + участники, создатель добавляется сам; 'manage' — если
+// canManageGroup(group), та же форма с текущими участниками и «Удалить»; иначе — список
+// участников для чтения и «Покинуть группу» (выйти может любой, без специальных прав).
 async function openGroupModal({ mode, group }) {
-  const canManage = mode === 'create' || canManageGroup(group);
-  let currentMemberIds = new Set([me.id]);
+  let memberIds = [me.id];
   if (mode === 'manage') {
     try {
-      const members = await api(`/api/groups/${group.id}/members`);
-      currentMemberIds = new Set(members.map((m) => m.id));
+      memberIds = (await api(`/api/groups/${group.id}/members`)).map((m) => m.id);
     } catch (e) { uiAlert(e.message, 'Не удалось загрузить участников'); return; }
   }
-
-  const overlay = document.createElement('div');
-  overlay.className = 'ui-modal-overlay';
-  const box = document.createElement('div');
-  box.className = 'ui-modal-box group-modal-box';
-
-  const candidates = usersCache.filter((u) => u.id !== me.id); // себя в чек-лист не добавляем — участие и так гарантировано
-  const memberListHtml = candidates.map((u) => {
-    const checked = currentMemberIds.has(u.id) ? 'checked' : '';
-    return canManage
-      ? `<label class="gm-member"><input type="checkbox" data-uid="${u.id}" ${checked}><span class="n">${escapeHtml(displayNameOf(u))}</span></label>`
-      : (currentMemberIds.has(u.id) ? `<div class="gm-member-name">${escapeHtml(displayNameOf(u))}</div>` : '');
-  }).join('');
-
-  box.innerHTML = `
-    <div class="ui-modal-title">${uiIcon('group')} ${mode === 'create' ? 'Новая группа' : escapeHtml(group.name)}</div>
-    ${canManage ? `
-      <div class="gm-field"><label>Название</label><input type="text" id="gmName" maxlength="80" value="${mode === 'manage' ? escapeHtml(group.name) : ''}" placeholder="Например, Отдел статистики"></div>
-      <div class="gm-field"><label>Участники</label><div class="gm-members">${memberListHtml || '<div class="gm-member-name" style="color:var(--muted)">Пока больше некого добавить</div>'}</div></div>
-    ` : `
-      <div class="gm-field"><label>Участники</label><div class="gm-readonly-members">${memberListHtml}</div></div>
-    `}
-    <div class="ui-modal-actions" style="margin-top:6px; flex-wrap:wrap;">
-      ${mode === 'manage' ? '<button class="ui-btn-ghost" id="gmLeave">Покинуть группу</button>' : ''}
-      ${mode === 'manage' && canManage ? '<button class="ui-btn-danger" id="gmDelete">Удалить</button>' : ''}
-      <button class="ui-btn-ghost" id="gmCancel">Отмена</button>
-      ${canManage ? '<button class="ui-btn-primary" id="gmSave">Сохранить</button>' : ''}
-    </div>
-  `;
-  overlay.appendChild(box);
-  document.body.appendChild(overlay);
-  const close = () => overlay.remove();
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
-  box.querySelector('#gmCancel').onclick = close;
-
-  if (canManage) {
-    box.querySelector('#gmSave').onclick = async () => {
-      const name = box.querySelector('#gmName').value.trim();
-      if (!name) return uiAlert('Введите название группы', 'Пустое название');
-      const checked = [...box.querySelectorAll('.gm-member input[type=checkbox]:checked')].map((el) => Number(el.dataset.uid));
-      try {
-        if (mode === 'create') {
-          await api('/api/groups', { method: 'POST', body: JSON.stringify({ name, memberIds: checked }) });
-        } else {
-          if (name !== group.name) await api(`/api/groups/${group.id}`, { method: 'PATCH', body: JSON.stringify({ name }) });
-          const toAdd = checked.filter((id) => !currentMemberIds.has(id));
-          const toRemove = [...currentMemberIds].filter((id) => id !== me.id && !checked.includes(id));
-          if (toAdd.length) await api(`/api/groups/${group.id}/members`, { method: 'POST', body: JSON.stringify({ userIds: toAdd }) });
-          for (const uid of toRemove) await api(`/api/groups/${group.id}/members/${uid}`, { method: 'DELETE' });
-        }
-        close();
-        await refreshGroups();
-        renderList();
-      } catch (e) { uiAlert(e.message, 'Не удалось сохранить'); }
-    };
-  }
-  if (mode === 'manage') {
-    box.querySelector('#gmLeave').onclick = async () => {
-      const ok = await uiConfirm(`Покинуть группу «${group.name}»? Вернуться обратно можно будет, только если вас снова добавят.`, { title: 'Покинуть группу', okText: 'Покинуть', danger: true });
-      if (!ok) return;
-      try {
-        await api(`/api/groups/${group.id}/members/${me.id}`, { method: 'DELETE' });
-        close();
-        await refreshGroups();
-        renderList();
-      } catch (e) { uiAlert(e.message, 'Не удалось выйти из группы'); }
-    };
-    if (canManage) {
-      box.querySelector('#gmDelete').onclick = async () => {
-        const ok = await uiConfirm(`Удалить группу «${group.name}» без возможности восстановления? Переписка останется в базе, но открыть её будет уже нельзя.`, { title: 'Удалить группу', okText: 'Удалить', danger: true });
-        if (!ok) return;
-        try {
-          await api(`/api/groups/${group.id}`, { method: 'DELETE' });
-          close();
-          await refreshGroups();
-          renderList();
-        } catch (e) { uiAlert(e.message, 'Не удалось удалить группу'); }
-      };
-    }
-  }
+  IskraGroupModal.open({
+    mode, group, me, users: usersCache, memberIds,
+    canManage: mode === 'create' || canManageGroup(group),
+    request: (method, path, body) => api(path, { method, body: body ? JSON.stringify(body) : undefined }),
+    onChanged: async () => { await refreshGroups(); renderList(); },
+  });
 }
 function renderList() {
   const list = document.getElementById('list');

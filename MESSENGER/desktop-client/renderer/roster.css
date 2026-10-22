@@ -169,20 +169,6 @@
   .row:hover .group-manage-btn { display: flex; }
   .row .group-manage-btn:hover { background: var(--panel); color: var(--text); }
   .row .group-manage-btn svg { width: 14px; height: 14px; }
-
-  /* ---- Модалка создания/управления группой ---- */
-  .group-modal-box { width: min(340px, 90%) !important; }
-  .gm-field { margin-bottom: 12px; }
-  .gm-field label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 5px; font-weight: 600; }
-  .gm-field input[type="text"] { width: 100%; box-sizing: border-box; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; color: var(--text); font-size: 13px; }
-  .gm-field input[type="text"]:focus { outline: none; border-color: var(--accent); }
-  .gm-members { max-height: 220px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; padding: 4px; }
-  .gm-member { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; font-size: 12.5px; }
-  .gm-member:hover { background: var(--hover); }
-  .gm-member input { flex-shrink: 0; }
-  .gm-member .n { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .gm-readonly-members { max-height: 220px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
-  .gm-readonly-members .gm-member-name { padding: 5px 8px; font-size: 12.5px; }
   .gm-owner-tag { color: var(--muted); font-size: 10.5px; margin-left: 4px; }
 
   /* ---- Профиль и настройки — раскрывающаяся панель под me-bar, а не отдельное окно ----

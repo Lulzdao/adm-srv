@@ -5,6 +5,11 @@ const id = type === 'dm' ? Number(params.get('id')) : params.get('id');
 const label = params.get('label');
 let token = params.get('token'); // может обновиться: сервер продлевает вход (сообщение 'token')
 const serverUrl = params.get('serverUrl');
+// Окно группы (id «group:7»): см. раздел «Окно группы» ниже. Объявлено здесь, потому что строка
+// под названием (paintHeaderSub) рисуется раньше, чем дойдёт до того раздела.
+const groupId = type === 'room' && /^group:\d+$/.test(id) ? Number(id.slice(6)) : null;
+let groupInfo = null;    // { id, name, created_by } из /api/groups; null — ещё не загружено или я уже не участник
+let groupLoaded = false;
 const me = JSON.parse(localStorage.getItem('me') || 'null');
 installErrorReporting(serverUrl, token, 'chat'); // см. ui-kit.js
 
@@ -47,7 +52,7 @@ function paintHeaderSub() {
   const el = document.getElementById('labelSub');
   if (headerTyping) { el.textContent = headerTyping; el.className = 'hsub typing'; return; }
   el.className = 'hsub';
-  if (type !== 'dm') { el.textContent = ''; return; }
+  if (type !== 'dm') { el.textContent = groupId && groupLoaded && !groupInfo ? 'Вы больше не участник этой группы' : ''; return; }
   if (headerState === 'active') el.textContent = 'В сети';
   else if (headerState === 'idle') el.textContent = headerIdleSince ? `Отошёл · ${formatIdleDuration(headerIdleSince).replace(' назад', '')}` : 'Отошёл';
   else el.textContent = 'Не в сети';
@@ -73,7 +78,7 @@ function presencePopupHtml(p) {
   return html;
 }
 function renderPresencePanel() {
-  presencePanel.innerHTML = presencePopupHtml(lastPresence);
+  presencePanel.innerHTML = groupId ? groupPresenceHtml() : presencePopupHtml(lastPresence);
 }
 function closePresencePanel() {
   presencePanel.classList.remove('open');
@@ -90,6 +95,94 @@ if (type === 'dm') {
   document.addEventListener('click', (e) => {
     if (presencePanel.classList.contains('open') && !e.target.closest('#presencePanel') && !e.target.closest('#label')) closePresencePanel();
   });
+}
+
+// ---------- Окно группы: шапка «Группа · название · 4/6», кто в сети, настройки ----------
+// Решение пользователя 2026-10-21: по шапке сразу видно, что это группа и сколько в ней людей
+// в сети; щелчок по «4/6» — список, кто в сети, а кто нет; шестерёнка рядом с «Историей» —
+// то же окно настроек, что у группы в списке сотрудников (group-modal.js).
+// «В сети» — любое живое подключение, «отошёл» тоже: сообщение до него дойдёт.
+let groupMembers = [];   // [{ id, username, display_name }]
+let presenceAll = {};    // последний снимок presence на всех: id сотрудника → { state, … }
+function memberState(uid) {
+  const state = presenceAll[uid]?.state || 'offline';
+  // Своё окно открыто — значит, я в сети, даже если снимок ещё не пришёл.
+  return uid === me?.id && state === 'offline' ? 'active' : state;
+}
+function memberName(m) { return m.display_name || m.username; }
+function paintGroupHeader() {
+  const total = groupMembers.length;
+  const online = groupMembers.filter((m) => memberState(m.id) !== 'offline').length;
+  const name = groupInfo ? groupInfo.name : label;
+  document.getElementById('label').innerHTML = `<span class="hg-word">Группа</span><span class="hg-name">${escapeHtml(name)}</span>`
+    + (groupInfo && total ? `<span class="hg-count" title="В сети ${online} из ${total} — нажмите, чтобы увидеть, кто">${online}/${total}</span>` : '');
+  document.getElementById('groupBtn').hidden = !groupInfo;
+  paintHeaderSub();
+  if (presencePanel.classList.contains('open')) renderPresencePanel();
+}
+function groupPresenceHtml() {
+  const byName = (a, b) => memberName(a).localeCompare(memberName(b), 'ru');
+  const on = groupMembers.filter((m) => memberState(m.id) !== 'offline').sort(byName);
+  const off = groupMembers.filter((m) => memberState(m.id) === 'offline').sort(byName);
+  const row = (m) => {
+    const state = memberState(m.id);
+    return `<div class="pp-member" title="${escapeHtml(statusLabel(state, presenceAll[m.id]?.idleSince))}"><span class="dot2 ${state}"></span>`
+      + `<span class="n">${escapeHtml(memberName(m))}${m.id === me?.id ? ' <span class="pp-me">(вы)</span>' : ''}</span></div>`;
+  };
+  const list = (arr) => arr.map(row).join('') || '<div class="pp-none">никого</div>';
+  return `<div class="pp-group"><div class="pp-hosts-title">В сети — ${on.length}</div>${list(on)}`
+    + `<div class="pp-hosts-title">Не в сети — ${off.length}</div>${list(off)}</div>`;
+}
+async function loadGroup() {
+  try {
+    const groups = await api('/api/groups');
+    if (!Array.isArray(groups)) return; // сервер ответил ошибкой — оставляем, что было
+    groupInfo = groups.find((g) => g.id === groupId) || null;
+    const members = groupInfo ? await api(`/api/groups/${groupId}/members`) : [];
+    groupMembers = Array.isArray(members) ? members : [];
+    groupLoaded = true;
+  } catch { /* сервер недоступен — оставляем, что было; повторим по groups-changed */ }
+  paintGroupHeader();
+}
+// Запрос с изменением (api() выше — только чтение и без разбора ошибок).
+async function apiSend(method, path, body) {
+  const res = await fetch(serverUrl + path, {
+    method,
+    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Сервер не ответил');
+  return data;
+}
+async function openGroupSettings() {
+  await loadGroup(); // состав мог поменяться, пока окно было открыто
+  if (!groupInfo) return uiAlert('Вы больше не участник этой группы.', 'Группа');
+  let users;
+  try { users = await api('/api/users'); } catch { users = null; }
+  if (!Array.isArray(users)) return uiAlert('Не удалось загрузить список сотрудников — проверьте подключение.', 'Группа');
+  IskraGroupModal.open({
+    mode: 'manage', group: groupInfo, me, users, memberIds: groupMembers.map((m) => m.id),
+    canManage: groupInfo.created_by === me?.id || !!me?.can_admin,
+    request: apiSend,
+    // Вышел или удалил — переписка этого окна больше недоступна, закрываем его.
+    onChanged: async (kind) => { if (kind === 'saved') await loadGroup(); else desktop.windowAction('close'); },
+  });
+}
+if (groupId) {
+  const labelEl = document.getElementById('label');
+  labelEl.classList.add('hg');
+  // Щёлкается только «4/6»: за название окно по-прежнему можно тащить.
+  labelEl.addEventListener('click', (e) => { if (e.target.closest('.hg-count')) togglePresencePanel(); });
+  document.addEventListener('click', (e) => {
+    if (presencePanel.classList.contains('open') && !e.target.closest('#presencePanel') && !e.target.closest('.hg-count')) closePresencePanel();
+  });
+  const btn = document.getElementById('groupBtn');
+  btn.querySelector('span').innerHTML = uiIcon('gear');
+  btn.title = 'Настройки группы: название и участники';
+  btn.onclick = openGroupSettings;
+  paintGroupHeader();
+  loadGroup();
 }
 
 // Собеседник, подключённый ТОЛЬКО через веб-панель администратора (без единого реального хоста),
@@ -496,7 +589,9 @@ function connectWs() {
     // мог понять, до кого обновление ещё не доехало (см. /api/admin/clients в server.js).
     + `&ver=${encodeURIComponent(desktop.appVersion)}&track=${encodeURIComponent(desktop.buildTrack)}`
     // Есть ли у пользователя права поставить обновление — панель не шлёт «обновись» тем, у кого их нет.
-    + `&adm=${desktop.canElevate === true ? 1 : desktop.canElevate === false ? 0 : ''}`);
+    + `&adm=${desktop.canElevate === true ? 1 : desktop.canElevate === false ? 0 : ''}`
+    // Статусы — полный список при подключении, дальше только изменившиеся (см. mergePresence в ui-kit.js).
+    + '&presence=delta');
   // У этого окна своё отдельное подключение к серверу — если оно не будет сообщать свой статус,
   // сервер посчитает его вечно "активным" и это перекроет настоящий статус AFK от окна ростера
   // (баг, который был: "Отошёл" не появлялся, пока открыто хоть одно окно чата). Статус на момент
@@ -518,8 +613,12 @@ function connectWs() {
   ws.onmessage = (e) => {
     const data = JSON.parse(e.data);
     if (data.type === 'token' && data.token) { token = data.token; return; } // сервер продлил вход
-    if (data.type === 'presence' && type === 'dm') {
-      const p = data.users[id];
+    if (isPresenceMessage(data)) presenceAll = mergePresence(presenceAll, data);
+    if (isPresenceMessage(data) && groupId) paintGroupHeader();
+    if (data.type === 'groups-changed' && groupId) loadGroup();
+    // Частичная рассылка без собеседника — у него ничего не поменялось.
+    if (isPresenceMessage(data) && type === 'dm' && (data.type === 'presence' || id in (data.users || {}))) {
+      const p = presenceAll[id];
       const state = p ? p.state : 'offline';
       document.getElementById('statusDot').className = 'dot ' + state;
       document.getElementById('statusDot').title = statusTitle(state, p?.idleSince, p?.since);
