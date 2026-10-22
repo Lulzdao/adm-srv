@@ -10,7 +10,8 @@ const tls = require('tls');
 const { diagnoseServer } = require('./diagnose');
 const { parseMachinePolicy } = require('./policy');
 const { detectCanElevate, updatePlan, canUpdateOnCommand } = require('./elevation');
-const { viewerArgs, viewerCandidates, launchViewer, defaultVncUser, credentialArgs } = require('./remote');
+const { isRemoteHost, viewerArgs, viewerCandidates, launchViewer, defaultVncUser, credentialArgs, parsePing } = require('./remote');
+const { cascadePosition, centerIn } = require('./window-place');
 const { SERVER_URL, VNC_VIEWER_PATHS, VNC_PORT, VNC_VIEWER_ARGS } = require('./config');
 const { autoUpdater } = require('electron-updater');
 
@@ -664,7 +665,17 @@ function createWindow(key, file, payload, size, { activate = false } = {}) {
   const saved = sizeKey && settings.rememberWindowSize ? settings[sizeKey] : null;
   const width = saved?.width || size?.width || 380;
   const height = saved?.height || size?.height || 520;
-  const pos = clampToVisibleArea(saved?.x, saved?.y, width, height);
+  let pos = clampToVisibleArea(saved?.x, saved?.y, width, height);
+  // Чаты не ложатся ровно друг на друга: если на месте нового окна уже стоит открытое — лесенкой
+  // (см. window-place.js). Без запомненного места считаем центр сами: Windows поставила бы туда же,
+  // но тогда не с чем было бы сравнивать. Свёрнутые и спрятанные окна места не занимают.
+  if (file === 'chat.html') {
+    const display = pos ? screen.getDisplayMatching({ ...pos, width, height }) : screen.getPrimaryDisplay();
+    const occupied = [...namedWins.values()]
+      .filter((w) => !w.isDestroyed() && w.isVisible() && !w.isMinimized())
+      .map((w) => w.getBounds());
+    pos = cascadePosition(pos || centerIn(display.workArea, { width, height }), { width, height }, occupied, display.workArea);
+  }
   const win = new BrowserWindow({
     width, height, ...(pos || {}),
     minWidth: size?.minWidth || 300,
@@ -1204,6 +1215,31 @@ ipcMain.handle('remote-login-info', (event) => {
   return { user: (savedVncLogin && savedVncLogin.user) || defaultVncUser(process.env), saved: !!savedVncLogin };
 });
 ipcMain.on('remote-forget-login', () => { savedVncLogin = null; });
+
+// Доступен ли ПК — для окна подключения (просьба пользователя 2026-10-22): идёт ли пинг и отвечает ли
+// порт UltraVNC. Нужно оба: брандмауэр Windows часто режет пинг, и тогда «не отвечает на пинг» при
+// открытом порте значит «подключиться можно»; а «пинг есть, порт молчит» — ПК включён, но служба
+// удалённого доступа не работает. Обе проверки идут разом и вместе укладываются в пару секунд.
+ipcMain.handle('remote-probe', async (event, host) => {
+  if (BrowserWindow.fromWebContents(event.sender) !== rosterWin) return null;
+  if (!isRemoteHost(host)) return null;
+  const port = machinePolicy.vncPort || VNC_PORT;
+  // -4: имя может разрешиться и в IPv6-адрес, а сеть организации и UltraVNC живут на IPv4.
+  // latin1 — вывод в кодировке консоли (866); разбору нужны только «TTL=», цифры и адрес.
+  const ping = new Promise((resolve) => {
+    require('child_process').execFile(path.join(SYSTEM32, 'ping.exe'), ['-4', '-n', '1', '-w', '1500', host],
+      { encoding: 'latin1', timeout: 8000, windowsHide: true }, (err, stdout) => resolve(parsePing(stdout, host)));
+  });
+  const vnc = new Promise((resolve) => {
+    const sock = require('net').connect({ host, port });
+    const done = (open) => { sock.destroy(); resolve(open); };
+    sock.setTimeout(2500, () => done(false));
+    sock.once('connect', () => done(true));
+    sock.once('error', () => done(false));
+  });
+  const [p, open] = await Promise.all([ping, vnc]);
+  return { ...p, port, vncOpen: open };
+});
 
 ipcMain.handle('remote-connect', async (event, host, login) => {
   if (BrowserWindow.fromWebContents(event.sender) !== rosterWin) return { ok: false, error: 'Недоступно из этого окна.' };

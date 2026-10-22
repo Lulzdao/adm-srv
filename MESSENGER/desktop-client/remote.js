@@ -85,4 +85,19 @@ function credentialArgs(user, password) {
   return ['-user', u, '-password', p];
 }
 
-module.exports = { isRemoteHost, remoteHostsOf, viewerArgs, viewerCandidates, findViewer, launchViewer, defaultVncUser, credentialArgs };
+// Разбор вывода ping.exe для окна подключения: отвечает ли ПК и за сколько. Текст ping переведён на язык
+// Windows и выходит в кодировке консоли (866), поэтому опираемся только на непереводимое: «TTL=» есть
+// в каждой строке ответа на любом языке, время стоит перед ним («время<1мс TTL=128», «time=3ms TTL=128»),
+// адрес — в квадратных скобках первой строки («Обмен пакетами с PC-1 [10.0.0.5]»). Нет ни ответа, ни
+// адреса — имя не нашлось в сети.
+// → { reply: bool, ms: число | null, below: bool (время «<1»), ip: строка | null, resolved: bool }
+function parsePing(output, host) {
+  const text = String(output || '');
+  const ipMatch = text.match(/\[(\d{1,3}(?:\.\d{1,3}){3})\]/);
+  const ip = ipMatch ? ipMatch[1] : (/^\d{1,3}(\.\d{1,3}){3}$/.test(host || '') ? host : null);
+  const time = text.match(/([=<])(\d+)[^\s=<]*\s+TTL=/i);
+  const reply = /TTL=/i.test(text);
+  return { reply, ms: time ? Number(time[2]) : null, below: !!time && time[1] === '<', ip, resolved: reply || !!ip };
+}
+
+module.exports = { isRemoteHost, remoteHostsOf, viewerArgs, viewerCandidates, findViewer, launchViewer, defaultVncUser, credentialArgs, parsePing };

@@ -1855,6 +1855,14 @@ const NORMAL_CLOSE_CODES = new Set([1000, 1001, 1005]);
 const startupGraceEnv = process.env.PRESENCE_STARTUP_GRACE_MS;
 const STARTUP_GRACE_MS = startupGraceEnv !== undefined && startupGraceEnv !== '' && Number(startupGraceEnv) >= 0 ? Number(startupGraceEnv) : 60000;
 const lastIdleSince = new Map(); // userId -> с какого момента человек «отошёл» (пока он «отошёл»)
+// Последние ПК, с которых человек был в «Искре» (без веб-панели и «неизвестного ПК»). Нужны тем, кто
+// не в сети: «Искра» могла не запуститься или упасть, а компьютер включён — администратор видит имя
+// ПК в подсказке и может подключиться (просьба пользователя 2026-10-22). В базе — в presence_state.hosts
+// строки со статусом offline (раньше там был пустой список), поэтому переживает перезапуск службы.
+const lastHosts = new Map(); // userId -> [имя ПК, ...]
+function clientHostsOf(hosts) {
+  return [...hosts].filter((h) => h && h !== ADMIN_WEB_HOSTNAME && h !== 'неизвестный ПК');
+}
 const savePresenceStmt = db.prepare(`
   INSERT INTO presence_state (user_id, state, since, idle_since, hosts) VALUES (?, ?, ?, ?, ?)
   ON CONFLICT(user_id) DO UPDATE SET state = excluded.state, since = excluded.since, idle_since = excluded.idle_since, hosts = excluded.hosts
@@ -1914,6 +1922,10 @@ const statusSince = new Map();
   for (const r of rows) {
     if (!['active', 'idle', 'offline'].includes(r.state) || !Number.isFinite(r.since)) continue;
     statusSince.set(r.user_id, { state: r.state, since: r.since });
+    let saved = [];
+    try { saved = JSON.parse(r.hosts || '[]'); } catch { /* испорчено — без имён ПК */ }
+    const known = Array.isArray(saved) ? clientHostsOf(saved.map(String)) : [];
+    if (known.length) lastHosts.set(r.user_id, known);
     if (r.state === 'idle' && r.idle_since) lastIdleSince.set(r.user_id, r.idle_since);
     if (r.state !== 'offline' && STARTUP_GRACE_MS > 0) {
       let hosts = [];
@@ -1974,6 +1986,10 @@ function presenceSnapshot() {
   for (const uid of getAllUserIds()) {
     const entry = onlineByUser.get(uid);
     const state = entry ? entry.state : 'offline';
+    if (entry) {
+      const known = clientHostsOf(entry.hosts);
+      if (known.length) lastHosts.set(uid, known);
+    }
     // «Отошёл с» — помним, пока человек отошёл: переподключившееся окно продолжит отсчёт, а не
     // начнёт его заново (см. status в handleClientMessage).
     if (state === 'idle') { if (entry.idleSince) lastIdleSince.set(uid, entry.idleSince); }
@@ -1981,7 +1997,7 @@ function presenceSnapshot() {
     const prev = statusSince.get(uid);
     if (!prev || prev.state !== state) {
       statusSince.set(uid, { state, since: now });
-      savePresence(uid, state, now, state === 'idle' ? entry.idleSince : null, entry ? [...entry.hosts] : []);
+      savePresence(uid, state, now, state === 'idle' ? entry.idleSince : null, entry ? [...entry.hosts] : (lastHosts.get(uid) || []));
     }
     result[uid] = {
       state,
@@ -1989,6 +2005,10 @@ function presenceSnapshot() {
       idleSince: entry ? entry.idleSince : null,
       since: statusSince.get(uid).since, // с какого момента текущий статус действует — для тултипа в клиенте
     };
+    // Только у тех, кто не в сети: у остальных живые имена ПК и так в hosts, а лишнее поле давало бы
+    // лишние рассылки изменений (см. broadcastPresence). hosts у них остаётся пустым — по нему клиент
+    // решает, можно ли писать человеку.
+    if (state === 'offline' && lastHosts.has(uid)) result[uid].lastHosts = lastHosts.get(uid);
   }
   return result;
 }

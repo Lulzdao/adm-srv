@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('desktop', {
   // Подключение к ПК сотрудника через UltraVNC — только у администратора, см. remote-connect в main.js.
   remoteConnect: (host, login) => ipcRenderer.invoke('remote-connect', host, login),
   remoteLoginInfo: () => ipcRenderer.invoke('remote-login-info'),
+  remoteProbe: (host) => ipcRenderer.invoke('remote-probe', host),
   remoteForgetLogin: () => ipcRenderer.send('remote-forget-login'),
   openDepartmentBroadcast: (payload) => ipcRenderer.send('open-department-broadcast', payload),
   copyText: (text) => ipcRenderer.send('copy-text', text),

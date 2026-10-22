@@ -99,3 +99,22 @@ test('логин по умолчанию — учётка Windows ДОМЕН\\л
     assert.throws(() => credentialArgs(u, p), `${JSON.stringify(u)} / ${JSON.stringify(p)}`);
   }
 });
+
+// Вывод ping.exe — настоящий, с русской Windows: в кодировке 866, прочитанный как latin1 (так его читает
+// main.js), — кириллица превращается в мусор, а «TTL=», цифры и адрес остаются как есть.
+const { parsePing } = require('./remote');
+test('ping: ответ, время и адрес — из настоящего вывода русской Windows', () => {
+  const ok = '\r\n\u0090¡¬¥­ ¯ ª¥â ¬¨ á PC-1 [10.0.0.5] á 32 ¡ ©â ¬¨ ¤ ­­ëå:\r\n\u008eâ¢¥â ®â 10.0.0.5: ç¨á«® ¡ ©â=32 ¢à¥¬ï<1¬á TTL=128\r\n';
+  assert.deepStrictEqual(parsePing(ok, 'PC-1'), { reply: true, ms: 1, below: true, ip: '10.0.0.5', resolved: true });
+  const slow = 'Pinging PC-2 [10.0.0.6] with 32 bytes of data:\r\nReply from 10.0.0.6: bytes=32 time=12ms TTL=127\r\n';
+  assert.deepStrictEqual(parsePing(slow, 'PC-2'), { reply: true, ms: 12, below: false, ip: '10.0.0.6', resolved: true });
+});
+test('ping: имя нашлось, но ПК не отвечает; имя не нашлось вовсе', () => {
+  const silent = '\r\n\u0090¡¬¥­ ¯ ª¥â ¬¨ á PC-3 [10.0.0.7] á 32 ¡ ©â ¬¨ ¤ ­­ëå:\r\n\u0088­â¥à¢ « ®¦¨¤ ­¨ï ¤«ï § ¯à®á  ¨áâ¥ª.\r\n';
+  assert.deepStrictEqual(parsePing(silent, 'PC-3'), { reply: false, ms: null, below: false, ip: '10.0.0.7', resolved: true });
+  const unreachable = 'Pinging PC-4 [10.0.0.8] with 32 bytes of data:\r\nReply from 10.0.0.1: Destination host unreachable.\r\n';
+  assert.strictEqual(parsePing(unreachable, 'PC-4').reply, false, 'ответ роутера «узел недоступен» — не ответ ПК');
+  const noName = '\u008fà¨ ¯à®¢¥àª¥ á¢ï§¨ ­¥ ã¤ «®áì ®¡­ àã¦¨âì ã§¥« no-such-pc.\r\n';
+  assert.deepStrictEqual(parsePing(noName, 'no-such-pc'), { reply: false, ms: null, below: false, ip: null, resolved: false });
+  assert.strictEqual(parsePing('', '10.0.0.9').ip, '10.0.0.9', 'адрес вместо имени — он и есть адрес');
+});
