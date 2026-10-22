@@ -15,6 +15,8 @@ installErrorReporting(serverUrl, token, 'chat'); // см. ui-kit.js
 
 document.getElementById('label').textContent = label;
 if (type !== 'dm') document.getElementById('statusDot').style.display = 'none';
+// В шапке окна группы — та же иконка, что у группы в ростере (просьба пользователя 2026-10-22).
+if (groupId) document.getElementById('statusDot').insertAdjacentHTML('afterend', `<div class="badge-icon group-badge">${uiIcon('group')}</div>`);
 
 // Настройка "Скрывать имя в сообщениях" — только в личных чатах (в общей комнате имя нужно, чтобы
 // различать реплики). Применяется сразу во всех открытых окнах при переключении слайдера (см.
@@ -114,7 +116,9 @@ function paintGroupHeader() {
   const total = groupMembers.length;
   const online = groupMembers.filter((m) => memberState(m.id) !== 'offline').length;
   const name = groupInfo ? groupInfo.name : label;
-  document.getElementById('label').innerHTML = `<span class="hg-word">Группа</span><span class="hg-name">${escapeHtml(name)}</span>`
+  // Слова «Группа» перед названием больше нет: то же говорит иконка группы слева (2026-10-22), а в
+  // узком окне каждое место на счету — название и так обрезалось до первых букв.
+  document.getElementById('label').innerHTML = `<span class="hg-name" title="Группа «${escapeAttr(name)}»">${escapeHtml(name)}</span>`
     + (groupInfo && total ? `<span class="hg-count" title="В сети ${online} из ${total} — нажмите, чтобы увидеть, кто">${online}/${total}</span>` : '');
   document.getElementById('groupBtn').hidden = !groupInfo;
   paintHeaderSub();
@@ -291,7 +295,8 @@ function bubbleHtml(m, { withDate, query, card } = {}) {
   const inlineTime = reactions.length ? '' : timeEl;
   const head = card
     ? `<div class="hhead"><span class="hwho${own ? ' me' : ''}" title="${own ? '' : escapeHtml(m.from_user)}">${own ? 'Вы' : escapeHtml(shortFio(m.from_user))}</span><span class="hwhen">${editedMarkHtml(m.edited_at)}${stamp}</span></div>`
-    : `<div class="who">${escapeHtml(m.from_user)}</div>`;
+    // Над пузырём — «Голубева Ж. А.», полное ФИО — в подсказке (просьба пользователя 2026-10-22).
+    : `<div class="who" title="${escapeAttr(m.from_user || '')}">${escapeHtml(shortFio(m.from_user))}</div>`;
 
   let body = '';
   if (m.text) body += `<div class="txt selectable" data-raw-text="${escapeAttr(m.text)}">${highlightHtml(m.text, query)}${files.length ? '' : inlineTime}</div>`;
@@ -345,7 +350,9 @@ function applyEdit(msgEl, text, editedAt) {
   } else if (txt) {
     txt.remove();
   }
-  const mark = msgEl.querySelector('.edited');
+  // Метку ищем и в узле времени: он уже вынут из сообщения (строкой выше), и поиск по одному
+  // msgEl её не находил — при каждой правке «изменено» добавлялось ещё раз (жалоба 2026-10-22).
+  const mark = (timeNode && timeNode.querySelector('.edited')) || msgEl.querySelector('.edited');
   if (mark) mark.outerHTML = editedMarkHtml(editedAt).trim();
   else if (timeNode) timeNode.insertAdjacentHTML('afterbegin', editedMarkHtml(editedAt));
   else { const when = msgEl.querySelector('.hwhen'); if (when) when.insertAdjacentHTML('afterbegin', editedMarkHtml(editedAt)); }
@@ -698,10 +705,13 @@ function showTypingIndicator(name) {
   // Имя — только в комнате/группе, где печатать может кто угодно. В личном чате оно очевидно и
   // лишняя строка только растит пузырь.
   const who = el.querySelector('.who');
-  who.textContent = type === 'room' ? name : '';
+  who.textContent = type === 'room' ? shortFio(name) : '';
+  who.title = type === 'room' ? name : '';
   who.style.display = type === 'room' ? '' : 'none';
+  // С именем точкам нужен отступ сверху: «волна» поднимает их на 4px, и они врезались в фамилию.
+  el.classList.toggle('with-name', type === 'room');
   if (follow) { programmaticScroll = true; box.scrollTop = box.scrollHeight; }
-  headerTyping = type === 'room' ? `${name} печатает…` : 'печатает…'; paintHeaderSub();
+  headerTyping = type === 'room' ? `${shortFio(name)} печатает…` : 'печатает…'; paintHeaderSub();
   clearTimeout(typingHideTimer);
   typingHideTimer = setTimeout(hideTypingIndicator, TYPING_TIMEOUT_MS);
 }
@@ -765,7 +775,8 @@ function startReplyTo(mid) {
   cancelEdit();
   const el = document.querySelector(`#messages [data-id="${mid}"], #hpMessages [data-id="${mid}"]`);
   if (!el) return;
-  const from_user = el.querySelector('.who')?.textContent || label;
+  const whoEl = el.querySelector('.who');
+  const from_user = (whoEl && (whoEl.title || whoEl.textContent)) || label; // полное ФИО — в подсказке
   const text = el.querySelector('.txt')?.dataset.rawText || (el.querySelector('.fn') ? '📎 ' + el.querySelector('.fn').textContent : '');
   replyingTo = { id: mid, from_user, text };
   paintReplyBanner();
