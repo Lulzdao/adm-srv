@@ -641,7 +641,7 @@ function applyReachability(row, u, p) {
   const chatPayload = { type: 'dm', id: u.id, label: displayNameOf(u), token, serverUrl };
   row.classList.toggle('unreachable', !reachable);
   // Не в сети — сервер присылает ПК, с которого человек был в «Искре» в последний раз (lastHosts,
-  // сервер 1.0.32+): «Искра» могла не запуститься, а компьютер включён — к нему можно подключиться.
+  // сервер 1.1.32+): «Искра» могла не запуститься, а компьютер включён — к нему можно подключиться.
   const lastHosts = p.state === 'offline' ? remoteHostsOf(p.lastHosts) : [];
   row.title = buildTooltip(p.state, p.idleSince, p.hosts, p.since)
     + lastHosts.map((h) => `\nПоследний ПК: ${h}`).join('')
