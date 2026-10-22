@@ -216,7 +216,6 @@ body:has(#messages) .wintitlebar, body:has(#feed) .wintitlebar { height: 52px; p
 .wintitlebar .who .n { font-size: 13px; }
 .wintitlebar .hsub { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .wintitlebar .hsub:empty { display: none; }
-.wintitlebar .hsub.typing { color: var(--online); }
 #tbExtra { align-items: center; gap: 4px !important; }
 #historyBtn, #groupBtn, #composeBtn { height: 30px; padding: 0 10px; border-radius: var(--radius-s); background: var(--panel-2); color: var(--text); font-size: 12px; font-weight: 500; font-family: inherit; }
 #historyBtn svg, #groupBtn svg { width: 15px; height: 15px; }

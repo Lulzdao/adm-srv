@@ -47,12 +47,12 @@ function statusTitle(state, idleSince, since) {
 }
 document.getElementById('statusDot').title = statusTitle('offline');
 
-// Вторая строка шапки (под именем): «печатает…», пока собеседник набирает, иначе его статус.
-// В комнате и группе статуса нет — там строка появляется только на время «печатает».
-let headerState = 'offline', headerIdleSince = null, headerTyping = '';
+// Вторая строка шапки (под именем): статус собеседника; в группе — только «Вы больше не участник».
+// «Печатает…» здесь больше не пишется — его и так видно пузырём с точками в конце ленты (решение
+// пользователя 2026-10-22: не дублировать).
+let headerState = 'offline', headerIdleSince = null;
 function paintHeaderSub() {
   const el = document.getElementById('labelSub');
-  if (headerTyping) { el.textContent = headerTyping; el.className = 'hsub typing'; return; }
   el.className = 'hsub';
   if (type !== 'dm') { el.textContent = groupId && groupLoaded && !groupInfo ? 'Вы больше не участник этой группы' : ''; return; }
   if (headerState === 'active') el.textContent = 'В сети';
@@ -711,14 +711,12 @@ function showTypingIndicator(name) {
   // С именем точкам нужен отступ сверху: «волна» поднимает их на 4px, и они врезались в фамилию.
   el.classList.toggle('with-name', type === 'room');
   if (follow) { programmaticScroll = true; box.scrollTop = box.scrollHeight; }
-  headerTyping = type === 'room' ? `${shortFio(name)} печатает…` : 'печатает…'; paintHeaderSub();
   clearTimeout(typingHideTimer);
   typingHideTimer = setTimeout(hideTypingIndicator, TYPING_TIMEOUT_MS);
 }
 function hideTypingIndicator() {
   clearTimeout(typingHideTimer);
   typingHideTimer = null;
-  headerTyping = ''; paintHeaderSub();
   const el = document.getElementById('typingBubble');
   if (el) el.remove();
 }
