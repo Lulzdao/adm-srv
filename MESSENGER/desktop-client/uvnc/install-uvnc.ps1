@@ -101,12 +101,15 @@ function Stop-Service-If-Any {
 }
 
 function Policy([string]$key) {
-	# Грубый разбор плоского config.json (в PS 2.0 нет ConvertFrom-Json).
+	# Грубый разбор плоского config.json (в PS 2.0 нет ConvertFrom-Json). Клиент (policy.js)
+	# разбирает этот файл настоящим JSON.parse, значит файл — валидный JSON, и обратная косая
+	# черта в значении экранирована: «ДОМЕН\\группа» в файле есть «ДОМЕН\группа» в значении.
+	# Регэксп захватывает сырое содержимое кавычек — разэкранируем двойную черту вручную.
 	$cfg = Join-Path $programData 'config.json'
 	if (-not (Test-Path $cfg)) { return '' }
 	$text = [System.IO.File]::ReadAllText($cfg)
 	$m = [System.Text.RegularExpressions.Regex]::Match($text, '"' + $key + '"\s*:\s*"([^"]*)"')
-	if ($m.Success) { return $m.Groups[1].Value }
+	if ($m.Success) { return $m.Groups[1].Value.Replace('\\', '\') }
 	$mb = [System.Text.RegularExpressions.Regex]::Match($text, '"' + $key + '"\s*:\s*(true|false)')
 	if ($mb.Success) { return $mb.Groups[1].Value }
 	return ''
