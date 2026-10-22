@@ -121,8 +121,10 @@ test("повреждение внутри базы: платформа рабо�
 test("порт занят: одна понятная строка и выход с ошибкой", async (t) => {
   const dir = tempDir(t);
   const port = await freePort();
-  // Порт держит «вторая копия» — так же, без адреса, как слушает сама платформа.
-  const busy = net.createServer().listen(port);
+  // Порт держит «вторая копия» — так же, как слушает сама платформа: только IPv4 (0.0.0.0, см. server.js).
+  // Слушающий и IPv6 сокет («без адреса») Windows пустила бы на тот же порт рядом — это другая копия
+  // не вышла бы с ошибкой, а запустилась параллельно.
+  const busy = net.createServer().listen(port, "0.0.0.0");
   await new Promise((r) => busy.once("listening", r));
   t.after(() => busy.close());
 

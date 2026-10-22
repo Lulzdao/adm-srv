@@ -24,4 +24,5 @@
     SetErrorLevel 3
     Abort
   ${EndIf}
+  !insertmacro StopUvncForUpdate
 !macroend

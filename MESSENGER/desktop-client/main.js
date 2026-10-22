@@ -10,7 +10,8 @@ const tls = require('tls');
 const { diagnoseServer } = require('./diagnose');
 const { parseMachinePolicy } = require('./policy');
 const { detectCanElevate, updatePlan, canUpdateOnCommand } = require('./elevation');
-const { viewerArgs, viewerCandidates, launchViewer } = require('./remote');
+const { isRemoteHost, viewerArgs, viewerCandidates, launchViewer, defaultVncUser, credentialArgs, parsePing } = require('./remote');
+const { cascadePosition, centerIn } = require('./window-place');
 const { SERVER_URL, VNC_VIEWER_PATHS, VNC_PORT, VNC_VIEWER_ARGS } = require('./config');
 const { autoUpdater } = require('electron-updater');
 
@@ -664,7 +665,17 @@ function createWindow(key, file, payload, size, { activate = false } = {}) {
   const saved = sizeKey && settings.rememberWindowSize ? settings[sizeKey] : null;
   const width = saved?.width || size?.width || 380;
   const height = saved?.height || size?.height || 520;
-  const pos = clampToVisibleArea(saved?.x, saved?.y, width, height);
+  let pos = clampToVisibleArea(saved?.x, saved?.y, width, height);
+  // Чаты не ложатся ровно друг на друга: если на месте нового окна уже стоит открытое — лесенкой
+  // (см. window-place.js). Без запомненного места считаем центр сами: Windows поставила бы туда же,
+  // но тогда не с чем было бы сравнивать. Свёрнутые и спрятанные окна места не занимают.
+  if (file === 'chat.html') {
+    const display = pos ? screen.getDisplayMatching({ ...pos, width, height }) : screen.getPrimaryDisplay();
+    const occupied = [...namedWins.values()]
+      .filter((w) => !w.isDestroyed() && w.isVisible() && !w.isMinimized())
+      .map((w) => w.getBounds());
+    pos = cascadePosition(pos || centerIn(display.workArea, { width, height }), { width, height }, occupied, display.workArea);
+  }
   const win = new BrowserWindow({
     width, height, ...(pos || {}),
     minWidth: size?.minWidth || 300,
@@ -1192,15 +1203,66 @@ ipcMain.on('send-file-to', (event, payload) => { handleSendFile(payload); });
 // администратора здесь не проверяется: пункт меню — удобство, а не допуск, и скрытый пункт никого
 // не защищает. Защищаем другое — чтобы окно не могло запустить что-то кроме просмотрщика и не с тем,
 // что является именем ПК: имя сообщает клиент сотрудника, то есть оно чужое (см. remote.js).
-ipcMain.handle('remote-connect', async (event, host) => {
+// Вход в UltraVNC по учётке Windows без окна просмотрщика (решение пользователя 2026-10-15): «Искра»
+// спрашивает пароль своим окном, логин подставлен — учётка, под которой администратор вошёл в Windows.
+// «Помнить до выхода» — пароль только в памяти этого процесса: на диск не пишется, при выходе из
+// учётки «Искры» и закрытии программы забывается. Политика vncAutoLogin: false — как раньше, окно
+// входа показывает сам просмотрщик.
+let savedVncLogin = null; // { user, password }
+ipcMain.handle('remote-login-info', (event) => {
+  if (BrowserWindow.fromWebContents(event.sender) !== rosterWin) return { disabled: true };
+  if (machinePolicy.vncAutoLogin === false) return { disabled: true };
+  return { user: (savedVncLogin && savedVncLogin.user) || defaultVncUser(process.env), saved: !!savedVncLogin };
+});
+ipcMain.on('remote-forget-login', () => { savedVncLogin = null; });
+
+// Доступен ли ПК — для окна подключения (просьба пользователя 2026-10-22): идёт ли пинг и отвечает ли
+// порт UltraVNC. Нужно оба: брандмауэр Windows часто режет пинг, и тогда «не отвечает на пинг» при
+// открытом порте значит «подключиться можно»; а «пинг есть, порт молчит» — ПК включён, но служба
+// удалённого доступа не работает. Обе проверки идут разом и вместе укладываются в пару секунд.
+ipcMain.handle('remote-probe', async (event, host) => {
+  if (BrowserWindow.fromWebContents(event.sender) !== rosterWin) return null;
+  if (!isRemoteHost(host)) return null;
+  const port = machinePolicy.vncPort || VNC_PORT;
+  // -4: имя может разрешиться и в IPv6-адрес, а сеть организации и UltraVNC живут на IPv4.
+  // latin1 — вывод в кодировке консоли (866); разбору нужны только «TTL=», цифры и адрес.
+  const ping = new Promise((resolve) => {
+    require('child_process').execFile(path.join(SYSTEM32, 'ping.exe'), ['-4', '-n', '1', '-w', '1500', host],
+      { encoding: 'latin1', timeout: 8000, windowsHide: true }, (err, stdout) => resolve(parsePing(stdout, host)));
+  });
+  const vnc = new Promise((resolve) => {
+    const sock = require('net').connect({ host, port });
+    const done = (open) => { sock.destroy(); resolve(open); };
+    sock.setTimeout(2500, () => done(false));
+    sock.once('connect', () => done(true));
+    sock.once('error', () => done(false));
+  });
+  const [p, open] = await Promise.all([ping, vnc]);
+  return { ...p, port, vncOpen: open };
+});
+
+ipcMain.handle('remote-connect', async (event, host, login) => {
   if (BrowserWindow.fromWebContents(event.sender) !== rosterWin) return { ok: false, error: 'Недоступно из этого окна.' };
-  const candidates = viewerCandidates(machinePolicy.vncViewerPath, VNC_VIEWER_PATHS);
+  // Просмотрщик из комплекта «Искры» (resources\uvnc) — первым: он нашей сборки (клавиши по скан-коду
+  // раскладки удалённого ПК). Если его нет (запуск из исходников) — прежние пути на диске.
+  const bundledViewer = path.join(process.resourcesPath, 'uvnc', 'vncviewer.exe');
+  const candidates = viewerCandidates(machinePolicy.vncViewerPath, [bundledViewer, ...VNC_VIEWER_PATHS]);
   let args;
   try {
     args = viewerArgs(host, machinePolicy.vncPort || VNC_PORT, machinePolicy.vncViewerArgs || VNC_VIEWER_ARGS);
   } catch {
     logLocal('remote_connect_bad_host', { host: String(host).slice(0, 100) }, 'WARN');
     return { ok: false, error: 'Имя этого компьютера не похоже на имя ПК — подключение не запущено.' };
+  }
+  // Логин и пароль: введённые сейчас или запомненные. В журналы пароль не попадает — пишется только
+  // имя ПК и путь просмотрщика.
+  if (login && machinePolicy.vncAutoLogin !== false) {
+    const cred = login.useSaved ? savedVncLogin : { user: login.user, password: login.password };
+    if (!cred) return { ok: false, error: 'Пароль не запомнен — введите его.' };
+    try { args = args.concat(credentialArgs(cred.user, cred.password)); } catch (err) {
+      return { ok: false, error: err.message === 'недопустимый логин' ? 'Логин не подходит: без кавычек и спецсимволов.' : 'Пароль не подходит: без кавычек и спецсимволов.' };
+    }
+    if (!login.useSaved) savedVncLogin = login.remember ? { user: cred.user.trim(), password: cred.password } : null;
   }
   // Без оболочки (shell): аргументы уходят программе как есть, собрать из них команду нельзя.
   // Рабочая папка — папка просмотрщика: там он ищет плагин шифрования и свои настройки.
@@ -1396,6 +1458,7 @@ ipcMain.on('set-settings', (event, partial) => {
 
 // Выход из аккаунта: чистим localStorage ростера, закрываем все окна кроме него, возвращаем на экран входа
 ipcMain.on('logout', () => {
+  savedVncLogin = null; // запомненный пароль подключения к ПК — не для того, кто войдёт следующим
   for (const win of namedWins.values()) { if (!win.isDestroyed()) win.close(); }
   if (rosterWin && !rosterWin.isDestroyed()) {
     rosterWin.webContents.executeJavaScript('localStorage.clear(); location.reload();');
@@ -1403,8 +1466,25 @@ ipcMain.on('logout', () => {
 });
 
 // Показ системного уведомления по входящему сообщению/рассылке (или открытие окна чата, если включена настройка)
+// Показанные уведомления о сообщениях — по id сообщения: отправитель удалил его, пока уведомление ещё
+// на экране, — убираем (см. message-deleted ниже). Запись живёт, пока уведомление не закрыли.
+const messageNotifications = new Map(); // id сообщения -> Notification
+
+// Отправитель удалил сообщение (ростер переслал WS 'message_deleted'): получатель его ещё не читал —
+// убавляем счётчик непрочитанных этого собеседника; уведомление о нём — закрываем.
+ipcMain.on('message-deleted', (event, info) => {
+  if (BrowserWindow.fromWebContents(event.sender) !== rosterWin || !info) return;
+  const n = messageNotifications.get(info.id);
+  if (n) { messageNotifications.delete(info.id); try { n.close(); } catch { /* уже закрыто */ } }
+  const count = unreadDms.get(info.from_id) || 0;
+  if (info.unread && count > 0) {
+    if (count > 1) unreadDms.set(info.from_id, count - 1); else unreadDms.delete(info.from_id);
+    broadcastUnreadState();
+  }
+});
+
 ipcMain.on('notify', (event, payload) => {
-  const { title, body, openPayload } = payload;
+  const { title, body, openPayload, msgId } = payload;
   // Раньше notify умел открывать только окно чата — рассылки просто присылали Windows-уведомление
   // без возможности сразу открыть саму рассылку. Теперь openPayload сам указывает, какой файл
   // открывать (chat.html по умолчанию, либо broadcast.html), так что механизм общий для обоих.
@@ -1421,7 +1501,8 @@ ipcMain.on('notify', (event, payload) => {
     const minimized = existing && !existing.isDestroyed() && existing.isMinimized();
     // autoOpened — окно знает, что открылось само: Windows делает его активным, но человек мог и не
     // смотреть, поэтому «прочитано» оно отмечает только после его действия (см. reportReadIfSeen).
-    const win = minimized ? existing : createWindow(key, file, { ...openPayload, autoOpened: '1' }, winSize);
+    // autoMsg — по какому сообщению окно открылось: удалит его отправитель — окно закроется само.
+    const win = minimized ? existing : createWindow(key, file, { ...openPayload, autoOpened: '1', ...(msgId ? { autoMsg: String(msgId) } : {}) }, winSize);
     if (!win.isFocused()) { markUnread(openPayload); callAttention(win); } // фокус окна снимет отметку
     return;
   }
@@ -1434,6 +1515,14 @@ ipcMain.on('notify', (event, payload) => {
   // Уведомления выключены в настройках — остаются отметка непрочитанного, мигание кнопки и счётчик в трее.
   if (!settings.notifications) return;
   const n = new Notification({ title, body });
+  if (msgId) {
+    messageNotifications.set(msgId, n);
+    // Уведомления, ушедшие в центр уведомлений Windows, событие close не присылают — храним последние 100.
+    if (messageNotifications.size > 100) messageNotifications.delete(messageNotifications.keys().next().value);
+    const forget = () => { if (messageNotifications.get(msgId) === n) messageNotifications.delete(msgId); };
+    n.on('close', forget);
+    n.on('click', forget);
+  }
   n.on('click', () => {
     if (openPayload) createWindow(key, file, openPayload, winSize, { activate: true });
     else { rosterWin.show(); rosterWin.focus(); }

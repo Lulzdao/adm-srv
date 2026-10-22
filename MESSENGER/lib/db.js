@@ -168,6 +168,10 @@ function openDatabase(DB_FILE, { logServer }) {
       // Когда отправитель последний раз исправил сообщение (NULL — не исправлял). По нему у сообщения
       // пишется «изменено», как в Telegram. Прежний текст не храним — так же, как Telegram.
       if (!cols.includes('edited_at')) db.exec('ALTER TABLE messages ADD COLUMN edited_at INTEGER');
+      // Когда отправитель удалил сообщение (NULL — не удалял). Удаление «мягкое»: строка остаётся —
+      // участникам переписки она больше не показывается, а администратор в «Переписках» веб-панели
+      // видит её с пометкой «удалено» (решение пользователя 2026-10-22).
+      if (!cols.includes('deleted_at')) db.exec('ALTER TABLE messages ADD COLUMN deleted_at INTEGER');
     }
     {
       const cols = db.prepare("PRAGMA table_info(broadcasts)").all().map((c) => c.name);

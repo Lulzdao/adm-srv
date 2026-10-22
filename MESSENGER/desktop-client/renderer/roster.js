@@ -267,8 +267,14 @@ function connectWs() {
       desktop.notify({
         title,
         body,
+        msgId: data.id, // если отправитель удалит сообщение — закрыть уведомление и окно, открытое ради него
         openPayload: { type: data.room ? 'room' : 'dm', id: data.room || data.from_id, label, token, serverUrl },
       });
+    }
+    // Отправитель удалил сообщение: главный процесс убавит счётчик непрочитанных (unread — получатель,
+    // то есть мы, его ещё не прочитал) и уберёт уведомление о нём, если оно ещё на экране.
+    if (data.type === 'message_deleted' && data.from_id !== me.id) {
+      desktop.messageDeleted({ id: data.id, from_id: data.from_id, unread: !!data.unread && data.to_id === me.id });
     }
     // Объявление удалили в панели — в строке «Объявления» могло стоять именно оно.
     if (data.type === 'broadcast_deleted') refreshBroadcastPreview();
@@ -634,7 +640,11 @@ function applyReachability(row, u, p) {
   const reachable = canReceiveMessages(p.hosts);
   const chatPayload = { type: 'dm', id: u.id, label: displayNameOf(u), token, serverUrl };
   row.classList.toggle('unreachable', !reachable);
+  // Не в сети — сервер присылает ПК, с которого человек был в «Искре» в последний раз (lastHosts,
+  // сервер 1.1.32+): «Искра» могла не запуститься, а компьютер включён — к нему можно подключиться.
+  const lastHosts = p.state === 'offline' ? remoteHostsOf(p.lastHosts) : [];
   row.title = buildTooltip(p.state, p.idleSince, p.hosts, p.since)
+    + lastHosts.map((h) => `\nПоследний ПК: ${h}`).join('')
     + (reachable ? '' : '\nСейчас недоступен для сообщений и файлов — подключён только через веб-панель администратора');
   makeSelectable(row, `u:${u.id}`, reachable ? () => desktop.openChat(chatPayload) : null);
   // Меню собирается в момент щелчка, а не здесь: право администратора могли выдать или снять, пока
@@ -648,8 +658,10 @@ function applyReachability(row, u, p) {
     // Администратору — подключение к ПК сотрудника через UltraVNC, по пункту на каждый его ПК. Имя
     // в пункте целиком: его сообщает клиент сотрудника, и администратор должен видеть, куда идёт.
     if (me.can_admin) {
-      for (const host of remoteHostsOf(p.hosts)) {
+      for (const host of remoteHostsOf(p.hosts).concat(lastHosts)) {
         items.push({ label: `Подключиться к ПК: ${host}`, icon: 'monitor', onClick: () => connectToPc(host) });
+        // Пароль запомнен — подключение идёт без вопросов; войти иначе (другой логин, сменился пароль) — отсюда.
+        if (vncLoginSaved) items.push({ label: 'Подключиться под другой учёткой…', icon: 'monitor', onClick: () => connectToPc(host, true) });
       }
     }
     uiContextMenu(e.clientX, e.clientY, items);
@@ -663,9 +675,101 @@ function remoteHostsOf(hosts) {
   return [...new Set((hosts || []).filter((h) => typeof h === 'string' && REMOTE_HOST_RE.test(h)))];
 }
 
-async function connectToPc(host) {
-  const res = await desktop.remoteConnect(host);
+// Вход в UltraVNC по учётке Windows: логин подставлен (учётка, под которой вошли в Windows), пароль
+// вводится здесь — просмотрщик получает оба и подключается без своего окна входа (см. remote-connect
+// в main.js). Пароль хранит главный процесс и только в памяти; сюда он не возвращается.
+let vncLoginSaved = false;
+async function connectToPc(host, askAgain = false) {
+  const info = await desktop.remoteLoginInfo();
+  let res;
+  if (info.disabled) {
+    res = await desktop.remoteConnect(host);
+  } else if (info.saved && !askAgain) {
+    // Окна входа нет (пароль запомнен) — проверку связи видно только так: порт молчит — показываем,
+    // что с ПК, и спрашиваем. Отвечает — подключаемся сразу, как раньше. Просмотрщик и сам будет
+    // переподключаться, поэтому «всё равно подключиться» имеет смысл: ПК может как раз загружаться.
+    const r = await desktop.remoteProbe(host);
+    if (r && !r.vncOpen) {
+      const { lines, hint } = probeSummary(r);
+      const text = lines.map((l) => `${l.ok ? '✓' : '✗'} ${l.text}`).join('\n') + (hint ? `\n\n${hint}` : '');
+      if (!await uiConfirm(text, { title: `Подключение к ${host}`, okText: 'Всё равно подключиться' })) return;
+    }
+    res = await desktop.remoteConnect(host, { useSaved: true });
+  } else {
+    const login = await askVncLogin(host, info.user);
+    if (!login) return;
+    res = await desktop.remoteConnect(host, login);
+    if (res.ok) vncLoginSaved = login.remember;
+  }
   if (!res.ok) uiAlert(res.error, 'Подключение к ПК');
+}
+
+// Итог проверки связи (remote-probe в main.js): пинг, порт UltraVNC и вывод по-человечески — что это
+// значит для подключения. Пинг часто режет брандмауэр, поэтому решает порт, а не пинг.
+function probeSummary(r) {
+  const ip = r.ip ? ` (${r.ip})` : '';
+  const lines = [
+    r.reply ? { ok: true, text: `Пинг: отвечает, ${r.below ? '<1' : r.ms} мс${ip}` }
+      : { ok: false, text: r.resolved ? `Пинг: не отвечает${ip}` : 'Имя ПК не найдено в сети' },
+    { ok: r.vncOpen, text: `Удалённый доступ (порт ${r.port}): ${r.vncOpen ? 'отвечает' : 'не отвечает'}` },
+  ];
+  const hint = r.vncOpen ? (r.reply ? '' : 'Пинг закрыт брандмауэром — подключиться можно.')
+    : r.reply ? 'ПК включён, но служба удалённого доступа на нём не работает.'
+      : r.resolved ? 'ПК, скорее всего, выключен или недоступен по сети.'
+        : 'ПК выключен давно или его имя сменилось.';
+  return { lines, hint };
+}
+function probeHtml(r) {
+  if (!r) return 'Связь проверить не удалось.';
+  const { lines, hint } = probeSummary(r);
+  return lines.map((l) => `<div><span style="display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:7px; background:${l.ok ? 'var(--online)' : 'var(--danger)'}"></span>${escapeHtml(l.text)}</div>`).join('')
+    + (hint ? `<div style="color:var(--muted); margin-top:2px">${escapeHtml(hint)}</div>` : '');
+}
+
+function askVncLogin(host, user) {
+  return new Promise((resolve) => {
+    const field = 'width:100%; padding:9px 11px; margin:4px 0 10px; background:var(--panel-2); border:1px solid var(--border); border-radius:8px; color:var(--text); font-size:13px; font-family:inherit;';
+    const overlay = document.createElement('div');
+    overlay.className = 'ui-modal-overlay';
+    const box = document.createElement('div');
+    box.className = 'ui-modal-box';
+    box.innerHTML = `
+      <div class="ui-modal-title">Подключение к ${escapeHtml(host)}</div>
+      <div id="vncProbe" title="Щёлкните, чтобы проверить ещё раз" style="font-size:12.5px; line-height:1.6; margin:-2px 0 10px; padding:7px 10px; background:var(--panel-2); border-radius:8px; cursor:pointer"></div>
+      <div class="ui-modal-msg" style="margin-bottom:10px">Учётная запись Windows для входа в UltraVNC.</div>
+      <label style="font-size:12px; color:var(--muted)">Логин</label>
+      <input id="vncUser" style="${field}" spellcheck="false" autocomplete="off">
+      <label style="font-size:12px; color:var(--muted)">Пароль</label>
+      <input id="vncPass" type="password" style="${field}" autocomplete="off">
+      <label style="display:flex; align-items:center; gap:7px; font-size:12.5px; margin:2px 0 14px; cursor:pointer">
+        <input id="vncRemember" type="checkbox"> Помнить пароль до выхода из «Искры»</label>
+      <div class="ui-modal-actions">
+        <button class="ui-btn-ghost" id="vncCancel">Отмена</button>
+        <button class="ui-btn-primary" id="vncOk">Подключиться</button>
+      </div>`;
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+    const probeEl = box.querySelector('#vncProbe');
+    const probe = () => {
+      probeEl.textContent = 'Проверяю связь с ПК…';
+      desktop.remoteProbe(host).then((r) => { if (overlay.isConnected) probeEl.innerHTML = probeHtml(r); });
+    };
+    probeEl.onclick = probe;
+    probe();
+    const userEl = box.querySelector('#vncUser');
+    const passEl = box.querySelector('#vncPass');
+    userEl.value = user || '';
+    (userEl.value ? passEl : userEl).focus();
+    const close = (val) => { passEl.value = ''; overlay.remove(); resolve(val); };
+    const ok = () => {
+      if (!userEl.value.trim()) { userEl.focus(); return; }
+      if (!passEl.value) { passEl.focus(); return; }
+      close({ user: userEl.value.trim(), password: passEl.value, remember: box.querySelector('#vncRemember').checked });
+    };
+    box.querySelector('#vncCancel').onclick = () => close(null);
+    box.querySelector('#vncOk').onclick = ok;
+    box.addEventListener('keydown', (e) => { if (e.key === 'Enter') ok(); if (e.key === 'Escape') close(null); });
+  });
 }
 
 // ---------- Непрочитанные — состояние хранит и считает главный процесс (main.js), здесь только отрисовка ----------

@@ -67,3 +67,16 @@ test('панель читает день из папки его месяца —
   const today = await request(srv.url, 'GET', '/api/admin/logs', { token: admin.token });
   assert.ok(today.json.entries.some((e) => e.event === 'login'), JSON.stringify(today.json).slice(0, 300));
 });
+
+// Адреса в журнале — только IPv4 (решение пользователя 2026-10-22): сервер слушает 0.0.0.0, и вместо
+// «::ffff:127.0.0.1» или локального IPv6 «fe80::…%10», по которому не понять, чей это ПК, — «127.0.0.1».
+test('адреса в журнале — только IPv4', async () => {
+  await login(srv.url, ADMIN.username, ADMIN.password);
+  await request(srv.url, 'GET', '/api/admin/history/all', { token: admin.token });
+  const files = [];
+  const walk = (dir) => { for (const e of fs.readdirSync(dir, { withFileTypes: true })) { const p = path.join(dir, e.name); if (e.isDirectory()) walk(p); else if (e.name.startsWith('server-')) files.push(p); } };
+  walk(path.join(srv.dir, 'logs'));
+  const ips = files.flatMap((f) => [...fs.readFileSync(f, 'utf8').matchAll(/"ip":"([^"]*)"/g)].map((m) => m[1]));
+  assert.ok(ips.length >= 2, `в журнале есть адреса входа и просмотра ленты: ${ips.length}`);
+  for (const ip of ips) assert.match(ip, /^\d{1,3}(\.\d{1,3}){3}$/, `не IPv4: ${ip}`);
+});

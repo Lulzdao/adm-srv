@@ -17,13 +17,17 @@ contextBridge.exposeInMainWorld('desktop', {
   // Windows оформить под «Искру» нельзя; здесь только то, что делает главный процесс.
   sendFileTo: (payload) => ipcRenderer.send('send-file-to', payload),
   // Подключение к ПК сотрудника через UltraVNC — только у администратора, см. remote-connect в main.js.
-  remoteConnect: (host) => ipcRenderer.invoke('remote-connect', host),
+  remoteConnect: (host, login) => ipcRenderer.invoke('remote-connect', host, login),
+  remoteLoginInfo: () => ipcRenderer.invoke('remote-login-info'),
+  remoteProbe: (host) => ipcRenderer.invoke('remote-probe', host),
+  remoteForgetLogin: () => ipcRenderer.send('remote-forget-login'),
   openDepartmentBroadcast: (payload) => ipcRenderer.send('open-department-broadcast', payload),
   copyText: (text) => ipcRenderer.send('copy-text', text),
   openLink: (url) => ipcRenderer.send('open-link', url),
   saveFileAs: (payload) => ipcRenderer.send('save-file-as', payload),
   windowAction: (action) => ipcRenderer.send('window-action', action),
   notify: (payload) => ipcRenderer.send('notify', payload),
+  messageDeleted: (info) => ipcRenderer.send('message-deleted', info),
   logout: () => ipcRenderer.send('logout'),
   onIdleState: (cb) => ipcRenderer.on('idle-state', (event, payload) => cb(payload)),
   onFilesToSend: (cb) => ipcRenderer.on('files-to-send', (event, files) => cb(files)),

@@ -466,6 +466,9 @@
   #histMessages .m { font-size:13.5px; line-height:1.5; color:var(--md-on-surface); }
   #histMessages .m b { color:var(--md-primary); }
   #histMessages .m .t { color:var(--md-on-surface-variant); font-size:11px; margin-left:8px; }
+  /* Удалённое отправителем — приглушено, с пометкой «удалено» (участникам его больше не видно). */
+  #histMessages .m.deleted { opacity:.6; }
+  #histMessages .m .del { margin-left:8px; padding:0 6px; border-radius:6px; font-size:11px; color:var(--md-error, #b3261e); border:1px solid currentColor; }
 
   #bcFeed { display:flex; flex-direction:column; gap:12px; }
   .bc-item { background:var(--md-surface-container-lowest); border:none; border-radius:var(--md-shape-m); padding:14px 16px; }

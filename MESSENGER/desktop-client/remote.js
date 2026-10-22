@@ -64,4 +64,40 @@ async function launchViewer(candidates, exists, start) {
   return { viewer: null, missing, failed };
 }
 
-module.exports = { isRemoteHost, remoteHostsOf, viewerArgs, viewerCandidates, findViewer, launchViewer };
+// Вход по учётной записи Windows (MS-Logon UltraVNC) без окна просмотрщика: логин и пароль уходят ему
+// ключами -user и -password — так он подключается сразу. Одного -user просмотрщик не принимает
+// (проверено на UltraVNC 1.4.3.1: окно входа остаётся пустым), поэтому только парой.
+// Логин по умолчанию — учётка, под которой администратор вошёл в Windows: ДОМЕН\логин.
+function defaultVncUser(env) {
+  const user = String((env && env.USERNAME) || '').trim();
+  const domain = String((env && env.USERDOMAIN) || '').trim();
+  return user ? (domain ? `${domain}\\${user}` : user) : '';
+}
+
+// Логин и пароль — аргументами программы (без оболочки, но всё же): без управляющих символов и кавычек,
+// разумной длины. Пробелы и русские буквы в логине допустимы — такие учётки бывают.
+const CONTROL_RE = /[\u0000-\u001f\u007f"]/;
+function credentialArgs(user, password) {
+  const u = typeof user === 'string' ? user.trim() : '';
+  const p = typeof password === 'string' ? password : '';
+  if (!u || u.length > 104 || CONTROL_RE.test(u)) throw new Error('недопустимый логин');
+  if (!p || p.length > 128 || CONTROL_RE.test(p)) throw new Error('недопустимый пароль');
+  return ['-user', u, '-password', p];
+}
+
+// Разбор вывода ping.exe для окна подключения: отвечает ли ПК и за сколько. Текст ping переведён на язык
+// Windows и выходит в кодировке консоли (866), поэтому опираемся только на непереводимое: «TTL=» есть
+// в каждой строке ответа на любом языке, время стоит перед ним («время<1мс TTL=128», «time=3ms TTL=128»),
+// адрес — в квадратных скобках первой строки («Обмен пакетами с PC-1 [10.0.0.5]»). Нет ни ответа, ни
+// адреса — имя не нашлось в сети.
+// → { reply: bool, ms: число | null, below: bool (время «<1»), ip: строка | null, resolved: bool }
+function parsePing(output, host) {
+  const text = String(output || '');
+  const ipMatch = text.match(/\[(\d{1,3}(?:\.\d{1,3}){3})\]/);
+  const ip = ipMatch ? ipMatch[1] : (/^\d{1,3}(\.\d{1,3}){3}$/.test(host || '') ? host : null);
+  const time = text.match(/([=<])(\d+)[^\s=<]*\s+TTL=/i);
+  const reply = /TTL=/i.test(text);
+  return { reply, ms: time ? Number(time[2]) : null, below: !!time && time[1] === '<', ip, resolved: reply || !!ip };
+}
+
+module.exports = { isRemoteHost, remoteHostsOf, viewerArgs, viewerCandidates, findViewer, launchViewer, defaultVncUser, credentialArgs, parsePing };

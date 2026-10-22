@@ -36,7 +36,6 @@
   /* Длинное название обрезается, а «Группа» и «4/6» видны всегда. */
   .wintitlebar .who .n.hg { display: flex; align-items: center; gap: 5px; }
   .wintitlebar .who .n .hg-name { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-  .wintitlebar .who .n .hg-word { color: var(--muted); font-weight: 500; flex-shrink: 0; }
   .wintitlebar .who .n .hg-count {
     flex-shrink: 0; padding: 0 7px; border-radius: 9px; line-height: 17px;
     background: var(--panel-2); border: 1px solid var(--border); font-size: 11px; font-weight: 600;
@@ -79,12 +78,16 @@
      накрывает собой первые строки сообщения: раньше он перекрывал имя автора и начало текста,
      мешая и читать, и выделять их мышью. Ровно 100%, без зазора: между тулбаром и пузырём не
      должно быть щели, иначе курсор, идущий к кнопкам, теряет :hover и тулбар исчезает. */
+  /* Тулбар растёт от угла пузыря внутрь ленты, а не наружу: чужой пузырь прижат к левому краю —
+     тулбар от его левого угла вправо, свой — к правому краю, тулбар от правого угла влево. Было
+     наоборот, и у короткого своего сообщения («Да») три кнопки вылезали за правый край ленты —
+     появлялась нижняя полоса прокрутки (жалоба 2026-10-22). */
   .msg-toolbar {
-    position: absolute; bottom: 100%; right: 8px; display: none; gap: 2px; z-index: 5;
+    position: absolute; bottom: 100%; left: 8px; display: none; gap: 2px; z-index: 5;
     background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
     padding: 2px; box-shadow: var(--shadow);
   }
-  .msg.own .msg-toolbar { right: auto; left: 8px; }
+  .msg.own .msg-toolbar { left: auto; right: 8px; }
   .msg:hover .msg-toolbar { display: flex; }
   .mt-btn { width: 24px; height: 24px; border: none; background: transparent; border-radius: 6px; color: var(--muted); cursor: pointer; display: flex; align-items: center; justify-content: center; }
   .mt-btn:hover { background: var(--hover); color: var(--text); }
@@ -195,6 +198,17 @@
      сплошное мельтешение. */
   .typing-bubble .tdot:nth-child(2) { animation-delay: .16s; }
   .typing-bubble .tdot:nth-child(3) { animation-delay: .32s; }
+  /* В группе над точками — имя: «волна» поднимает точки на 4px, без отступа они врезались в фамилию. */
+  .typing-bubble.with-name .tdots { margin-top: 7px; }
+  /* Иконка группы в шапке окна — как у группы в ростере (размер и цвета — .badge-icon в redesign.css). */
+  .wintitlebar .group-badge { display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .wintitlebar .group-badge svg { width: 16px; height: 16px; }
+  /* Узкое окно чата: «Настройки» и «История» — только значками (подсказки у кнопок есть), иначе
+     кнопки съедали всю шапку и от имени собеседника/названия группы оставались первые буквы.
+     Два id в селекторе — чтобы перебить размер шрифта из redesign.css, он подключён позже. */
+  @media (max-width: 460px) {
+    #tbExtra > #historyBtn, #tbExtra > #groupBtn { font-size: 0; gap: 0; padding: 0 7px; }
+  }
   @keyframes typingWave {
     0%, 60%, 100% { transform: translateY(0); opacity: .45; }
     30% { transform: translateY(-4px); opacity: 1; }

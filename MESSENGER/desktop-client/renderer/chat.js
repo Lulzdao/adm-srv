@@ -15,6 +15,8 @@ installErrorReporting(serverUrl, token, 'chat'); // см. ui-kit.js
 
 document.getElementById('label').textContent = label;
 if (type !== 'dm') document.getElementById('statusDot').style.display = 'none';
+// В шапке окна группы — та же иконка, что у группы в ростере (просьба пользователя 2026-10-22).
+if (groupId) document.getElementById('statusDot').insertAdjacentHTML('afterend', `<div class="badge-icon group-badge">${uiIcon('group')}</div>`);
 
 // Настройка "Скрывать имя в сообщениях" — только в личных чатах (в общей комнате имя нужно, чтобы
 // различать реплики). Применяется сразу во всех открытых окнах при переключении слайдера (см.
@@ -45,12 +47,12 @@ function statusTitle(state, idleSince, since) {
 }
 document.getElementById('statusDot').title = statusTitle('offline');
 
-// Вторая строка шапки (под именем): «печатает…», пока собеседник набирает, иначе его статус.
-// В комнате и группе статуса нет — там строка появляется только на время «печатает».
-let headerState = 'offline', headerIdleSince = null, headerTyping = '';
+// Вторая строка шапки (под именем): статус собеседника; в группе — только «Вы больше не участник».
+// «Печатает…» здесь больше не пишется — его и так видно пузырём с точками в конце ленты (решение
+// пользователя 2026-10-22: не дублировать).
+let headerState = 'offline', headerIdleSince = null;
 function paintHeaderSub() {
   const el = document.getElementById('labelSub');
-  if (headerTyping) { el.textContent = headerTyping; el.className = 'hsub typing'; return; }
   el.className = 'hsub';
   if (type !== 'dm') { el.textContent = groupId && groupLoaded && !groupInfo ? 'Вы больше не участник этой группы' : ''; return; }
   if (headerState === 'active') el.textContent = 'В сети';
@@ -114,7 +116,9 @@ function paintGroupHeader() {
   const total = groupMembers.length;
   const online = groupMembers.filter((m) => memberState(m.id) !== 'offline').length;
   const name = groupInfo ? groupInfo.name : label;
-  document.getElementById('label').innerHTML = `<span class="hg-word">Группа</span><span class="hg-name">${escapeHtml(name)}</span>`
+  // Слова «Группа» перед названием больше нет: то же говорит иконка группы слева (2026-10-22), а в
+  // узком окне каждое место на счету — название и так обрезалось до первых букв.
+  document.getElementById('label').innerHTML = `<span class="hg-name" title="Группа «${escapeAttr(name)}»">${escapeHtml(name)}</span>`
     + (groupInfo && total ? `<span class="hg-count" title="В сети ${online} из ${total} — нажмите, чтобы увидеть, кто">${online}/${total}</span>` : '');
   document.getElementById('groupBtn').hidden = !groupInfo;
   paintHeaderSub();
@@ -291,7 +295,8 @@ function bubbleHtml(m, { withDate, query, card } = {}) {
   const inlineTime = reactions.length ? '' : timeEl;
   const head = card
     ? `<div class="hhead"><span class="hwho${own ? ' me' : ''}" title="${own ? '' : escapeHtml(m.from_user)}">${own ? 'Вы' : escapeHtml(shortFio(m.from_user))}</span><span class="hwhen">${editedMarkHtml(m.edited_at)}${stamp}</span></div>`
-    : `<div class="who">${escapeHtml(m.from_user)}</div>`;
+    // Над пузырём — «Голубева Ж. А.», полное ФИО — в подсказке (просьба пользователя 2026-10-22).
+    : `<div class="who" title="${escapeAttr(m.from_user || '')}">${escapeHtml(shortFio(m.from_user))}</div>`;
 
   let body = '';
   if (m.text) body += `<div class="txt selectable" data-raw-text="${escapeAttr(m.text)}">${highlightHtml(m.text, query)}${files.length ? '' : inlineTime}</div>`;
@@ -314,7 +319,9 @@ function bubbleHtml(m, { withDate, query, card } = {}) {
   }
   // «Изменить» — только у своих сообщений с текстом (как в Telegram; файлы не меняются).
   const editBtn = own && m.text ? `<button type="button" class="mt-btn mt-edit" data-mid="${m.id}" title="Изменить">${uiIcon('pencil')}</button>` : '';
-  const toolbar = `<div class="msg-toolbar"><button type="button" class="mt-btn mt-react" data-mid="${m.id}" title="Реакция">${uiIcon('emoji')}</button><button type="button" class="mt-btn mt-reply" data-mid="${m.id}" title="Ответить">${uiIcon('reply')}</button>${editBtn}</div>`;
+  // «Удалить» — у любого своего сообщения, и с файлами тоже (у собеседника оно пропадёт; см. confirmDelete).
+  const deleteBtn = own ? `<button type="button" class="mt-btn mt-delete" data-mid="${m.id}" title="Удалить">${uiIcon('trash')}</button>` : '';
+  const toolbar = `<div class="msg-toolbar"><button type="button" class="mt-btn mt-react" data-mid="${m.id}" title="Реакция">${uiIcon('emoji')}</button><button type="button" class="mt-btn mt-reply" data-mid="${m.id}" title="Ответить">${uiIcon('reply')}</button>${editBtn}${deleteBtn}</div>`;
   // has-files — пузырь с карточками файлов: у него свои поля (карточка почти вплотную к краям).
   const cls = `msg${own ? ' own' : ''}${card ? ' hcard' : ''}${files.length ? ' has-files' : ''}`;
   return `<div class="${cls}" data-ts="${m.created_at}" data-id="${m.id}">${toolbar}${card ? head : ''}${replyQuoteHtml(m)}${card ? '' : head}${body}${reactionsMarkup(m.id, reactions, timeEl)}</div>`;
@@ -345,11 +352,35 @@ function applyEdit(msgEl, text, editedAt) {
   } else if (txt) {
     txt.remove();
   }
-  const mark = msgEl.querySelector('.edited');
+  // Метку ищем и в узле времени: он уже вынут из сообщения (строкой выше), и поиск по одному
+  // msgEl её не находил — при каждой правке «изменено» добавлялось ещё раз (жалоба 2026-10-22).
+  const mark = (timeNode && timeNode.querySelector('.edited')) || msgEl.querySelector('.edited');
   if (mark) mark.outerHTML = editedMarkHtml(editedAt).trim();
   else if (timeNode) timeNode.insertAdjacentHTML('afterbegin', editedMarkHtml(editedAt));
   else { const when = msgEl.querySelector('.hwhen'); if (when) when.insertAdjacentHTML('afterbegin', editedMarkHtml(editedAt)); }
   if (timeNode) placeTime(msgEl, timeNode);
+}
+
+// Удаление своего сообщения — с подтверждением: у собеседника оно пропадёт сразу. На сервере остаётся
+// (администратор видит его в «Переписках» с пометкой «удалено»), но участникам больше не показывается.
+async function confirmDelete(mid) {
+  const ok = await uiConfirm('Сообщение пропадёт и у вас, и у собеседника.', { title: 'Удалить сообщение?', okText: 'Удалить', danger: true });
+  if (ok) sendPayload({ type: 'delete', id: mid });
+}
+
+// Сообщение удалили (WS 'message_deleted' — и своё из любого окна, и чужое): убираем карточку из ленты
+// и из панели истории; разделитель дня, под которым ничего не осталось, — тоже. Правку или ответ на
+// него — отменяем. Окно, открывшееся само ради этого сообщения, закрывается (см. autoOpenMsgs).
+function applyDelete(mid) {
+  document.querySelectorAll(`#messages [data-id="${mid}"], #hpMessages [data-id="${mid}"]`).forEach((el) => {
+    const prev = el.previousElementSibling;
+    const next = el.nextElementSibling;
+    el.remove();
+    if (prev && prev.classList.contains('day-sep') && (!next || !next.classList.contains('msg') || next.id === 'typingBubble')) prev.remove();
+  });
+  if (editingId === mid) cancelEdit();
+  if (replyingTo && replyingTo.id === mid) clearReplyingTo();
+  if (autoOpenMsgs.delete(mid) && !autoOpenMsgs.size && !userEngaged) window.close();
 }
 
 // Цитата сообщения, на которое отвечают — снимок автора/текста сделан на сервере в момент отправки
@@ -508,6 +539,12 @@ function engage() { if (userEngaged) return; userEngaged = true; reportReadIfSee
 ['mousedown', 'keydown', 'wheel'].forEach((ev) => window.addEventListener(ev, engage, true));
 window.addEventListener('blur', () => { windowWasBlurred = true; });
 window.addEventListener('focus', () => { if (windowWasBlurred) engage(); });
+// Сообщения, из-за которых окно открылось само и которые человек ещё «не трогал»: то, по которому
+// открылось (autoMsg из notify в main.js), и пришедшие следом, пока он ничего не делал в окне. Удалил
+// их отправитель все — окно закрывается: человек написал не тому и сразу удалил, получателю незачем
+// видеть пустой чат (просьба пользователя 2026-10-22). Человек уже что-то делал в окне — не закрываем.
+const autoOpenMsgs = new Set(userEngaged ? [] : [Number(params.get('autoMsg'))].filter((n) => n > 0));
+
 function reportReadIfSeen() {
   if (type !== 'dm' || maxKnownTs <= readReportedTs) return;
   if (!userEngaged || !document.hasFocus() || document.visibilityState !== 'visible') return;
@@ -647,9 +684,14 @@ function connectWs() {
       document.querySelectorAll(`#messages [data-id="${data.id}"], #hpMessages [data-id="${data.id}"]`).forEach((el) => applyEdit(el, data.text, data.edited_at));
       return;
     }
+    if (data.type === 'message_deleted') { applyDelete(data.id); return; }
     if (data.type !== 'message') return;
     const belongs = type === 'room' ? data.room === id : (data.from_id === id || data.to_id === id);
-    if (belongs) { hideTypingIndicator(); addMessage(data); } // раз сообщение пришло — печатать закончил
+    if (belongs) {
+      hideTypingIndicator(); // раз сообщение пришло — печатать закончил
+      if (!userEngaged && data.from_id !== me.id) autoOpenMsgs.add(data.id);
+      addMessage(data);
+    }
   };
   ws.onclose = () => {
     if (window.appShuttingDown) return; // выключается ПК — не переподключаемся и не показываем «нет связи»
@@ -698,17 +740,18 @@ function showTypingIndicator(name) {
   // Имя — только в комнате/группе, где печатать может кто угодно. В личном чате оно очевидно и
   // лишняя строка только растит пузырь.
   const who = el.querySelector('.who');
-  who.textContent = type === 'room' ? name : '';
+  who.textContent = type === 'room' ? shortFio(name) : '';
+  who.title = type === 'room' ? name : '';
   who.style.display = type === 'room' ? '' : 'none';
+  // С именем точкам нужен отступ сверху: «волна» поднимает их на 4px, и они врезались в фамилию.
+  el.classList.toggle('with-name', type === 'room');
   if (follow) { programmaticScroll = true; box.scrollTop = box.scrollHeight; }
-  headerTyping = type === 'room' ? `${name} печатает…` : 'печатает…'; paintHeaderSub();
   clearTimeout(typingHideTimer);
   typingHideTimer = setTimeout(hideTypingIndicator, TYPING_TIMEOUT_MS);
 }
 function hideTypingIndicator() {
   clearTimeout(typingHideTimer);
   typingHideTimer = null;
-  headerTyping = ''; paintHeaderSub();
   const el = document.getElementById('typingBubble');
   if (el) el.remove();
 }
@@ -765,7 +808,8 @@ function startReplyTo(mid) {
   cancelEdit();
   const el = document.querySelector(`#messages [data-id="${mid}"], #hpMessages [data-id="${mid}"]`);
   if (!el) return;
-  const from_user = el.querySelector('.who')?.textContent || label;
+  const whoEl = el.querySelector('.who');
+  const from_user = (whoEl && (whoEl.title || whoEl.textContent)) || label; // полное ФИО — в подсказке
   const text = el.querySelector('.txt')?.dataset.rawText || (el.querySelector('.fn') ? '📎 ' + el.querySelector('.fn').textContent : '');
   replyingTo = { id: mid, from_user, text };
   paintReplyBanner();
@@ -820,6 +864,8 @@ function wireMessageToolbar(container) {
     if (replyBtn) { e.stopPropagation(); startReplyTo(Number(replyBtn.dataset.mid)); return; }
     const editBtn = e.target.closest('.mt-edit');
     if (editBtn) { e.stopPropagation(); startEdit(Number(editBtn.dataset.mid)); return; }
+    const deleteBtn = e.target.closest('.mt-delete');
+    if (deleteBtn) { e.stopPropagation(); confirmDelete(Number(deleteBtn.dataset.mid)); return; }
     const pill = e.target.closest('.reaction-pill');
     if (pill) { e.stopPropagation(); toggleReaction(Number(pill.dataset.mid), pill.dataset.emoji); return; }
     const quote = e.target.closest('.reply-quote');
@@ -1453,6 +1499,7 @@ function wireMessageContextMenu(container) {
       const items = [{ label: 'Копировать текст', icon: 'copy', onClick: () => desktop.copyText(txtEl.dataset.rawText || '') }];
       const ownMsg = txtEl.closest('.msg.own[data-id]');
       if (ownMsg) items.push({ label: 'Изменить', icon: 'pencil', onClick: () => startEdit(Number(ownMsg.dataset.id)) });
+      if (ownMsg) items.push({ label: 'Удалить', icon: 'trash', onClick: () => confirmDelete(Number(ownMsg.dataset.id)) });
       uiContextMenu(e.clientX, e.clientY, items);
     }
   });
