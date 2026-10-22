@@ -10,12 +10,14 @@
 #     сотруднику с автосогласием, значок в трее виден;
 #   * задаёт случайный пароль VNC (без него сервер не отвечает), только если его ещё нет;
 #   * включает SoftwareSASGeneration — Ctrl+Alt+Del без лишнего вопроса сотруднику;
-#   * группа доступа (MS-Logon) и правило брандмауэра на порт 5995 — из машинной политики, если задана;
+#   * группа доступа (MS-Logon) — по умолчанию p48_g_support, машинная политика может подменить;
+#   * правило брандмауэра на порт 5995 — без ограничений по адресам (политика vncAllowFrom сужает);
 #   * после проверки, что новая служба слушает 5995, удаляет прежнюю папку uvnc_s.
 #
 # Настройки берутся из машинной политики C:\ProgramData\Iskra\config.json (пишут туда только
-# администраторы). Ключи: vncAccessGroup (строка «ДОМЕН\группа»), vncAllowFrom (адреса/подсети через
-# запятую — с них разрешить подключение), vncQueryAccept (true — спрашивать сотрудника без
+# администраторы). Ключи: vncAccessGroup (строка «ДОМЕН\группа» — подменяет группу доступа,
+# по умолчанию p48_g_support), vncAllowFrom (адреса/подсети через запятую — с них разрешить
+# подключение, по умолчанию без ограничений), vncQueryAccept (true — спрашивать сотрудника без
 # автосогласия). Настройку пользователя (Ctrl+S в клиенте) НЕ читаем.
 #
 # PowerShell 2.0 (Windows 7). Файл — UTF-8 с BOM.
@@ -184,14 +186,32 @@ if (-not $hasPwd) {
 # 4. Ctrl+Alt+Del без лишнего окна: разрешить программный ввод SAS.
 Run $reg 'add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v SoftwareSASGeneration /t REG_DWORD /d 1 /f' | Out-Null
 
-# 5. Группа доступа (MS-Logon), если задана политикой.
+# 5. Группа доступа (MS-Logon): по умолчанию p48_g_support (решение пользователя 2026-10-22),
+#    машинная политика vncAccessGroup подменяет («ДОМЕН\группа»). Имя группы домена, поэтому
+#    вне домена оно не разрешится — MSLogonACL молча пропустит строку, ACL останется пустым
+#    (никто не подключится) — проверка ниже честно пишет об этом в журнал.
 $group = Policy 'vncAccessGroup'
-if ($group -ne '') {
-	$aclFile = Join-Path $Root 'access.acl'
-	# Кодировка системная (ANSI): имя группы может быть с кириллицей, ASCII бы его потерял.
-	[System.IO.File]::WriteAllText($aclFile, "allow`t0x00000003`t" + $group + "`r`n", [System.Text.Encoding]::Default)
-	$mslogon = Join-Path $Root 'MSLogonACL.exe'
-	if (Test-Path $mslogon) { Run $mslogon ('/i /o "' + $aclFile + '"') | Out-Null; Log ('группа доступа: ' + $group) }
+if ($group -eq '') { $group = 'p48_g_support' }
+$aclFile = Join-Path $Root 'access.acl'
+# Кодировка системная (ANSI): имя группы может быть с кириллицей, ASCII бы его потерял.
+# Маска 3 = ViewOnly(1) + Interact(2) — всё управление, без передачи файлов.
+[System.IO.File]::WriteAllText($aclFile, "allow`t0x00000003`t" + $group + "`r`n", [System.Text.Encoding]::Default)
+$mslogon = Join-Path $Root 'MSLogonACL.exe'
+if (Test-Path $mslogon) {
+	Run $mslogon ('/i /o "' + $aclFile + '"') | Out-Null
+	# MSLogonACL возвращает 0 даже когда имя не разрешается (строку пропускает, код не портит),
+	# поэтому «группа задана» по коду выхода не проверить. Единственная честная проверка:
+	# экспортировать ACL обратно (SID разрешается в имя) и найти в нём имя группы.
+	$expFile = [System.IO.Path]::GetTempFileName()
+	Run $mslogon ('/e "' + $expFile + '"') | Out-Null
+	$exp = ''
+	if (Test-Path $expFile) { $exp = [System.IO.File]::ReadAllText($expFile, [System.Text.Encoding]::Default) }
+	$grpName = $group
+	$slash = $group.LastIndexOf('\')
+	if ($slash -ge 0) { $grpName = $group.Substring($slash + 1) }
+	if ($exp -ne '' -and $exp.Contains($grpName)) { Log ('группа доступа: ' + $group) }
+	else { Log ('группа доступа НЕ применена: ' + $group + ' не разрешается на этой машине (вне домена?)') }
+	Remove-Item -LiteralPath $expFile -Force -ErrorAction SilentlyContinue
 }
 
 # 6. Служба uvnc_service должна указывать на winvnc.exe из папки «Искры».
