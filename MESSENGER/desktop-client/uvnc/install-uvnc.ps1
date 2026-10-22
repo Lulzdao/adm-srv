@@ -12,7 +12,8 @@
 #   * включает SoftwareSASGeneration — Ctrl+Alt+Del без лишнего вопроса сотруднику;
 #   * группа доступа (MS-Logon) — по умолчанию p48_g_support, машинная политика может подменить;
 #   * правило брандмауэра на порт 5995 — без ограничений по адресам (политика vncAllowFrom сужает);
-#   * после проверки, что новая служба слушает 5995, удаляет прежнюю папку uvnc_s.
+#   * после проверки, что новая служба слушает 5995, удаляет прежнюю папку uvnc_s (из Program Files
+#     и из Program Files (x86)). Папку администратора uvnc_support не трогает: службы в ней нет.
 #
 # Настройки берутся из машинной политики C:\ProgramData\Iskra\config.json (пишут туда только
 # администраторы). Ключи: vncAccessGroup (строка «ДОМЕН\группа» — подменяет группу доступа,
@@ -33,7 +34,9 @@ if (-not $Root) { $Root = $here }
 
 $svc = 'uvnc_service'
 $port = 5995
-$oldDir = 'C:\Program Files\uvnc_s'
+# Где на рабочих ПК стоит прежняя UltraVNC, точно не известно: 32-битный установщик на 64-битной
+# Windows кладёт её в Program Files (x86). Проверяем оба места.
+$oldDirs = @('C:\Program Files\uvnc_s', 'C:\Program Files (x86)\uvnc_s')
 $programData = Join-Path $env:ProgramData 'Iskra'
 $log = Join-Path $programData 'uvnc-setup.log'
 $sc = Join-Path $env:SystemRoot 'System32\sc.exe'
@@ -278,11 +281,12 @@ Log ('служба слушает ' + $port + ': ' + $listens)
 # Провал честно проваливает установку: без этого установщик молча рапортует успех,
 # и машина остаётся без удалённого доступа, пока кто-нибудь не заметит.
 if (-not $listens) { Log 'install: не завершена — служба не слушает порт'; exit 1 }
-if ($listens -and (Test-Path $oldDir)) {
-	$running = Run $sc ('qc ' + $svc)
-	if ($running -match 'iskra-desktop') {
-		try { Remove-Item -LiteralPath $oldDir -Recurse -Force -ErrorAction Stop; Log 'прежняя папка uvnc_s удалена' }
-		catch { Log ('не удалось удалить uvnc_s: ' + $_.Exception.Message) }
+$running = Run $sc ('qc ' + $svc)
+if ($running -match 'iskra-desktop') {
+	foreach ($oldDir in $oldDirs) {
+		if (-not (Test-Path $oldDir)) { continue }
+		try { Remove-Item -LiteralPath $oldDir -Recurse -Force -ErrorAction Stop; Log ('прежняя папка удалена: ' + $oldDir) }
+		catch { Log ('не удалось удалить ' + $oldDir + ': ' + $_.Exception.Message) }
 	}
 }
 Log 'install: готово'
