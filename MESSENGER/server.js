@@ -349,13 +349,18 @@ function requireCapability(cap) {
 }
 
 const insertMessage = db.prepare('INSERT INTO messages (from_id, room, to_id, text, files_json, created_at, reply_to_id, reply_snapshot) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
-const getMessageForReply = db.prepare('SELECT id, from_id, to_id, room, text FROM messages WHERE id = ?');
+// Удалённые (deleted_at) для ответа, реакции и правки — как несуществующие: участникам их больше не видно.
+const getMessageForReply = db.prepare('SELECT id, from_id, to_id, room, text FROM messages WHERE id = ? AND deleted_at IS NULL');
 // Реакции — WS-обработчик 'react' ниже: чей маршрут (комната/личка) у сообщения, узнаём отдельным
 // запросом, чтобы разослать обновление тем же адресатам, что и само сообщение.
-const getMessageRoute = db.prepare('SELECT id, from_id, to_id, room FROM messages WHERE id = ?');
+const getMessageRoute = db.prepare('SELECT id, from_id, to_id, room FROM messages WHERE id = ? AND deleted_at IS NULL');
 // Правка своего сообщения (WS 'edit'): files_json — чтобы сообщение с файлами можно было оставить без текста.
-const getMessageForEdit = db.prepare('SELECT id, from_id, to_id, room, files_json, file_url FROM messages WHERE id = ?');
+const getMessageForEdit = db.prepare('SELECT id, from_id, to_id, room, files_json, file_url FROM messages WHERE id = ? AND deleted_at IS NULL');
 const updateMessageText = db.prepare('UPDATE messages SET text = ?, edited_at = ? WHERE id = ?');
+// Удаление своего сообщения (WS 'delete'): read_at — было ли личное сообщение ещё не прочитано (тогда у
+// получателя убавляется счётчик непрочитанных).
+const getMessageForDelete = db.prepare('SELECT id, from_id, to_id, room, read_at FROM messages WHERE id = ? AND deleted_at IS NULL');
+const markMessageDeleted = db.prepare('UPDATE messages SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL');
 const getUserReactionOnMessage = db.prepare('SELECT emoji FROM message_reactions WHERE message_id = ? AND user_id = ?');
 const deleteReaction = db.prepare('DELETE FROM message_reactions WHERE message_id = ? AND user_id = ?');
 const upsertReaction = db.prepare(`
@@ -372,39 +377,39 @@ const HISTORY_PAGE_SIZE = 200;
 const roomHistoryAll = db.prepare(`
   SELECT m.id, m.text, m.created_at, m.from_id, m.file_url, m.file_name, m.file_size, m.files_json, m.reply_to_id, m.reply_snapshot, m.edited_at, u.display_name AS from_user
   FROM messages m JOIN users u ON u.id = m.from_id
-  WHERE m.room = ? AND m.id < ? ORDER BY m.id DESC LIMIT ${HISTORY_PAGE_SIZE}
+  WHERE m.room = ? AND m.id < ? AND m.deleted_at IS NULL ORDER BY m.id DESC LIMIT ${HISTORY_PAGE_SIZE}
 `);
 const roomHistoryRange = db.prepare(`
   SELECT m.id, m.text, m.created_at, m.from_id, m.file_url, m.file_name, m.file_size, m.files_json, m.reply_to_id, m.reply_snapshot, m.edited_at, u.display_name AS from_user
   FROM messages m JOIN users u ON u.id = m.from_id
-  WHERE m.room = ? AND m.created_at >= ? AND m.created_at < ? ORDER BY m.id ASC
+  WHERE m.room = ? AND m.created_at >= ? AND m.created_at < ? AND m.deleted_at IS NULL ORDER BY m.id ASC
 `);
 const roomHistorySearch = db.prepare(`
   SELECT m.id, m.text, m.created_at, m.from_id, m.file_url, m.file_name, m.file_size, m.files_json, m.reply_to_id, m.reply_snapshot, m.edited_at, u.display_name AS from_user
   FROM messages m JOIN users u ON u.id = m.from_id
-  WHERE m.room = ? AND m.id < ? AND lower_ru(m.text) LIKE '%' || lower_ru(?) || '%' ORDER BY m.id DESC LIMIT ${HISTORY_PAGE_SIZE}
+  WHERE m.room = ? AND m.id < ? AND m.deleted_at IS NULL AND lower_ru(m.text) LIKE '%' || lower_ru(?) || '%' ORDER BY m.id DESC LIMIT ${HISTORY_PAGE_SIZE}
 `);
 const roomHistoryDays = db.prepare(`
   SELECT strftime('%Y-%m-%d', datetime(m.created_at/1000, 'unixepoch', ?)) AS day, COUNT(*) AS count
-  FROM messages m WHERE m.room = ? GROUP BY day ORDER BY day DESC
+  FROM messages m WHERE m.room = ? AND m.deleted_at IS NULL GROUP BY day ORDER BY day DESC
 `);
 
 const dmHistoryAll = db.prepare(`
   SELECT m.id, m.text, m.created_at, m.from_id, m.to_id, m.read_at, m.file_url, m.file_name, m.file_size, m.files_json, m.reply_to_id, m.reply_snapshot, m.edited_at, u.display_name AS from_user
   FROM messages m JOIN users u ON u.id = m.from_id
-  WHERE ((m.from_id = ? AND m.to_id = ?) OR (m.from_id = ? AND m.to_id = ?)) AND m.id < ?
+  WHERE ((m.from_id = ? AND m.to_id = ?) OR (m.from_id = ? AND m.to_id = ?)) AND m.id < ? AND m.deleted_at IS NULL
   ORDER BY m.id DESC LIMIT ${HISTORY_PAGE_SIZE}
 `);
 const dmHistoryRange = db.prepare(`
   SELECT m.id, m.text, m.created_at, m.from_id, m.to_id, m.read_at, m.file_url, m.file_name, m.file_size, m.files_json, m.reply_to_id, m.reply_snapshot, m.edited_at, u.display_name AS from_user
   FROM messages m JOIN users u ON u.id = m.from_id
-  WHERE ((m.from_id = ? AND m.to_id = ?) OR (m.from_id = ? AND m.to_id = ?)) AND m.created_at >= ? AND m.created_at < ?
+  WHERE ((m.from_id = ? AND m.to_id = ?) OR (m.from_id = ? AND m.to_id = ?)) AND m.created_at >= ? AND m.created_at < ? AND m.deleted_at IS NULL
   ORDER BY m.id ASC
 `);
 const dmHistorySearch = db.prepare(`
   SELECT m.id, m.text, m.created_at, m.from_id, m.to_id, m.read_at, m.file_url, m.file_name, m.file_size, m.files_json, m.reply_to_id, m.reply_snapshot, m.edited_at, u.display_name AS from_user
   FROM messages m JOIN users u ON u.id = m.from_id
-  WHERE ((m.from_id = ? AND m.to_id = ?) OR (m.from_id = ? AND m.to_id = ?)) AND m.id < ? AND lower_ru(m.text) LIKE '%' || lower_ru(?) || '%'
+  WHERE ((m.from_id = ? AND m.to_id = ?) OR (m.from_id = ? AND m.to_id = ?)) AND m.id < ? AND m.deleted_at IS NULL AND lower_ru(m.text) LIKE '%' || lower_ru(?) || '%'
   ORDER BY m.id DESC LIMIT ${HISTORY_PAGE_SIZE}
 `);
 // Отмечаем прочитанными сообщения ОТ peer КО мне (to_id = я), полученные не позже upTo — тем же
@@ -414,11 +419,23 @@ const markDmRead = db.prepare(`
   WHERE from_id = ? AND to_id = ? AND read_at IS NULL AND created_at <= ?
 `);
 const unreadDmCounts = db.prepare(`
-  SELECT from_id, COUNT(*) AS c FROM messages WHERE to_id = ? AND read_at IS NULL GROUP BY from_id
+  SELECT from_id, COUNT(*) AS c FROM messages WHERE to_id = ? AND read_at IS NULL AND deleted_at IS NULL GROUP BY from_id
 `);
 const dmHistoryDays = db.prepare(`
   SELECT strftime('%Y-%m-%d', datetime(m.created_at/1000, 'unixepoch', ?)) AS day, COUNT(*) AS count
-  FROM messages m WHERE (m.from_id = ? AND m.to_id = ?) OR (m.from_id = ? AND m.to_id = ?) GROUP BY day ORDER BY day DESC
+  FROM messages m WHERE ((m.from_id = ? AND m.to_id = ?) OR (m.from_id = ? AND m.to_id = ?)) AND m.deleted_at IS NULL GROUP BY day ORDER BY day DESC
+`);
+// Для «Переписок» веб-панели — вместе с удалёнными: администратор видит их с пометкой «удалено».
+const adminRoomHistory = db.prepare(`
+  SELECT m.id, m.text, m.created_at, m.from_id, m.file_url, m.file_name, m.file_size, m.files_json, m.reply_to_id, m.reply_snapshot, m.edited_at, m.deleted_at, u.display_name AS from_user
+  FROM messages m JOIN users u ON u.id = m.from_id
+  WHERE m.room = ? AND m.id < ? ORDER BY m.id DESC LIMIT ${HISTORY_PAGE_SIZE}
+`);
+const adminDmHistory = db.prepare(`
+  SELECT m.id, m.text, m.created_at, m.from_id, m.to_id, m.read_at, m.file_url, m.file_name, m.file_size, m.files_json, m.reply_to_id, m.reply_snapshot, m.edited_at, m.deleted_at, u.display_name AS from_user
+  FROM messages m JOIN users u ON u.id = m.from_id
+  WHERE ((m.from_id = ? AND m.to_id = ?) OR (m.from_id = ? AND m.to_id = ?)) AND m.id < ?
+  ORDER BY m.id DESC LIMIT ${HISTORY_PAGE_SIZE}
 `);
 
 const insertBroadcast = db.prepare('INSERT INTO broadcasts (from_id, text, html, files_json, department_id, created_at) VALUES (?, ?, ?, ?, ?, ?)');
@@ -1555,7 +1572,7 @@ app.delete('/api/admin/broadcasts/:id', auth, requireCapability('can_admin'), (r
 // переписка организации разом, поэтому каждое открытие ленты пишется в журнал: кто смотрел.
 const allMessagesRecent = db.prepare(`
   SELECT m.id, m.text, m.created_at, m.from_id, m.to_id, m.room, m.file_url, m.file_name, m.file_size, m.files_json,
-         m.reply_to_id, m.reply_snapshot, m.edited_at, u.display_name AS from_user, t.display_name AS to_user, g.name AS group_name
+         m.reply_to_id, m.reply_snapshot, m.edited_at, m.deleted_at, u.display_name AS from_user, t.display_name AS to_user, g.name AS group_name
   FROM messages m
   JOIN users u ON u.id = m.from_id
   LEFT JOIN users t ON t.id = m.to_id
@@ -1592,11 +1609,11 @@ app.get('/api/admin/groups', auth, requireCapability('can_admin'), (req, res) =>
 });
 
 app.get('/api/admin/history/room/:room', auth, requireCapability('can_admin'), (req, res) => {
-  res.json(roomHistoryAll.all(req.params.room, beforeId(req)).reverse().map(normalizeRow));
+  res.json(adminRoomHistory.all(req.params.room, beforeId(req)).reverse().map(normalizeRow));
 });
 app.get('/api/admin/history/dm/:u1/:u2', auth, requireCapability('can_admin'), (req, res) => {
   const a = Number(req.params.u1), b = Number(req.params.u2);
-  res.json(dmHistoryAll.all(a, b, b, a, beforeId(req)).reverse().map(normalizeRow));
+  res.json(adminDmHistory.all(a, b, b, a, beforeId(req)).reverse().map(normalizeRow));
 });
 
 // ---------- Обновления клиентов ----------
@@ -2319,6 +2336,34 @@ function handleClientMessage(ws, user, msg) {
         targets.forEach((c) => sendTo(c, out));
       }
       logServer('INFO', 'message_edited', { userId: user.id, messageId });
+      return;
+    }
+
+    // Удаление своего сообщения — без срока, в личке и в группе (решение пользователя 2026-10-22).
+    // «Мягкое»: строка с текстом и файлами остаётся в базе (deleted_at), участникам она больше не
+    // показывается, у получателя сообщение пропадает сразу; администратор видит его в «Переписках»
+    // веб-панели с пометкой «удалено». Рассылка — тем же адресатам, что и само сообщение.
+    // unread — личное сообщение получатель ещё не прочитал: его клиент убавит счётчик непрочитанных.
+    if (msg.type === 'delete') {
+      const messageId = toUserId(msg.id);
+      const target = messageId ? getMessageForDelete.get(messageId) : null;
+      if (!target || target.from_id !== user.id) return;
+      if (isGroupRoom(target.room) && !isGroupMemberStmt.get(groupIdFromRoom(target.room), user.id)) return;
+      const now = Date.now();
+      if (!markMessageDeleted.run(now, messageId).changes) return;
+      const out = JSON.stringify({
+        type: 'message_deleted', id: messageId, from_id: target.from_id, to_id: target.to_id || null,
+        room: target.room || null, unread: !!target.to_id && !target.read_at, deleted_at: now,
+      });
+      if (isGroupRoom(target.room)) {
+        for (const uid of groupMemberIds(groupIdFromRoom(target.room))) sendToUser(uid, out);
+      } else if (target.room) {
+        sendToAll(out);
+      } else {
+        const targets = new Set([...(online.get(target.to_id) || []), ...(online.get(target.from_id) || [])]);
+        targets.forEach((c) => sendTo(c, out));
+      }
+      logServer('INFO', 'message_deleted', { userId: user.id, messageId });
       return;
     }
 

@@ -27,6 +27,7 @@ contextBridge.exposeInMainWorld('desktop', {
   saveFileAs: (payload) => ipcRenderer.send('save-file-as', payload),
   windowAction: (action) => ipcRenderer.send('window-action', action),
   notify: (payload) => ipcRenderer.send('notify', payload),
+  messageDeleted: (info) => ipcRenderer.send('message-deleted', info),
   logout: () => ipcRenderer.send('logout'),
   onIdleState: (cb) => ipcRenderer.on('idle-state', (event, payload) => cb(payload)),
   onFilesToSend: (cb) => ipcRenderer.on('files-to-send', (event, files) => cb(files)),

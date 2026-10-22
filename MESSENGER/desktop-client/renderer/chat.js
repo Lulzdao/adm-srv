@@ -319,7 +319,9 @@ function bubbleHtml(m, { withDate, query, card } = {}) {
   }
   // «Изменить» — только у своих сообщений с текстом (как в Telegram; файлы не меняются).
   const editBtn = own && m.text ? `<button type="button" class="mt-btn mt-edit" data-mid="${m.id}" title="Изменить">${uiIcon('pencil')}</button>` : '';
-  const toolbar = `<div class="msg-toolbar"><button type="button" class="mt-btn mt-react" data-mid="${m.id}" title="Реакция">${uiIcon('emoji')}</button><button type="button" class="mt-btn mt-reply" data-mid="${m.id}" title="Ответить">${uiIcon('reply')}</button>${editBtn}</div>`;
+  // «Удалить» — у любого своего сообщения, и с файлами тоже (у собеседника оно пропадёт; см. confirmDelete).
+  const deleteBtn = own ? `<button type="button" class="mt-btn mt-delete" data-mid="${m.id}" title="Удалить">${uiIcon('trash')}</button>` : '';
+  const toolbar = `<div class="msg-toolbar"><button type="button" class="mt-btn mt-react" data-mid="${m.id}" title="Реакция">${uiIcon('emoji')}</button><button type="button" class="mt-btn mt-reply" data-mid="${m.id}" title="Ответить">${uiIcon('reply')}</button>${editBtn}${deleteBtn}</div>`;
   // has-files — пузырь с карточками файлов: у него свои поля (карточка почти вплотную к краям).
   const cls = `msg${own ? ' own' : ''}${card ? ' hcard' : ''}${files.length ? ' has-files' : ''}`;
   return `<div class="${cls}" data-ts="${m.created_at}" data-id="${m.id}">${toolbar}${card ? head : ''}${replyQuoteHtml(m)}${card ? '' : head}${body}${reactionsMarkup(m.id, reactions, timeEl)}</div>`;
@@ -357,6 +359,28 @@ function applyEdit(msgEl, text, editedAt) {
   else if (timeNode) timeNode.insertAdjacentHTML('afterbegin', editedMarkHtml(editedAt));
   else { const when = msgEl.querySelector('.hwhen'); if (when) when.insertAdjacentHTML('afterbegin', editedMarkHtml(editedAt)); }
   if (timeNode) placeTime(msgEl, timeNode);
+}
+
+// Удаление своего сообщения — с подтверждением: у собеседника оно пропадёт сразу. На сервере остаётся
+// (администратор видит его в «Переписках» с пометкой «удалено»), но участникам больше не показывается.
+async function confirmDelete(mid) {
+  const ok = await uiConfirm('Сообщение пропадёт и у вас, и у собеседника.', { title: 'Удалить сообщение?', okText: 'Удалить', danger: true });
+  if (ok) sendPayload({ type: 'delete', id: mid });
+}
+
+// Сообщение удалили (WS 'message_deleted' — и своё из любого окна, и чужое): убираем карточку из ленты
+// и из панели истории; разделитель дня, под которым ничего не осталось, — тоже. Правку или ответ на
+// него — отменяем. Окно, открывшееся само ради этого сообщения, закрывается (см. autoOpenMsgs).
+function applyDelete(mid) {
+  document.querySelectorAll(`#messages [data-id="${mid}"], #hpMessages [data-id="${mid}"]`).forEach((el) => {
+    const prev = el.previousElementSibling;
+    const next = el.nextElementSibling;
+    el.remove();
+    if (prev && prev.classList.contains('day-sep') && (!next || !next.classList.contains('msg') || next.id === 'typingBubble')) prev.remove();
+  });
+  if (editingId === mid) cancelEdit();
+  if (replyingTo && replyingTo.id === mid) clearReplyingTo();
+  if (autoOpenMsgs.delete(mid) && !autoOpenMsgs.size && !userEngaged) window.close();
 }
 
 // Цитата сообщения, на которое отвечают — снимок автора/текста сделан на сервере в момент отправки
@@ -515,6 +539,12 @@ function engage() { if (userEngaged) return; userEngaged = true; reportReadIfSee
 ['mousedown', 'keydown', 'wheel'].forEach((ev) => window.addEventListener(ev, engage, true));
 window.addEventListener('blur', () => { windowWasBlurred = true; });
 window.addEventListener('focus', () => { if (windowWasBlurred) engage(); });
+// Сообщения, из-за которых окно открылось само и которые человек ещё «не трогал»: то, по которому
+// открылось (autoMsg из notify в main.js), и пришедшие следом, пока он ничего не делал в окне. Удалил
+// их отправитель все — окно закрывается: человек написал не тому и сразу удалил, получателю незачем
+// видеть пустой чат (просьба пользователя 2026-10-22). Человек уже что-то делал в окне — не закрываем.
+const autoOpenMsgs = new Set(userEngaged ? [] : [Number(params.get('autoMsg'))].filter((n) => n > 0));
+
 function reportReadIfSeen() {
   if (type !== 'dm' || maxKnownTs <= readReportedTs) return;
   if (!userEngaged || !document.hasFocus() || document.visibilityState !== 'visible') return;
@@ -654,9 +684,14 @@ function connectWs() {
       document.querySelectorAll(`#messages [data-id="${data.id}"], #hpMessages [data-id="${data.id}"]`).forEach((el) => applyEdit(el, data.text, data.edited_at));
       return;
     }
+    if (data.type === 'message_deleted') { applyDelete(data.id); return; }
     if (data.type !== 'message') return;
     const belongs = type === 'room' ? data.room === id : (data.from_id === id || data.to_id === id);
-    if (belongs) { hideTypingIndicator(); addMessage(data); } // раз сообщение пришло — печатать закончил
+    if (belongs) {
+      hideTypingIndicator(); // раз сообщение пришло — печатать закончил
+      if (!userEngaged && data.from_id !== me.id) autoOpenMsgs.add(data.id);
+      addMessage(data);
+    }
   };
   ws.onclose = () => {
     if (window.appShuttingDown) return; // выключается ПК — не переподключаемся и не показываем «нет связи»
@@ -829,6 +864,8 @@ function wireMessageToolbar(container) {
     if (replyBtn) { e.stopPropagation(); startReplyTo(Number(replyBtn.dataset.mid)); return; }
     const editBtn = e.target.closest('.mt-edit');
     if (editBtn) { e.stopPropagation(); startEdit(Number(editBtn.dataset.mid)); return; }
+    const deleteBtn = e.target.closest('.mt-delete');
+    if (deleteBtn) { e.stopPropagation(); confirmDelete(Number(deleteBtn.dataset.mid)); return; }
     const pill = e.target.closest('.reaction-pill');
     if (pill) { e.stopPropagation(); toggleReaction(Number(pill.dataset.mid), pill.dataset.emoji); return; }
     const quote = e.target.closest('.reply-quote');
@@ -1462,6 +1499,7 @@ function wireMessageContextMenu(container) {
       const items = [{ label: 'Копировать текст', icon: 'copy', onClick: () => desktop.copyText(txtEl.dataset.rawText || '') }];
       const ownMsg = txtEl.closest('.msg.own[data-id]');
       if (ownMsg) items.push({ label: 'Изменить', icon: 'pencil', onClick: () => startEdit(Number(ownMsg.dataset.id)) });
+      if (ownMsg) items.push({ label: 'Удалить', icon: 'trash', onClick: () => confirmDelete(Number(ownMsg.dataset.id)) });
       uiContextMenu(e.clientX, e.clientY, items);
     }
   });

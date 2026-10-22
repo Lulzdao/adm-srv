@@ -1466,8 +1466,25 @@ ipcMain.on('logout', () => {
 });
 
 // Показ системного уведомления по входящему сообщению/рассылке (или открытие окна чата, если включена настройка)
+// Показанные уведомления о сообщениях — по id сообщения: отправитель удалил его, пока уведомление ещё
+// на экране, — убираем (см. message-deleted ниже). Запись живёт, пока уведомление не закрыли.
+const messageNotifications = new Map(); // id сообщения -> Notification
+
+// Отправитель удалил сообщение (ростер переслал WS 'message_deleted'): получатель его ещё не читал —
+// убавляем счётчик непрочитанных этого собеседника; уведомление о нём — закрываем.
+ipcMain.on('message-deleted', (event, info) => {
+  if (BrowserWindow.fromWebContents(event.sender) !== rosterWin || !info) return;
+  const n = messageNotifications.get(info.id);
+  if (n) { messageNotifications.delete(info.id); try { n.close(); } catch { /* уже закрыто */ } }
+  const count = unreadDms.get(info.from_id) || 0;
+  if (info.unread && count > 0) {
+    if (count > 1) unreadDms.set(info.from_id, count - 1); else unreadDms.delete(info.from_id);
+    broadcastUnreadState();
+  }
+});
+
 ipcMain.on('notify', (event, payload) => {
-  const { title, body, openPayload } = payload;
+  const { title, body, openPayload, msgId } = payload;
   // Раньше notify умел открывать только окно чата — рассылки просто присылали Windows-уведомление
   // без возможности сразу открыть саму рассылку. Теперь openPayload сам указывает, какой файл
   // открывать (chat.html по умолчанию, либо broadcast.html), так что механизм общий для обоих.
@@ -1484,7 +1501,8 @@ ipcMain.on('notify', (event, payload) => {
     const minimized = existing && !existing.isDestroyed() && existing.isMinimized();
     // autoOpened — окно знает, что открылось само: Windows делает его активным, но человек мог и не
     // смотреть, поэтому «прочитано» оно отмечает только после его действия (см. reportReadIfSeen).
-    const win = minimized ? existing : createWindow(key, file, { ...openPayload, autoOpened: '1' }, winSize);
+    // autoMsg — по какому сообщению окно открылось: удалит его отправитель — окно закроется само.
+    const win = minimized ? existing : createWindow(key, file, { ...openPayload, autoOpened: '1', ...(msgId ? { autoMsg: String(msgId) } : {}) }, winSize);
     if (!win.isFocused()) { markUnread(openPayload); callAttention(win); } // фокус окна снимет отметку
     return;
   }
@@ -1497,6 +1515,14 @@ ipcMain.on('notify', (event, payload) => {
   // Уведомления выключены в настройках — остаются отметка непрочитанного, мигание кнопки и счётчик в трее.
   if (!settings.notifications) return;
   const n = new Notification({ title, body });
+  if (msgId) {
+    messageNotifications.set(msgId, n);
+    // Уведомления, ушедшие в центр уведомлений Windows, событие close не присылают — храним последние 100.
+    if (messageNotifications.size > 100) messageNotifications.delete(messageNotifications.keys().next().value);
+    const forget = () => { if (messageNotifications.get(msgId) === n) messageNotifications.delete(msgId); };
+    n.on('close', forget);
+    n.on('click', forget);
+  }
   n.on('click', () => {
     if (openPayload) createWindow(key, file, openPayload, winSize, { activate: true });
     else { rosterWin.show(); rosterWin.focus(); }

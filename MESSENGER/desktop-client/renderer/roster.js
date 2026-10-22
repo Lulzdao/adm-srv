@@ -267,8 +267,14 @@ function connectWs() {
       desktop.notify({
         title,
         body,
+        msgId: data.id, // если отправитель удалит сообщение — закрыть уведомление и окно, открытое ради него
         openPayload: { type: data.room ? 'room' : 'dm', id: data.room || data.from_id, label, token, serverUrl },
       });
+    }
+    // Отправитель удалил сообщение: главный процесс убавит счётчик непрочитанных (unread — получатель,
+    // то есть мы, его ещё не прочитал) и уберёт уведомление о нём, если оно ещё на экране.
+    if (data.type === 'message_deleted' && data.from_id !== me.id) {
+      desktop.messageDeleted({ id: data.id, from_id: data.from_id, unread: !!data.unread && data.to_id === me.id });
     }
     // Объявление удалили в панели — в строке «Объявления» могло стоять именно оно.
     if (data.type === 'broadcast_deleted') refreshBroadcastPreview();
