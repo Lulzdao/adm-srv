@@ -42,6 +42,10 @@ server.on("error", (err) => {
   }
   process.exit(1);
 });
-server.listen(config.port, () => {
+// Только IPv4: тогда в журнале аудита и при входе адрес всегда IPv4, а не «::ffff:…» или локальный
+// IPv6 «fe80::…» (решение пользователя 2026-10-22). Браузер, нашедший имя сервера по IPv6, сам
+// переподключится по IPv4. Переопределяется BIND_HOST.
+const BIND_HOST = process.env.BIND_HOST || "0.0.0.0";
+server.listen(config.port, BIND_HOST, () => {
   console.log(`Сервер запущен: ${secure ? "https" : "http"}://localhost:${config.port}`);
 });

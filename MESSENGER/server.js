@@ -2588,7 +2588,12 @@ server.on('error', (err) => {
   });
   process.exit(1);
 });
-server.listen(PORT, () => {
+// Только IPv4 (0.0.0.0, а не все адреса): тогда и адрес собеседника всегда IPv4 — «10.48.1.15», а не
+// «::ffff:10.48.1.15» и не локальный IPv6 «fe80::…%10», по которому в журнале не понять, чей это ПК
+// (решение пользователя 2026-10-22: в журналах — только IPv4). Браузер и клиент, нашедшие имя сервера
+// по IPv6, сами переподключаются по IPv4. Переопределяется BIND_HOST.
+const BIND_HOST = process.env.BIND_HOST || '0.0.0.0';
+server.listen(PORT, BIND_HOST, () => {
   ensureBootstrapAdmin();
   const scheme = server instanceof https.Server ? 'https' : 'http';
   console.log(`Искра запущена: ${scheme}://localhost:${PORT}`);
