@@ -198,7 +198,9 @@ if ($group -eq '') { $group = 'p48_g_support' }
 $aclFile = Join-Path $Root 'access.acl'
 # Кодировка системная (ANSI): имя группы может быть с кириллицей, ASCII бы его потерял.
 # Маска 3 = ViewOnly(1) + Interact(2) — всё управление, без передачи файлов.
-[System.IO.File]::WriteAllText($aclFile, "allow`t0x00000003`t" + $group + "`r`n", [System.Text.Encoding]::Default)
+# Имя группы — В КАВЫЧКАХ: токенизатор MSLogonACL режет строку по пробелам, и имя с пробелом
+# («NT AUTHORITY\SYSTEM») без кавычек разваливается на три части и молча пропускается.
+[System.IO.File]::WriteAllText($aclFile, "allow`t0x00000003`t`"" + $group + "`"`r`n", [System.Text.Encoding]::Default)
 $mslogon = Join-Path $Root 'MSLogonACL.exe'
 if (Test-Path $mslogon) {
 	Run $mslogon ('/i /o "' + $aclFile + '"') | Out-Null
