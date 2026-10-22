@@ -46,18 +46,23 @@ function Log([string]$text) {
 	} catch { }
 }
 
-function Run([string]$exe, [string]$args) {
+function Run([string]$exe, [string]$argLine) {
 	# Запуск без окна, ждём завершения, код возврата — в $LASTEXITCODE. Вывод — во временный файл:
 	# читать stdout и stderr процесса через ReadToEnd по очереди в PowerShell 2.0 опасно (если дочерний
 	# процесс заполнит один буфер, пока мы ждём другой, — взаимная блокировка). Через файл этого нет.
+	# ВАЖНО: параметр называется $argLine, а не $args. $args — зарезервированная автоматическая
+	# переменная PowerShell: параметр с таким именем молча остаётся пустым, Start-Process падает
+	# с исключением, а catch его глушит. 2026-10-22 из-за этого сценарий «отработал успешно»,
+	# не запустив ни одной внешней программы (net start, netsh, setpasswd, reg add).
 	$tmp = [System.IO.Path]::GetTempFileName()
 	try {
-		$proc = Start-Process -FilePath $exe -ArgumentList $args -NoNewWindow -Wait -PassThru -RedirectStandardOutput $tmp -RedirectStandardError ($tmp + '.err')
+		$proc = Start-Process -FilePath $exe -ArgumentList $argLine -NoNewWindow -Wait -PassThru -RedirectStandardOutput $tmp -RedirectStandardError ($tmp + '.err')
 		$global:LASTEXITCODE = $proc.ExitCode
 		$out = ''
 		if (Test-Path $tmp) { $out = [System.IO.File]::ReadAllText($tmp) }
 		return $out
 	} catch {
+		Log ('не удалось запустить ' + $exe + ': ' + $_.Exception.Message)
 		$global:LASTEXITCODE = 1
 		return ''
 	} finally {
@@ -66,20 +71,26 @@ function Run([string]$exe, [string]$args) {
 	}
 }
 
-function RunApp([string]$exe, [string]$args) {
+function RunApp([string]$exe, [string]$argLine) {
 	# Для winvnc.exe (GUI-приложение): запуск без перенаправления вывода. С перенаправлением
 	# (как в Run) регистрация службы через -install у GUI-приложения не срабатывала.
+	# Параметр не $args по той же причине, что и в Run.
 	try {
-		$proc = Start-Process -FilePath $exe -ArgumentList $args -NoNewWindow -Wait -PassThru
+		$proc = Start-Process -FilePath $exe -ArgumentList $argLine -NoNewWindow -Wait -PassThru
 		$global:LASTEXITCODE = $proc.ExitCode
-	} catch { $global:LASTEXITCODE = 1 }
+	} catch {
+		Log ('не удалось запустить ' + $exe + ': ' + $_.Exception.Message)
+		$global:LASTEXITCODE = 1
+	}
 }
 
 function Stop-Service-If-Any {
 	Run $sc ('stop ' + $svc) | Out-Null
+	# В русской выдаче sc локализованы МЕТКИ («Состояние»), а значения (RUNNING/STOP_PENDING)
+	# остаются английскими — потому ждём, пока исчезнут RUNNING и *PENDING, а не ищем метку STATE.
 	for ($i = 0; $i -lt 10; $i++) {
 		$q = Run $sc ('query ' + $svc)
-		if ($q -match 'STOPPED' -or $q -notmatch 'STATE') { break }
+		if ($q -notmatch 'RUNNING' -and $q -notmatch 'PENDING') { break }
 		Start-Sleep -Milliseconds 500
 	}
 	# winvnc мог остаться как процесс в сеансе пользователя — снять, иначе файлы заняты.
@@ -104,7 +115,9 @@ if ($Uninstall) {
 	Log 'uninstall: удаляем службу и правило'
 	Stop-Service-If-Any
 	$winvnc = Join-Path $Root 'winvnc.exe'
-	if (Test-Path $winvnc) { Run $winvnc '-uninstall' | Out-Null }
+	# -uninstall выполняет то же GUI-приложение winvnc: с перенаправленным выводом (Run) его
+	# вызовы не срабатывают — как и с -install, поэтому RunApp.
+	if (Test-Path $winvnc) { RunApp $winvnc '-uninstall' }
 	Run $sc ('delete ' + $svc) | Out-Null
 	Run $netsh 'advfirewall firewall delete rule name="Iskra Remote Access"' | Out-Null
 	Log 'uninstall: готово'
@@ -126,25 +139,29 @@ $tpl = Join-Path $Root 'ultravnc.ini.template'
 if (Test-Path $tpl) {
 	$ini = [System.IO.File]::ReadAllText($tpl)
 	$ini = $ini.Replace('__PATH__', $Root)
-	if ((Policy 'vncQueryAccept') -eq 'true') { $ini = $ini -replace '(?m)^QueryAccept=.*', 'QueryAccept=1' }
-	# Сохранить уже заданный пароль из существующего ini (его нет в шаблоне).
+	if ((Policy 'vncQueryAccept') -eq 'true') { $ini = $ini -replace '(?m)^QueryAccept=[^\r\n]*', 'QueryAccept=1' }
+	# Сохранить уже заданный пароль из существующего ini (его нет в шаблоне). Строки passwd/
+	# passwd2 живут в секции [ultravnc] — туда их пишет сам UltraVNC, и winvnc ищет их именно
+	# там, а не в конце файла (конец — это уже секция [poll]).
+	# ini читаем и пишем в системной кодировке (ANSI): UltraVNC разбирает его до-Unicode
+	# средствами, UTF-8 он прочтёт как мусор — русский текст запроса сотруднику исказился бы.
 	$pw = ''; $pw2 = ''
 	if (Test-Path $iniPath) {
-		$cur = [System.IO.File]::ReadAllText($iniPath)
-		$mp = [System.Text.RegularExpressions.Regex]::Match($cur, '(?m)^passwd=(.*)$'); if ($mp.Success) { $pw = $mp.Groups[1].Value }
-		$mp2 = [System.Text.RegularExpressions.Regex]::Match($cur, '(?m)^passwd2=(.*)$'); if ($mp2.Success) { $pw2 = $mp2.Groups[1].Value }
+		$cur = [System.IO.File]::ReadAllText($iniPath, [System.Text.Encoding]::Default)
+		$mp = [System.Text.RegularExpressions.Regex]::Match($cur, '(?m)^passwd=([^\r\n]*)'); if ($mp.Success) { $pw = $mp.Groups[1].Value }
+		$mp2 = [System.Text.RegularExpressions.Regex]::Match($cur, '(?m)^passwd2=([^\r\n]*)'); if ($mp2.Success) { $pw2 = $mp2.Groups[1].Value }
 	}
-	if ($pw -ne '') { $ini = $ini.TrimEnd() + "`r`npasswd=" + $pw + "`r`npasswd2=" + $pw2 + "`r`n" }
-	$enc = New-Object System.Text.UTF8Encoding $false
+	if ($pw -ne '') { $ini = $ini -replace '(?m)^\[ultravnc\]', ('[ultravnc]' + "`r`npasswd=" + $pw + "`r`npasswd2=" + $pw2) }
+	$enc = [System.Text.Encoding]::Default
 	$old = ''
-	if (Test-Path $iniPath) { $old = [System.IO.File]::ReadAllText($iniPath) }
+	if (Test-Path $iniPath) { $old = [System.IO.File]::ReadAllText($iniPath, [System.Text.Encoding]::Default) }
 	if ($old -ne $ini) { [System.IO.File]::WriteAllText($iniPath, $ini, $enc); Log 'ini записан' } else { Log 'ini без изменений' }
 }
 
 # 3. Пароль VNC — случайный, только если его ещё нет (без пароля сервер не отвечает). Для входа он
 #    не нужен: вход по учётной записи Windows. Знать его сотруднику незачем.
 $hasPwd = $false
-if (Test-Path $iniPath) { $hasPwd = ([System.IO.File]::ReadAllText($iniPath) -match '(?m)^passwd=..') }
+if (Test-Path $iniPath) { $hasPwd = ([System.IO.File]::ReadAllText($iniPath, [System.Text.Encoding]::Default) -match '(?m)^passwd=..') }
 if (-not $hasPwd) {
 	$chars = 'abcdefghijkmnpqrstuvwxyz23456789'.ToCharArray()
 	$rng = New-Object byte[] 8
@@ -153,10 +170,14 @@ if (-not $hasPwd) {
 	foreach ($b in $rng) { $pass += $chars[$b % $chars.Length] }
 	$setpasswd = Join-Path $Root 'setpasswd.exe'
 	if (Test-Path $setpasswd) {
+		# setpasswd пишет passwd/passwd2 в ultravnc.ini текущего каталога — потому Push-Location.
+		# Проверяем, что он действительно записал: иначе сервер не примет подключения,
+		# а журнал будет врать, что всё хорошо.
 		Push-Location $Root
 		Run $setpasswd ($pass + ' ' + $pass) | Out-Null
 		Pop-Location
-		Log 'пароль VNC задан'
+		$done = ([System.IO.File]::ReadAllText($iniPath, [System.Text.Encoding]::Default) -match '(?m)^passwd=..')
+		if ($done) { Log 'пароль VNC задан' } else { Log ('пароль VNC НЕ записан, код setpasswd: ' + $LASTEXITCODE) }
 	}
 }
 
@@ -167,7 +188,8 @@ Run $reg 'add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /
 $group = Policy 'vncAccessGroup'
 if ($group -ne '') {
 	$aclFile = Join-Path $Root 'access.acl'
-	[System.IO.File]::WriteAllText($aclFile, "allow`t0x00000003`t" + $group + "`r`n", (New-Object System.Text.ASCIIEncoding))
+	# Кодировка системная (ANSI): имя группы может быть с кириллицей, ASCII бы его потерял.
+	[System.IO.File]::WriteAllText($aclFile, "allow`t0x00000003`t" + $group + "`r`n", [System.Text.Encoding]::Default)
 	$mslogon = Join-Path $Root 'MSLogonACL.exe'
 	if (Test-Path $mslogon) { Run $mslogon ('/i /o "' + $aclFile + '"') | Out-Null; Log ('группа доступа: ' + $group) }
 }
@@ -184,9 +206,10 @@ $svcKey = 'HKLM:\SYSTEM\CurrentControlSet\Services\' + $svc
 Run $sc ('stop ' + $svc) | Out-Null
 Get-Process winvnc -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 # Ждём, пока служба действительно остановится (иначе net start ниже упрётся в «ещё останавливается»).
+# Условие по RUNNING/PENDING, не по метке STATE: в русской выдаче sc метки локализованы (см. выше).
 for ($i = 0; $i -lt 20; $i++) {
 	$q = Run $sc ('query ' + $svc)
-	if ($q -match 'STOPPED' -or $q -notmatch 'STATE') { break }
+	if ($q -notmatch 'RUNNING' -and $q -notmatch 'PENDING') { break }
 	Start-Sleep -Milliseconds 500
 }
 if (-not (Test-Path $svcKey)) {
@@ -202,14 +225,22 @@ Log ('путь службы: ' + $imagePath)
 # поднимается), и следующая за этим проверка порта могла увидеть службу ещё не слушающей.
 # net start ждёт, пока служба действительно запустится, и возвращает ненулевой код при ошибке.
 $net = Join-Path $env:SystemRoot 'System32\net.exe'
-Run $net ('start ' + $svc) | Out-Null
+# Две попытки с паузой — страховка: сразу после принудительного снятия старого winvnc его
+# мьютекс/порт могут быть ещё не освобождены, и первый запуск нового иногда срывается.
+for ($i = 1; $i -le 2; $i++) {
+	$netOut = Run $net ('start ' + $svc)
+	if ((Run $sc ('query ' + $svc)) -match 'RUNNING') { break }
+	Log ('запуск службы, попытка ' + $i + ': не RUNNING; net start: ' + (($netOut -replace "[\r\n]+", ' ').Trim()))
+	Start-Sleep -Seconds 3
+}
 
 # 7. Правило брандмауэра на порт 5995 (при политике vncAllowFrom — только с этих адресов).
 Run $netsh 'advfirewall firewall delete rule name="Iskra Remote Access"' | Out-Null
 $allow = Policy 'vncAllowFrom'
 $ruleArgs = 'advfirewall firewall add rule name="Iskra Remote Access" dir=in action=allow protocol=TCP localport=' + $port + ' profile=any'
 if ($allow -ne '') { $ruleArgs += ' remoteip=' + $allow }
-Run $netsh $ruleArgs | Out-Null
+$fwOut = Run $netsh $ruleArgs
+if ($LASTEXITCODE -ne 0) { Log ('правило брандмауэра не создано, код ' + $LASTEXITCODE + ': ' + (($fwOut -replace "[\r\n]+", ' ').Trim())) }
 
 # 8. Проверить, что новая служба слушает 5995, и только тогда убрать прежнюю папку uvnc_s.
 $listens = $false
@@ -219,6 +250,9 @@ for ($i = 0; $i -lt 12; $i++) {
 	if ($ns -match ('TCP\s+\S*:' + $port + '\s')) { $listens = $true; break }
 }
 Log ('служба слушает ' + $port + ': ' + $listens)
+# Провал честно проваливает установку: без этого установщик молча рапортует успех,
+# и машина остаётся без удалённого доступа, пока кто-нибудь не заметит.
+if (-not $listens) { Log 'install: не завершена — служба не слушает порт'; exit 1 }
 if ($listens -and (Test-Path $oldDir)) {
 	$running = Run $sc ('qc ' + $svc)
 	if ($running -match 'iskra-desktop') {
