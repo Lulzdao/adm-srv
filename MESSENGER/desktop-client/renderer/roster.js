@@ -280,7 +280,10 @@ function connectWs() {
     if (data.type === 'broadcast_deleted') refreshBroadcastPreview();
     if (data.type === 'broadcast') {
       paintBroadcastPreview({ ...data, created_at: data.created_at || Date.now() });
-      desktop.notify({
+      // Своё объявление сервер присылает и автору (чтобы оно появилось в его ленте), но уведомлять
+      // автора о нём незачем: без этой проверки у него всплывало уведомление, росла отметка
+      // непрочитанного, а с «Открывать при новом сообщении» само открывалось окно (жалоба 2026-10-23).
+      if (data.from_id !== me.id) desktop.notify({
         title: data.department
           ? `📢 Отдел «${data.department}» — ${data.from_user}`
           : '📢 Рассылка от ' + data.from_user,
