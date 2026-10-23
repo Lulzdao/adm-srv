@@ -7,6 +7,7 @@ const STATIC = ipcRenderer.sendSync('get-static-info');
 
 contextBridge.exposeInMainWorld('desktop', {
   hostname: STATIC.hostname,
+  addresses: STATIC.addresses || [],
   appVersion: STATIC.appVersion,
   buildTrack: STATIC.buildTrack,
   // Сможет ли клиент сам поставить обновление (права администратора): true / false / null — неизвестно.
@@ -17,9 +18,9 @@ contextBridge.exposeInMainWorld('desktop', {
   // Windows оформить под «Искру» нельзя; здесь только то, что делает главный процесс.
   sendFileTo: (payload) => ipcRenderer.send('send-file-to', payload),
   // Подключение к ПК сотрудника через UltraVNC — только у администратора, см. remote-connect в main.js.
-  remoteConnect: (host, login) => ipcRenderer.invoke('remote-connect', host, login),
+  remoteConnect: (host, login, addrs) => ipcRenderer.invoke('remote-connect', host, login, addrs),
   remoteLoginInfo: () => ipcRenderer.invoke('remote-login-info'),
-  remoteProbe: (host) => ipcRenderer.invoke('remote-probe', host),
+  remoteProbe: (host, addrs) => ipcRenderer.invoke('remote-probe', host, addrs),
   remoteForgetLogin: () => ipcRenderer.send('remote-forget-login'),
   openDepartmentBroadcast: (payload) => ipcRenderer.send('open-department-broadcast', payload),
   copyText: (text) => ipcRenderer.send('copy-text', text),

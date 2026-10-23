@@ -1697,6 +1697,15 @@ function isOutdated(machine) {
   return !!(pub && machine.version && pub.version !== machine.version);
 }
 
+// Адреса ПК для «Подключиться к ПК» в клиенте администратора (см. saveHostAddresses). Только
+// администраторам: кому и откуда подключаться — их дело, остальным адреса чужих ПК ни к чему.
+app.get('/api/admin/host-addresses/:host', auth, requireCapability('can_admin'), (req, res) => {
+  const row = getHostAddresses.get(String(req.params.host).slice(0, 64));
+  let addresses = [];
+  try { addresses = row ? parseIPv4List(JSON.parse(row.addresses).join(',')) : []; } catch { addresses = []; }
+  res.json({ host: req.params.host, addresses, updatedAt: row ? row.updated_at : null });
+});
+
 app.get('/api/admin/clients', auth, requireCapability('can_admin'), (req, res) => {
   const list = connectedMachines().map(({ sockets, ...m }) => m);
   res.json(list.sort((a, b) => a.user.localeCompare(b.user, 'ru')));
@@ -2098,6 +2107,33 @@ function broadcastGroupsChanged() {
   sendToAll(JSON.stringify({ type: 'groups-changed' }));
 }
 
+// Адреса ПК, которые сообщил клиент (ключ ip, клиент 1.1.32+): администратор подключается по ним,
+// если имя ПК из его сети не находится — так с компьютерами in.local, чьих имён DNS rosstat.local не
+// знает (2026-10-23). Сам сервер адрес клиента узнать не может: клиенты in.local ходят через прокси и
+// видны с его адресом. Это чужой ввод — только IPv4 в точечной записи, не больше четырёх; веб-панель
+// и «неизвестный ПК» не храним. Пишем только при изменении — переподключения окон часты.
+const upsertHostAddresses = db.prepare(`
+  INSERT INTO host_addresses (host, addresses, updated_at) VALUES (?, ?, ?)
+  ON CONFLICT(host) DO UPDATE SET addresses = excluded.addresses, updated_at = excluded.updated_at
+`);
+const getHostAddresses = db.prepare('SELECT addresses, updated_at FROM host_addresses WHERE host = ?');
+function parseIPv4List(raw) {
+  const list = String(raw || '').split(',').map((s) => s.trim()).filter((s) => {
+    const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(s);
+    return !!m && m.slice(1).every((n) => Number(n) <= 255);
+  });
+  return [...new Set(list)].slice(0, 4);
+}
+function saveHostAddresses(hostname, raw) {
+  if (!clientHostsOf([hostname]).length) return;
+  const addrs = parseIPv4List(raw);
+  if (!addrs.length) return;
+  const json = JSON.stringify(addrs);
+  const prev = getHostAddresses.get(hostname);
+  if (prev && prev.addresses === json) return;
+  upsertHostAddresses.run(hostname, json, Date.now());
+}
+
 wss.on('connection', (ws, req) => {
   const url = new URL(req.url, 'http://x');
   const token = url.searchParams.get('token');
@@ -2119,6 +2155,7 @@ wss.on('connection', (ws, req) => {
   const canElevate = adm === '1' ? true : adm === '0' ? false : null;
   const user = userFromToken(token);
   if (!user) { logServer('WARN', 'ws_auth_failed', { ip: req.socket.remoteAddress }); return ws.close(); }
+  saveHostAddresses(hostname, url.searchParams.get('ip'));
 
   // Сокет без обработчика 'error' — это падение всего сервера: 'error' на EventEmitter без
   // слушателя превращается в исключение, а неперехваченное исключение у нас завершает процесс

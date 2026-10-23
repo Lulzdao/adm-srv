@@ -10,7 +10,8 @@
 #     сотруднику с автосогласием, значок в трее виден;
 #   * задаёт случайный пароль VNC (без него сервер не отвечает), только если его ещё нет;
 #   * включает SoftwareSASGeneration — Ctrl+Alt+Del без лишнего вопроса сотруднику;
-#   * группа доступа (MS-Logon) — по умолчанию p48_g_support, машинная политика может подменить;
+#   * группа доступа (MS-Logon) — по умолчанию p48_g_support, на ПК домена in.local — администраторы
+#     домена in.local (доверия между доменами нет); машинная политика может подменить;
 #   * правило брандмауэра на порт 5995 — без ограничений по адресам (политика vncAllowFrom сужает);
 #   * после проверки, что новая служба слушает 5995, удаляет прежнюю папку uvnc_s (из Program Files
 #     и из Program Files (x86)). Папку администратора uvnc_support не трогает: службы в ней нет.
@@ -118,6 +119,27 @@ function Policy([string]$key) {
 	return ''
 }
 
+function DefaultAccessGroup {
+	# Группа доступа, когда политика её не задала. Обычно p48_g_support (домен rosstat.local).
+	# ПК домена in.local (сеть 192.168.254.0/23): доверия с rosstat.local нет, p48_g_support там не
+	# разрешится, и в UltraVNC не вошёл бы никто — пускаем администраторов домена in.local (решение
+	# пользователя 2026-10-23). Имя этой группы на русском контроллере домена переведено
+	# («Администраторы домена»), поэтому ищем её по SID: SID домена берём у учётной записи самого
+	# компьютера, группе администраторов домена всегда соответствует RID 512.
+	$domain = ''
+	try { $domain = [string](Get-WmiObject Win32_ComputerSystem).Domain } catch { }
+	if ($domain -ne 'in.local') { return 'p48_g_support' }
+	try {
+		$machine = New-Object System.Security.Principal.NTAccount(($env:COMPUTERNAME + '$'))
+		$domainSid = $machine.Translate([System.Security.Principal.SecurityIdentifier]).AccountDomainSid
+		$admins = New-Object System.Security.Principal.SecurityIdentifier([System.Security.Principal.WellKnownSidType]::AccountDomainAdminsSid, $domainSid)
+		return $admins.Translate([System.Security.Principal.NTAccount]).Value
+	} catch {
+		Log ('группа администраторов домена in.local не найдена по SID: ' + $_.Exception.Message)
+		return 'IN\Администраторы домена'
+	}
+}
+
 # ----------------------------- удаление -----------------------------
 if ($Uninstall) {
 	Log 'uninstall: удаляем службу и правило'
@@ -197,7 +219,7 @@ Run $reg 'add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /
 #    вне домена оно не разрешится — MSLogonACL молча пропустит строку, ACL останется пустым
 #    (никто не подключится) — проверка ниже честно пишет об этом в журнал.
 $group = Policy 'vncAccessGroup'
-if ($group -eq '') { $group = 'p48_g_support' }
+if ($group -eq '') { $group = DefaultAccessGroup }
 $aclFile = Join-Path $Root 'access.acl'
 # Кодировка системная (ANSI): имя группы может быть с кириллицей, ASCII бы его потерял.
 # Маска 3 = ViewOnly(1) + Interact(2) — всё управление, без передачи файлов.

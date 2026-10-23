@@ -11,7 +11,7 @@ const { diagnoseServer } = require('./diagnose');
 const { ROOT_STORE_COMMAND, pemsFromStoreOutput } = require('./root-store');
 const { parseMachinePolicy } = require('./policy');
 const { detectCanElevate, updatePlan, canUpdateOnCommand } = require('./elevation');
-const { isRemoteHost, viewerArgs, viewerCandidates, launchViewer, defaultVncUser, credentialArgs, parsePing } = require('./remote');
+const { isRemoteHost, viewerArgs, viewerCandidates, launchViewer, defaultVncUser, credentialArgs, parsePing, localIPv4, pickTarget } = require('./remote');
 const { cascadePosition, centerIn } = require('./window-place');
 const { SERVER_URL, VNC_VIEWER_PATHS, VNC_PORT, VNC_VIEWER_ARGS } = require('./config');
 const { autoUpdater } = require('electron-updater');
@@ -209,7 +209,10 @@ function runSystemUpdater() {
 }
 
 ipcMain.on('get-static-info', (event) => {
-  event.returnValue = { hostname: require('os').hostname(), appVersion: app.getVersion(), buildTrack: BUILD_TRACK, canElevate: CAN_ELEVATE };
+  // addresses — IPv4 этого ПК: по ним администратор подключится, если имя ПК в его сети не находится.
+  let addresses = [];
+  try { addresses = localIPv4(require('os').networkInterfaces()); } catch { /* без адресов — только по имени */ }
+  event.returnValue = { hostname: require('os').hostname(), addresses, appVersion: app.getVersion(), buildTrack: BUILD_TRACK, canElevate: CAN_ELEVATE };
 });
 
 // GPU/аппаратное ускорение Chromium на Windows 7 нестабильно (устаревшие/неполные драйверы DirectX,
@@ -1224,7 +1227,20 @@ ipcMain.on('remote-forget-login', () => { savedVncLogin = null; });
 // порт UltraVNC. Нужно оба: брандмауэр Windows часто режет пинг, и тогда «не отвечает на пинг» при
 // открытом порте значит «подключиться можно»; а «пинг есть, порт молчит» — ПК включён, но служба
 // удалённого доступа не работает. Обе проверки идут разом и вместе укладываются в пару секунд.
-ipcMain.handle('remote-probe', async (event, host) => {
+// Отвечает ли порт UltraVNC по этому имени или адресу — за 2,5 секунды.
+function vncPortOpen(target, port) {
+  return new Promise((resolve) => {
+    const sock = require('net').connect({ host: target, port });
+    const done = (open) => { sock.destroy(); resolve(open); };
+    sock.setTimeout(2500, () => done(false));
+    sock.once('connect', () => done(true));
+    sock.once('error', () => done(false));
+  });
+}
+
+// addrs — адреса ПК, которые сообщил его клиент (сервер отдаёт администратору, см. connectToPc в
+// roster.js): по ним подключаемся, если имя не находится — так с ПК сети in.local (2026-10-23).
+ipcMain.handle('remote-probe', async (event, host, addrs) => {
   if (BrowserWindow.fromWebContents(event.sender) !== rosterWin) return null;
   if (!isRemoteHost(host)) return null;
   const port = machinePolicy.vncPort || VNC_PORT;
@@ -1234,26 +1250,23 @@ ipcMain.handle('remote-probe', async (event, host) => {
     require('child_process').execFile(path.join(SYSTEM32, 'ping.exe'), ['-4', '-n', '1', '-w', '1500', host],
       { encoding: 'latin1', timeout: 8000, windowsHide: true }, (err, stdout) => resolve(parsePing(stdout, host)));
   });
-  const vnc = new Promise((resolve) => {
-    const sock = require('net').connect({ host, port });
-    const done = (open) => { sock.destroy(); resolve(open); };
-    sock.setTimeout(2500, () => done(false));
-    sock.once('connect', () => done(true));
-    sock.once('error', () => done(false));
-  });
-  const [p, open] = await Promise.all([ping, vnc]);
-  return { ...p, port, vncOpen: open };
+  const vnc = pickTarget(host, addrs, (t) => vncPortOpen(t, port));
+  const [p, picked] = await Promise.all([ping, vnc]);
+  return { ...p, port, vncOpen: picked.open, via: picked.target !== host ? picked.target : null };
 });
 
-ipcMain.handle('remote-connect', async (event, host, login) => {
+ipcMain.handle('remote-connect', async (event, host, login, addrs) => {
   if (BrowserWindow.fromWebContents(event.sender) !== rosterWin) return { ok: false, error: 'Недоступно из этого окна.' };
   // Просмотрщик из комплекта «Искры» (resources\uvnc) — первым: он нашей сборки (клавиши по скан-коду
   // раскладки удалённого ПК). Если его нет (запуск из исходников) — прежние пути на диске.
   const bundledViewer = path.join(process.resourcesPath, 'uvnc', 'vncviewer.exe');
   const candidates = viewerCandidates(machinePolicy.vncViewerPath, [bundledViewer, ...VNC_VIEWER_PATHS]);
+  // Имя не находится или порт по нему молчит, а по адресу ПК отвечает — подключаемся по адресу.
+  const port = machinePolicy.vncPort || VNC_PORT;
+  const target = isRemoteHost(host) && addrs && addrs.length ? (await pickTarget(host, addrs, (t) => vncPortOpen(t, port))).target : host;
   let args;
   try {
-    args = viewerArgs(host, machinePolicy.vncPort || VNC_PORT, machinePolicy.vncViewerArgs || VNC_VIEWER_ARGS);
+    args = viewerArgs(target, port, machinePolicy.vncViewerArgs || VNC_VIEWER_ARGS);
   } catch {
     logLocal('remote_connect_bad_host', { host: String(host).slice(0, 100) }, 'WARN');
     return { ok: false, error: 'Имя этого компьютера не похоже на имя ПК — подключение не запущено.' };
@@ -1281,7 +1294,7 @@ ipcMain.handle('remote-connect', async (event, host, login) => {
   for (const f of failed) logLocal('remote_connect_failed', { host, viewer: f.path, message: f.message });
   if (viewer) {
     // В журнал сервера (раздел «Логи»): кто и к какому ПК подключался из «Искры».
-    logLocal('remote_connect', { host, viewer }, 'INFO');
+    logLocal('remote_connect', { host, ...(target !== host ? { address: target } : {}), viewer }, 'INFO');
     return { ok: true };
   }
   const hint = `\n\nДругой путь задаётся строкой vncViewerPath в ${MACHINE_POLICY_PATH}.`;
