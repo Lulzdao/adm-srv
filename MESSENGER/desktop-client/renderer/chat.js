@@ -378,6 +378,7 @@ function applyDelete(mid) {
     el.remove();
     if (prev && prev.classList.contains('day-sep') && (!next || !next.classList.contains('msg') || next.id === 'typingBubble')) prev.remove();
   });
+  markQuotesDeleted(mid);
   if (editingId === mid) cancelEdit();
   if (replyingTo && replyingTo.id === mid) clearReplyingTo();
   if (autoOpenMsgs.delete(mid) && !autoOpenMsgs.size && !userEngaged) window.close();
@@ -386,9 +387,22 @@ function applyDelete(mid) {
 // Цитата сообщения, на которое отвечают — снимок автора/текста сделан на сервере в момент отправки
 // (см. миграцию reply_snapshot в server.js), поэтому не ломается, даже если само оригинальное
 // сообщение сейчас не загружено в этом окне (старая страница пагинации/другой день).
+const DELETED_QUOTE_HTML = '<i>Сообщение удалено</i>';
 function replyQuoteHtml(m) {
   if (!m.reply) return '';
-  return `<div class="reply-quote" data-reply-id="${m.reply.id}"><div class="rq-bar"></div><div class="rq-body"><span class="rq-name">${escapeHtml(m.reply.from_user || '')}</span><span class="rq-text">${escapeHtml((m.reply.text || '').slice(0, 140))}</span></div></div>`;
+  // Оригинал удалён отправителем — сервер присылает цитату без текста (reply.deleted, сервер 1.1.32+).
+  const text = m.reply.deleted ? DELETED_QUOTE_HTML : escapeHtml((m.reply.text || '').slice(0, 140));
+  return `<div class="reply-quote${m.reply.deleted ? ' deleted' : ''}" data-reply-id="${m.reply.id}"><div class="rq-bar"></div><div class="rq-body"><span class="rq-name">${escapeHtml(m.reply.from_user || '')}</span><span class="rq-text">${text}</span></div></div>`;
+}
+
+// Оригинал удалили, пока окно открыто: в уже показанных ответах на него убираем текст цитаты — так же,
+// как сервер отдаст их при следующей загрузке истории.
+function markQuotesDeleted(mid) {
+  document.querySelectorAll(`#messages .reply-quote[data-reply-id="${mid}"], #hpMessages .reply-quote[data-reply-id="${mid}"]`).forEach((q) => {
+    q.classList.add('deleted');
+    const t = q.querySelector('.rq-text');
+    if (t) t.innerHTML = DELETED_QUOTE_HTML;
+  });
 }
 
 // Реакции — переиспользуется и при первой отрисовке сообщения (bubbleHtml), и при живом обновлении
@@ -869,7 +883,8 @@ function wireMessageToolbar(container) {
     const pill = e.target.closest('.reaction-pill');
     if (pill) { e.stopPropagation(); toggleReaction(Number(pill.dataset.mid), pill.dataset.emoji); return; }
     const quote = e.target.closest('.reply-quote');
-    if (quote) { e.stopPropagation(); scrollToMessage(Number(quote.dataset.replyId)); return; }
+    // К удалённому оригиналу прокручивать некуда.
+    if (quote) { e.stopPropagation(); if (!quote.classList.contains('deleted')) scrollToMessage(Number(quote.dataset.replyId)); return; }
   });
 }
 
