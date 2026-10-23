@@ -8,6 +8,7 @@ const http = require('http');
 const https = require('https');
 const tls = require('tls');
 const { diagnoseServer } = require('./diagnose');
+const { ROOT_STORE_COMMAND, pemsFromStoreOutput } = require('./root-store');
 const { parseMachinePolicy } = require('./policy');
 const { detectCanElevate, updatePlan, canUpdateOnCommand } = require('./elevation');
 const { isRemoteHost, viewerArgs, viewerCandidates, launchViewer, defaultVncUser, credentialArgs, parsePing } = require('./remote');
@@ -68,26 +69,21 @@ else {
 const ORG_CA_PATH = path.join(__dirname, 'rosstat-root-ca.crt');
 const EXTRA_CA_DIR = path.join(__dirname, 'ca'); // сюда можно доложить .crt на время смены УЦ
 
-function pemFromBase64(b64) {
-  const body = String(b64).replace(/\s+/g, '').match(/.{1,64}/g);
-  return body ? `-----BEGIN CERTIFICATE-----\n${body.join('\n')}\n-----END CERTIFICATE-----\n` : null;
-}
-
 // Корни из хранилища Windows (LocalMachine\Root — именно туда групповые политики кладут корневые
 // сертификаты домена). Синхронно и один раз при старте: список нужен до первого сетевого запроса.
+// Команда и разбор — в root-store.js (там же — почему на Windows 7 хранилище раньше не читалось).
 function readWindowsRootStore() {
   if (process.platform !== 'win32') return [];
   try {
     const { execFileSync } = require('child_process');
     const out = execFileSync(
       'powershell',
-      ['-NoProfile', '-NonInteractive', '-Command',
-        "Get-ChildItem Cert:\\LocalMachine\\Root | ForEach-Object { [Convert]::ToBase64String($_.RawData) }"],
+      ['-NoProfile', '-NonInteractive', '-Command', ROOT_STORE_COMMAND],
       // Таймаут обязателен: заблокированный политиками или зависший PowerShell не должен
       // задерживать запуск приложения дольше, чем на несколько секунд.
       { timeout: 20000, windowsHide: true, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 }
     );
-    return String(out).split(/\r?\n/).map((l) => l.trim()).filter(Boolean).map(pemFromBase64).filter(Boolean);
+    return pemsFromStoreOutput(out);
   } catch (err) {
     logLocal('win_ca_store_unreadable', { message: String((err && err.message) || err) });
     return [];

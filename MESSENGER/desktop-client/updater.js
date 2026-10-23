@@ -34,6 +34,7 @@ const https = require('https');
 const tls = require('tls');
 const crypto = require('crypto');
 const { execFileSync } = require('child_process');
+const { ROOT_STORE_COMMAND, pemsFromStoreOutput } = require('./root-store');
 
 const MAX_INSTALLER_BYTES = 1024 * 1024 * 1024; // больше гигабайта установщик не бывает — это не он
 const REQUEST_TIMEOUT_MS = 60000;               // тишина дольше минуты — связь оборвалась
@@ -177,15 +178,16 @@ function trustAnchors(policy) {
   // -InputFormat None и закрытый ввод: PowerShell 2.0 (Windows 7) иначе может ждать ввода до тайм-аута
   // (та же ловушка, что в установщике до 1.0.28). Тайм-аут с запасом: первый запуск PowerShell от
   // имени системы на старой машине сразу после входа бывает долгим.
+  // Команда и разбор — в root-store.js: на Windows 7 прежний вывод резался PowerShell 2.0 на обрывки,
+  // и хранилище не работало вовсе (2026-10-23).
   let fromStore = 0;
   try {
     const out = execFileSync(path.join(SYSTEM_ROOT, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
-      ['-NoProfile', '-NonInteractive', '-InputFormat', 'None', '-Command', 'Get-ChildItem Cert:\\LocalMachine\\Root | ForEach-Object { [Convert]::ToBase64String($_.RawData) }'],
+      ['-NoProfile', '-NonInteractive', '-InputFormat', 'None', '-Command', ROOT_STORE_COMMAND],
       { timeout: 60000, windowsHide: true, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
-    for (const line of String(out).split(/\r?\n/)) {
-      const body = line.trim().match(/.{1,64}/g);
-      if (body) { anchors.push(`-----BEGIN CERTIFICATE-----\n${body.join('\n')}\n-----END CERTIFICATE-----\n`); fromStore += 1; }
-    }
+    const pems = pemsFromStoreOutput(out);
+    anchors.push(...pems);
+    fromStore = pems.length;
   } catch (err) {
     // Хранилище не прочиталось — остаются корень из сборки и политика. Пишем почему: на Windows 7
     // задание падало с «self signed certificate in certificate chain» (2026-10-15).
@@ -208,6 +210,24 @@ function makeSecureDir() {
     throw new Error(`не удалось закрыть папку загрузки: ${err.message}`);
   }
   return dir;
+}
+
+// Чей корень на вершине цепочки, которую видит эта машина. Только для журнала: соединение без
+// проверки, ничего не отправляем и сразу закрываем.
+function presentedRoot(serverUrl) {
+  return new Promise((resolve) => {
+    let url;
+    try { url = new URL(serverUrl); } catch { resolve(null); return; }
+    const sock = tls.connect({ host: url.hostname, port: Number(url.port) || 443, servername: url.hostname, rejectUnauthorized: false }, () => {
+      let cert = sock.getPeerCertificate(true);
+      for (let i = 0; i < 10 && cert && cert.issuerCertificate && cert.issuerCertificate !== cert; i++) cert = cert.issuerCertificate;
+      const s = (cert && cert.subject) || {};
+      sock.destroy();
+      resolve([s.CN, s.O].filter(Boolean).join(', ') || null);
+    });
+    sock.setTimeout(15000, () => { sock.destroy(); resolve(null); });
+    sock.on('error', () => resolve(null));
+  });
 }
 
 // Остатки прежних запусков (прервали, выключили компьютер посреди загрузки).
@@ -234,13 +254,20 @@ async function main() {
   if (track !== 'win7' && track !== 'win10') throw new Error(`сборка «${track || 'из исходников'}» сама не обновляется`);
 
   removeStaleDirs();
-  const result = await prepare({
-    serverUrl: resolveServerUrl(policy, SERVER_URL),
-    track,
-    installedVersion: pkg.version,
-    ca: trustAnchors(policy),
-    makeDir: makeSecureDir,
-  });
+  const serverUrl = resolveServerUrl(policy, SERVER_URL);
+  let result;
+  try {
+    result = await prepare({ serverUrl, track, installedVersion: pkg.version, ca: trustAnchors(policy), makeDir: makeSecureDir });
+  } catch (err) {
+    // Сертификат не признан — дописываем, чей корень предъявлен: сервер отдаёт цепочку до корня
+    // домена, и чужой корень значит, что соединение по дороге кто-то подменяет (проверка HTTPS
+    // антивирусом, прокси). Без этого из журнала не понять, кого искать (так было 2026-10-23).
+    if (/certificate|self.signed|CERT_/i.test(String(err && err.message))) {
+      const root = await presentedRoot(serverUrl);
+      if (root) err.message += ` (presented root: ${root})`;
+    }
+    throw err;
+  }
 
   if (!result.update) {
     log(`check: installed ${result.installed}, published ${result.published} - nothing to do (${os.hostname()})`);
@@ -259,4 +286,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { parseVersion, isNewer, parseLatestYml, resolveServerUrl, prepare };
+module.exports = { parseVersion, isNewer, parseLatestYml, resolveServerUrl, prepare, presentedRoot };
