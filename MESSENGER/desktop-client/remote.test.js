@@ -5,7 +5,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { isRemoteHost, remoteHostsOf, viewerArgs, viewerCandidates, findViewer, launchViewer } = require('./remote');
+const { isRemoteHost, remoteHostsOf, viewerArgs, viewerCandidates, findViewer, launchViewer, isIPv4, localIPv4, pickTarget } = require('./remote');
 
 test('просмотрщик ищется только на диске C: — и в Program Files, и в Program Files (x86)', () => {
   const { VNC_VIEWER_PATHS } = require('./config');
@@ -117,4 +117,32 @@ test('ping: имя нашлось, но ПК не отвечает; имя не 
   const noName = '\u008fà¨ ¯à®¢¥àª¥ á¢ï§¨ ­¥ ã¤ «®áì ®¡­ àã¦¨âì ã§¥« no-such-pc.\r\n';
   assert.deepStrictEqual(parsePing(noName, 'no-such-pc'), { reply: false, ms: null, below: false, ip: null, resolved: false });
   assert.strictEqual(parsePing('', '10.0.0.9').ip, '10.0.0.9', 'адрес вместо имени — он и есть адрес');
+});
+
+// ---------- Адреса ПК: подключение, когда имя не находится (сеть in.local, 2026-10-23) ----------
+
+test('localIPv4: только IPv4 своих адаптеров — без петли, без 169.254, без повторов, не больше четырёх', () => {
+  const ifs = {
+    'Ethernet 2': [{ family: 'IPv6', address: 'fe80::1', internal: false }, { family: 'IPv4', address: '192.168.254.33', internal: false }],
+    'Loopback': [{ family: 'IPv4', address: '127.0.0.1', internal: true }],
+    'Ethernet 3': [{ family: 'IPv4', address: '169.254.10.20', internal: false }],
+    'happ-xray': [{ family: 4, address: '172.19.0.1', internal: false }],
+    'Wi-Fi': [{ family: 'IPv4', address: '192.168.254.33', internal: false }, { family: 'IPv4', address: '10.1.1.1', internal: false }],
+    'VPN': [{ family: 'IPv4', address: '10.2.2.2', internal: false }, { family: 'IPv4', address: '10.3.3.3', internal: false }],
+  };
+  assert.deepStrictEqual(localIPv4(ifs), ['192.168.254.33', '172.19.0.1', '10.1.1.1', '10.2.2.2']);
+  assert.deepStrictEqual(localIPv4(undefined), []);
+});
+
+test('isIPv4: точечная запись, числа до 255', () => {
+  for (const ok of ['192.168.254.33', '10.0.0.1', '255.255.255.255']) assert.strictEqual(isIPv4(ok), true, ok);
+  for (const bad of ['256.1.1.1', '1.2.3', '1.2.3.4.5', 'p48-pc', '-connect', '', null]) assert.strictEqual(isIPv4(bad), false, String(bad));
+});
+
+test('pickTarget: имя отвечает — по имени; не отвечает — первый отвечающий адрес; никто — имя', async () => {
+  const open = (set) => async (t) => set.has(t);
+  assert.deepStrictEqual(await pickTarget('P48-PC', ['192.168.254.33'], open(new Set(['P48-PC', '192.168.254.33']))), { target: 'P48-PC', open: true });
+  assert.deepStrictEqual(await pickTarget('IN-PC-7', ['172.19.0.1', 'мусор', '192.168.254.33'], open(new Set(['192.168.254.33']))), { target: '192.168.254.33', open: true });
+  assert.deepStrictEqual(await pickTarget('IN-PC-7', ['192.168.254.33'], open(new Set())), { target: 'IN-PC-7', open: false });
+  assert.deepStrictEqual(await pickTarget('IN-PC-7', undefined, open(new Set())), { target: 'IN-PC-7', open: false });
 });

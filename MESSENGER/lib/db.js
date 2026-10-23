@@ -220,6 +220,16 @@ function openDatabase(DB_FILE, { logServer }) {
         hosts TEXT
       );
     `);
+    // Адреса ПК (IPv4), которые сообщил клиент «Искры» при подключении: по ним администратор
+    // подключается к ПК, чьё имя из его сети не находится (сеть in.local, 2026-10-23). Последнее
+    // известное — переживает перезапуск службы и выход человека из сети.
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS host_addresses (
+        host TEXT PRIMARY KEY,
+        addresses TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+    `);
 
     // Права — два независимых флага прямо на пользователе: can_broadcast (может рассылать всем) и
     // can_admin (доступ к веб-панели). Раздаются только персонально, не на отдел — так исключений и

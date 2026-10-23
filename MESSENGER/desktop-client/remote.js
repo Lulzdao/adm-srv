@@ -100,4 +100,43 @@ function parsePing(output, host) {
   return { reply, ms: time ? Number(time[2]) : null, below: !!time && time[1] === '<', ip, resolved: reply || !!ip };
 }
 
-module.exports = { isRemoteHost, remoteHostsOf, viewerArgs, viewerCandidates, findViewer, launchViewer, defaultVncUser, credentialArgs, parsePing };
+// ---------- Подключение по адресу, когда имя ПК не находится ----------
+// Компьютеры сети in.local (свой домен, свой DNS) по имени из rosstat.local не находятся: наш DNS их
+// имён не знает (2026-10-23). Поэтому клиент сообщает серверу и адреса своего ПК, а «Подключиться к
+// ПК» пробует сначала имя, потом эти адреса.
+
+function isIPv4(text) {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(String(text || ''));
+  return !!m && m.slice(1).every((n) => Number(n) <= 255);
+}
+
+// Адреса своего ПК для сервера (os.networkInterfaces()): только IPv4, без петли и без 169.254.x.x
+// (адрес, который Windows ставит сама, когда DHCP не ответил, — по нему никто не подключится).
+// Не больше четырёх: у ПК бывают виртуальные адаптеры, а строка уходит в адрес подключения.
+function localIPv4(interfaces) {
+  const out = [];
+  for (const list of Object.values(interfaces || {})) {
+    for (const a of list || []) {
+      // family — 'IPv4' в Node 16 (сборка win7) и 4 в Node 18.0–18.3.
+      if ((a.family !== 'IPv4' && a.family !== 4) || a.internal || !isIPv4(a.address) || a.address.startsWith('169.254.')) continue;
+      if (!out.includes(a.address)) out.push(a.address);
+    }
+  }
+  return out.slice(0, 4);
+}
+
+// Куда подключаться: имя, если порт по нему отвечает; иначе первый адрес ПК, где порт отвечает;
+// не ответил никто — всё равно имя (просмотрщик сам будет переподключаться: ПК может загружаться).
+//   isOpen — (имя или адрес) => Promise<boolean>.  → { target, open }
+async function pickTarget(host, addrs, isOpen) {
+  if (await isOpen(host)) return { target: host, open: true };
+  for (const ip of (addrs || []).filter(isIPv4)) {
+    if (ip !== host && await isOpen(ip)) return { target: ip, open: true };
+  }
+  return { target: host, open: false };
+}
+
+module.exports = {
+  isRemoteHost, remoteHostsOf, viewerArgs, viewerCandidates, findViewer, launchViewer, defaultVncUser, credentialArgs, parsePing,
+  isIPv4, localIPv4, pickTarget,
+};

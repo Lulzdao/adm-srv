@@ -223,6 +223,8 @@ function connectWs() {
     + `&ver=${encodeURIComponent(desktop.appVersion)}&track=${encodeURIComponent(desktop.buildTrack)}`
     // Есть ли у пользователя права поставить обновление — панель не шлёт «обновись» тем, у кого их нет.
     + `&adm=${desktop.canElevate === true ? 1 : desktop.canElevate === false ? 0 : ''}`
+    // Адреса этого ПК: администратор подключится по ним, если имя ПК в его сети не находится (in.local).
+    + `&ip=${encodeURIComponent((desktop.addresses || []).join(','))}`
     // Статусы — полный список при подключении, дальше только изменившиеся (см. mergePresence в ui-kit.js).
     + '&presence=delta');
   // Реальный статус на момент подключения, а не всегда "в сети" — иначе новое WS-подключение
@@ -682,26 +684,36 @@ function remoteHostsOf(hosts) {
 // вводится здесь — просмотрщик получает оба и подключается без своего окна входа (см. remote-connect
 // в main.js). Пароль хранит главный процесс и только в памяти; сюда он не возвращается.
 let vncLoginSaved = false;
+// Адреса ПК, которые сообщил его клиент (сервер 1.1.33+): по ним «Искра» подключается, если имя ПК
+// отсюда не находится — так с компьютерами сети in.local, чьих имён наш DNS не знает (2026-10-23).
+// Не вышло узнать — подключаемся по имени, как раньше.
+async function hostAddresses(host) {
+  try {
+    const r = await api(`/api/admin/host-addresses/${encodeURIComponent(host)}`);
+    return Array.isArray(r.addresses) ? r.addresses : [];
+  } catch { return []; }
+}
+
 async function connectToPc(host, askAgain = false) {
-  const info = await desktop.remoteLoginInfo();
+  const [info, addrs] = await Promise.all([desktop.remoteLoginInfo(), hostAddresses(host)]);
   let res;
   if (info.disabled) {
-    res = await desktop.remoteConnect(host);
+    res = await desktop.remoteConnect(host, undefined, addrs);
   } else if (info.saved && !askAgain) {
     // Окна входа нет (пароль запомнен) — проверку связи видно только так: порт молчит — показываем,
     // что с ПК, и спрашиваем. Отвечает — подключаемся сразу, как раньше. Просмотрщик и сам будет
     // переподключаться, поэтому «всё равно подключиться» имеет смысл: ПК может как раз загружаться.
-    const r = await desktop.remoteProbe(host);
+    const r = await desktop.remoteProbe(host, addrs);
     if (r && !r.vncOpen) {
       const { lines, hint } = probeSummary(r);
       const text = lines.map((l) => `${l.ok ? '✓' : '✗'} ${l.text}`).join('\n') + (hint ? `\n\n${hint}` : '');
       if (!await uiConfirm(text, { title: `Подключение к ${host}`, okText: 'Всё равно подключиться' })) return;
     }
-    res = await desktop.remoteConnect(host, { useSaved: true });
+    res = await desktop.remoteConnect(host, { useSaved: true }, addrs);
   } else {
-    const login = await askVncLogin(host, info.user);
+    const login = await askVncLogin(host, info.user, addrs);
     if (!login) return;
-    res = await desktop.remoteConnect(host, login);
+    res = await desktop.remoteConnect(host, login, addrs);
     if (res.ok) vncLoginSaved = login.remember;
   }
   if (!res.ok) uiAlert(res.error, 'Подключение к ПК');
@@ -714,9 +726,11 @@ function probeSummary(r) {
   const lines = [
     r.reply ? { ok: true, text: `Пинг: отвечает, ${r.below ? '<1' : r.ms} мс${ip}` }
       : { ok: false, text: r.resolved ? `Пинг: не отвечает${ip}` : 'Имя ПК не найдено в сети' },
-    { ok: r.vncOpen, text: `Удалённый доступ (порт ${r.port}): ${r.vncOpen ? 'отвечает' : 'не отвечает'}` },
+    { ok: r.vncOpen, text: `Удалённый доступ (порт ${r.port}): ${r.vncOpen ? 'отвечает' : 'не отвечает'}${r.via ? ` по адресу ${r.via}` : ''}` },
   ];
-  const hint = r.vncOpen ? (r.reply ? '' : 'Пинг закрыт брандмауэром — подключиться можно.')
+  // via — по имени порт не ответил (или имя не нашлось), а по адресу ПК ответил: подключение пойдёт туда.
+  const hint = r.via ? `Подключение пойдёт по адресу ${r.via}.`
+    : r.vncOpen ? (r.reply ? '' : 'Пинг закрыт брандмауэром — подключиться можно.')
     : r.reply ? 'ПК включён, но служба удалённого доступа на нём не работает.'
       : r.resolved ? 'ПК, скорее всего, выключен или недоступен по сети.'
         : 'ПК выключен давно или его имя сменилось.';
@@ -729,7 +743,7 @@ function probeHtml(r) {
     + (hint ? `<div style="color:var(--muted); margin-top:2px">${escapeHtml(hint)}</div>` : '');
 }
 
-function askVncLogin(host, user) {
+function askVncLogin(host, user, addrs) {
   return new Promise((resolve) => {
     const field = 'width:100%; padding:9px 11px; margin:4px 0 10px; background:var(--panel-2); border:1px solid var(--border); border-radius:8px; color:var(--text); font-size:13px; font-family:inherit;';
     const overlay = document.createElement('div');
@@ -755,7 +769,7 @@ function askVncLogin(host, user) {
     const probeEl = box.querySelector('#vncProbe');
     const probe = () => {
       probeEl.textContent = 'Проверяю связь с ПК…';
-      desktop.remoteProbe(host).then((r) => { if (overlay.isConnected) probeEl.innerHTML = probeHtml(r); });
+      desktop.remoteProbe(host, addrs).then((r) => { if (overlay.isConnected) probeEl.innerHTML = probeHtml(r); });
     };
     probeEl.onclick = probe;
     probe();
