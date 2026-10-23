@@ -72,6 +72,8 @@ module.exports = {
     // Без этой строки собранное приложение падало бы при старте: файл в сборку не попал бы.
     // Тест diagnose.test.js рядом с ним не перечислен и в сборку не идёт — так и надо.
     'diagnose.js',
+    // Корни из хранилища Windows (require из main.js и updater.js) — то же самое.
+    'root-store.js',
     // Разбор машинной политики C:\ProgramData\Iskra\config.json (require из main.js) — то же самое.
     'policy.js',
     // Подключение к ПК сотрудника через UltraVNC (require из main.js) — то же самое.
