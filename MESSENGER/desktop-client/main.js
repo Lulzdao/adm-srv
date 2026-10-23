@@ -621,6 +621,14 @@ function hookSessionEnd(win) {
   if (process.platform !== 'win32') return;
   const onSessionEnding = () => {
     isQuitting = true; // синхронно и дёшево: с этого момента 'close' больше не отменяется
+    // Скачанное обновление при выключении НЕ ставим. Выход здесь — app.exit(0) или штатное завершение
+    // Chromium, и оба дают событие quit с кодом 0, а по нему electron-updater запускает установщик
+    // (autoInstallOnAppQuit). Windows снимает его посреди работы: прежние файлы установщик уже удалил,
+    // новые разложил не все — в Program Files остаётся пол-«Искры» без программы, и она больше не
+    // запускается и не обновляется (журнал updater.log: «no program exe», 2026-10-22, Windows 7).
+    // Тоже синхронно: Windows может снять процесс раньше, чем дойдёт до beginShutdown. Версию
+    // поставит задание Iskra\Update или следующий обычный выход из «Искры».
+    if (app.isPackaged) autoUpdater.autoInstallOnAppQuit = false;
     setImmediate(beginShutdown);
   };
   win.hookWindowMessage(0x0011, onSessionEnding); // WM_QUERYENDSESSION — приходит первым
