@@ -91,3 +91,31 @@ test('группа: удаление видят все участники, пр�
     assert.ok(уАдмина.json.find((m) => m.id === id).deleted_at > 0);
   } finally { wsА.close(); wsБ.close(); wsВ.close(); }
 });
+
+// Ответили на сообщение, потом его удалили: снимок цитаты (reply_snapshot) хранит текст оригинала,
+// и раньше он оставался виден в ответе — «пропадает у собеседника» выходило неполным (2026-10-23).
+test('цитата удалённого: участникам без текста с пометкой deleted, администратору — с текстом', async () => {
+  const wsА = await connect(srv.url, анна.token);
+  const wsБ = await connect(srv.url, борис.token);
+  try {
+    wsА.send({ type: 'send', to: борис.id, text: 'секрет в оригинале' });
+    const { id } = await wsБ.next((m) => m.type === 'message' && m.text === 'секрет в оригинале');
+    wsБ.send({ type: 'send', to: анна.id, text: 'отвечаю на секрет', replyTo: id });
+    const ответ = await wsА.next((m) => m.type === 'message' && m.text === 'отвечаю на секрет');
+    assert.equal(ответ.reply.text, 'секрет в оригинале', 'пока оригинал на месте — цитата с текстом');
+
+    wsА.send({ type: 'delete', id });
+    await wsБ.next((m) => m.type === 'message_deleted' && m.id === id);
+
+    for (const [кто, peer] of [[борис, анна], [анна, борис]]) {
+      const цитата = (await dmOf(кто.token, peer.id)).find((m) => m.id === ответ.id).reply;
+      assert.equal(цитата.deleted, true);
+      assert.equal(цитата.text, undefined, 'текста удалённого в цитате нет');
+      assert.equal(цитата.id, id);
+    }
+    const уАдмина = (await request(srv.url, 'GET', `/api/admin/history/dm/${анна.id}/${борис.id}`, { token: admin.token })).json;
+    const цитата = уАдмина.find((m) => m.id === ответ.id).reply;
+    assert.equal(цитата.deleted, true);
+    assert.equal(цитата.text, 'секрет в оригинале', 'администратор видит, что было в цитате');
+  } finally { wsА.close(); wsБ.close(); }
+});

@@ -78,7 +78,15 @@ const SECRET = resolveSecret();
 // Админ может удалить файл с диска через веб-панель, не трогая саму историю переписки (см.
 // DELETE /api/admin/files/:diskName ниже) — сообщение остаётся, но ссылка в нём мертва. exists
 // помечает такие файлы, чтобы клиент показал "файл удалён", а не сломанную/вечно грузящуюся карточку.
-function normalizeRow(row) {
+// Цитата удалённого сообщения (ответ на то, что отправитель потом удалил): снимок reply_snapshot хранит
+// его текст, и без этой проверки текст оставался виден участникам в каждом ответе на него — удаление
+// «у собеседника пропадает» выходило неполным (2026-10-23). Участникам — без текста, с пометкой
+// deleted: клиент пишет «Сообщение удалено». Администратору («Переписки» веб-панели) — текст остаётся,
+// как и у самих удалённых сообщений там. Один запрос по первичному ключу на сообщение с ответом.
+const getReplyTargetDeleted = db.prepare('SELECT deleted_at FROM messages WHERE id = ?');
+function normalizeRow(row) { return normalizeRowFor(row, false); }
+function normalizeAdminRow(row) { return normalizeRowFor(row, true); }
+function normalizeRowFor(row, admin) {
   if (!row) return row;
   const { file_url, file_name, file_size, files_json, reply_to_id, reply_snapshot, ...rest } = row;
   let files = [];
@@ -96,6 +104,13 @@ function normalizeRow(row) {
   let reply = null;
   if (reply_snapshot) {
     try { reply = { id: reply_to_id, ...JSON.parse(reply_snapshot) }; } catch { reply = null; }
+  }
+  if (reply && reply_to_id) {
+    const target = getReplyTargetDeleted.get(reply_to_id);
+    if (target && target.deleted_at) {
+      reply.deleted = true;
+      if (!admin) delete reply.text;
+    }
   }
   return { ...rest, files, reply };
 }
@@ -1590,7 +1605,7 @@ app.get('/api/admin/history/all', auth, requireCapability('can_admin'), (req, re
   if (!req.query.before) logServer('INFO', 'admin_all_messages_viewed', { adminId: req.user.id, username: req.user.username, ip: req.ip });
   res.json(allMessagesRecent.all(beforeId(req)).reverse().map((row) => {
     const { to_user, group_name, ...rest } = row;
-    return { ...normalizeRow(rest), place: messagePlace(row) };
+    return { ...normalizeAdminRow(rest), place: messagePlace(row) };
   }));
 });
 
@@ -1609,11 +1624,11 @@ app.get('/api/admin/groups', auth, requireCapability('can_admin'), (req, res) =>
 });
 
 app.get('/api/admin/history/room/:room', auth, requireCapability('can_admin'), (req, res) => {
-  res.json(adminRoomHistory.all(req.params.room, beforeId(req)).reverse().map(normalizeRow));
+  res.json(adminRoomHistory.all(req.params.room, beforeId(req)).reverse().map(normalizeAdminRow));
 });
 app.get('/api/admin/history/dm/:u1/:u2', auth, requireCapability('can_admin'), (req, res) => {
   const a = Number(req.params.u1), b = Number(req.params.u2);
-  res.json(adminDmHistory.all(a, b, b, a, beforeId(req)).reverse().map(normalizeRow));
+  res.json(adminDmHistory.all(a, b, b, a, beforeId(req)).reverse().map(normalizeAdminRow));
 });
 
 // ---------- Обновления клиентов ----------
