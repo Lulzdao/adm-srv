@@ -50,7 +50,7 @@ test('адреса чужих ПК — только администратору
     assert.equal((await addrsOf(анна.token, 'P48-INLOCAL-08')).status, 403);
     assert.deepEqual((await addrsOf(admin.token, 'нет-такого')).json.addresses, []);
   } finally { ws.close(); }
-  // Клиент без адресов (до 1.1.32) прежние не стирает.
+  // Клиент без адресов (до 1.1.33) прежние не стирает.
   const old = await connect(srv.url, анна.token, { host: 'P48-INLOCAL-08' });
   try { assert.deepEqual((await addrsOf(admin.token, 'P48-INLOCAL-08')).json.addresses, ['192.168.254.50']); }
   finally { old.close(); }
