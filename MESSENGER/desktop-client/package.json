@@ -12,7 +12,8 @@
     "dist:win10": "electron-builder --win --config build-config/win10.js",
     "dist": "npm run dist:win7 && npm run dist:win10",
     "release": "node scripts/release.js",
-    "icons": "node scripts/make-icons.js"
+    "icons": "node scripts/make-icons.js",
+    "installer-art": "electron scripts/installer-art.js"
   },
   "dependencies": {
     "electron-updater": "6.3.9"
