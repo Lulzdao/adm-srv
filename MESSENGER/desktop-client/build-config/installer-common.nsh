@@ -108,6 +108,48 @@
   uvncDone:
 !macroend
 
+; Удаление файлов программы — замена стандартного шага electron-builder (uninstaller.nsh, Section
+; "un.install"), чтобы ДО него снять средство удалённого доступа. Раньше это делал customUnInstall, но
+; electron-builder зовёт его уже после RMDir /r $INSTDIR: сценария install-uvnc.ps1 к тому времени нет,
+; а winvnc.exe занят работающей службой и не удаляется. Итог (найдено 2026-10-26 на Win7-ВМ): после
+; удаления «Искры» служба UltraVNC продолжала работать из уцелевшей папки, порт 5995 и правило
+; брандмауэра оставались открытыми. Здесь — тот же шаг уже после подтверждения удаления (не в
+; un.onInit: на странице приветствия деинсталлятора человек ещё может передумать).
+; При обновлении (--updated) службу уже остановил новый установщик (StopUvncForUpdate) — не трогаем.
+; Ниже первой проверки — дословно стандартный шаг из шаблона electron-builder 24.
+!macro customRemoveFiles
+  ${IfNot} ${isUpdated}
+    IfFileExists "$INSTDIR\resources\uvnc\install-uvnc.ps1" 0 uvncUnDone
+      DetailPrint "Удаляем средство удалённого доступа..."
+      nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -InputFormat None -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\resources\uvnc\install-uvnc.ps1" -Uninstall'
+      Pop $0
+      Pop $1
+    uvncUnDone:
+  ${EndIf}
+
+  ${if} ${isUpdated}
+    CreateDirectory "$PLUGINSDIR\old-install"
+
+    Push ""
+    Call un.atomicRMDir
+    Pop $R0
+
+    ${if} $R0 != 0
+      DetailPrint "File is busy, aborting: $R0"
+
+      # Attempt to restore previous directory
+      Push ""
+      Call un.restoreFiles
+      Pop $R0
+
+      Abort `Can't rename "$INSTDIR" to "$PLUGINSDIR\old-install".`
+    ${endif}
+  ${endif}
+
+  # Remove all files (or remaining shallow directories from the block above)
+  RMDir /r $INSTDIR
+!macroend
+
 ; Задания убираются только при настоящем удалении программы. При установке новой версии поверх
 ; старой деинсталлятор тоже вызывается (с ключом --updated) — и вызывает его в том числе само
 ; задание Iskra\Update, которое в этот момент выполняется: удалять его из-под себя нельзя, а новая
@@ -120,11 +162,9 @@
     nsExec::ExecToStack '"$SYSDIR\schtasks.exe" /Delete /TN "Iskra\Relaunch" /F'
     Pop $0
     Pop $1
-    ; Средство удалённого доступа снимаем только при настоящем удалении «Искры», не при обновлении.
-    IfFileExists "$INSTDIR\resources\uvnc\install-uvnc.ps1" 0 uvncRemoved
-      nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -InputFormat None -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\resources\uvnc\install-uvnc.ps1" -Uninstall'
-      Pop $0
-      Pop $1
-    uvncRemoved:
+    ; Средство удалённого доступа снято ещё до удаления файлов — см. customRemoveFiles выше.
+    ; Автозапуск «Искры» при входе — значение в реестре того, кто удаляет (программа ставит его
+    ; сама, см. applyAutoStart в main.js); без этого Windows при каждом входе искала бы удалённый exe.
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "ru.lipetskstat.iskra"
   ${EndIf}
 !macroend
