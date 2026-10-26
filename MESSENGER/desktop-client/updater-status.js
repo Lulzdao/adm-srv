@@ -23,6 +23,8 @@ const RULES = [
   [/^could not start updater: (.*)$/, (m) => ({ state: 'error', detail: m[1] })],
   [/^refused: (.*)$/, (m) => ({ state: 'error', detail: m[1] })],
   [/^no program exe in (.*)$/, (m) => ({ state: 'error', detail: `нет программы в ${m[1]}` })],
+  // Починка (iskra-update.ps1, шаг 0): программы нет, задание само качает установщик — и не смогло.
+  [/^repair: (.*)$/, (m) => ({ state: 'error', detail: `починка не удалась: ${m[1]}` })],
 ];
 
 // Последнее значимое событие журнала. Служебные строки (возврат «Искры» сотруднику, хранилище

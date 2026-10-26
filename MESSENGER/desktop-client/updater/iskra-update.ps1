@@ -39,7 +39,71 @@ function Write-Log([string]$text) {
 # Сама программа — самый большой .exe в папке установки. Имя у неё кириллическое, по имени не ищем.
 $exe = @(Get-ChildItem -LiteralPath $Root -Filter '*.exe' -ErrorAction SilentlyContinue | Sort-Object Length -Descending)[0]
 $updater = Join-Path $Root 'resources\app.asar\updater.js'
-if (-not $exe) { Write-Log "no program exe in $Root"; exit 1 }
+
+# --- 0. починка: самой программы нет ---
+# «Искра» лишилась своего exe (или app.asar): установщик сняли посреди работы (так ломалось до 1.1.32
+# при выключении ПК), файл унёс антивирус и т. п. Шаг 1 тогда невозможен — узнать о версии и скачать
+# её умеет только сама программа (updater.js), — и задание при каждом запуске писало «no program exe»
+# и выходило: такой ПК без человека не чинился никогда (найдено 2026-10-26 на Win7-ВМ). Здесь то же,
+# что делает updater.js, средствами PowerShell 2.0: latest.yml с сервера, установщик в закрытую папку,
+# сверка sha512 — и дальше обычная установка (шаг 2). Версию не сравниваем: ставим ту, что выложена.
+# TLS — средствами .NET 3.5 и хранилищем корней Windows: на Windows 7 с обновлениями это TLS 1.2
+# (проверено на ВМ); где их нет, скачать не выйдет — причина будет в журнале.
+# Откуда качать — как у updater.js: сборка и адрес из resources\app-update.yml (его кладёт
+# electron-builder, и он переживает такую поломку), адрес из машинной политики важнее.
+function Get-RepairInstaller {
+	$yml = Join-Path $Root 'resources\app-update.yml'
+	$url = ''
+	if (Test-Path -LiteralPath $yml) {
+		$m = [regex]::Match([IO.File]::ReadAllText($yml), '(?m)^url:\s*[''"]?([^''"\r\n]+?)[''"]?\s*$')
+		if ($m.Success) { $url = $m.Groups[1].Value }
+	}
+	$tm = [regex]::Match($url, '/updates/(win7|win10)/?$')
+	if (-not $tm.Success) { Write-Log "repair: no update source in $yml"; return $null }
+	$track = $tm.Groups[1].Value
+	$server = $url.Substring(0, $tm.Index)
+	$cfg = Join-Path $programData 'Iskra\config.json'
+	if (Test-Path -LiteralPath $cfg) {
+		$pm = [regex]::Match([IO.File]::ReadAllText($cfg), '"serverUrl"\s*:\s*"([^"]+)"')
+		if ($pm.Success) { $server = $pm.Groups[1].Value.TrimEnd('/') }
+	}
+	if ($server -notmatch '^https://') { Write-Log "repair: server address is not https: $server"; return $null }
+	$base = "$server/updates/$track"
+	$wc = New-Object Net.WebClient
+	$wc.Headers.Add('X-Iskra-Host', $env:COMPUTERNAME)
+	try { $text = $wc.DownloadString("$base/latest.yml") }
+	catch { Write-Log ("repair: latest.yml not downloaded from {0}: {1}" -f $base, $_.Exception.Message); return $null }
+	$v = [regex]::Match($text, '(?m)^version:\s*[''"]?(\d+\.\d+\.\d+)')
+	$f = [regex]::Match($text, '(?m)^path:\s*[''"]?([A-Za-z0-9][A-Za-z0-9._-]*\.exe)')
+	$h = [regex]::Match($text, '(?m)^sha512:\s*[''"]?([A-Za-z0-9+/]{86}==)')
+	if (-not ($v.Success -and $f.Success -and $h.Success)) { Write-Log "repair: latest.yml from $base not understood"; return $null }
+	# Папка — та же, что у updater.js (шаг 2 проверяет путь): закрыта для всех, кроме системы и администраторов.
+	$dir = Join-Path $env:SystemRoot ('Temp\iskra-update-' + [guid]::NewGuid().ToString('N'))
+	New-Item -ItemType Directory -Path $dir -Force | Out-Null
+	& (Join-Path $env:SystemRoot 'System32\icacls.exe') $dir /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' | Out-Null
+	if ($LASTEXITCODE -ne 0) { Write-Log "repair: could not lock $dir"; Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue; return $null }
+	$file = Join-Path $dir $f.Groups[1].Value
+	try {
+		$wc.DownloadFile("$base/" + $f.Groups[1].Value, $file)
+		$stream = [IO.File]::OpenRead($file)
+		try { $got = [Convert]::ToBase64String((New-Object Security.Cryptography.SHA512Managed).ComputeHash($stream)) } finally { $stream.Close() }
+		if ($got -ne $h.Groups[1].Value) { throw 'sha512 does not match latest.yml' }
+	} catch {
+		Write-Log ("repair: installer not downloaded: {0}" -f $_.Exception.Message)
+		Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
+		return $null
+	}
+	# Та же строка, что у updater.js: панель «Клиенты» (updater-status.js) покажет «скачано».
+	Write-Log ("download ok: missing -> {0}, {1} (repair: program files were missing)" -f $v.Groups[1].Value, $f.Groups[1].Value)
+	return @{ update = '1'; installer = $file; dir = $dir; version = $v.Groups[1].Value }
+}
+
+$broken = (-not $exe) -or (-not (Test-Path -LiteralPath (Join-Path $Root 'resources\app.asar')))
+if ($broken) {
+	Write-Log "no program exe in $Root - repairing"
+	$info = Get-RepairInstaller
+	if (-not $info) { exit 1 }
+} else {
 
 # --- 1. узнать и скачать ---
 # Через Start-Process с ожиданием и выводом в файл, а не «& программа»: «Искра» — оконная программа,
@@ -77,6 +141,7 @@ foreach ($line in $lines) {
 # в панели «Клиенты» (там видна последняя значимая строка).
 if ($started -and -not $info.ContainsKey('update')) { Write-Log ("updater gave no answer, exit code {0}" -f $prepareCode) }
 if ($info['update'] -ne '1') { exit $prepareCode }
+} # конец шага 1 (при починке он пропущен — см. шаг 0)
 
 $installer = $info['installer']
 $dir = $info['dir']
