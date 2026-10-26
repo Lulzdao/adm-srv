@@ -2134,7 +2134,9 @@ wss.on('connection', (ws, req) => {
   // «отошёл» с тем же моментом, пока клиент не прислал свой статус. Иначе после переподключения он
   // на долю секунды становился «в сети», и отсчёт «отошёл с» начинался заново.
   const idleSince = lastIdleSince.get(user.id) || null;
-  connMeta.set(ws, { userId: user.id, name: user.display_name, hostname, appVersion, buildTrack, canElevate, presenceMode, state: idleSince ? 'idle' : 'active', lastSeen: Date.now(), idleSince });
+  connMeta.set(ws, { userId: user.id, name: user.display_name, hostname, appVersion, buildTrack, canElevate, presenceMode, state: idleSince ? 'idle' : 'active', lastSeen: Date.now(), lastPong: Date.now(), idleSince });
+  // Ответ на служебный ping (см. «Не дать промежуточному оборудованию…» ниже) — признак, что клиент жив.
+  ws.on('pong', () => { const m = connMeta.get(ws); if (m) m.lastPong = Date.now(); });
   metrics.wsConnect();
   // Продление входа (2026-10-08): токен выдаётся на 30 дней, и клиент, который месяц не перезаходил, вылетал
   // на экран входа. Окно подключается — если его токену больше суток, сервер выдаёт свежий, окно его
@@ -2526,10 +2528,24 @@ app.get('/api/admin/load', auth, requireCapability('can_admin'), (req, res) => {
 // клиентами. Переопределяется WS_PING_MS (мс), 0 — выключить.
 const pingEnv = process.env.WS_PING_MS;
 const WS_PING_MS = pingEnv !== undefined && pingEnv !== '' && Number(pingEnv) >= 0 ? Number(pingEnv) : 5000;
+// Тот же ping — и проверка, что клиент жив: на ping клиент (Chromium) отвечает pong сам, любой версии.
+// Нет ответа дольше WS_DEAD_MS — соединение мёртвое (выключили питание, выдернули кабель, пропала
+// сеть): рвём его, и человек через OFFLINE_GRACE_MS уходит «не в сети». Раньше ответ не проверялся, и
+// такое соединение снимала только подстраховка ниже — через 90 минут: всё это время человек числился
+// «в сети» (найдено 2026-10-26 на Win7-ВМ: сеть оборвана на 3 минуты — сервер всё время показывал
+// «в сети»). Переопределяется WS_DEAD_MS (мс); по умолчанию — 6 пропущенных ping, но не меньше 30 с.
+const deadEnv = process.env.WS_DEAD_MS;
+const WS_DEAD_MS = deadEnv !== undefined && deadEnv !== '' && Number(deadEnv) > 0 ? Number(deadEnv) : Math.max(30000, WS_PING_MS * 6);
 if (WS_PING_MS > 0) {
   setInterval(() => {
-    for (const ws of connMeta.keys()) {
+    const now = Date.now();
+    for (const [ws, meta] of connMeta) {
       if (ws.readyState !== ws.OPEN) continue;
+      if (now - meta.lastPong > WS_DEAD_MS) {
+        logServer('WARN', 'ws_no_pong', { userId: meta.userId, hostname: meta.hostname, silentSec: Math.round((now - meta.lastPong) / 1000) });
+        ws.terminate(); // дальше — обычное закрытие: 'close', отсрочка OFFLINE_GRACE_MS, «не в сети»
+        continue;
+      }
       try { ws.ping(); } catch { /* сокет закрылся между проверкой и отправкой */ }
     }
   }, WS_PING_MS).unref();
