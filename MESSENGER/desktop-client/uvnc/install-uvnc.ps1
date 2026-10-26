@@ -148,7 +148,13 @@ $tpl = Join-Path $Root 'ultravnc.ini.template'
 if (Test-Path $tpl) {
 	$ini = [System.IO.File]::ReadAllText($tpl)
 	$ini = $ini.Replace('__PATH__', $Root)
-	if ((Policy 'vncQueryAccept') -eq 'true') { $ini = $ini -replace '(?m)^QueryAccept=[^\r\n]*', 'QueryAccept=1' }
+	# Окно запроса сотруднику. В UltraVNC 1.8 (vncserver.cpp, vncclient.cpp): QuerySetting=4 — окно
+	# показывается, 2 — нет; QueryAccept — что сделать, когда за QueryTimeout секунд сотрудник ничего не
+	# нажал: 1 — принять, 0 — отказать. Шаблон: окно с автосогласием через 10 с. До 2026-10-26 там стояли
+	# значения из рабочего комплекта 1.4.3.1 (QuerySetting=1, QueryAccept=0) — для 1.8 это «без окна»:
+	# подключались молча (найдено на Win7-ВМ). Политика vncQueryAccept=true — без автосогласия: не нажал
+	# «Принять» — отказ (раньше здесь ставилось QueryAccept=1, то есть ровно обратное).
+	if ((Policy 'vncQueryAccept') -eq 'true') { $ini = $ini -replace '(?m)^QueryAccept=[^\r\n]*', 'QueryAccept=0' }
 	# Сохранить уже заданный пароль из существующего ini (его нет в шаблоне). Строки passwd/
 	# passwd2 живут в секции [ultravnc] — туда их пишет сам UltraVNC, и winvnc ищет их именно
 	# там, а не в конце файла (конец — это уже секция [poll]).
