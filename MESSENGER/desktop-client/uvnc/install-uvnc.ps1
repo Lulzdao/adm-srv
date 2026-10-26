@@ -104,7 +104,29 @@ function Stop-Service-If-Any {
 	Start-Sleep -Milliseconds 500
 }
 
+# Политике верим, только если её владелец — система или администраторы (так у файла, положенного
+# администратором с повышенными правами или групповой политикой). До 1.1.33 обычный пользователь мог
+# создать в C:\ProgramData\Iskra свой config.json и, например, выдать доступ к ПК своей группе —
+# этот сценарий работает с правами администратора (найдено 2026-10-26). Чужой файл откладываем в
+# сторону: его не прочтут ни задание обновления, ни сама программа. Та же проверка — в iskra-update.ps1.
+function Test-TrustedPolicy([string]$path) {
+	if (-not (Test-Path -LiteralPath $path)) { return $true }
+	$owner = ''
+	# Через .NET, а не Get-Acl: у Get-Acl в PowerShell 2.0 нет -LiteralPath — вызов падал, владелец
+	# выходил пустым, и откладывалась даже политика администратора (поймано на Win7-ВМ).
+	try { $owner = [System.IO.File]::GetAccessControl($path).GetOwner([System.Security.Principal.SecurityIdentifier]).Value } catch { }
+	if ($owner -eq 'S-1-5-18' -or $owner -eq 'S-1-5-32-544') { return $true }
+	# Владельца узнать не удалось — в этот раз не верим, но и не трогаем: вдруг это сбой, а файл верный.
+	if ($owner -eq '') { Log ('политика не принята: не удалось узнать владельца ' + $path); return $false }
+	$aside = $path + '.untrusted-' + (Get-Date).ToString('yyyyMMdd-HHmmss')
+	try { Move-Item -LiteralPath $path -Destination $aside -Force -ErrorAction Stop } catch { $aside = '(не перенесён: ' + $_.Exception.Message + ')' }
+	Log ('политика не принята: владелец ' + $path + ' — ' + $owner + ', не система и не администраторы; файл: ' + $aside)
+	return $false
+}
+$policyTrusted = Test-TrustedPolicy (Join-Path $programData 'config.json')
+
 function Policy([string]$key) {
+	if (-not $policyTrusted) { return '' }
 	# Грубый разбор плоского config.json (в PS 2.0 нет ConvertFrom-Json). Клиент (policy.js)
 	# разбирает этот файл настоящим JSON.parse, значит файл — валидный JSON, и обратная косая
 	# черта в значении экранирована: «ДОМЕН\\группа» в файле есть «ДОМЕН\группа» в значении.

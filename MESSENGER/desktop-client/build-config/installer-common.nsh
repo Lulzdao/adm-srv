@@ -38,6 +38,26 @@
 !macroend
 
 !macro customInstall
+  ; Папка машинной политики и журналов — только для системы и администраторов. Права по умолчанию
+  ; наследуются от ProgramData, а там обычные пользователи могут СОЗДАВАТЬ файлы — значит, и свой
+  ; config.json, которому верят задание обновления и настройка UltraVNC (работают с правами
+  ; администратора). Найдено 2026-10-26 на Win7-ВМ. Наследование снимаем, пользователям — только чтение.
+  ; Ранее подложенный файл после этого остаётся, но им не верят сценарии: см. Test-TrustedPolicy в
+  ; iskra-update.ps1 и install-uvnc.ps1 (владелец — не система и не администраторы).
+  ; Путь — из переменной окружения, а не $APPDATA: тот указывает на ProgramData только в режиме
+  ; SetShellVarContext all.
+  ReadEnvStr $R9 "ProgramData"
+  ${If} $R9 == ""
+    StrCpy $R9 "C:\ProgramData"
+  ${EndIf}
+  CreateDirectory "$R9\Iskra"
+  nsExec::ExecToStack '"$SYSDIR\icacls.exe" "$R9\Iskra" /inheritance:r /grant:r *S-1-5-18:(OI)(CI)F *S-1-5-32-544:(OI)(CI)F *S-1-5-32-545:(OI)(CI)RX'
+  Pop $0
+  Pop $1
+  ${If} $0 != 0
+    DetailPrint "Не удалось закрыть папку политики (код $0): $1"
+  ${EndIf}
+
   IfFileExists "${ORG_CA_FILE}" 0 caDone
     ; -verifystore возвращает 0, только если сертификат с таким отпечатком в хранилище есть.
     nsExec::ExecToStack '"$SYSDIR\certutil.exe" -verifystore Root ${ORG_CA_THUMBPRINT}'

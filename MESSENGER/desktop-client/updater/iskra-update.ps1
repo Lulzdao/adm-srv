@@ -36,6 +36,28 @@ function Write-Log([string]$text) {
 	} catch { }
 }
 
+# Машинной политике (config.json: адрес сервера, корни, http) задание верит, только если её владелец —
+# система или администраторы: так выходит у файла, положенного администратором с повышенными правами
+# или групповой политикой. До 1.1.33 в C:\ProgramData\Iskra обычный пользователь мог создать свой
+# файл (права наследовались от ProgramData), и задание, работающее от имени системы, пошло бы по
+# адресу из него (найдено 2026-10-26 на Win7-ВМ). Теперь установщик закрывает папку, а уже лежащий
+# чужой файл откладываем в сторону — его не прочтут ни updater.js, ни сама программа.
+function Test-TrustedPolicy([string]$path) {
+	if (-not (Test-Path -LiteralPath $path)) { return $true }
+	$owner = ''
+	# Через .NET, а не Get-Acl: у Get-Acl в PowerShell 2.0 нет -LiteralPath (см. install-uvnc.ps1).
+	try { $owner = [System.IO.File]::GetAccessControl($path).GetOwner([System.Security.Principal.SecurityIdentifier]).Value } catch { }
+	if ($owner -eq 'S-1-5-18' -or $owner -eq 'S-1-5-32-544') { return $true }
+	# Владельца узнать не удалось — в этот раз не верим, но файл не трогаем: вдруг сбой, а файл верный.
+	if ($owner -eq '') { Write-Log "policy ignored: $path is owned by unknown (could not read owner)"; return $false }
+	$aside = $path + '.untrusted-' + (Get-Date).ToString('yyyyMMdd-HHmmss')
+	try { Move-Item -LiteralPath $path -Destination $aside -Force -ErrorAction Stop } catch { $aside = '(not moved: ' + $_.Exception.Message + ')' }
+	Write-Log ("policy ignored: {0} is owned by {1}, not SYSTEM or Administrators; moved to {2}" -f $path, $owner, $aside)
+	return $false
+}
+$policyFile = Join-Path $programData 'Iskra\config.json'
+if (-not (Test-TrustedPolicy $policyFile) -and (Test-Path -LiteralPath $policyFile)) { exit 1 }
+
 # Сама программа — самый большой .exe в папке установки. Имя у неё кириллическое, по имени не ищем.
 $exe = @(Get-ChildItem -LiteralPath $Root -Filter '*.exe' -ErrorAction SilentlyContinue | Sort-Object Length -Descending)[0]
 $updater = Join-Path $Root 'resources\app.asar\updater.js'
