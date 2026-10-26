@@ -7,7 +7,8 @@
 # Что делает (идемпотентно — повторный запуск при обновлении ничего лишнего не меняет):
 #   * заводит службу uvnc_service из папки «Искры» (…\resources\uvnc), заменяя прежнюю из uvnc_s;
 #   * пишет ultravnc.ini из шаблона: порт 5995, SecureVNC, вход по учётной записи Windows, запрос
-#     сотруднику с автосогласием, значок в трее виден;
+#     сотруднику с автосогласием, значок в трее виден; метка ultravnc.portable — чтобы служба читала
+#     именно его, а не копию в C:\ProgramData\UltraVNC;
 #   * задаёт случайный пароль VNC (без него сервер не отвечает), только если его ещё нет;
 #   * включает SoftwareSASGeneration — Ctrl+Alt+Del без лишнего вопроса сотруднику;
 #   * группа доступа (MS-Logon) — по умолчанию p48_g_support, машинная политика может подменить;
@@ -164,6 +165,30 @@ if (Test-Path $tpl) {
 	$old = ''
 	if (Test-Path $iniPath) { $old = [System.IO.File]::ReadAllText($iniPath, [System.Text.Encoding]::Default) }
 	if ($old -ne $ini) { [System.IO.File]::WriteAllText($iniPath, $ini, $enc); Log 'ini записан' } else { Log 'ini без изменений' }
+}
+
+# 2а. Чтобы служба читала именно этот ultravnc.ini. UltraVNC 1.8 без метки ultravnc.portable рядом
+#     с winvnc.exe берёт настройки из C:\ProgramData\UltraVNC\ultravnc.ini, а наш файл копирует
+#     туда ОДИН раз — если там пусто (UltraVNCService.cpp, MigrateServiceIniToProgramData). Дальше
+#     правки шаблона в новых версиях и политика vncQueryAccept до службы не доходили (найдено
+#     2026-10-26: на ВМ служба читала копию от 22.10), а на ПК, где от другой UltraVNC в ProgramData
+#     уже лежит свой ini, наши порт, шифрование и вход по Windows не применились бы вовсе. С меткой
+#     служба и значок в трее читают ini из папки «Искры». Меню «Свойства» сотруднику по-прежнему
+#     недоступно: AllowProperties=0 в шаблоне.
+$marker = Join-Path $Root 'ultravnc.portable'
+if (-not (Test-Path $marker)) {
+	[System.IO.File]::WriteAllText($marker, "Метка для UltraVNC: настройки — ultravnc.ini в этой папке (см. install-uvnc.ps1).`r`n", [System.Text.Encoding]::Default)
+	Log 'метка ultravnc.portable создана'
+}
+# Копию наших настроек, сделанную UltraVNC в ProgramData до метки, убираем — в ней устаревший
+# пароль, и по ней легко ошибиться, какой файл действует. Только нашу: в ней путь к папке «Искры».
+$pdIni = Join-Path $env:ProgramData 'UltraVNC\ultravnc.ini'
+if (Test-Path $pdIni) {
+	$pdText = [System.IO.File]::ReadAllText($pdIni, [System.Text.Encoding]::Default)
+	if ($pdText.Contains('path=' + $Root)) {
+		Remove-Item -LiteralPath $pdIni -Force -ErrorAction SilentlyContinue
+		Log 'устаревшая копия ultravnc.ini в ProgramData удалена'
+	}
 }
 
 # 3. Пароль VNC — случайный, только если его ещё нет (без пароля сервер не отвечает). Для входа он
