@@ -1869,6 +1869,11 @@ setInterval(sweepWebPresence, PRESENCE_SWEEP_MS).unref();
 const graceEnv = process.env.PRESENCE_GRACE_MS;
 const OFFLINE_GRACE_MS = graceEnv !== undefined && graceEnv !== '' && Number(graceEnv) >= 0 ? Number(graceEnv) : 20000;
 const recentlyGone = new Map(); // userId -> { until, state, idleSince, hosts: [...] }
+// Недавние отправки по номеру от клиента ("userId:cid" -> { out, at }) — чтобы повтор не записался
+// дважды (см. обработку 'send'). Живёт в памяти: последних RECENT_SENDS_MAX хватает с запасом —
+// клиент повторяет в пределах часов, а не недель.
+const recentSends = new Map();
+const RECENT_SENDS_MAX = 5000;
 
 // Обрыв связи — закрытие без прощания (1006) или с ошибкой. Обычные закрытия (окно чата закрыли,
 // клиент вышел) не пишем: их тысячи, и они ничего не говорят. Адрес — чтобы было видно, общая ли
@@ -2402,6 +2407,21 @@ function handleClientMessage(ws, user, msg) {
     if (!text && !files.length) return;
     const filesJson = files.length ? JSON.stringify(files) : null;
 
+    // Номер отправки от клиента (1.1.33+): клиент держит сообщение «отправляется», пока не увидит его
+    // эхо с этим номером, а не дождался — шлёт ещё раз. Повтор того, что уже записано (эхо потерялось
+    // на мёртвом соединении), не пишем второй раз — только снова отдаём эхо отправителю. Раньше
+    // сообщение, отправленное в тихий обрыв сети, пропадало молча (найдено 2026-10-26 на Win7-ВМ).
+    const cid = typeof msg.cid === 'string' && /^[A-Za-z0-9_-]{8,64}$/.test(msg.cid) ? msg.cid : null;
+    if (cid) {
+      const seen = recentSends.get(`${user.id}:${cid}`);
+      if (seen) { for (const c of online.get(user.id) || []) sendTo(c, seen.out); return; }
+    }
+    const remember = (out) => {
+      if (!cid) return;
+      recentSends.set(`${user.id}:${cid}`, { out, at: now });
+      if (recentSends.size > RECENT_SENDS_MAX) recentSends.delete(recentSends.keys().next().value);
+    };
+
     // Ответ на сообщение (reply) — снимок автора/текста делаем ЗДЕСЬ, на сервере (источник истины),
     // а не доверяем тому, что прислал клиент: то, на что отвечают, могло не быть у него в DOM
     // (старая страница пагинации), а после отправки должно остаться верным, даже если оригинал
@@ -2422,7 +2442,8 @@ function handleClientMessage(ws, user, msg) {
 
     if (room) {
       const info = insertMessage.run(user.id, room, null, text, filesJson, now, replyToId, replySnapshot);
-      const out = JSON.stringify({ type: 'message', id: info.lastInsertRowid, room, from_id: user.id, from_user: user.display_name, text, files, created_at: now, reply: replyOut });
+      const out = JSON.stringify({ type: 'message', id: info.lastInsertRowid, room, from_id: user.id, from_user: user.display_name, text, files, created_at: now, reply: replyOut, ...(cid ? { cid } : {}) });
+      remember(out);
       if (isGroupRoom(room)) {
         for (const uid of groupMemberIds(groupIdFromRoom(room))) sendToUser(uid, out);
       } else {
@@ -2430,7 +2451,8 @@ function handleClientMessage(ws, user, msg) {
       }
     } else {
       const info = insertMessage.run(user.id, null, to, text, filesJson, now, replyToId, replySnapshot);
-      const out = JSON.stringify({ type: 'message', id: info.lastInsertRowid, to_id: to, from_id: user.id, from_user: user.display_name, text, files, created_at: now, reply: replyOut });
+      const out = JSON.stringify({ type: 'message', id: info.lastInsertRowid, to_id: to, from_id: user.id, from_user: user.display_name, text, files, created_at: now, reply: replyOut, ...(cid ? { cid } : {}) });
+      remember(out);
       const targets = new Set([...(online.get(to) || []), ...(online.get(user.id) || [])]);
       targets.forEach((c) => sendTo(c, out));
     }

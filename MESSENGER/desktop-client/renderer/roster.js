@@ -172,12 +172,27 @@ function sendClosedOutboxes() {
   if (!me || !ws || ws.readyState !== WebSocket.OPEN) return;
   let sent = 0;
   for (const dialog of Outbox.collectClosed(localStorage, me.id, Date.now())) {
-    // Сначала убираем из хранилища, потом отправляем: если окно чата откроют в эту же секунду, оно
-    // этих сообщений уже не увидит и не отправит второй раз.
-    Outbox.write(localStorage, dialog.key, dialog.keep);
+    // С номером отправки (1.1.33+) сообщение остаётся в хранилище, пока не придёт эхо (ackOutbox
+    // ниже): соединение могло оказаться мёртвым (тихий обрыв сети), и отправленное в него пропало бы.
+    // Повтор и одновременная отправка из окна чата дубля не дают — сервер узнаёт номер. Без номера
+    // (записано версией до 1.1.33) — как раньше: убираем и отправляем.
+    const legacy = dialog.send.filter((item) => !item.payload.cid);
+    if (legacy.length) Outbox.write(localStorage, dialog.key, [...dialog.keep, ...dialog.send.filter((item) => item.payload.cid)]);
     for (const item of dialog.send) { ws.send(JSON.stringify(item.payload)); sent += 1; }
   }
-  if (sent) uiToast(sent === 1 ? 'Отправлено сообщение, написанное без связи' : `Отправлены сообщения, написанные без связи: ${sent}`);
+  if (sent) uiToast(sent === 1 ? 'Отправляется сообщение, написанное без связи' : `Отправляются сообщения, написанные без связи: ${sent}`);
+}
+// Эхо своего сообщения с номером отправки — убрать его из хранилища неотправленного (см. выше).
+function ackOutbox(m) {
+  if (!m.cid || !me) return;
+  const pre = `outbox:${me.id}:`;
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (!key || !key.startsWith(pre)) continue;
+    const items = Outbox.read(localStorage, key);
+    const rest = items.filter((item) => item.payload.cid !== m.cid);
+    if (rest.length !== items.length) { Outbox.write(localStorage, key, rest); return; }
+  }
 }
 // Связь у списка могла и не пропадать (упало только соединение окна чата) — поэтому ещё и по таймеру.
 setInterval(sendClosedOutboxes, 30000);
@@ -249,6 +264,7 @@ function connectWs() {
     // Команды администратора из веб-панели. Выполняет их главный процесс — окно только передаёт.
     if (data.type === 'force-update') { desktop.forceUpdate(); return; }
     if (data.type === 'send-log') { sendLocalLogToServer(); return; }
+    if (data.type === 'message' && data.from_id === me.id) ackOutbox(data);
     if (data.type === 'message' && data.from_id !== me.id) {
       const files = data.files || [];
       let body = data.text || '';

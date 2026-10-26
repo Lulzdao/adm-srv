@@ -704,6 +704,7 @@ function connectWs() {
     if (belongs) {
       hideTypingIndicator(); // раз сообщение пришло — печатать закончил
       if (!userEngaged && data.from_id !== me.id) autoOpenMsgs.add(data.id);
+      if (data.from_id === me.id) ackPendingSend(data); // эхо своего — «черновик» больше не нужен
       addMessage(data);
     }
   };
@@ -888,11 +889,24 @@ function wireMessageToolbar(container) {
   });
 }
 
+// Номер отправки: по нему сервер возвращает эхо и не пишет повтор второй раз (см. 'send' в server.js).
+function newCid() {
+  try { return crypto.randomUUID().replace(/-/g, ''); } catch { return Date.now().toString(36) + Math.random().toString(36).slice(2, 14); }
+}
+
 function sendPayload(payload) {
+  // Сообщение — всегда с подтверждением: оно в ленте «черновиком», пока сервер не вернёт эхо с его
+  // номером. Раньше при открытом соединении оно уходило сразу и только: если соединение было уже
+  // мёртвым (тихий обрыв сети — выдернули кабель, пропал Wi-Fi, а закрытия ещё нет), сообщение
+  // пропадало молча — ни в ленте, ни на сервере (найдено 2026-10-26 на Win7-ВМ). Теперь нет эха за
+  // ACK_TIMEOUT_MS — «Не отправлено», и оно уйдёт само, когда связь вернётся; дубля не будет.
+  if (payload.type === 'send') {
+    if (!payload.cid) payload.cid = newCid();
+    transmitPending(addPendingSend(payload, { sending: true }));
+    return;
+  }
   if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(payload));
-  // Сообщение без связи не исчезает молча из поля ввода: остаётся в ленте с «Не отправлено · Повторить»
-  // и уходит само, когда связь вернётся. Служебное (печатает, прочитано, реакции) просто ждёт связи.
-  else if (payload.type === 'send') addPendingSend(payload);
+  // Служебное (печатает, прочитано, реакции) без связи просто ждёт её.
   else if (payload.type === 'typing') return; // «печатает» без связи бессмыслен — не копим
   else wsReadyQueue.push(() => ws.send(JSON.stringify(payload)));
 }
@@ -918,17 +932,51 @@ window.addEventListener('pagehide', () => { try { localStorage.removeItem(OUTBOX
 function restoreOutbox() {
   const now = Date.now();
   for (const item of Outbox.read(localStorage, OUTBOX_KEY)) {
+    if (!item.payload.cid) item.payload.cid = newCid(); // записано версией до 1.1.33
     if (!Outbox.isFresh(item.at, now)) addPendingSend(item.payload, { at: item.at, stale: true });
-    else if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(item.payload));
-    else addPendingSend(item.payload, { at: item.at });
+    else transmitPending(addPendingSend(item.payload, { at: item.at }));
   }
   saveOutbox();
 }
 
-function addPendingSend(payload, { at = Date.now(), stale = false } = {}) {
+// Сколько ждать эха своего сообщения, прежде чем признать: не дошло.
+const ACK_TIMEOUT_MS = 10000;
+// Отправить «черновик» и ждать эха. Связи нет — так и пишем: уйдёт само при восстановлении.
+function transmitPending(n) {
+  const p = pendingSends.get(n);
+  if (!p) return;
+  clearTimeout(p.ackTimer);
+  if (!(ws && ws.readyState === WebSocket.OPEN)) { markUnsent(p, 'Не отправлено — нет связи'); return; }
+  ws.send(JSON.stringify(p.payload));
+  p.el.classList.add('sending');
+  p.el.querySelector('.pending-state').textContent = 'Отправляется…';
+  p.ackTimer = setTimeout(() => { if (pendingSends.get(n) === p) markUnsent(p, 'Не отправлено — сервер не ответил'); }, ACK_TIMEOUT_MS);
+}
+function markUnsent(p, text) {
+  p.el.classList.remove('sending', 'fresh');
+  p.el.querySelector('.pending-state').textContent = text;
+}
+// Эхо своего сообщения от сервера: «черновик» убираем — настоящее сообщение встаёт в ленту как обычно.
+// Сервер до 1.1.33 номера не возвращает — тогда узнаём по тексту.
+function ackPendingSend(m) {
+  for (const [n, p] of pendingSends) {
+    const same = m.cid ? p.payload.cid === m.cid : !p.stale && (p.payload.text || '') === (m.text || '');
+    if (!same) continue;
+    clearTimeout(p.ackTimer);
+    p.el.remove();
+    pendingSends.delete(n);
+    saveOutbox();
+    return;
+  }
+}
+
+function addPendingSend(payload, { at = Date.now(), stale = false, sending = false } = {}) {
   const n = ++pendingSeq;
   const el = document.createElement('div');
-  el.className = 'msg own pending';
+  // fresh — первые полторы секунды без строки состояния: при живой связи эхо приходит раньше, и
+  // «Отправляется…» не мелькало бы под каждым сообщением.
+  el.className = `msg own pending${sending ? ' sending fresh' : ''}`;
+  if (sending) setTimeout(() => el.classList.remove('fresh'), 1500);
   el.dataset.pending = String(n);
   const files = payload.files || [];
   el.innerHTML = `${payload.text ? `<div class="pending-text">${escapeHtml(payload.text)}</div>` : ''}`
@@ -944,17 +992,16 @@ function addPendingSend(payload, { at = Date.now(), stale = false } = {}) {
   }
   pendingSends.set(n, { payload, el, at, stale });
   saveOutbox();
+  return n;
 }
-// Есть связь — отправляем, а «черновик» убираем: настоящее сообщение придёт обратно от сервера и
-// встанет в ленту как обычно. Нет связи — так и пишем; уйдёт само при восстановлении (flushPendingSends).
+// Есть связь — отправляем и ждём эха (transmitPending): «черновик» уберёт оно. Нет связи — так и
+// пишем; уйдёт само при восстановлении (flushPendingSends).
 function retryPendingSend(n) {
   const p = pendingSends.get(n);
   if (!p) return;
   if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify(p.payload));
-    p.el.remove();
-    pendingSends.delete(n);
-    saveOutbox();
+    p.stale = false;
+    transmitPending(n);
   } else {
     p.stale = false; // человек сам нажал «Повторить» — теперь уйдёт при появлении связи
     p.el.classList.add('sending');
