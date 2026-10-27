@@ -1,9 +1,11 @@
 // ====== Бюллетени ======
 //
-// Таблица из ЦСОД + форма (шаблон Word и правила) → готовый документ.
-// «Сформировать» — всем участникам групп бюллетеней; «Формы» — группам с правом
-// управления и администраторам; группы — во вкладке Администрирования. Права
-// проверяет сервер (routes/bulletins.js), меню лишь не показывает лишнего.
+// Таблица из ЦСОД + бюллетень (шаблон Word и разбор таблицы) → готовый документ.
+// «Сформировать» — всем участникам групп бюллетеней. «Шаблоны» — группам с правом
+// управления: скачать, заменить, сделать новый по образцу. Разбор таблицы (листы,
+// столбцы, строки) и новые бюллетени с нуля — администраторам, как и группы во
+// вкладке Администрирования. Права проверяет сервер (routes/bulletins.js), меню
+// лишь не показывает лишнего.
 //
 // Всё, что пришло из базы, — в разметку только через esc().
 
@@ -16,7 +18,7 @@ const BULLETIN_TAGS_HELP = `
   <code>{#строки}…{/строки}</code> — строки по правилам, у каждой <code>{наименование}</code> <code>{код}</code> <code>{1}</code> <code>{2}</code> …
   и признак своего вида: <code>{#раздел}…{/}</code>`;
 
-/** Права и формы текущего пользователя — для меню и экранов. */
+/** Права и бюллетени текущего пользователя — для меню и экранов. */
 async function refreshBulletinAccess() {
   try { state.bulletins = await api("/bulletins"); } catch { state.bulletins = null; }
   return state.bulletins;
@@ -26,7 +28,7 @@ function bulletinNavItems() {
   const b = state.bulletins;
   if (!b || (!b.forms.length && !b.canManage)) return [];
   const items = [{ id: "bull:make", label: "Сформировать", icon: "doc" }];
-  if (b.canManage) items.push({ id: "bull:forms", label: "Формы", icon: "sliders" });
+  if (b.canManage) items.push({ id: "bull:forms", label: "Шаблоны", icon: "sliders" });
   return items;
 }
 
@@ -35,11 +37,6 @@ function renderBulletins(main, sub) {
   if (sub === "make") return renderBulletinMake(main);
   if (sub === "forms") return renderBulletinForms(main);
 }
-
-const bullToday = () => {
-  const d = new Date();
-  return `${String(d.getDate()).padStart(2, "0")}.${String(d.getMonth() + 1).padStart(2, "0")}.${d.getFullYear()}`;
-};
 
 /** Имя файла из Content-Disposition (filename* — в UTF-8). */
 function bullFileName(res, fallback) {
@@ -58,53 +55,104 @@ function bullSave(blob, name) {
   setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
 
+const bullSize = (n) => (n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} КБ` : `${(n / 1024 / 1024).toFixed(1).replace(".", ",")} МБ`);
+const BULL_LAST_KEY = "adm.bulletinForm";
+
 // ---- Сформировать ----------------------------------------------------------
+// Раскладка — как у «Новой заявки»: по центру, бюллетень — плиткой, ниже таблица
+// и дата, внизу подсказка и кнопка.
 
 async function renderBulletinMake(main) {
   main.innerHTML = `<div class="topbar"><div class="topbar-title">Бюллетени</div></div><div class="page"><div class="spinner">Загрузка…</div></div>`;
   const b = await refreshBulletinAccess();
   const page = main.querySelector(".page");
   if (!b || !b.forms.length) {
-    page.innerHTML = `<div class="empty-state">Вам пока не доступна ни одна форма бюллетеня.
-      ${b && b.canManage ? "Добавьте форму в разделе «Формы»." : "Доступ даёт администратор платформы: Администрирование → Бюллетени."}</div>`;
+    page.innerHTML = `<div class="form-narrow"><div class="empty-state">Вам пока не доступен ни один бюллетень.
+      Доступ даёт администратор платформы: Администрирование → Бюллетени.</div></div>`;
     return;
   }
+  // Выбранный в прошлый раз бюллетень — снова выбран: чаще всего нужен тот же.
+  let chosen = b.forms[0].id;
+  try { const last = Number(localStorage.getItem(BULL_LAST_KEY)); if (b.forms.some((f) => f.id === last)) chosen = last; } catch { /* хранилище недоступно */ }
+  let file = null;
+  const today = new Date();
+  const iso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+
   page.innerHTML = `
-    <div class="form-narrow" style="margin:0;max-width:640px">
+    <div class="form-narrow">
       <div class="form-card">
-        <div class="field-label">Таблица из ЦСОД (.xlsx или .xls)</div>
-        <input type="file" class="field-input" id="bmFile" accept=".xlsx,.xls">
-        <div class="form-row" style="margin:14px 0 0">
-          <div><div class="field-label">Форма бюллетеня</div>
-            <select class="field-input" id="bmForm">
-              <option value="">Определить по заголовку таблицы</option>
-              ${b.forms.map((f) => `<option value="${f.id}">${esc(f.name)}</option>`).join("")}
-            </select></div>
-          <div><div class="field-label">Дата документа</div>
-            <input class="field-input" id="bmDate" value="${bullToday()}" placeholder="ДД.ММ.ГГГГ" style="max-width:160px"></div>
+        <div class="form-card-title">Какой бюллетень</div>
+        <div class="form-card-sub">Выберите бюллетень, который нужно сформировать</div>
+        <div class="dept-strip" id="bmStrip">
+          <div class="dept-fade left" hidden></div>
+          <button type="button" class="dept-nav prev" hidden aria-label="Предыдущие">${icon("chevron-left", 16)}</button>
+          <div class="dept-scroll">${b.forms.map((f, i) => `
+            <button type="button" class="dept-tile ${f.id === chosen ? "active" : ""}" data-form="${f.id}">
+              <span class="dept-icon" style="color:${DEPT_FALLBACK_COLORS[i % DEPT_FALLBACK_COLORS.length]};">${icon("doc", 22)}</span>
+              <span class="dept-name">${esc(f.name)}</span>
+              <span class="dept-hint">Шаблон обновлён ${esc(fmtDate(f.updated_at))}</span>
+              <span class="dept-check">${icon("check", 12)}</span>
+            </button>`).join("")}</div>
+          <div class="dept-fade right" hidden></div>
+          <button type="button" class="dept-nav next" hidden aria-label="Следующие">${icon("chevron", 16)}</button>
         </div>
       </div>
-      <div class="as-note" style="margin:-4px 0 14px">Месяц и год берутся из заголовка таблицы («…за сентябрь 2026 года»);
-        от них зависят заголовок, текст и шапка таблицы документа.</div>
-      <div class="form-foot"><div class="actions"><span class="grp-msg" id="bmMsg"></span>
-        <button class="btn btn-wire" id="bmGo">${icon("download", 14)} Сформировать Word</button></div></div>
-    </div>`;
-  const msg = page.querySelector("#bmMsg");
-  const say = (ok, text) => { msg.style.color = ok ? "var(--green)" : "var(--red)"; msg.textContent = text; };
-  // Форма из списка запоминается: в следующий раз чаще всего нужна та же.
-  const formSel = page.querySelector("#bmForm");
-  try { const last = localStorage.getItem("adm.bulletinForm"); if (last && b.forms.some((f) => String(f.id) === last)) formSel.value = last; } catch { /* хранилище недоступно */ }
 
+      <div class="form-card">
+        <div class="form-card-title" style="margin-bottom:16px;">Таблица из ЦСОД</div>
+        <div class="dropzone" id="bmDrop"></div>
+        <input type="file" id="bmFile" accept=".xlsx,.xls" hidden>
+        <div class="field-label">Дата документа</div>
+        <input class="field-input" type="date" id="bmDate" value="${iso}" style="max-width:220px;margin-bottom:0;">
+      </div>
+
+      <div class="form-foot">
+        <div class="hint" id="bmHint"></div>
+        <div class="actions"><button class="btn-send" id="bmGo">Сформировать Word</button></div>
+      </div>
+    </div>`;
+
+  const scroll = wireTileStrip(page.querySelector("#bmStrip"));
+  const drop = page.querySelector("#bmDrop");
+  const input = page.querySelector("#bmFile");
+  const hint = page.querySelector("#bmHint");
   const go = page.querySelector("#bmGo");
+  const nameOf = (id) => (b.forms.find((f) => f.id === id) || {}).name || "";
+  const say = (text, bad = false) => { hint.classList.toggle("invalid", bad); hint.textContent = text; };
+  const showHint = () => say(`Документ «${nameOf(chosen)}» соберётся по таблице и сразу скачается. Месяц и год возьмутся из таблицы.`);
+  const showFile = () => {
+    drop.innerHTML = file
+      ? `<span class="dropzone-icon">${icon("doc", 18)}</span>${esc(file.name)} · ${bullSize(file.size)} — нажмите, чтобы выбрать другую`
+      : `<span class="dropzone-icon">${icon("upload", 18)}</span>Перетащите таблицу сюда или нажмите, чтобы выбрать (.xlsx или .xls)`;
+  };
+  showFile();
+  showHint();
+
+  scroll.querySelectorAll(".dept-tile").forEach((tile) => {
+    tile.onclick = () => {
+      chosen = Number(tile.dataset.form);
+      scroll.querySelectorAll(".dept-tile").forEach((t) => t.classList.toggle("active", t === tile));
+      showHint();
+    };
+  });
+  drop.onclick = () => { input.value = ""; input.click(); };
+  input.onchange = () => { if (input.files[0]) { file = input.files[0]; showFile(); showHint(); } };
+  drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
+  drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+  drop.addEventListener("drop", (e) => {
+    e.preventDefault(); drop.classList.remove("over");
+    if (e.dataTransfer.files[0]) { file = e.dataTransfer.files[0]; showFile(); showHint(); }
+  });
+
   go.onclick = async () => {
-    const file = page.querySelector("#bmFile").files[0];
-    if (!file) return say(false, "Выберите файл таблицы");
+    if (!file) { say("Выберите файл таблицы из ЦСОД.", true); drop.classList.add("over"); setTimeout(() => drop.classList.remove("over"), 900); return; }
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(page.querySelector("#bmDate").value);
+    if (!m) { say("Укажите дату документа.", true); return; }
     const fd = new FormData();
+    fd.append("form_id", String(chosen));
+    fd.append("date", `${m[3]}.${m[2]}.${m[1]}`);
     fd.append("file", file);
-    if (formSel.value) fd.append("form_id", formSel.value);
-    fd.append("date", page.querySelector("#bmDate").value.trim());
-    try { localStorage.setItem("adm.bulletinForm", formSel.value); } catch { /* хранилище недоступно */ }
-    go.disabled = true; msg.style.color = "var(--ink-soft)"; msg.textContent = "Собираю документ…";
+    go.disabled = true; go.textContent = "Собираю…";
     try {
       const res = await fetch("/api/bulletins/make", { method: "POST", body: fd, credentials: "same-origin" });
       if (!res.ok) {
@@ -114,48 +162,109 @@ async function renderBulletinMake(main) {
       }
       const name = bullFileName(res, "бюллетень.docx");
       bullSave(await res.blob(), name);
-      say(true, `Готово: ${name}`);
-    } catch (e) { say(false, e.message); } finally { go.disabled = false; }
+      say(`Готово: ${name}`);
+      // Запоминаем только удачный выбор: ошибочно нажатая плитка не должна стать выбором по умолчанию.
+      try { localStorage.setItem(BULL_LAST_KEY, String(chosen)); } catch { /* хранилище недоступно */ }
+    } catch (e) { say(e.message, true); } finally { go.disabled = false; go.textContent = "Сформировать Word"; }
   };
 }
 
-// ---- Формы -----------------------------------------------------------------
+// ---- Шаблоны ---------------------------------------------------------------
 
-async function renderBulletinForms(main, editId) {
-  main.innerHTML = `<div class="topbar"><div class="topbar-title-row"><div class="topbar-title">Формы бюллетеней</div></div>
-    <div class="as-top-actions"><button class="btn btn-wire" id="bfNew">${icon("plus", 14)} Добавить форму</button></div></div>
+async function renderBulletinForms(main) {
+  main.innerHTML = `<div class="topbar"><div class="topbar-title">Шаблоны бюллетеней</div></div>
     <div class="page"><div class="spinner">Загрузка…</div></div>`;
   const b = await refreshBulletinAccess();
   const page = main.querySelector(".page");
-  if (!b || !b.canManage) { page.innerHTML = `<div class="empty-state">Нет прав на управление формами.</div>`; return; }
-  main.querySelector("#bfNew").onclick = () => bulletinFormEditor(main, null);
-  if (editId) return bulletinFormEditor(main, editId);
+  if (!b || !b.canManage) { page.innerHTML = `<div class="form-narrow"><div class="empty-state">Нет прав на шаблоны бюллетеней.</div></div>`; return; }
   const mine = b.forms.filter((f) => f.canEdit);
   page.innerHTML = `
-    <div class="as-note" style="margin-bottom:16px;max-width:820px">Форма — шаблон Word и правила: из каких столбцов таблицы ЦСОД брать
-      данные и какие строки выводить в документ. Проще всего скачать шаблон готовой формы, поправить и загрузить новой формой.</div>
-    ${mine.length ? mine.map((f) => `
-      <div class="as-tpl">
-        <div class="as-tpl-main">
-          <div class="as-tpl-t">${esc(f.name)}</div>
-          <div class="as-note">${f.sign ? `узнаётся по «${esc(f.sign)}»` : "форму выбирают вручную"} · ${esc(f.updated_by || "")} · ${esc(fmtDate(f.updated_at))}</div>
-        </div>
-        <div class="as-tpl-act">
-          <button class="btn btn-ghost as-btn-sm" data-get="${f.id}">${icon("download", 14)} Шаблон</button>
-          <button class="btn btn-ghost as-btn-sm" data-edit="${f.id}">${icon("edit", 14)} Изменить</button>
-          <button class="btn btn-text as-btn-sm" data-del="${f.id}" data-name="${esc(f.name)}">Удалить</button>
-        </div>
-      </div>`).join("") : `<div class="empty-state">Форм пока нет.</div>`}`;
+    <div class="form-narrow">
+      <div class="as-note" style="margin-bottom:16px">Чтобы поменять оформление или текст бюллетеня: скачайте шаблон, поправьте его в Word
+        и загрузите обратно. Слова в фигурных скобках — <code>{год}</code>, <code>{периоду}</code>, <code>{#строки}</code> — не трогайте:
+        на их место встанут данные из таблицы. Новый бюллетень по той же таблице — кнопка «По образцу».</div>
+      ${mine.length ? mine.map((f) => `
+        <div class="as-tpl">
+          <div class="as-tpl-main">
+            <div class="as-tpl-t">${esc(f.name)}</div>
+            <div class="as-note">${esc(f.filename)} · ${esc(f.updated_by || "")} · ${esc(fmtDate(f.updated_at))}</div>
+          </div>
+          <div class="as-tpl-act">
+            <button class="btn btn-ghost as-btn-sm" data-get="${f.id}">${icon("download", 14)} Скачать</button>
+            <button class="btn btn-ghost as-btn-sm" data-up="${f.id}">${icon("upload", 14)} Заменить</button>
+            <button class="btn btn-ghost as-btn-sm" data-copy="${f.id}">${icon("plus", 14)} По образцу</button>
+            ${b.admin ? `<button class="btn btn-ghost as-btn-sm" data-edit="${f.id}">${icon("sliders", 14)} Разбор таблицы</button>
+              <button class="btn btn-text as-btn-sm" data-del="${f.id}">Удалить</button>` : ""}
+          </div>
+        </div>`).join("") : `<div class="empty-state">Бюллетеней пока нет.</div>`}
+      ${b.admin ? `<div style="margin-top:14px;display:flex;justify-content:flex-end;">
+        <button class="btn btn-wire" id="bfNew">${icon("plus", 14)} Новый бюллетень с нуля</button></div>` : ""}
+      <input type="file" id="bfUp" accept=".docx" hidden>
+    </div>`;
+  const byId = (id) => mine.find((f) => f.id === Number(id));
+  const warn = (r, ok) => (r.warnings && r.warnings.length ? toast(`${ok}, но: ${r.warnings.join("; ")}`, true) : toast(ok));
   page.querySelectorAll("[data-get]").forEach((x) => { x.onclick = () => asstDownload(`/bulletins/forms/${x.dataset.get}/template`); });
+
+  const up = page.querySelector("#bfUp");
+  let target = null;
+  page.querySelectorAll("[data-up]").forEach((x) => { x.onclick = () => { target = x.dataset.up; up.value = ""; up.click(); }; });
+  up.onchange = async () => {
+    if (!up.files[0]) return;
+    const fd = new FormData();
+    fd.append("file", up.files[0]);
+    try {
+      warn(await api(`/bulletins/forms/${target}/template`, { method: "PUT", body: fd }), "Шаблон заменён");
+      renderBulletinForms(main);
+    } catch (e) { toast(e.message, true); }
+  };
+
+  page.querySelectorAll("[data-copy]").forEach((x) => {
+    x.onclick = () => {
+      const f = byId(x.dataset.copy);
+      const m = asstModal("Новый бюллетень по образцу", `
+        <div class="as-note" style="margin-bottom:12px">Таблица разбирается так же, как у «${esc(f.name)}»; оформление и текст — из вашего шаблона.
+          Проще всего скачать шаблон образца, поправить и загрузить сюда.</div>
+        <div class="field-label">Название</div>
+        <input class="field-input" id="cpName" maxlength="80" value="${esc(f.name)} (копия)">
+        <div class="field-label">Шаблон Word</div>
+        <input type="file" class="field-input" id="cpFile" accept=".docx">
+        <div id="cpMsg" class="as-note" style="color:var(--red);min-height:18px;margin:6px 0 10px"></div>
+        <div style="display:flex;gap:10px;justify-content:flex-end;">
+          <button class="btn btn-ghost" id="cpCancel">Отмена</button>
+          <button class="btn btn-wire" id="cpOk">Создать</button>
+        </div>`);
+      m.el.querySelector("#cpCancel").onclick = () => m.close();
+      m.el.querySelector("#cpOk").onclick = async () => {
+        const fd = new FormData();
+        fd.append("payload", JSON.stringify({ name: m.el.querySelector("#cpName").value }));
+        const tpl = m.el.querySelector("#cpFile").files[0];
+        if (tpl) fd.append("file", tpl);
+        try {
+          warn(await api(`/bulletins/forms/${f.id}/copy`, { method: "POST", body: fd }), "Бюллетень создан");
+          m.close();
+          await refreshBulletinAccess(); refreshNav();
+          renderBulletinForms(main);
+        } catch (e) { m.el.querySelector("#cpMsg").textContent = e.message; }
+      };
+    };
+  });
+
+  if (!b.admin) return;
+  page.querySelector("#bfNew").onclick = () => bulletinFormEditor(main, null);
   page.querySelectorAll("[data-edit]").forEach((x) => { x.onclick = () => bulletinFormEditor(main, Number(x.dataset.edit)); });
   page.querySelectorAll("[data-del]").forEach((x) => {
     x.onclick = async () => {
-      if (!(await uiConfirm(`Удалить форму «${x.dataset.name}»? Документы по ней больше не собрать.`, { ok: "Удалить", danger: true }))) return;
-      try { await api(`/bulletins/forms/${x.dataset.del}`, { method: "DELETE" }); toast("Форма удалена"); await refreshBulletinAccess(); refreshNav(); renderBulletinForms(main); }
+      const f = byId(x.dataset.del);
+      if (!(await uiConfirm(`Удалить бюллетень «${f.name}»? Документы по нему больше не собрать.`, { ok: "Удалить", danger: true }))) return;
+      try { await api(`/bulletins/forms/${f.id}`, { method: "DELETE" }); toast("Бюллетень удалён"); await refreshBulletinAccess(); refreshNav(); renderBulletinForms(main); }
       catch (e) { toast(e.message, true); }
     };
   });
 }
+
+// ---- Разбор таблицы — администраторам ----------------------------------------
+// Разовая настройка под выгрузку: с каких листов и столбцов брать значения,
+// какие строки выводить. Отделы её не видят — им хватает шаблонов.
 
 const BULL_RULE_HINT = "Коды: # — цифра, @ — латинская буква, * — что угодно; несколько — через запятую (10, 11, 12). "
   + "Если столбца кода нет, маска сверяется с наименованием: «Российская Федерация, *федеральный округ». "
@@ -177,32 +286,24 @@ async function bulletinFormEditor(main, id) {
   let f;
   try {
     f = id ? await api(`/bulletins/forms/${id}`) : {
-      name: "", groups: [], warnings: [],
-      settings: { sign: "", fileName: "{название}_{ММ}_{ГГГГ}", nameCol: "A", codeCol: "B", valueCols: ["C", "D", "E"],
+      name: "", warnings: [],
+      settings: { fileName: "{название}_{ММ}_{ГГГГ}", nameCol: "A", codeCol: "B", valueCols: ["C", "D", "E"],
         rules: [{ kind: "раздел", codes: "@", sections: [], sentenceCase: true }, { kind: "вид", codes: "##", sections: [], sentenceCase: false }],
         timesFrom: 200, digits: 1 },
     };
   } catch (e) { page.innerHTML = `<div class="empty-state">${esc(e.message)}</div>`; return; }
   const s = f.settings;
-  const groups = (state.bulletins && state.bulletins.manageGroups) || [];
-  const isAdmin = state.bulletins && state.bulletins.admin;
   page.innerHTML = `
-    <div class="form-narrow" style="margin:0;max-width:880px">
+    <div class="form-narrow">
       <div class="form-card">
+        <div class="form-card-title" style="margin-bottom:16px;">${id ? "Разбор таблицы" : "Новый бюллетень"}</div>
         <div class="form-row" style="margin-bottom:12px">
-          <div><div class="field-label">Название формы</div><input class="field-input" id="bfName" maxlength="80" value="${esc(f.name)}" placeholder="350 Индексы производства"></div>
-          ${!id && groups.length ? `<div><div class="field-label">Группа${isAdmin ? " (необязательно)" : ""}</div>
-            <select class="field-input" id="bfGroup">${isAdmin ? `<option value="">— без группы —</option>` : ""}
-              ${groups.map((g) => `<option value="${g.id}">${esc(g.name)}</option>`).join("")}</select></div>` : ""}
-        </div>
-        <div class="field-label">Шаблон Word ${id ? `(сейчас: ${esc(f.filename)}; приложите новый, чтобы заменить)` : ""}</div>
-        <input type="file" class="field-input" id="bfFile" accept=".docx" style="margin-bottom:12px">
-        <div class="form-row" style="margin-bottom:12px">
-          <div><div class="field-label">Признак таблицы — текст из её заголовка</div>
-            <input class="field-input" id="bfSign" maxlength="200" value="${esc(s.sign)}" placeholder="Индексы производства по видам экономической деятельности"></div>
+          <div><div class="field-label">Название бюллетеня</div><input class="field-input" id="bfName" maxlength="80" value="${esc(f.name)}" placeholder="350 Индексы производства"></div>
           <div><div class="field-label">Имя файла: {название} {ММ} {ГГГГ} {месяц}</div>
             <input class="field-input mono" id="bfFileName" maxlength="100" value="${esc(s.fileName)}"></div>
         </div>
+        <div class="field-label">Шаблон Word ${id ? `(сейчас: ${esc(f.filename)}; приложите новый, чтобы заменить)` : ""}</div>
+        <input type="file" class="field-input" id="bfFile" accept=".docx" style="margin-bottom:12px">
         <div class="form-row" style="margin-bottom:12px">
           <div><div class="field-label">Столбец наименования</div><input class="field-input mono" id="bfNameCol" maxlength="2" value="${esc(s.nameCol)}"></div>
           <div><div class="field-label">Столбец кода (пусто — по наименованию)</div><input class="field-input mono" id="bfCodeCol" maxlength="2" value="${esc(s.codeCol)}"></div>
@@ -230,11 +331,11 @@ async function bulletinFormEditor(main, id) {
         <div class="as-note" style="margin-top:8px">${esc(BULL_RULE_HINT)}</div>
       </div>
       <div class="as-note" style="margin:-4px 0 14px">Метки шаблона: ${BULLETIN_TAGS_HELP}</div>
+      ${!id ? `<div class="as-note" style="margin:-4px 0 14px">Кому виден новый бюллетень — отметьте у групп в Администрировании → Бюллетени.</div>` : ""}
       ${f.warnings && f.warnings.length ? `<div class="as-note" style="color:var(--red);margin-bottom:12px">${f.warnings.map(esc).join("<br>")}</div>` : ""}
-      <div class="form-foot"><div class="actions">
-        <button class="btn btn-ghost" id="bfBack" type="button">К списку</button>
-        <span class="grp-msg" id="bfMsg"></span>
-        <button class="btn btn-wire" id="bfSave">Сохранить</button></div></div>
+      <div class="form-foot"><div class="hint" id="bfMsg"></div><div class="actions">
+        <button class="btn-text" id="bfBack" type="button">К шаблонам</button>
+        <button class="btn-send" id="bfSave">Сохранить</button></div></div>
     </div>`;
   const $ = (sel) => page.querySelector(sel);
   const wireRules = () => page.querySelectorAll(".bf-rule-del").forEach((x) => { x.onclick = () => x.closest("tr").remove(); });
@@ -244,7 +345,7 @@ async function bulletinFormEditor(main, id) {
   const msg = $("#bfMsg");
   $("#bfSave").onclick = async () => {
     const settings = {
-      sign: $("#bfSign").value, fileName: $("#bfFileName").value,
+      fileName: $("#bfFileName").value,
       nameCol: $("#bfNameCol").value, codeCol: $("#bfCodeCol").value,
       // Только запятая: в имени листа бывает пробел («Лист 1!C»).
       valueCols: $("#bfValueCols").value.split(/[,;]/).map((x) => x.trim()).filter(Boolean),
@@ -256,11 +357,9 @@ async function bulletinFormEditor(main, id) {
       })).filter((r) => r.kind || r.codes),
     };
     const fd = new FormData();
-    const payload = { name: $("#bfName").value, settings };
-    if ($("#bfGroup")) payload.group_id = $("#bfGroup").value || null;
-    fd.append("payload", JSON.stringify(payload));
+    fd.append("payload", JSON.stringify({ name: $("#bfName").value, settings }));
     if ($("#bfFile").files[0]) fd.append("file", $("#bfFile").files[0]);
-    msg.style.color = "var(--ink-soft)"; msg.textContent = "Сохраняю…";
+    msg.classList.remove("invalid"); msg.textContent = "Сохраняю…";
     try {
       const r = await api(id ? `/bulletins/forms/${id}` : "/bulletins/forms", { method: id ? "PUT" : "POST", body: fd });
       await refreshBulletinAccess(); refreshNav();
@@ -268,9 +367,9 @@ async function bulletinFormEditor(main, id) {
         toast(`Сохранено, но: ${r.warnings.join("; ")}`, true);
         return bulletinFormEditor(main, id || r.id);
       }
-      toast("Форма сохранена");
+      toast("Сохранено");
       renderBulletinForms(main);
-    } catch (e) { msg.style.color = "var(--red)"; msg.textContent = e.message; }
+    } catch (e) { msg.classList.add("invalid"); msg.textContent = e.message; }
   };
 }
 
@@ -283,7 +382,7 @@ async function renderBulletinGroupsAdmin(box) {
   const { groups, forms } = data;
   const formChecks = (sel) => forms.length
     ? forms.map((f) => `<label class="grp-check" style="margin:2px 14px 2px 0;display:inline-flex"><input type="checkbox" class="bg-form" value="${f.id}" ${sel.includes(f.id) ? "checked" : ""}> ${esc(f.name)}</label>`).join("")
-    : `<div class="as-note">Форм пока нет — их добавляют в разделе «Бюллетени → Формы».</div>`;
+    : `<div class="as-note">Бюллетеней пока нет — их добавляют в разделе «Бюллетени → Шаблоны».</div>`;
   const card = (g) => `
     <div class="card grp-card" data-id="${g ? g.id : ""}" style="margin-bottom:14px">
       ${g ? "" : `<div class="section-label">Новая группа</div>`}
@@ -296,9 +395,9 @@ async function renderBulletinGroupsAdmin(box) {
           <textarea class="field-input mono bg-logins" rows="3" style="resize:vertical;width:100%" placeholder="ivanov">${esc(g ? g.logins.map((l) => l.login).join("\n") : "")}</textarea></div>
       </div>
       ${g && g.logins.length ? `<div class="grp-who">${g.logins.map((l) => `<span><span class="mono">${esc(l.login)}</span> — ${l.name ? esc(l.name) : `<i>ещё не входил</i>`}</span>`).join("")}</div>` : ""}
-      <div class="field-label" style="margin-top:10px">Формы группы</div>
+      <div class="field-label" style="margin-top:10px">Бюллетени группы</div>
       <div>${formChecks(g ? g.forms : [])}</div>
-      <label class="grp-check"><input type="checkbox" class="bg-manage" ${g && g.can_manage ? "checked" : ""}> Может править формы группы и добавлять новые (раздел «Бюллетени → Формы»)</label>
+      <label class="grp-check"><input type="checkbox" class="bg-manage" ${g && g.can_manage ? "checked" : ""}> Может менять шаблоны бюллетеней группы и делать новые по образцу (раздел «Бюллетени → Шаблоны»)</label>
       <div class="grp-actions">
         ${g ? `<button class="btn btn-ghost bg-del">Удалить группу</button>` : ""}
         <span class="grp-msg"></span>
@@ -307,8 +406,8 @@ async function renderBulletinGroupsAdmin(box) {
     </div>`;
   box.innerHTML = `
     <div class="as-note" style="margin-bottom:14px;max-width:820px">Сотрудник видит раздел «Бюллетени», если состоит в группе: по группе домена
-      (как она была при его последнем входе) или по логину в списке. У каждой группы свой набор форм.
-      Администраторы платформы видят и правят все формы.</div>
+      (как она была при его последнем входе) или по логину в списке. У каждой группы свой набор бюллетеней.
+      Администраторы платформы видят и правят все.</div>
     ${groups.map(card).join("")}
     ${card(null)}`;
   box.querySelectorAll(".grp-card").forEach((c) => {
@@ -331,7 +430,7 @@ async function renderBulletinGroupsAdmin(box) {
     const del = c.querySelector(".bg-del");
     if (del) del.onclick = async () => {
       const name = c.querySelector(".bg-name").value;
-      if (!(await uiConfirm(`Удалить группу «${name}»? Формы останутся, но её участники их больше не увидят.`, { ok: "Удалить", danger: true }))) return;
+      if (!(await uiConfirm(`Удалить группу «${name}»? Бюллетени останутся, но её участники их больше не увидят.`, { ok: "Удалить", danger: true }))) return;
       try { await api(`/bulletins/groups/${id}`, { method: "DELETE" }); toast("Группа удалена"); renderBulletinGroupsAdmin(box); }
       catch (e) { say(false, e.message); }
     };
