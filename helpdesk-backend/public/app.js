@@ -325,7 +325,7 @@ function loadNavGroups() {
 function saveNavGroups() {
   try { sessionStorage.setItem(NAV_GROUPS_KEY, JSON.stringify(state.navGroupOpen)); } catch { /* приватный режим */ }
 }
-const state = { user: null, view: "inbox", currentTicket: null, notifications: [], departments: [], modules: [], navGroupOpen: loadNavGroups(),
+const state = { user: null, view: "inbox", currentTicket: null, notifications: [], departments: [], modules: [], bulletins: null, navGroupOpen: loadNavGroups(),
   // Задачи администраторов: какая открыта в карточке справа и сколько «моих»
   // требуют внимания (просрочены или там новое от других) — для счётчика в меню.
   taskOpenId: null, taskAttention: 0,
@@ -540,6 +540,8 @@ async function enterApp() {
     const { modules } = await api("/modules");
     state.modules = modules;
   } catch (e) { state.modules = []; }
+  // Бюллетени — по группам (Администрирование → Бюллетени): от них зависит, есть ли раздел в меню.
+  try { state.bulletins = await api("/bulletins"); } catch (e) { state.bulletins = null; }
   await refreshNotifications();
   // Обновление страницы не должно выбрасывать на «Входящие»: человек нажал F5
   // на журнале звонков и ждёт увидеть журнал звонков. Адрес вкладки держим в
@@ -642,6 +644,8 @@ function viewExists(view) {
     if (view === "asst:acts") return canActs(u);
     return true;
   }
+  // Бюллетени — участникам групп бюллетеней; «Формы» — тем, кто может их править.
+  if (view.startsWith("bull:")) return bulletinNavItems().some((it) => it.id === view);
   // Разделы администратора — по признаку is_admin, а не по роли: роль "it"
   // теперь значит «исполнитель отдела ИТ», и прав администратора не даёт.
   if (["dashboard", "admin", "certs", "tasks", "taskcal", "tasknotes"].includes(view) || view.startsWith("notif:")) return Boolean(u.is_admin);
@@ -765,7 +769,7 @@ function navBtnHtml(it, active, indented) {
 // Группы, раскрытые по умолчанию, пока человек сам их не свернёт. «Задачи» —
 // потому что внутри всего два вида одного раздела, и прятать их за лишний
 // щелчок незачем.
-const NAV_GROUPS_OPEN_BY_DEFAULT = new Set(["tasks", "assistant"]);
+const NAV_GROUPS_OPEN_BY_DEFAULT = new Set(["tasks", "assistant", "bulletins"]);
 
 function navGroupHtml(groupId, label, iconName, badge, items) {
   const saved = state.navGroupOpen[groupId];
@@ -977,6 +981,11 @@ function buildNavHtml() {
       ASSISTANT_VIEWS.filter((v) => v.id !== "asst:settings" || isAdmin));
   }
 
+  // Бюллетени: кто только собирает документы — одна кнопка; кто правит формы — группа.
+  const bull = bulletinNavItems();
+  if (bull.length === 1) navHtml += navBtnHtml({ ...bull[0], label: "Бюллетени" }, navView() === bull[0].id, false);
+  else if (bull.length) navHtml += navGroupHtml("bulletins", "Бюллетени", "doc", 0, bull);
+
   if (state.modules.length) {
     navHtml += state.modules.map(m => {
       const views = (m.views && m.views.length) ? m.views : [{ id: "root", label: m.label, sub: "" }];
@@ -1068,6 +1077,7 @@ function renderShell() {
   else if (state.view === "tasknotes") renderTaskNotes(main);
   else if (state.view.startsWith("notif:")) renderNotifications(main, state.view.slice(6));
   else if (state.view.startsWith("asst:")) renderAssistant(main, state.view.slice(5));
+  else if (state.view.startsWith("bull:")) renderBulletins(main, state.view.slice(5));
   else if (state.view.startsWith("module:")) {
     const [, modId, viewId] = state.view.split(":");
     const mod = state.modules.find(m => m.id === modId);

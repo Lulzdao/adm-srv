@@ -67,7 +67,7 @@ async function renderDashboard(main) {
 const ADMIN_TABS = [
   ["health", "Состояние"],
   ["people", "Администраторы и исполнители"], ["groups", "Группы исполнителей"],
-  ["access", "Заявка на доступ"], ["backup", "Резервные копии"], ["audit", "Журнал действий"],
+  ["access", "Заявка на доступ"], ["bulletins", "Бюллетени"], ["backup", "Резервные копии"], ["audit", "Журнал действий"],
 ];
 let adminTab = "health";
 
@@ -224,6 +224,7 @@ async function renderAdmin(main) {
 
       <div data-pane="health" id="healthPane"></div>
       <div data-pane="audit" id="auditPane"></div>
+      <div data-pane="bulletins" id="bulletinGroupsPane"></div>
 
       <div data-pane="people">
       <div class="card" style="margin-bottom:14px;">
@@ -326,6 +327,9 @@ async function renderAdmin(main) {
     // Журнал — при первом открытии вкладки и заново при каждом следующем: за это время могли появиться записи.
     main.querySelector('#admTabs [data-tab="audit"]').addEventListener("click", () => renderAudit(main.querySelector("#auditPane")));
     if (adminTab === "audit") renderAudit(main.querySelector("#auditPane"));
+
+    // ---- Бюллетени: группы и их формы (app-bulletins.js) ----
+    renderBulletinGroupsAdmin(main.querySelector("#bulletinGroupsPane"));
 
     // ---- Заявка на доступ: отделы, начальники, отдел ИТ (app-assistant.js) ----
     renderAccessAdmin(main.querySelector("#accessAdmin"));

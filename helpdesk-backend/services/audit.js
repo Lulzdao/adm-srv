@@ -31,6 +31,9 @@ const AREAS = [
   /^\/api\/notifications\/(?!([^/]+|ticket\/[^/]+)\/read$)/,
   /^\/api\/mailings\/settings\b/,
   /^\/api\/assistant\/settings\//,
+  // Бюллетени: группы (администратор) и формы (и группы с правом управления —
+  // правка шаблона меняет каждый следующий документ отдела, её стоит видеть).
+  /^\/api\/bulletins\/(groups|forms)\b/,
 ];
 
 const groupName = (role) => { const d = require("../config/departments").byRole(role); return d ? `«${d.name}»` : role; };
@@ -110,7 +113,39 @@ const RULES = [
   { m: "POST", re: /^\/api\/assistant\/settings\/templates\/([^/]+)$/, text: ({ p }) => `Ассистент: загружен шаблон «${p[1]}»`,
     details: ({ req }) => (req.file ? { файл: req.file.originalname, байт: req.file.size } : {}) },
   { m: "DELETE", re: /^\/api\/assistant\/settings\/templates\/([^/]+)$/, text: ({ p }) => `Ассистент: шаблон «${p[1]}» возвращён к стандартному` },
+
+  { m: "POST", re: /^\/api\/bulletins\/groups$/, text: ({ body }) => `Бюллетени: создана группа «${String(body.name || "").trim()}»`,
+    details: ({ body }) => bulletinGroupDetails(body) },
+  { m: "PUT", re: /^\/api\/bulletins\/groups\/(\d+)$/,
+    before: (req, db, p) => (db.prepare("SELECT name FROM bulletin_groups WHERE id = ?").get(Number(p[1])) || {}).name,
+    text: ({ before, p }) => `Бюллетени: изменена группа «${before || `#${p[1]}`}»`, details: ({ body }) => bulletinGroupDetails(body) },
+  { m: "DELETE", re: /^\/api\/bulletins\/groups\/(\d+)$/,
+    before: (req, db, p) => (db.prepare("SELECT name FROM bulletin_groups WHERE id = ?").get(Number(p[1])) || {}).name,
+    text: ({ before, p }) => `Бюллетени: удалена группа «${before || `#${p[1]}`}»` },
+  { m: "POST", re: /^\/api\/bulletins\/forms$/, text: ({ req }) => `Бюллетени: добавлена форма «${bulletinFormName(req)}»`,
+    details: ({ req }) => (req.file ? { шаблон: req.file.originalname, байт: req.file.size } : {}) },
+  { m: "PUT", re: /^\/api\/bulletins\/forms\/(\d+)$/,
+    before: (req, db, p) => (db.prepare("SELECT name FROM bulletin_forms WHERE id = ?").get(Number(p[1])) || {}).name,
+    text: ({ before, p }) => `Бюллетени: изменена форма «${before || `#${p[1]}`}»`,
+    details: ({ req }) => (req.file ? { "новый шаблон": req.file.originalname, байт: req.file.size } : { шаблон: "не менялся" }) },
+  { m: "DELETE", re: /^\/api\/bulletins\/forms\/(\d+)$/,
+    before: (req, db, p) => (db.prepare("SELECT name FROM bulletin_forms WHERE id = ?").get(Number(p[1])) || {}).name,
+    text: ({ before, p }) => `Бюллетени: удалена форма «${before || `#${p[1]}`}»` },
 ];
+
+function bulletinGroupDetails(body) {
+  return {
+    "группы домена": String(body.ad_groups || "").split(/\r?\n/).map((x) => x.trim()).filter(Boolean).join(", ") || "(нет)",
+    логины: String(body.logins || "").split(/[\s,;]+/).filter(Boolean).join(", ") || "(нет)",
+    "правит формы": Boolean(body.can_manage),
+    форм: Array.isArray(body.forms) ? body.forms.length : 0,
+  };
+}
+
+/** Название формы из multipart-запроса (поле payload — JSON). */
+function bulletinFormName(req) {
+  try { return String(JSON.parse(req.body.payload).name || "").trim(); } catch { return ""; }
+}
 
 const pathOf = (req) => String(req.originalUrl || "").split("?")[0];
 
