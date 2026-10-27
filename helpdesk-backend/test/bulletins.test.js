@@ -10,8 +10,8 @@ const { freshDb } = require("./helpers/tempDb");
 const { startApp, makeLocalUser, client } = require("./helpers/httpApp");
 const table = require("./helpers/bulletinTable");
 const B = require("../services/bulletins");
-const { readXlsFirstSheet } = require("../services/xls");
-const { readFirstSheet } = require("../services/xlsx");
+const { readXlsFirstSheet, readXlsSheets } = require("../services/xls");
+const { readFirstSheet, readSheets } = require("../services/xlsx");
 const { readZip } = require("../services/zip");
 
 // ============================================================================
@@ -24,10 +24,19 @@ const { readZip } = require("../services/zip");
 
 const XLS = fs.readFileSync(path.join(__dirname, "fixtures", "bulletin-sample.xls"));
 const TEMPLATE_350 = fs.readFileSync(path.join(__dirname, "..", "bulletins", "350.docx"));
+const TEMPLATE_352 = fs.readFileSync(path.join(__dirname, "..", "bulletins", "352.docx"));
+const XLS_REGIONS = fs.readFileSync(path.join(__dirname, "fixtures", "bulletin-regions.xls"));
 const SETTINGS_350 = B.normalizeSettings({
   sign: "Индексы производства по видам экономической деятельности", fileName: "350_{ММ}_{ГГГГ}",
   valueCols: ["C", "D", "E"],
   rules: [{ kind: "раздел", codes: "@", sentenceCase: true }, { kind: "вид", codes: "##", sections: ["C"] }],
+});
+
+const SETTINGS_352 = B.normalizeSettings({
+  sign: "Индекс промышленного производства по субъектам Российской Федерации", fileName: "352_{ММ}_{ГГГГ}",
+  codeCol: "", valueCols: ["1!*", "3!*", "2!*"],
+  rangeFrom: "Российская Федерация", rangeTo: "Северо-Западный федеральный округ",
+  rules: [{ kind: "итог", codes: "Российская Федерация, *федеральный округ" }, { kind: "регион", codes: "*" }],
 });
 
 /** Текст документа: абзацы и ячейки таблиц, без разметки. */
@@ -127,6 +136,57 @@ test("нет месяца в заголовке или нужной строки
     /неизвестная метка \{3\}/);
 });
 
+// ---------------------------------------------------------------------------
+//  Выгрузка «по субъектам»: значения с разных листов, последний столбец
+// ---------------------------------------------------------------------------
+
+test(".xls с несколькими листами: имена и содержимое — как у той же книги в .xlsx", () => {
+  const a = readXlsSheets(XLS_REGIONS);
+  const b = readSheets(table.regionsXlsx());
+  assert.deepStrictEqual(a.map((sh) => sh.name), ["Содержание", "1", "2", "3"]);
+  assert.deepStrictEqual(a.map((sh) => sh.rows.map(trimRow)), b.map((sh) => sh.rows.map(trimRow)));
+});
+
+test("месяц и год — из шапки последнего заполненного столбца, год — из объединённой ячейки слева", () => {
+  const [, one, two] = readSheets(table.regionsXlsx());
+  assert.deepStrictEqual(B.periodFromColumn(one.rows, 6), { month: 3, year: 2031 });
+  assert.deepStrictEqual(B.periodFromColumn(two.rows, 6), { month: 3, year: 2031 }, "«январь-март» — март");
+  assert.deepStrictEqual(B.periodFromColumn(one.rows, 2), { month: 2, year: 2030 });
+});
+
+test("документ по форме 352: строки по диапазону, значения трёх листов — по наименованию", () => {
+  for (const source of [table.regionsXlsx(), XLS_REGIONS]) {
+    const out = B.makeDocument({ table: source, template: TEMPLATE_352, settings: SETTINGS_352, date: "05.04.2031" });
+    const text = docText(out.docx);
+    assert.deepStrictEqual(out.period, { month: 3, year: 2031 });
+    assert.match(text, /05\.04\.2031 г\./);
+    assert.match(text, /ЗА ЯНВАРЬ-МАРТ 2031 ГОДА/);
+    assert.match(text, /Март 2031\u00a0г\. в % к/);
+    assert.match(text, /к марту \n2030\u00a0г\./);
+    assert.match(text, /к февралю \n2031\u00a0г\./);
+    assert.match(text, /Январь-март\n2031\u00a0г\. в % к январю-марту/);
+    // Лист 1 — к месяцу прошлого года, лист 3 — к предыдущему месяцу, лист 2 — к периоду.
+    assert.match(text, /\|Российская Федерация\|100,5\|120,5\|110,5\|/);
+    assert.match(text, /\|Центральный федеральный округ\|103,5\|123,5\|113,5\|/);
+    assert.match(text, /\|Белгородская область\|97,5\|117,5\|107,5\|/);
+    assert.match(text, /\|Липецкая область\|104,5\|…\|114,5\|/, "нет на листе 3 — «…», а не чужое значение");
+    assert.match(text, /\|г\. Москва\|111,5\|131,5\|121,5\|/);
+    assert.doesNotMatch(text, /Северо-Западный|Карелия|Сноска/, "строки за диапазоном и сноски не выводятся");
+    assert.doesNotMatch(text, /[{}]/);
+    assert.strictEqual(out.rows, 5);
+  }
+  // Форма узнаётся по тексту с листа «Содержание», 350 к этой книге не подходит.
+  const forms = [{ name: "352", settings: SETTINGS_352 }, { name: "350", settings: SETTINGS_350 }];
+  assert.deepStrictEqual(B.matchingForms(XLS_REGIONS, forms).map((f) => f.name), ["352"]);
+  assert.deepStrictEqual(B.matchingForms(XLS, forms).map((f) => f.name), ["350"]);
+});
+
+test("нет листа из правил — понятный отказ", () => {
+  assert.throws(
+    () => B.makeDocument({ table: table.regionsXlsx(), template: TEMPLATE_352, settings: { ...SETTINGS_352, valueCols: ["1!*", "9!*", "2!*"] }, date: "01.01.2031" }),
+    /нет листа «9»/);
+});
+
 test("правила формы проверяются: столбцы, виды строк, маски, порог", () => {
   assert.throws(() => B.normalizeSettings({ valueCols: ["C", "1"], rules: [] }), /буква столбца/);
   assert.throws(() => B.normalizeSettings({ valueCols: ["C"], rules: [{ kind: "два слова", codes: "##" }] }), /одно слово/);
@@ -136,6 +196,10 @@ test("правила формы проверяются: столбцы, виды
   assert.throws(() => B.normalizeSettings({ valueCols: ["C"], rules: [], digits: 7 }), /от 0 до 4/);
   const s = B.normalizeSettings({ valueCols: ["c"], rules: [{ kind: "вид", codes: "##", sections: "c, b" }] });
   assert.deepStrictEqual([s.valueCols, s.rules[0].sections, s.nameCol, s.timesFrom], [["C"], ["C", "B"], "A", 200]);
+  const m = B.normalizeSettings({ codeCol: "", valueCols: ["1!*", " Лист 2 !c", "*"], rules: [] });
+  assert.deepStrictEqual([m.codeCol, m.valueCols], ["", ["1!*", "Лист 2!C", "*"]]);
+  assert.throws(() => B.normalizeSettings({ valueCols: ["1!CCC"], rules: [] }), /последний заполненный/);
+  assert.throws(() => B.normalizeSettings({ valueCols: ["a/b!C"], rules: [] }), /Имя листа/);
 });
 
 test("имя файла — по образцу формы, без запрещённых в Windows знаков", () => {
@@ -173,13 +237,18 @@ async function multipart(app, c, method, url, { file, name = "table.xlsx", field
 
 const form350 = (db) => db.prepare("SELECT id FROM bulletin_forms WHERE name = '350 Индексы производства'").get().id;
 
-test("встроенная форма заводится один раз: удалённая не возвращается при следующем запуске", () => {
+test("встроенные формы заводятся по одной и один раз: удалённая не возвращается, новая — добавляется", () => {
   const { db, cleanup } = freshDb();
+  const names = () => db.prepare("SELECT name FROM bulletin_forms ORDER BY name").all().map((r) => r.name);
   try {
-    assert.ok(form350(db));
+    assert.deepStrictEqual(names(), ["350 Индексы производства", "352 Индексы производства по субъектам ЦФО"]);
     db.prepare("DELETE FROM bulletin_forms").run();
     B.seedBuiltinForms(db);
-    assert.strictEqual(db.prepare("SELECT COUNT(*) AS n FROM bulletin_forms").get().n, 0);
+    assert.deepStrictEqual(names(), []);
+    // База от первой версии (была только 350, и её удалили): 352 появляется, 350 — нет.
+    db.prepare("UPDATE settings SET value = '1' WHERE key = 'bulletins_seeded'").run();
+    B.seedBuiltinForms(db);
+    assert.deepStrictEqual(names(), ["352 Индексы производства по субъектам ЦФО"]);
   } finally { cleanup(); }
 });
 

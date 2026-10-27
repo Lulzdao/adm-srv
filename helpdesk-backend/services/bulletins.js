@@ -1,5 +1,5 @@
-const { readFirstSheet } = require("./xlsx");
-const { readXlsFirstSheet, isXls } = require("./xls");
+const { readSheets } = require("./xlsx");
+const { readXlsSheets, isXls } = require("./xls");
 const { fillDocx, listTags, checkTemplate } = require("./docx");
 const { parseLogins } = require("./executorGroups");
 
@@ -8,8 +8,14 @@ const { parseLogins } = require("./executorGroups");
 //
 //  Форма бюллетеня — шаблон Word и правила: из каких столбцов таблицы брать
 //  наименование, код и значения, какие строки выводить в таблицу документа.
-//  Месяц и год берутся из заголовка таблицы («…за сентябрь 2026 года») — от них
-//  зависят заголовок, текст и шапка таблицы документа, со склонением месяца.
+//  Значения можно брать и с других листов той же книги («3!U»), и из последнего
+//  заполненного столбца («3!*») — так устроены выгрузки, где каждый месяц
+//  добавляет справа новый столбец. Строки разных листов сопоставляются по коду,
+//  а если столбца кода нет — по наименованию.
+//
+//  Месяц и год берутся из заголовка таблицы («…за сентябрь 2026 года»), а у
+//  формы с последним заполненным столбцом — из его шапки («2026 год» / «август»).
+//  От них зависят заголовок, текст и шапка таблицы документа, со склонением.
 //
 //  Метки шаблона — те же, что у Ассистента ({поле}, {#список}…{/}), см.
 //  services/docx.js. Что доступно в шаблоне:
@@ -58,13 +64,16 @@ const PERIOD_TAGS = ["дата", "год", "прошлый_год", "ММ", "М�
 //  Таблица
 // ---------------------------------------------------------------------------
 
-/** Первый лист .xlsx или .xls — по содержимому файла, а не по расширению. */
-function readTable(buf) {
+/** Все листы .xlsx или .xls — [{ name, rows }]; формат — по содержимому файла, а не по расширению. */
+function readBook(buf) {
   if (!Buffer.isBuffer(buf) || !buf.length) fail("Файл таблицы пустой");
-  if (isXls(buf)) return readXlsFirstSheet(buf);
-  if (buf[0] === 0x50 && buf[1] === 0x4b) return readFirstSheet(buf);
+  if (isXls(buf)) return readXlsSheets(buf);
+  if (buf[0] === 0x50 && buf[1] === 0x4b) return readSheets(buf);
   fail("Это не таблица Excel (.xlsx или .xls). Если её выгрузили из ЦСОД, откройте файл в Excel и сохраните заново");
 }
+
+/** Первый лист. */
+const readTable = (buf) => readBook(buf)[0].rows;
 
 const squash = (s) => String(s ?? "").split(/\s+/).filter(Boolean).join(" ");
 const headerText = (rows, depth = 10) => rows.slice(0, depth).map((r) => (r || []).map(squash).filter(Boolean).join(" ")).join(" ");
@@ -75,6 +84,30 @@ function parsePeriod(rows) {
   return m ? { month: MONTHS.findIndex((x) => x[0] === m[1]) + 1, year: Number(m[2]) } : null;
 }
 
+const MONTH_WORD_RE = new RegExp(MONTHS.map((m) => m[0]).join("|"), "g");
+const YEAR_RE = /(?:^|\D)((?:19|20)\d{2})(?!\d)/;
+
+/**
+ * Месяц и год из шапки столбца: месяц — последний названный в его ячейках выше
+ * данных («август», «январь-август»), год — ближайший слева в той же строке:
+ * «2026 год» над месяцами стоит в объединённой ячейке, а текст объединённой
+ * ячейки хранится только в первой из них.
+ */
+function periodFromColumn(rows, col) {
+  let month = null, year = null;
+  for (const row of rows) {
+    const r = row || [];
+    if (toNumber(r[col]) !== null) break; // начались данные
+    const words = squash(r[col]).toLowerCase().match(MONTH_WORD_RE);
+    if (words && !month) month = MONTHS.findIndex((m) => m[0] === words[words.length - 1]) + 1;
+    for (let c = col; c >= 0 && !year; c--) {
+      const y = YEAR_RE.exec(String(r[c] ?? ""));
+      if (y) year = Number(y[1]);
+    }
+  }
+  return month && year ? { month, year } : null;
+}
+
 /** «C» -> 2. */
 function colIndex(letters) {
   let n = 0;
@@ -82,18 +115,88 @@ function colIndex(letters) {
   return n - 1;
 }
 
-/** Строки таблицы с непустым кодом: { code, name, values }. */
-function dataRows(rows, s) {
-  const nameCol = colIndex(s.nameCol), codeCol = colIndex(s.codeCol);
-  const valueCols = s.valueCols.map(colIndex);
+const LAST = "*";
+
+/** «3!*» -> { sheet: "3", col: "*" }; «C» -> { sheet: null, col: "C" }. */
+function parseCol(spec) {
+  const i = spec.lastIndexOf("!");
+  return i < 0 ? { sheet: null, col: spec } : { sheet: spec.slice(0, i), col: spec.slice(i + 1) };
+}
+
+function findSheet(book, name) {
+  const sheet = book.find((sh) => squash(sh.name).toLowerCase() === squash(name).toLowerCase());
+  return sheet || fail(`В таблице нет листа «${name}»`);
+}
+
+/** Лист, по строкам которого идёт таблица документа: лист первого столбца значений, иначе первый. */
+function mainSheet(book, s) {
+  const first = parseCol(s.valueCols[0]);
+  return first.sheet === null ? book[0] : findSheet(book, first.sheet);
+}
+
+/** Последний столбец листа, где есть хоть одно число. */
+function lastFilledCol(sheet) {
+  let last = -1;
+  for (const row of sheet.rows) (row || []).forEach((v, c) => { if (c > last && toNumber(v) !== null) last = c; });
+  return last >= 0 ? last : fail(`На листе «${sheet.name}» нет ни одного числа`);
+}
+
+const same = (a, b) => squash(a).toLowerCase() === squash(b).toLowerCase();
+
+/**
+ * Строки таблицы: { key, code, name, values }. Ключ — код, а без столбца кода —
+ * наименование; по нему же находятся значения на других листах. Строки без
+ * единого значения (шапка, сноски) пропускаются. Диапазон «с … по» — по ключу
+ * или наименованию: с первой строки включительно до второй, не включая её.
+ */
+function dataRows(book, s) {
+  const main = mainSheet(book, s);
+  const nameCol = colIndex(s.nameCol);
+  const codeCol = s.codeCol ? colIndex(s.codeCol) : null;
+  const keyOf = (r) => squash(codeCol === null ? r[nameCol] : r[codeCol]);
+  const sources = s.valueCols.map(parseCol).map((c) => {
+    const sheet = c.sheet === null ? main : findSheet(book, c.sheet);
+    const col = c.col === LAST ? lastFilledCol(sheet) : colIndex(c.col);
+    let byKey = null;
+    if (sheet !== main) {
+      byKey = new Map();
+      for (const row of sheet.rows) {
+        const k = keyOf(row || []);
+        if (k && !byKey.has(k)) byKey.set(k, row);
+      }
+    }
+    return { sheet, col, byKey };
+  });
+
   const out = [];
-  for (const row of rows) {
+  let inRange = !s.rangeFrom;
+  for (const row of main.rows) {
     const r = row || [];
-    const code = squash(r[codeCol]);
-    if (!code) continue;
-    out.push({ code, name: squash(r[nameCol]), values: valueCols.map((c) => r[c] ?? "") });
+    const key = keyOf(r);
+    if (!key) continue;
+    const name = squash(r[nameCol]);
+    if (!inRange && (same(key, s.rangeFrom) || same(name, s.rangeFrom))) inRange = true;
+    else if (inRange && s.rangeTo && (same(key, s.rangeTo) || same(name, s.rangeTo))) break;
+    if (!inRange) continue;
+    const values = sources.map((src) => {
+      const from = src.byKey ? src.byKey.get(key) : r;
+      return from ? (from[src.col] ?? "") : "";
+    });
+    if (values.every((v) => !squash(v))) continue;
+    out.push({ key, code: codeCol === null ? "" : key, name, values });
   }
   return out;
+}
+
+/** Месяц и год: у формы с последним заполненным столбцом — из его шапки, иначе из заголовка листа. */
+function findPeriod(book, s) {
+  const last = s.valueCols.map(parseCol).find((c) => c.col === LAST);
+  if (last) {
+    const sheet = last.sheet === null ? mainSheet(book, s) : findSheet(book, last.sheet);
+    const p = periodFromColumn(sheet.rows, lastFilledCol(sheet));
+    if (p) return p;
+  }
+  return parsePeriod(mainSheet(book, s).rows);
 }
 
 /**
@@ -103,15 +206,16 @@ function dataRows(rows, s) {
  *   несколько масок — через запятую: «10, 11, 12», «##.#», «@».
  */
 function maskToRegExp(mask) {
-  const parts = String(mask).split(",").map((p) => p.trim()).filter(Boolean);
+  const parts = String(mask).split(",").map(squash).filter(Boolean);
   const one = (p) => [...p].map((ch) => (ch === "#" ? "\\d" : ch === "@" ? "[A-Z]" : ch === "*" ? ".*" : ch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))).join("");
   return new RegExp(`^(?:${parts.map(one).join("|")})$`);
 }
 
 /**
  * Строки для списка {#строки}: в порядке таблицы, каждая — по первому
- * подходящему правилу. Раздел — последняя строка выше с кодом из одной
- * латинской буквы (так устроены ОКВЭД и ОКПД2).
+ * подходящему правилу. Маска сверяется с кодом, а без столбца кода — с
+ * наименованием («*федеральный округ»). Раздел — последняя строка выше с кодом
+ * из одной латинской буквы (так устроены ОКВЭД и ОКПД2).
  */
 function selectRows(data, rules) {
   const compiled = rules.map((r) => ({ ...r, re: maskToRegExp(r.codes) }));
@@ -119,7 +223,7 @@ function selectRows(data, rules) {
   let section = null;
   for (const row of data) {
     if (/^[A-Z]$/.test(row.code)) section = row.code;
-    const rule = compiled.find((r) => r.re.test(row.code) && (!r.sections.length || r.sections.includes(section)));
+    const rule = compiled.find((r) => r.re.test(row.key) && (!r.sections.length || r.sections.includes(section)));
     if (rule) out.push({ row, rule });
   }
   return out;
@@ -170,12 +274,13 @@ function rowData(row, s) {
   return out;
 }
 
-/** Данные для шаблона из прочитанной таблицы. */
-function buildData(rows, s, date) {
-  const period = parsePeriod(rows);
+/** Данные для шаблона из прочитанной книги. */
+function buildData(book, s, date) {
+  const period = findPeriod(book, s);
   const data = period ? periodData(period, date) : {};
-  const all = dataRows(rows, s);
+  const all = dataRows(book, s);
   for (const row of all) {
+    if (!row.code) continue;
     const key = codeKey(row.code);
     if (!(key in data)) data[key] = rowData(row, s);
   }
@@ -226,8 +331,7 @@ function checkFormTemplate(template, s) {
  * место в документе: незаметная дыра в бюллетене хуже понятного отказа.
  */
 function makeDocument({ table, template, settings, date }) {
-  const rows = readTable(table);
-  const { data, period } = buildData(rows, settings, date);
+  const { data, period } = buildData(readBook(table), settings, date);
   const problems = [];
   let needsPeriod = false;
   for (const tag of listTags(template)) {
@@ -239,7 +343,9 @@ function makeDocument({ table, template, settings, date }) {
       problems.push(`в таблице нет строки с кодом ${name.split(".")[0].replace(/_/g, ".")} (метка {${name}})`);
     }
   }
-  if (needsPeriod && !period) problems.unshift("в заголовке таблицы не нашлись месяц и год («…за сентябрь 2026 года»)");
+  if (needsPeriod && !period) {
+    problems.unshift("не нашлись месяц и год — ни в заголовке таблицы («…за сентябрь 2026 года»), ни в шапке последнего заполненного столбца");
+  }
   if (problems.length) fail(`Документ не собран: ${problems.join("; ")}.`);
   return { docx: fillDocx(template, data), period, rows: data[LIST].length };
 }
@@ -256,9 +362,9 @@ function outputName(form, period) {
   return `${name || "бюллетень"}.docx`;
 }
 
-/** Формы, к которым подходит таблица (по признаку в заголовке). */
+/** Формы, к которым подходит таблица (по признаку в заголовке любого её листа). */
 function matchingForms(table, forms) {
-  const head = headerText(readTable(table)).toLowerCase();
+  const head = readBook(table).map((sh) => headerText(sh.rows)).join(" ").toLowerCase();
   return forms.filter((f) => f.settings.sign && head.includes(squash(f.settings.sign).toLowerCase()));
 }
 
@@ -268,10 +374,11 @@ function matchingForms(table, forms) {
 
 const DEFAULT_SETTINGS = {
   sign: "", fileName: "{название}_{ММ}_{ГГГГ}", nameCol: "A", codeCol: "B", valueCols: ["C", "D", "E"],
-  rules: [], timesFrom: 200, digits: 1,
+  rangeFrom: "", rangeTo: "", rules: [], timesFrom: 200, digits: 1,
 };
 
 const COL_RE = /^[A-Z]{1,2}$/;
+const SHEET_RE = /^[^[\]:*?/\\]{1,31}$/;
 const KIND_RE = /^[\p{L}_][\p{L}\p{N}_]{0,29}$/u;
 const RESERVED = new Set([LIST, ...ROW_FIELDS, ...PERIOD_TAGS]);
 
@@ -293,11 +400,21 @@ function normalizeSettings(input) {
     sign: text(s.sign, "Признак таблицы", 200),
     fileName: text(s.fileName, "Имя файла", 100) || DEFAULT_SETTINGS.fileName,
     nameCol: col(s.nameCol ?? DEFAULT_SETTINGS.nameCol, "Столбец наименования"),
-    codeCol: col(s.codeCol ?? DEFAULT_SETTINGS.codeCol, "Столбец кода"),
+    // Пусто — столбца кода нет: строки листов сопоставляются по наименованию.
+    codeCol: s.codeCol === "" ? "" : col(s.codeCol ?? DEFAULT_SETTINGS.codeCol, "Столбец кода"),
+    rangeFrom: text(s.rangeFrom, "Строки с", 200),
+    rangeTo: text(s.rangeTo, "Строки до", 200),
   };
   const values = Array.isArray(s.valueCols) ? s.valueCols : fail("Столбцы значений — списком");
   if (!values.length || values.length > 20) fail("Столбцов значений — от 1 до 20");
-  out.valueCols = values.map((v) => col(v, "Столбец значения"));
+  out.valueCols = values.map((v) => {
+    const { sheet, col: c } = parseCol(text(v, "Столбец значения", 40));
+    const letter = c.trim().toUpperCase();
+    if (letter !== LAST && !COL_RE.test(letter)) fail("Столбец значения — буква столбца (C) или * — последний заполненный; с другого листа — «лист!столбец»: 3!C, 3!*");
+    if (sheet === null) return letter;
+    if (!SHEET_RE.test(sheet.trim())) fail(`Имя листа «${sheet}» — до 31 знака, без [ ] : * ? / \\`);
+    return `${sheet.trim()}!${letter}`;
+  });
 
   const rules = Array.isArray(s.rules) ? s.rules : fail("Правила строк — списком");
   if (rules.length > 20) fail("Правил строк — не больше 20");
@@ -380,8 +497,10 @@ const canManageAny = (a) => a.admin || a.manageGroups.length > 0;
 //  Встроенные формы
 // ---------------------------------------------------------------------------
 
-// Заводятся в базе один раз, при первом запуске с бюллетенями. Дальше это
-// обычные формы: их правят и удаляют из панели, обновление их не возвращает.
+// Каждая заводится в базе один раз — при первом запуске версии, где она
+// появилась. Дальше это обычная форма: её правят и удаляют из панели, и
+// обновление её не возвращает. Какие уже заводились — в настройке
+// bulletins_seeded (список названий; «1» — от первой версии, где была только 350).
 const BUILTIN_FORMS = [
   {
     name: "350 Индексы производства",
@@ -397,23 +516,46 @@ const BUILTIN_FORMS = [
       timesFrom: 200, digits: 1,
     },
   },
+  {
+    // Значения — с трёх листов выгрузки «по субъектам», из последнего заполненного
+    // столбца: лист 1 — к месяцу прошлого года, 3 — к предыдущему месяцу,
+    // 2 — к периоду прошлого года. Строки — РФ и Центральный округ с его регионами.
+    name: "352 Индексы производства по субъектам ЦФО",
+    file: "352.docx",
+    settings: {
+      sign: "Индекс промышленного производства по субъектам Российской Федерации",
+      fileName: "352_{ММ}_{ГГГГ}",
+      nameCol: "A", codeCol: "", valueCols: ["1!*", "3!*", "2!*"],
+      rangeFrom: "Российская Федерация", rangeTo: "Северо-Западный федеральный округ",
+      rules: [
+        { kind: "итог", codes: "Российская Федерация, *федеральный округ", sections: [], sentenceCase: false },
+        { kind: "регион", codes: "*", sections: [], sentenceCase: false },
+      ],
+      timesFrom: 200, digits: 1,
+    },
+  },
 ];
 
 function seedBuiltinForms(db) {
   const { getSetting, setSetting } = require("./settings");
-  if (getSetting(db, "bulletins_seeded")) return;
+  const raw = getSetting(db, "bulletins_seeded");
+  let seeded = [];
+  if (raw === "1") seeded = [BUILTIN_FORMS[0].name];
+  else if (raw) { try { seeded = JSON.parse(raw); } catch { seeded = BUILTIN_FORMS.map((f) => f.name); } }
+  const todo = BUILTIN_FORMS.filter((f) => !seeded.includes(f.name));
+  if (!todo.length) return;
   const fs = require("fs");
   const path = require("path");
   const insert = db.prepare("INSERT OR IGNORE INTO bulletin_forms (name, settings, filename, template, updated_by) VALUES (?, ?, ?, ?, 'встроенная')");
-  for (const f of BUILTIN_FORMS) {
+  for (const f of todo) {
     insert.run(f.name, JSON.stringify(normalizeSettings(f.settings)), f.file, fs.readFileSync(path.join(__dirname, "..", "bulletins", f.file)));
   }
-  setSetting(db, "bulletins_seeded", "1");
+  setSetting(db, "bulletins_seeded", JSON.stringify([...seeded, ...todo.map((f) => f.name)]));
 }
 
 module.exports = {
   BulletinError, MONTHS, LIST, PERIOD_TAGS, DEFAULT_SETTINGS,
-  readTable, parsePeriod, maskToRegExp, selectRows, fmtValue, periodData, buildData,
+  readBook, readTable, parsePeriod, periodFromColumn, maskToRegExp, selectRows, fmtValue, periodData, buildData,
   makeDocument, outputName, matchingForms, checkFormTemplate, unknownTags,
   normalizeSettings, parseSettings, userGroups, access, canManageAny, lines, seedBuiltinForms,
 };

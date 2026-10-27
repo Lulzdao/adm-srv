@@ -158,6 +158,7 @@ async function renderBulletinForms(main, editId) {
 }
 
 const BULL_RULE_HINT = "Коды: # — цифра, @ — латинская буква, * — что угодно; несколько — через запятую (10, 11, 12). "
+  + "Если столбца кода нет, маска сверяется с наименованием: «Российская Федерация, *федеральный округ». "
   + "Разделы — буквы ОКВЭД через запятую, пусто — во всех.";
 
 function bulletinRuleRow(r) {
@@ -204,8 +205,17 @@ async function bulletinFormEditor(main, id) {
         </div>
         <div class="form-row" style="margin-bottom:12px">
           <div><div class="field-label">Столбец наименования</div><input class="field-input mono" id="bfNameCol" maxlength="2" value="${esc(s.nameCol)}"></div>
-          <div><div class="field-label">Столбец кода</div><input class="field-input mono" id="bfCodeCol" maxlength="2" value="${esc(s.codeCol)}"></div>
+          <div><div class="field-label">Столбец кода (пусто — по наименованию)</div><input class="field-input mono" id="bfCodeCol" maxlength="2" value="${esc(s.codeCol)}"></div>
           <div><div class="field-label">Столбцы значений → {1} {2} …</div><input class="field-input mono" id="bfValueCols" value="${esc(s.valueCols.join(", "))}"></div>
+        </div>
+        <div class="as-note" style="margin:-6px 0 12px">Столбец значения — буква (C) или * — последний заполненный;
+          с другого листа — «лист!столбец»: <code>1!*, 3!*, 2!*</code>. Таблица документа идёт по строкам листа первого столбца,
+          значения с других листов находятся по коду, а без него — по наименованию.</div>
+        <div class="form-row" style="margin-bottom:12px">
+          <div><div class="field-label">Строки с (код или наименование; пусто — с начала)</div>
+            <input class="field-input" id="bfFrom" maxlength="200" value="${esc(s.rangeFrom || "")}" placeholder="Российская Федерация"></div>
+          <div><div class="field-label">до, не включая (пусто — до конца)</div>
+            <input class="field-input" id="bfTo" maxlength="200" value="${esc(s.rangeTo || "")}" placeholder="Северо-Западный федеральный округ"></div>
         </div>
         <div class="form-row" style="margin-bottom:12px">
           <div><div class="field-label">От скольких % писать «в N р.» (0 — никогда)</div><input class="field-input" id="bfTimes" type="number" min="0" value="${esc(s.timesFrom)}"></div>
@@ -236,7 +246,9 @@ async function bulletinFormEditor(main, id) {
     const settings = {
       sign: $("#bfSign").value, fileName: $("#bfFileName").value,
       nameCol: $("#bfNameCol").value, codeCol: $("#bfCodeCol").value,
-      valueCols: $("#bfValueCols").value.split(/[\s,;]+/).filter(Boolean),
+      // Только запятая: в имени листа бывает пробел («Лист 1!C»).
+      valueCols: $("#bfValueCols").value.split(/[,;]/).map((x) => x.trim()).filter(Boolean),
+      rangeFrom: $("#bfFrom").value, rangeTo: $("#bfTo").value,
       timesFrom: Number($("#bfTimes").value), digits: Number($("#bfDigits").value),
       rules: [...page.querySelectorAll(".bf-rule")].map((tr) => ({
         kind: tr.querySelector(".bf-kind").value, codes: tr.querySelector(".bf-codes").value,
