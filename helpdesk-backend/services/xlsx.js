@@ -56,20 +56,18 @@ function firstSheetPath(files) {
   return [...files.keys()].filter((n) => /^xl\/worksheets\/sheet\d+\.xml$/.test(n)).sort()[0] || null;
 }
 
-/**
- * Первый лист книги как массив строк, каждая строка — массив текстов.
- * Пустые ячейки внутри строки — пустые строки, чтобы колонки не съезжали.
- */
-function readFirstSheet(buf) {
+/** Книга из буфера: архив и общий список строк. */
+function openBook(buf) {
   let files;
   try { files = readZip(buf); } catch { throw new Error("Файл не открывается как книга Excel (.xlsx)"); }
-  const sheetPath = firstSheetPath(files);
-  if (!sheetPath) throw new Error("В книге нет ни одного листа");
-
   const shared = [];
   const ss = files.get("xl/sharedStrings.xml");
   if (ss) for (const m of ss.toString("utf8").matchAll(/<si>([\s\S]*?)<\/si>|<si\/>/g)) shared.push(m[1] ? textOf(m[1]) : "");
+  return { files, shared };
+}
 
+/** Строки листа: массив строк, в строке — тексты ячеек. */
+function sheetRows(files, sheetPath, shared) {
   const rows = [];
   const xml = files.get(sheetPath).toString("utf8");
   for (const r of xml.matchAll(/<row\b([^>]*?)(?:\/>|>([\s\S]*?)<\/row>)/g)) {
@@ -100,6 +98,43 @@ function readFirstSheet(buf) {
     rows[idx] = cells;
   }
   return rows;
+}
+
+/**
+ * Первый лист книги как массив строк, каждая строка — массив текстов.
+ * Пустые ячейки внутри строки — пустые строки, чтобы колонки не съезжали.
+ */
+function readFirstSheet(buf) {
+  const { files, shared } = openBook(buf);
+  const sheetPath = firstSheetPath(files);
+  if (!sheetPath) throw new Error("В книге нет ни одного листа");
+  return sheetRows(files, sheetPath, shared);
+}
+
+/**
+ * Все листы книги по порядку: [{ name, rows }]. Нужны бюллетеням, которые
+ * собирают значения с разных листов одной выгрузки.
+ */
+function readSheets(buf) {
+  const { files, shared } = openBook(buf);
+  const wb = files.get("xl/workbook.xml");
+  const rels = files.get("xl/_rels/workbook.xml.rels");
+  const relXml = rels ? rels.toString("utf8") : "";
+  const out = [];
+  for (const m of (wb ? wb.toString("utf8") : "").matchAll(/<sheet\b([^>]*)\/?>/g)) {
+    const name = /\bname="([^"]*)"/.exec(m[1]);
+    const id = /\br:id="([^"]+)"/.exec(m[1]);
+    const rel = id && new RegExp(`<Relationship\\b[^>]*\\bId="${id[1]}"[^>]*>`).exec(relXml);
+    const target = rel && /Target="([^"]+)"/.exec(rel[0]);
+    const path = target && "xl/" + target[1].replace(/^\/?(xl\/)?/, "");
+    if (name && path && files.has(path)) out.push({ name: unxml(name[1]), rows: sheetRows(files, path, shared) });
+  }
+  if (!out.length) {
+    const first = firstSheetPath(files);
+    if (!first) throw new Error("В книге нет ни одного листа");
+    out.push({ name: "", rows: sheetRows(files, first, shared) });
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -206,4 +241,4 @@ function buildXlsx(sheets, now = new Date()) {
 
 const XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
-module.exports = { readFirstSheet, buildXlsx, XLSX_TYPE, colLetter };
+module.exports = { readFirstSheet, readSheets, buildXlsx, XLSX_TYPE, colLetter };

@@ -1,12 +1,12 @@
 // ============================================================================
-//  Книги Excel 97–2003 (.xls): прочитать первый лист
+//  Книги Excel 97–2003 (.xls): прочитать листы
 //
 //  ЦСОД и старые версии Excel до сих пор отдают таблицы в .xls, а пакет с npm
 //  на закрытый контур не поставить. Формат — составной файл OLE (CFB), внутри
 //  поток Workbook из записей BIFF8. Нужно немногое: тексты и числа ячеек
-//  первого листа — ровно то, что readFirstSheet в xlsx.js отдаёт для .xlsx, и в
-//  том же виде (массив строк, в строке — тексты ячеек), чтобы дальше разницы
-//  между форматами не было.
+//  листов — ровно то, что readFirstSheet и readSheets в xlsx.js отдают для
+//  .xlsx, и в том же виде (массив строк, в строке — тексты ячеек), чтобы
+//  дальше разницы между форматами не было.
 //
 //  Не поддерживаются: защищённые паролем книги и книги Excel 5.0/95 (BIFF5) —
 //  на них понятный отказ с советом пересохранить.
@@ -175,11 +175,8 @@ function rkValue(rk) {
 // Число — как его покажет xlsx.js: целое без «.0» (String так и делает).
 const numText = (n) => String(n);
 
-/**
- * Первый лист книги .xls как массив строк, каждая строка — массив текстов.
- * Пустые ячейки внутри строки — пустые строки, чтобы колонки не съезжали.
- */
-function readXlsFirstSheet(buf) {
+/** Поток Workbook, список листов и общий список строк. */
+function openBook(buf) {
   if (!isXls(buf)) throw new XlsError("Файл не похож на книгу Excel 97–2003 (.xls)");
   let wb;
   try {
@@ -203,8 +200,10 @@ function readXlsFirstSheet(buf) {
       if (sstSegments && rec.type === R.CONTINUE) { sstSegments.push(rec.data); continue; }
       if (sstSegments) { parseSst(sstSegments, sst); sstSegments = null; }
       if (rec.type === R.FILEPASS) throw new XlsError("Книга защищена паролем — снимите защиту в Excel и загрузите снова");
-      else if (rec.type === R.BOUNDSHEET) sheets.push({ offset: rec.data.readUInt32LE(0), kind: rec.data[5] });
-      else if (rec.type === R.SST) sstSegments = [rec.data];
+      else if (rec.type === R.BOUNDSHEET) {
+        // Имя листа — короткая строка: длина одним байтом.
+        sheets.push({ offset: rec.data.readUInt32LE(0), kind: rec.data[5], name: new SegmentReader([rec.data.subarray(6)]).string(1) });
+      } else if (rec.type === R.SST) sstSegments = [rec.data];
       else if (rec.type === R.EOF) break;
     }
     if (sstSegments) parseSst(sstSegments, sst);
@@ -212,10 +211,14 @@ function readXlsFirstSheet(buf) {
     if (err instanceof XlsError) throw err;
     throw broken();
   }
+  // Листы диаграмм и макросов — не таблицы.
+  const worksheets = sheets.filter((s) => s.kind === 0);
+  if (!worksheets.length) throw new XlsError("В книге нет ни одного листа");
+  return { wb, sst, sheets: worksheets };
+}
 
-  const sheet = sheets.find((s) => s.kind === 0);
-  if (!sheet) throw new XlsError("В книге нет ни одного листа");
-
+/** Строки листа с его начала (BOF) до EOF. */
+function sheetRows(wb, offset, sst) {
   const rows = [];
   const put = (row, col, value) => {
     while (rows.length <= row) rows.push([]);
@@ -225,7 +228,7 @@ function readXlsFirstSheet(buf) {
   };
   try {
     let pendingFormula = null;
-    for (const { type, data } of records(wb, sheet.offset)) {
+    for (const { type, data } of records(wb, offset)) {
       if (type === R.EOF) break;
       if (pendingFormula && type === R.STRING) {
         put(pendingFormula.row, pendingFormula.col, new SegmentReader([data]).string());
@@ -259,6 +262,21 @@ function readXlsFirstSheet(buf) {
   return rows;
 }
 
+/**
+ * Первый лист книги .xls как массив строк, каждая строка — массив текстов.
+ * Пустые ячейки внутри строки — пустые строки, чтобы колонки не съезжали.
+ */
+function readXlsFirstSheet(buf) {
+  const { wb, sst, sheets } = openBook(buf);
+  return sheetRows(wb, sheets[0].offset, sst);
+}
+
+/** Все листы книги по порядку: [{ name, rows }] — как readSheets в xlsx.js. */
+function readXlsSheets(buf) {
+  const { wb, sst, sheets } = openBook(buf);
+  return sheets.map((s) => ({ name: s.name, rows: sheetRows(wb, s.offset, sst) }));
+}
+
 function parseSst(segments, out) {
   const r = new SegmentReader(segments);
   r.skip(4); // всего строк в книге
@@ -266,4 +284,4 @@ function parseSst(segments, out) {
   for (let k = 0; k < unique && !r.atEnd; k++) out.push(r.string());
 }
 
-module.exports = { readXlsFirstSheet, isXls, XlsError };
+module.exports = { readXlsFirstSheet, readXlsSheets, isXls, XlsError };
