@@ -463,3 +463,33 @@ CREATE TABLE IF NOT EXISTS notes (
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+
+-- Бюллетени (services/bulletins.js): форма — шаблон Word и правила разбора
+-- таблицы из ЦСОД (JSON: столбцы, какие строки выводить, порог «в разах»).
+CREATE TABLE IF NOT EXISTS bulletin_forms (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  settings TEXT NOT NULL DEFAULT '{}',
+  filename TEXT NOT NULL,
+  template BLOB NOT NULL,
+  updated_by TEXT,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Группы бюллетеней: кто какие формы видит. Участник — по группе домена
+-- (ad_groups — имена по строке, сверяются с users.ad_groups) или по логину в
+-- списке. can_manage — группа сама правит свои формы и заводит новые.
+CREATE TABLE IF NOT EXISTS bulletin_groups (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  ad_groups TEXT NOT NULL DEFAULT '',
+  logins TEXT NOT NULL DEFAULT '',
+  can_manage INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS bulletin_group_forms (
+  group_id INTEGER NOT NULL REFERENCES bulletin_groups(id) ON DELETE CASCADE,
+  form_id INTEGER NOT NULL REFERENCES bulletin_forms(id) ON DELETE CASCADE,
+  PRIMARY KEY (group_id, form_id)
+);

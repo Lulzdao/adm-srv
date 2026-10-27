@@ -91,6 +91,7 @@ function createApp(db, { secureCookie = false } = {}) {
   app.use("/api/assistant", require("./routes/assistant")(db));
   app.use("/api/assistant", require("./routes/assistantActs")(db));
   app.use("/api/mailings", require("./routes/mailings")(db));
+  app.use("/api/bulletins", require("./routes/bulletins")(db));
   app.use("/api/admin", require("./routes/admin")(db));
   app.use("/api/departments", require("./routes/departments")(db));
   app.use(require("./routes/modules")());

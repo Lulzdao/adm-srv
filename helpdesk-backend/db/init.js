@@ -119,6 +119,8 @@ function initDb() {
     // задача на перевыпуск) — её настройки не нужны. События в ленте остаются.
     db.prepare("DELETE FROM notification_settings WHERE kind = 'expired'").run();
     encryptStoredPasswords(db);
+    // Бюллетени: встроенные формы — один раз, дальше ими управляют из панели.
+    require("../services/bulletins").seedBuiltinForms(db);
     // Списки логинов групп исполнителей могли поменяться в обход панели (копия базы, ручная правка).
     require("../services/executorGroups").recomputeAll(db);
     db.exec("COMMIT");
