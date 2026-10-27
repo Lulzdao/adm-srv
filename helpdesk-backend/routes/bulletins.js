@@ -9,10 +9,10 @@ const B = require("../services/bulletins");
 // ============================================================================
 //  Бюллетени
 //
-//  Сотрудник группы загружает таблицу из ЦСОД, выбирает форму (или она
-//  определяется по заголовку таблицы) и получает готовый документ Word.
-//  Формы правят группы с правом управления — только формы своей группы;
-//  группы и их наборы форм заводит администратор платформы.
+//  Сотрудник группы выбирает бюллетень, загружает таблицу из ЦСОД и получает
+//  готовый документ Word. Шаблоны Word меняют группы с правом управления —
+//  только у бюллетеней своей группы; разбор таблицы, группы и их наборы
+//  бюллетеней ведёт администратор платформы.
 //
 //  Права — на каждом маршруте по базе, а не по пункту меню: скрытая кнопка
 //  защитой не считается.
@@ -95,58 +95,41 @@ module.exports = function bulletinRoutes(db) {
   router.get("/", (req, res) => {
     const a = B.access(db, req.session.user);
     const rows = a.formIds.length
-      ? db.prepare(`SELECT id, name, settings, updated_by, updated_at FROM bulletin_forms WHERE id IN (${a.formIds.map(() => "?").join(",")}) ORDER BY name`).all(...a.formIds)
+      ? db.prepare(`SELECT id, name, filename, updated_by, updated_at FROM bulletin_forms WHERE id IN (${a.formIds.map(() => "?").join(",")}) ORDER BY name`).all(...a.formIds)
       : [];
     res.json({
       forms: rows.map((f) => ({
-        id: f.id, name: f.name, sign: B.parseSettings(f.settings).sign,
+        id: f.id, name: f.name, filename: f.filename,
         canEdit: a.manageIds.includes(f.id), updated_by: f.updated_by, updated_at: f.updated_at,
       })),
       groups: a.groups,
       canManage: B.canManageAny(a),
-      manageGroups: a.manageGroups,
       admin: a.admin,
     });
   });
 
+  // Форму сотрудник выбирает сам, по названию: угадывать её по таблице
+  // ненадёжно — у разных бюллетеней бывает одна и та же выгрузка.
   router.post("/make", withUpload, handle((req, res) => {
+    const wanted = parseId(req.body.form_id);
+    if (!wanted) fail("Выберите бюллетень");
     if (!req.file) fail("Выберите файл таблицы из ЦСОД (.xlsx или .xls)");
     const a = B.access(db, req.session.user);
+    const form = a.formIds.includes(wanted) ? loadForm(wanted) : null;
+    if (!form) fail("Этот бюллетень вам недоступен");
     const date = checkDate(req.body.date);
-    let form;
-    const wanted = parseId(req.body.form_id);
-    if (wanted) {
-      form = a.formIds.includes(wanted) ? loadForm(wanted) : null;
-      if (!form) fail("Эта форма вам недоступна");
-    } else {
-      const mine = a.formIds.map(loadForm).filter(Boolean);
-      const found = B.matchingForms(req.file.buffer, mine);
-      if (found.length !== 1) {
-        fail(found.length
-          ? `Таблица подходит к нескольким формам (${found.map((f) => `«${f.name}»`).join(", ")}) — выберите форму сами`
-          : "Не удалось определить форму по заголовку таблицы — выберите её сами");
-      }
-      form = found[0];
-    }
     const out = B.makeDocument({ table: req.file.buffer, template: form.template, settings: form.settings, date });
     sendFile(res, out.docx, B.outputName(form, out.period), DOCX_TYPE);
   }));
 
   // -------------------------------------------------------------------------
-  //  Управление формами — группам с правом управления и администраторам
+  //  Шаблоны — группам с правом управления (формы своей группы) и администраторам
+  //
+  //  Отдел меняет оформление и формулировки: скачал шаблон, поправил в Word,
+  //  загрузил. Новый бюллетень по той же выгрузке — «по образцу» существующего,
+  //  с тем же разбором таблицы. Сам разбор (листы, столбцы, строки) — разовая
+  //  настройка под выгрузку, его ведёт администратор платформы.
   // -------------------------------------------------------------------------
-
-  router.get("/forms/:id", handle((req, res) => {
-    const { form, a } = managedForm(req);
-    if (!form) return res.status(404).json({ error: "Нет такой формы" });
-    res.json({
-      id: form.id, name: form.name, settings: form.settings, filename: form.filename,
-      updated_by: form.updated_by, updated_at: form.updated_at,
-      groups: formGroups.all(form.id).map((r) => r.group_id),
-      warnings: B.checkFormTemplate(form.template, form.settings),
-      admin: a.admin,
-    });
-  }));
 
   router.get("/forms/:id/template", handle((req, res) => {
     const { form } = managedForm(req);
@@ -154,49 +137,87 @@ module.exports = function bulletinRoutes(db) {
     sendFile(res, form.template, form.filename, DOCX_TYPE);
   }));
 
-  // Новая форма: шаблон обязателен. Кто управляет не всеми формами, кладёт её
-  // в одну из своих групп — иначе после сохранения он бы её больше не увидел.
-  router.post("/forms", withUpload, handle((req, res) => {
-    const a = B.access(db, req.session.user);
-    if (!B.canManageAny(a)) return res.status(403).json({ error: "Недостаточно прав" });
+  router.put("/forms/:id/template", withUpload, handle((req, res) => {
+    const { form } = managedForm(req);
+    if (!form) return res.status(404).json({ error: "Нет такой формы" });
+    if (!isDocx(req.file)) fail("Выберите шаблон Word (.docx)");
+    const warnings = B.checkFormTemplate(req.file.buffer, form.settings);
+    db.prepare("UPDATE bulletin_forms SET filename = ?, template = ?, updated_by = ?, updated_at = datetime('now') WHERE id = ?")
+      .run(req.file.originalname || form.filename, req.file.buffer, req.session.user.full_name, form.id);
+    res.json({ ok: true, warnings });
+  }));
+
+  // По образцу: новое название и свой шаблон, разбор таблицы — как у образца.
+  // Новый бюллетень видят те же группы, что и образец: сотрудники отдела получают
+  // его сразу, без похода к администратору.
+  router.post("/forms/:id/copy", withUpload, handle((req, res) => {
+    const { form } = managedForm(req);
+    if (!form) return res.status(404).json({ error: "Нет такой формы" });
+    const name = checkName(payloadOf(req).name, "Название бюллетеня");
+    if (!isDocx(req.file)) fail("Выберите шаблон Word (.docx)");
+    const warnings = B.checkFormTemplate(req.file.buffer, form.settings);
+    if (db.prepare("SELECT 1 FROM bulletin_forms WHERE name = ? COLLATE NOCASE").get(name)) fail(`Бюллетень «${name}» уже есть`);
+    const groups = formGroups.all(form.id).map((r) => r.group_id);
+    db.exec("BEGIN");
+    try {
+      const info = db.prepare("INSERT INTO bulletin_forms (name, settings, filename, template, updated_by) VALUES (?, ?, ?, ?, ?)")
+        .run(name, JSON.stringify(form.settings), req.file.originalname || `${name}.docx`, req.file.buffer, req.session.user.full_name);
+      const id = Number(info.lastInsertRowid);
+      const link = db.prepare("INSERT INTO bulletin_group_forms (group_id, form_id) VALUES (?, ?)");
+      for (const g of groups) link.run(g, id);
+      db.exec("COMMIT");
+      res.status(201).json({ id, warnings });
+    } catch (err) { db.exec("ROLLBACK"); throw err; }
+  }));
+
+  // -------------------------------------------------------------------------
+  //  Разбор таблицы — только администраторы платформы
+  // -------------------------------------------------------------------------
+
+  router.get("/forms/:id", requireAdmin, handle((req, res) => {
+    const form = loadForm(parseId(req.params.id));
+    if (!form) return res.status(404).json({ error: "Нет такой формы" });
+    res.json({
+      id: form.id, name: form.name, settings: form.settings, filename: form.filename,
+      updated_by: form.updated_by, updated_at: form.updated_at,
+      groups: formGroups.all(form.id).map((r) => r.group_id),
+      warnings: B.checkFormTemplate(form.template, form.settings),
+    });
+  }));
+
+  // Новая форма с нуля: шаблон и разбор. Группы ей назначаются в Администрировании.
+  router.post("/forms", requireAdmin, withUpload, handle((req, res) => {
     const p = payloadOf(req);
-    const name = checkName(p.name, "Название формы");
+    const name = checkName(p.name, "Название бюллетеня");
     const settings = B.normalizeSettings(p.settings);
     if (!isDocx(req.file)) fail("Выберите шаблон Word (.docx)");
     const warnings = B.checkFormTemplate(req.file.buffer, settings);
-    let groupId = parseId(p.group_id);
-    if (!a.admin) {
-      if (!groupId && a.manageGroups.length === 1) groupId = a.manageGroups[0].id;
-      if (!groupId || !a.manageGroups.some((g) => g.id === groupId)) fail("Выберите группу, в которую добавить форму");
-    } else if (groupId && !db.prepare("SELECT 1 FROM bulletin_groups WHERE id = ?").get(groupId)) fail("Нет такой группы");
-    if (db.prepare("SELECT 1 FROM bulletin_forms WHERE name = ? COLLATE NOCASE").get(name)) fail(`Форма «${name}» уже есть`);
+    if (db.prepare("SELECT 1 FROM bulletin_forms WHERE name = ? COLLATE NOCASE").get(name)) fail(`Бюллетень «${name}» уже есть`);
     const info = db.prepare("INSERT INTO bulletin_forms (name, settings, filename, template, updated_by) VALUES (?, ?, ?, ?, ?)")
       .run(name, JSON.stringify(settings), req.file.originalname || `${name}.docx`, req.file.buffer, req.session.user.full_name);
-    const id = Number(info.lastInsertRowid);
-    if (groupId) db.prepare("INSERT INTO bulletin_group_forms (group_id, form_id) VALUES (?, ?)").run(groupId, id);
-    res.status(201).json({ id, warnings });
+    res.status(201).json({ id: Number(info.lastInsertRowid), warnings });
   }));
 
-  // Правка: название и правила; шаблон — только если приложен новый.
-  router.put("/forms/:id", withUpload, handle((req, res) => {
-    const { form } = managedForm(req);
+  // Правка: название и разбор; шаблон — только если приложен новый.
+  router.put("/forms/:id", requireAdmin, withUpload, handle((req, res) => {
+    const form = loadForm(parseId(req.params.id));
     if (!form) return res.status(404).json({ error: "Нет такой формы" });
     const p = payloadOf(req);
-    const name = checkName(p.name, "Название формы");
+    const name = checkName(p.name, "Название бюллетеня");
     const settings = B.normalizeSettings(p.settings);
     if (req.file && !isDocx(req.file)) fail("Шаблон — документ Word (.docx)");
     const template = req.file ? req.file.buffer : form.template;
     const warnings = B.checkFormTemplate(template, settings);
-    if (db.prepare("SELECT 1 FROM bulletin_forms WHERE name = ? COLLATE NOCASE AND id != ?").get(name, form.id)) fail(`Форма «${name}» уже есть`);
+    if (db.prepare("SELECT 1 FROM bulletin_forms WHERE name = ? COLLATE NOCASE AND id != ?").get(name, form.id)) fail(`Бюллетень «${name}» уже есть`);
     db.prepare(`UPDATE bulletin_forms SET name = ?, settings = ?, filename = ?, template = ?, updated_by = ?, updated_at = datetime('now') WHERE id = ?`)
       .run(name, JSON.stringify(settings), req.file ? (req.file.originalname || form.filename) : form.filename, template, req.session.user.full_name, form.id);
     res.json({ ok: true, warnings });
   }));
 
-  router.delete("/forms/:id", handle((req, res) => {
-    const { form } = managedForm(req);
-    if (!form) return res.status(404).json({ error: "Нет такой формы" });
-    db.prepare("DELETE FROM bulletin_forms WHERE id = ?").run(form.id);
+  router.delete("/forms/:id", requireAdmin, handle((req, res) => {
+    const id = parseId(req.params.id);
+    const info = id ? db.prepare("DELETE FROM bulletin_forms WHERE id = ?").run(id) : { changes: 0 };
+    if (!info.changes) return res.status(404).json({ error: "Нет такой формы" });
     res.json({ ok: true });
   }));
 

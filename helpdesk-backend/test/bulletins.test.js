@@ -27,13 +27,13 @@ const TEMPLATE_350 = fs.readFileSync(path.join(__dirname, "..", "bulletins", "35
 const TEMPLATE_352 = fs.readFileSync(path.join(__dirname, "..", "bulletins", "352.docx"));
 const XLS_REGIONS = fs.readFileSync(path.join(__dirname, "fixtures", "bulletin-regions.xls"));
 const SETTINGS_350 = B.normalizeSettings({
-  sign: "Индексы производства по видам экономической деятельности", fileName: "350_{ММ}_{ГГГГ}",
+  fileName: "350_{ММ}_{ГГГГ}",
   valueCols: ["C", "D", "E"],
   rules: [{ kind: "раздел", codes: "@", sentenceCase: true }, { kind: "вид", codes: "##", sections: ["C"] }],
 });
 
 const SETTINGS_352 = B.normalizeSettings({
-  sign: "Индекс промышленного производства по субъектам Российской Федерации", fileName: "352_{ММ}_{ГГГГ}",
+  fileName: "352_{ММ}_{ГГГГ}",
   codeCol: "", valueCols: ["1!*", "3!*", "2!*"],
   rangeFrom: "Российская Федерация", rangeTo: "Северо-Западный федеральный округ",
   rules: [{ kind: "итог", codes: "Российская Федерация, *федеральный округ" }, { kind: "регион", codes: "*" }],
@@ -175,10 +175,6 @@ test("документ по форме 352: строки по диапазону
     assert.doesNotMatch(text, /[{}]/);
     assert.strictEqual(out.rows, 5);
   }
-  // Форма узнаётся по тексту с листа «Содержание», 350 к этой книге не подходит.
-  const forms = [{ name: "352", settings: SETTINGS_352 }, { name: "350", settings: SETTINGS_350 }];
-  assert.deepStrictEqual(B.matchingForms(XLS_REGIONS, forms).map((f) => f.name), ["352"]);
-  assert.deepStrictEqual(B.matchingForms(XLS, forms).map((f) => f.name), ["350"]);
 });
 
 test("нет листа из правил — понятный отказ", () => {
@@ -252,7 +248,7 @@ test("встроенные формы заводятся по одной и од
   } finally { cleanup(); }
 });
 
-test("группы — только администратору; сотрудник группы видит её формы и собирает документ", async (t) => {
+test("группы — только администратору; сотрудник группы видит её бюллетени и собирает документ", async (t) => {
   const { db, app, Adm, Stat, Other } = await стенд(t);
   const id = form350(db);
 
@@ -264,80 +260,75 @@ test("группы — только администратору; сотрудн
   const list = (await Adm.get("/api/bulletins/groups")).json;
   assert.deepStrictEqual(list.groups[0].logins.map((l) => [l.login, l.name]), [["stat1", "Статова Стат"], ["stat2", "Шаблонов Шаблон"]]);
 
-  // Участник видит форму, посторонний — нет.
+  // Участник видит бюллетень, посторонний — нет.
   const mine = (await Stat.get("/api/bulletins")).json;
   assert.deepStrictEqual(mine.forms.map((f) => f.id), [id]);
   assert.strictEqual(mine.canManage, false);
   assert.deepStrictEqual((await Other.get("/api/bulletins")).json.forms, []);
 
-  // Форма определяется по заголовку таблицы; ответ — готовый .docx с именем по образцу.
-  const r = await multipart(app, Stat, "POST", "/api/bulletins/make", { file: XLS, name: "выгрузка.xls", fields: { date: "05.05.2031" } });
+  // Бюллетень выбирают сами; ответ — готовый .docx с именем по образцу.
+  const r = await multipart(app, Stat, "POST", "/api/bulletins/make", { file: XLS, name: "выгрузка.xls", fields: { form_id: String(id), date: "05.05.2031" } });
   assert.strictEqual(r.status, 200, r.json && r.json.error);
   assert.match(r.headers.get("content-disposition"), /350_03_2031\.docx/);
   assert.match(docText(r.buf), /ЗА ЯНВАРЬ-МАРТ 2031 ГОДА/);
 
-  // Чужая форма по номеру не собирается; плохая дата — 400.
+  // Без выбора — не угадываем; чужой по номеру не собирается; плохая дата — 400.
+  const none = await multipart(app, Stat, "POST", "/api/bulletins/make", { file: XLS });
+  assert.strictEqual(none.status, 400);
+  assert.match(none.json.error, /Выберите бюллетень/);
   const other = await multipart(app, Other, "POST", "/api/bulletins/make", { file: XLS, fields: { form_id: String(id) } });
   assert.strictEqual(other.status, 400);
-  assert.match(other.json.error, /недоступна/);
-  const badDate = await multipart(app, Stat, "POST", "/api/bulletins/make", { file: XLS, fields: { date: "2031-05-05" } });
+  assert.match(other.json.error, /недоступен/);
+  const badDate = await multipart(app, Stat, "POST", "/api/bulletins/make", { file: XLS, fields: { form_id: String(id), date: "2031-05-05" } });
   assert.strictEqual(badDate.status, 400);
 
-  // Таблица не к той форме — понятная причина.
-  const wrong = await multipart(app, Stat, "POST", "/api/bulletins/make", { file: table.xlsx({ title: "Цены производителей за март 2031 года" }) });
-  assert.strictEqual(wrong.status, 400);
-  assert.match(wrong.json.error, /Не удалось определить форму/);
+  // Без права управления шаблонов не видно — и их существование не выдаётся.
+  assert.strictEqual((await fetch(`${app.url}/api/bulletins/forms/${id}/template`, { headers: { Cookie: Stat.cookie } })).status, 404);
+  assert.strictEqual((await multipart(app, Stat, "PUT", `/api/bulletins/forms/${id}/template`, { file: TEMPLATE_350, name: "x.docx" })).status, 404);
 
-  // Управлять формой без права нельзя — и её существование не выдаётся.
-  assert.strictEqual((await Stat.get(`/api/bulletins/forms/${id}`)).status, 404);
-  assert.strictEqual((await Stat.delete(`/api/bulletins/forms/${id}`)).status, 404);
-  assert.strictEqual((await multipart(app, Stat, "POST", "/api/bulletins/forms", { file: TEMPLATE_350, name: "x.docx", fields: { payload: { name: "Х", settings: SETTINGS_350 } } })).status, 403);
-
-  // Исключили из группы — форма пропала сразу, без повторного входа.
+  // Исключили из группы — бюллетень пропал сразу, без повторного входа.
   await Adm.put(`/api/bulletins/groups/${g.json.id}`, { name: "Отдел статистики предприятий", ad_groups: "", logins: "stat2", can_manage: false, forms: [id] });
   assert.deepStrictEqual((await Stat.get("/api/bulletins")).json.forms, []);
   assert.ok(db.prepare("SELECT 1 FROM admin_audit WHERE summary LIKE 'Бюллетени: изменена группа%'").get(), "правка группы — в журнале действий");
 });
 
-test("группа с правом управления правит только свои формы, новую кладёт в свою группу", async (t) => {
+test("группа с правом управления: шаблоны своих бюллетеней и новые по образцу; разбор таблицы — только администратору", async (t) => {
   const { db, app, Adm, Stat, Mgr } = await стенд(t);
   const id = form350(db);
-  const mgrGroup = (await Adm.post("/api/bulletins/groups", { name: "Шаблоны отдела", ad_groups: "", logins: "stat2", can_manage: true, forms: [id] })).json.id;
-  await Adm.post("/api/bulletins/groups", { name: "Отдел", ad_groups: "", logins: "stat1", can_manage: false, forms: [id] });
-  const foreign = (await multipart(app, Adm, "POST", "/api/bulletins/forms", { file: TEMPLATE_350, name: "чужая.docx", fields: { payload: { name: "Чужая форма", settings: SETTINGS_350 } } })).json.id;
+  await Adm.post("/api/bulletins/groups", { name: "Шаблоны отдела", ad_groups: "", logins: "stat2", can_manage: true, forms: [id] });
+  const staff = (await Adm.post("/api/bulletins/groups", { name: "Отдел", ad_groups: "", logins: "stat1", can_manage: false, forms: [id] })).json.id;
+  const foreign = (await multipart(app, Adm, "POST", "/api/bulletins/forms", { file: TEMPLATE_350, name: "чужой.docx", fields: { payload: { name: "Чужой бюллетень", settings: SETTINGS_350 } } })).json.id;
 
-  const access = (await Mgr.get("/api/bulletins")).json;
-  assert.strictEqual(access.canManage, true);
-  assert.deepStrictEqual(access.manageGroups.map((g) => g.id), [mgrGroup]);
-  assert.strictEqual((await Mgr.get(`/api/bulletins/forms/${foreign}`)).status, 404, "форма не своей группы");
+  assert.strictEqual((await Mgr.get("/api/bulletins")).json.canManage, true);
+  assert.strictEqual((await fetch(`${app.url}/api/bulletins/forms/${foreign}/template`, { headers: { Cookie: Mgr.cookie } })).status, 404, "не своей группы");
+  assert.strictEqual((await fetch(`${app.url}/api/bulletins/forms/${id}/template`, { headers: { Cookie: Mgr.cookie } })).status, 200);
 
-  const f = (await Mgr.get(`/api/bulletins/forms/${id}`)).json;
-  assert.deepStrictEqual(f.warnings, []);
-  const tpl = await fetch(`${app.url}/api/bulletins/forms/${id}/template`, { headers: { Cookie: Mgr.cookie } });
-  assert.strictEqual(tpl.status, 200);
+  // Разбор таблицы и бюллетени с нуля — не отделу.
+  assert.strictEqual((await Mgr.get(`/api/bulletins/forms/${id}`)).status, 403);
+  assert.strictEqual((await multipart(app, Mgr, "PUT", `/api/bulletins/forms/${id}`, { fields: { payload: { name: "350", settings: SETTINGS_350 } } })).status, 403);
+  assert.strictEqual((await multipart(app, Mgr, "POST", "/api/bulletins/forms", { file: TEMPLATE_350, name: "x.docx", fields: { payload: { name: "Х", settings: SETTINGS_350 } } })).status, 403);
+  assert.strictEqual((await Mgr.delete(`/api/bulletins/forms/${id}`)).status, 403);
 
-  // Новая форма — в группу управляющего, без явного выбора (группа одна).
-  const created = await multipart(app, Mgr, "POST", "/api/bulletins/forms", {
-    file: TEMPLATE_350, name: "копия.docx", fields: { payload: { name: "350 копия", settings: { ...SETTINGS_350, sign: "" } } },
-  });
-  assert.strictEqual(created.status, 201, created.json && created.json.error);
-  assert.ok(db.prepare("SELECT 1 FROM bulletin_group_forms WHERE group_id = ? AND form_id = ?").get(mgrGroup, created.json.id));
+  // Замена шаблона: чужие метки — сохраняется с предупреждением; не Word — отказ.
+  const odd = await multipart(app, Mgr, "PUT", `/api/bulletins/forms/${id}/template`, { file: TEMPLATE_352, name: "не тот.docx" });
+  assert.strictEqual(odd.status, 200);
+  assert.match(odd.json.warnings[0], /\{#итог\}/);
+  const back = await multipart(app, Mgr, "PUT", `/api/bulletins/forms/${id}/template`, { file: TEMPLATE_350, name: "350 свой.docx" });
+  assert.deepStrictEqual(back.json.warnings, []);
+  assert.strictEqual(db.prepare("SELECT filename FROM bulletin_forms WHERE id = ?").get(id).filename, "350 свой.docx");
+  assert.strictEqual((await multipart(app, Mgr, "PUT", `/api/bulletins/forms/${id}/template`, { file: Buffer.from("не docx"), name: "x.docx" })).status, 400);
+  assert.ok(db.prepare("SELECT 1 FROM admin_audit WHERE summary = 'Бюллетени: заменён шаблон «350 Индексы производства»'").get());
 
-  // Правка: битые правила — 400, шаблон с лишней меткой — сохраняется с предупреждением.
-  const bad = await multipart(app, Mgr, "PUT", `/api/bulletins/forms/${created.json.id}`, { fields: { payload: { name: "350 копия", settings: { ...SETTINGS_350, valueCols: [] } } } });
-  assert.strictEqual(bad.status, 400);
-  const fewer = await multipart(app, Mgr, "PUT", `/api/bulletins/forms/${created.json.id}`, { fields: { payload: { name: "350 копия", settings: { ...SETTINGS_350, valueCols: ["C", "D"] } } } });
-  assert.strictEqual(fewer.status, 200);
-  assert.match(fewer.json.warnings[0], /\{3\}/);
-
-  // Не шаблон Word — отказ.
-  const notDocx = await multipart(app, Mgr, "PUT", `/api/bulletins/forms/${created.json.id}`, { file: Buffer.from("не docx"), name: "x.docx", fields: { payload: { name: "350 копия", settings: SETTINGS_350 } } });
-  assert.strictEqual(notDocx.status, 400);
-
-  // Обычный участник группы формы не правит; управляющий — удаляет свою.
-  assert.strictEqual((await Stat.delete(`/api/bulletins/forms/${created.json.id}`)).status, 404);
-  assert.strictEqual((await Mgr.delete(`/api/bulletins/forms/${created.json.id}`)).status, 200);
-  assert.ok(db.prepare("SELECT 1 FROM admin_audit WHERE summary = 'Бюллетени: удалена форма «350 копия»'").get());
+  // По образцу: тот же разбор, свой шаблон; видят те же группы, что и образец.
+  const copy = await multipart(app, Mgr, "POST", `/api/bulletins/forms/${id}/copy`, { file: TEMPLATE_350, name: "сайт.docx", fields: { payload: { name: "350 для сайта" } } });
+  assert.strictEqual(copy.status, 201, copy.json && copy.json.error);
+  assert.deepStrictEqual(
+    JSON.parse(db.prepare("SELECT settings FROM bulletin_forms WHERE id = ?").get(copy.json.id).settings),
+    JSON.parse(db.prepare("SELECT settings FROM bulletin_forms WHERE id = ?").get(id).settings));
+  assert.ok((await Stat.get("/api/bulletins")).json.forms.some((f) => f.id === copy.json.id), "сотрудники отдела видят новый сразу");
+  assert.ok(db.prepare("SELECT 1 FROM bulletin_group_forms WHERE group_id = ? AND form_id = ?").get(staff, copy.json.id));
+  assert.strictEqual((await multipart(app, Mgr, "POST", `/api/bulletins/forms/${id}/copy`, { file: TEMPLATE_350, name: "x.docx", fields: { payload: { name: "350 для сайта" } } })).status, 400, "имя занято");
+  assert.strictEqual((await multipart(app, Stat, "POST", `/api/bulletins/forms/${id}/copy`, { file: TEMPLATE_350, name: "x.docx", fields: { payload: { name: "Другой" } } })).status, 404, "без права управления");
 });
 
 test("участник по группе домена: форма видна тому, кто вошёл с этой группой", async (t) => {

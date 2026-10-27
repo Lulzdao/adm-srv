@@ -333,20 +333,21 @@ function checkFormTemplate(template, s) {
 function makeDocument({ table, template, settings, date }) {
   const { data, period } = buildData(readBook(table), settings, date);
   const problems = [];
+  const missing = new Set();
   let needsPeriod = false;
   for (const tag of listTags(template)) {
     const kind = tagKind(tag, settings);
     const name = tag.replace(/^[#^]/, "");
     if (!kind) problems.push(`в шаблоне неизвестная метка {${tag}}`);
     else if (kind === "period") needsPeriod = true;
-    else if (kind === "code" && !(name.split(".")[0] in data)) {
-      problems.push(`в таблице нет строки с кодом ${name.split(".")[0].replace(/_/g, ".")} (метка {${name}})`);
-    }
+    else if (kind === "code" && !(name.split(".")[0] in data)) missing.add(name.split(".")[0].replace(/_/g, "."));
   }
+  if (missing.size) problems.unshift(`в таблице нет ${missing.size > 1 ? "строк с кодами" : "строки с кодом"} ${[...missing].join(", ")}`);
   if (needsPeriod && !period) {
     problems.unshift("не нашлись месяц и год — ни в заголовке таблицы («…за сентябрь 2026 года»), ни в шапке последнего заполненного столбца");
   }
-  if (problems.length) fail(`Документ не собран: ${problems.join("; ")}.`);
+  // Чаще всего причина одна: таблица от другого бюллетеня — об этом и говорим первым.
+  if (problems.length) fail(`Документ не собран — проверьте, что выбран нужный бюллетень и таблица к нему: ${problems.join("; ")}.`);
   return { docx: fillDocx(template, data), period, rows: data[LIST].length };
 }
 
@@ -362,18 +363,12 @@ function outputName(form, period) {
   return `${name || "бюллетень"}.docx`;
 }
 
-/** Формы, к которым подходит таблица (по признаку в заголовке любого её листа). */
-function matchingForms(table, forms) {
-  const head = readBook(table).map((sh) => headerText(sh.rows)).join(" ").toLowerCase();
-  return forms.filter((f) => f.settings.sign && head.includes(squash(f.settings.sign).toLowerCase()));
-}
-
 // ---------------------------------------------------------------------------
 //  Правила формы
 // ---------------------------------------------------------------------------
 
 const DEFAULT_SETTINGS = {
-  sign: "", fileName: "{название}_{ММ}_{ГГГГ}", nameCol: "A", codeCol: "B", valueCols: ["C", "D", "E"],
+  fileName: "{название}_{ММ}_{ГГГГ}", nameCol: "A", codeCol: "B", valueCols: ["C", "D", "E"],
   rangeFrom: "", rangeTo: "", rules: [], timesFrom: 200, digits: 1,
 };
 
@@ -397,7 +392,6 @@ function normalizeSettings(input) {
     return c;
   };
   const out = {
-    sign: text(s.sign, "Признак таблицы", 200),
     fileName: text(s.fileName, "Имя файла", 100) || DEFAULT_SETTINGS.fileName,
     nameCol: col(s.nameCol ?? DEFAULT_SETTINGS.nameCol, "Столбец наименования"),
     // Пусто — столбца кода нет: строки листов сопоставляются по наименованию.
@@ -506,7 +500,6 @@ const BUILTIN_FORMS = [
     name: "350 Индексы производства",
     file: "350.docx",
     settings: {
-      sign: "Индексы производства по видам экономической деятельности",
       fileName: "350_{ММ}_{ГГГГ}",
       nameCol: "A", codeCol: "B", valueCols: ["C", "D", "E"],
       rules: [
@@ -523,7 +516,6 @@ const BUILTIN_FORMS = [
     name: "352 Индексы производства по субъектам ЦФО",
     file: "352.docx",
     settings: {
-      sign: "Индекс промышленного производства по субъектам Российской Федерации",
       fileName: "352_{ММ}_{ГГГГ}",
       nameCol: "A", codeCol: "", valueCols: ["1!*", "3!*", "2!*"],
       rangeFrom: "Российская Федерация", rangeTo: "Северо-Западный федеральный округ",
@@ -556,6 +548,6 @@ function seedBuiltinForms(db) {
 module.exports = {
   BulletinError, MONTHS, LIST, PERIOD_TAGS, DEFAULT_SETTINGS,
   readBook, readTable, parsePeriod, periodFromColumn, maskToRegExp, selectRows, fmtValue, periodData, buildData,
-  makeDocument, outputName, matchingForms, checkFormTemplate, unknownTags,
+  makeDocument, outputName, checkFormTemplate, unknownTags,
   normalizeSettings, parseSettings, userGroups, access, canManageAny, lines, seedBuiltinForms,
 };

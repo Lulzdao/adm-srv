@@ -336,6 +336,45 @@ async function renderList(main, opts = {}) {
 // число может вырасти. При переносе четвёртая плитка встала бы во вторую
 // строку, форма подросла бы, и всё под ней уехало вниз — а высота ленты
 // одинакова при любом числе отделов.
+/**
+ * Лента плиток с прокруткой вбок: стрелки и затемнение по краям появляются,
+ * только когда прокручивать есть что. Общая для отделов «Новой заявки» и
+ * бюллетеней. Возвращает прокручиваемый контейнер с плитками.
+ */
+function wireTileStrip(strip) {
+  const scroll = strip.querySelector(".dept-scroll");
+  const nav = { prev: strip.querySelector(".dept-nav.prev"), next: strip.querySelector(".dept-nav.next") };
+  const fade = { left: strip.querySelector(".dept-fade.left"), right: strip.querySelector(".dept-fade.right") };
+
+  function updateStrip() {
+    // Класс ставим ДО замеров: он отводит поля по краям под кнопки, и без него
+    // ширина ленты считалась бы по старой раскладке. Поля появляются только
+    // когда прокручивать есть что — иначе при трёх отделах, которые и так
+    // помещаются, две пустые колонки съели бы 68 px и лента поехала бы на
+    // ровном месте.
+    strip.classList.toggle("scrollable", scroll.scrollWidth > scroll.clientWidth + 4);
+    const влево = scroll.scrollLeft > 4;
+    const вправо = scroll.scrollLeft + scroll.clientWidth < scroll.scrollWidth - 4;
+    nav.prev.hidden = !влево; fade.left.hidden = !влево;
+    nav.next.hidden = !вправо; fade.right.hidden = !вправо;
+  }
+  const шаг = () => scroll.clientWidth * 0.8;
+  nav.prev.onclick = () => scroll.scrollBy({ left: -шаг(), behavior: "smooth" });
+  nav.next.onclick = () => scroll.scrollBy({ left: шаг(), behavior: "smooth" });
+  scroll.addEventListener("scroll", updateStrip);
+  // Колесо мыши крутит ленту вбок. Прокрутку страницы перехватываем только
+  // когда ленте есть куда ехать, иначе колесо над ней «залипало» бы.
+  scroll.addEventListener("wheel", (e) => {
+    if (scroll.scrollWidth <= scroll.clientWidth) return;
+    if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+    e.preventDefault();
+    scroll.scrollLeft += e.deltaY;
+  }, { passive: false });
+  window.addEventListener("resize", updateStrip);
+  updateStrip();
+  return scroll;
+}
+
 function renderCreate(main) {
   let files = [];
   // Скрытые в Администрировании группы плиток не получают: заявки к ним
@@ -439,36 +478,7 @@ function renderCreate(main) {
 
   // --- Лента отделов ------------------------------------------------------
   const strip = document.getElementById("deptStrip");
-  const scroll = document.getElementById("deptScroll");
-  const nav = { prev: strip.querySelector(".dept-nav.prev"), next: strip.querySelector(".dept-nav.next") };
-  const fade = { left: strip.querySelector(".dept-fade.left"), right: strip.querySelector(".dept-fade.right") };
-
-  function updateStrip() {
-    // Класс ставим ДО замеров: он отводит поля по краям под кнопки, и без него
-    // ширина ленты считалась бы по старой раскладке. Поля появляются только
-    // когда прокручивать есть что — иначе при трёх отделах, которые и так
-    // помещаются, две пустые колонки съели бы 68 px и лента поехала бы на
-    // ровном месте.
-    strip.classList.toggle("scrollable", scroll.scrollWidth > scroll.clientWidth + 4);
-    const влево = scroll.scrollLeft > 4;
-    const вправо = scroll.scrollLeft + scroll.clientWidth < scroll.scrollWidth - 4;
-    nav.prev.hidden = !влево; fade.left.hidden = !влево;
-    nav.next.hidden = !вправо; fade.right.hidden = !вправо;
-  }
-  const шаг = () => scroll.clientWidth * 0.8;
-  nav.prev.onclick = () => scroll.scrollBy({ left: -шаг(), behavior: "smooth" });
-  nav.next.onclick = () => scroll.scrollBy({ left: шаг(), behavior: "smooth" });
-  scroll.addEventListener("scroll", updateStrip);
-  // Колесо мыши крутит ленту вбок. Прокрутку страницы перехватываем только
-  // когда ленте есть куда ехать, иначе колесо над ней «залипало» бы.
-  scroll.addEventListener("wheel", (e) => {
-    if (scroll.scrollWidth <= scroll.clientWidth) return;
-    if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
-    e.preventDefault();
-    scroll.scrollLeft += e.deltaY;
-  }, { passive: false });
-  window.addEventListener("resize", updateStrip);
-  updateStrip();
+  const scroll = wireTileStrip(strip);
 
   const ticketPart = document.getElementById("ticketPart");
   const accessPart = document.getElementById("accessPart");
