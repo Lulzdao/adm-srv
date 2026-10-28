@@ -255,7 +255,7 @@ test("группы — только администратору; сотрудн
   assert.strictEqual((await Stat.get("/api/bulletins/groups")).status, 403);
   assert.strictEqual((await Stat.post("/api/bulletins/groups", { name: "Х", ad_groups: "", logins: "stat1", forms: [] })).status, 403);
 
-  const g = await Adm.post("/api/bulletins/groups", { name: "Отдел статистики предприятий", ad_groups: "", logins: "Stat1\nDOMAIN\\stat2", can_manage: false, forms: [id] });
+  const g = await Adm.post("/api/bulletins/groups", { name: "Отдел статистики предприятий", ad_groups: "", logins: "Stat1\nDOMAIN\\stat2", forms: [id] });
   assert.strictEqual(g.status, 201, g.text);
   const list = (await Adm.get("/api/bulletins/groups")).json;
   assert.deepStrictEqual(list.groups[0].logins.map((l) => [l.login, l.name]), [["stat1", "Статова Стат"], ["stat2", "Шаблонов Шаблон"]]);
@@ -263,7 +263,7 @@ test("группы — только администратору; сотрудн
   // Участник видит бюллетень, посторонний — нет.
   const mine = (await Stat.get("/api/bulletins")).json;
   assert.deepStrictEqual(mine.forms.map((f) => f.id), [id]);
-  assert.strictEqual(mine.canManage, false);
+  assert.strictEqual(mine.admin, false);
   assert.deepStrictEqual((await Other.get("/api/bulletins")).json.forms, []);
 
   // Бюллетень выбирают сами; ответ — готовый .docx с именем по образцу.
@@ -282,53 +282,53 @@ test("группы — только администратору; сотрудн
   const badDate = await multipart(app, Stat, "POST", "/api/bulletins/make", { file: XLS, fields: { form_id: String(id), date: "2031-05-05" } });
   assert.strictEqual(badDate.status, 400);
 
-  // Без права управления шаблонов не видно — и их существование не выдаётся.
-  assert.strictEqual((await fetch(`${app.url}/api/bulletins/forms/${id}/template`, { headers: { Cookie: Stat.cookie } })).status, 404);
-  assert.strictEqual((await multipart(app, Stat, "PUT", `/api/bulletins/forms/${id}/template`, { file: TEMPLATE_350, name: "x.docx" })).status, 404);
+  // Шаблоны участнику группы недоступны: их правит только администратор.
+  assert.strictEqual((await fetch(`${app.url}/api/bulletins/forms/${id}/template`, { headers: { Cookie: Stat.cookie } })).status, 403);
+  assert.strictEqual((await multipart(app, Stat, "PUT", `/api/bulletins/forms/${id}/template`, { file: TEMPLATE_350, name: "x.docx" })).status, 403);
 
   // Исключили из группы — бюллетень пропал сразу, без повторного входа.
-  await Adm.put(`/api/bulletins/groups/${g.json.id}`, { name: "Отдел статистики предприятий", ad_groups: "", logins: "stat2", can_manage: false, forms: [id] });
+  await Adm.put(`/api/bulletins/groups/${g.json.id}`, { name: "Отдел статистики предприятий", ad_groups: "", logins: "stat2", forms: [id] });
   assert.deepStrictEqual((await Stat.get("/api/bulletins")).json.forms, []);
   assert.ok(db.prepare("SELECT 1 FROM admin_audit WHERE summary LIKE 'Бюллетени: изменена группа%'").get(), "правка группы — в журнале действий");
 });
 
-test("группа с правом управления: шаблоны своих бюллетеней и новые по образцу; разбор таблицы — только администратору", async (t) => {
+test("шаблоны, новые по образцу и разбор таблицы — только администратору, участникам групп — нет", async (t) => {
   const { db, app, Adm, Stat, Mgr } = await стенд(t);
   const id = form350(db);
+  // Прежний флаг «правит формы» больше ничего не даёт — даже если его прислали.
   await Adm.post("/api/bulletins/groups", { name: "Шаблоны отдела", ad_groups: "", logins: "stat2", can_manage: true, forms: [id] });
-  const staff = (await Adm.post("/api/bulletins/groups", { name: "Отдел", ad_groups: "", logins: "stat1", can_manage: false, forms: [id] })).json.id;
-  const foreign = (await multipart(app, Adm, "POST", "/api/bulletins/forms", { file: TEMPLATE_350, name: "чужой.docx", fields: { payload: { name: "Чужой бюллетень", settings: SETTINGS_350 } } })).json.id;
+  const staff = (await Adm.post("/api/bulletins/groups", { name: "Отдел", ad_groups: "", logins: "stat1", forms: [id] })).json.id;
 
-  assert.strictEqual((await Mgr.get("/api/bulletins")).json.canManage, true);
-  assert.strictEqual((await fetch(`${app.url}/api/bulletins/forms/${foreign}/template`, { headers: { Cookie: Mgr.cookie } })).status, 404, "не своей группы");
-  assert.strictEqual((await fetch(`${app.url}/api/bulletins/forms/${id}/template`, { headers: { Cookie: Mgr.cookie } })).status, 200);
-
-  // Разбор таблицы и бюллетени с нуля — не отделу.
+  assert.ok(!("canManage" in (await Mgr.get("/api/bulletins")).json));
+  assert.strictEqual((await fetch(`${app.url}/api/bulletins/forms/${id}/template`, { headers: { Cookie: Mgr.cookie } })).status, 403);
+  assert.strictEqual((await multipart(app, Mgr, "PUT", `/api/bulletins/forms/${id}/template`, { file: TEMPLATE_350, name: "x.docx" })).status, 403);
+  assert.strictEqual((await multipart(app, Mgr, "POST", `/api/bulletins/forms/${id}/copy`, { file: TEMPLATE_350, name: "x.docx", fields: { payload: { name: "Другой" } } })).status, 403);
   assert.strictEqual((await Mgr.get(`/api/bulletins/forms/${id}`)).status, 403);
   assert.strictEqual((await multipart(app, Mgr, "PUT", `/api/bulletins/forms/${id}`, { fields: { payload: { name: "350", settings: SETTINGS_350 } } })).status, 403);
   assert.strictEqual((await multipart(app, Mgr, "POST", "/api/bulletins/forms", { file: TEMPLATE_350, name: "x.docx", fields: { payload: { name: "Х", settings: SETTINGS_350 } } })).status, 403);
   assert.strictEqual((await Mgr.delete(`/api/bulletins/forms/${id}`)).status, 403);
 
-  // Замена шаблона: чужие метки — сохраняется с предупреждением; не Word — отказ.
-  const odd = await multipart(app, Mgr, "PUT", `/api/bulletins/forms/${id}/template`, { file: TEMPLATE_352, name: "не тот.docx" });
+  // Скачать и заменить шаблон: чужие метки — сохраняется с предупреждением; не Word — отказ.
+  assert.strictEqual((await fetch(`${app.url}/api/bulletins/forms/${id}/template`, { headers: { Cookie: Adm.cookie } })).status, 200);
+  assert.strictEqual((await fetch(`${app.url}/api/bulletins/forms/999/template`, { headers: { Cookie: Adm.cookie } })).status, 404);
+  const odd = await multipart(app, Adm, "PUT", `/api/bulletins/forms/${id}/template`, { file: TEMPLATE_352, name: "не тот.docx" });
   assert.strictEqual(odd.status, 200);
   assert.match(odd.json.warnings[0], /\{#итог\}/);
-  const back = await multipart(app, Mgr, "PUT", `/api/bulletins/forms/${id}/template`, { file: TEMPLATE_350, name: "350 свой.docx" });
+  const back = await multipart(app, Adm, "PUT", `/api/bulletins/forms/${id}/template`, { file: TEMPLATE_350, name: "350 свой.docx" });
   assert.deepStrictEqual(back.json.warnings, []);
   assert.strictEqual(db.prepare("SELECT filename FROM bulletin_forms WHERE id = ?").get(id).filename, "350 свой.docx");
-  assert.strictEqual((await multipart(app, Mgr, "PUT", `/api/bulletins/forms/${id}/template`, { file: Buffer.from("не docx"), name: "x.docx" })).status, 400);
+  assert.strictEqual((await multipart(app, Adm, "PUT", `/api/bulletins/forms/${id}/template`, { file: Buffer.from("не docx"), name: "x.docx" })).status, 400);
   assert.ok(db.prepare("SELECT 1 FROM admin_audit WHERE summary = 'Бюллетени: заменён шаблон «350 Индексы производства»'").get());
 
   // По образцу: тот же разбор, свой шаблон; видят те же группы, что и образец.
-  const copy = await multipart(app, Mgr, "POST", `/api/bulletins/forms/${id}/copy`, { file: TEMPLATE_350, name: "сайт.docx", fields: { payload: { name: "350 для сайта" } } });
+  const copy = await multipart(app, Adm, "POST", `/api/bulletins/forms/${id}/copy`, { file: TEMPLATE_350, name: "сайт.docx", fields: { payload: { name: "350 для сайта" } } });
   assert.strictEqual(copy.status, 201, copy.json && copy.json.error);
   assert.deepStrictEqual(
     JSON.parse(db.prepare("SELECT settings FROM bulletin_forms WHERE id = ?").get(copy.json.id).settings),
     JSON.parse(db.prepare("SELECT settings FROM bulletin_forms WHERE id = ?").get(id).settings));
   assert.ok((await Stat.get("/api/bulletins")).json.forms.some((f) => f.id === copy.json.id), "сотрудники отдела видят новый сразу");
   assert.ok(db.prepare("SELECT 1 FROM bulletin_group_forms WHERE group_id = ? AND form_id = ?").get(staff, copy.json.id));
-  assert.strictEqual((await multipart(app, Mgr, "POST", `/api/bulletins/forms/${id}/copy`, { file: TEMPLATE_350, name: "x.docx", fields: { payload: { name: "350 для сайта" } } })).status, 400, "имя занято");
-  assert.strictEqual((await multipart(app, Stat, "POST", `/api/bulletins/forms/${id}/copy`, { file: TEMPLATE_350, name: "x.docx", fields: { payload: { name: "Другой" } } })).status, 404, "без права управления");
+  assert.strictEqual((await multipart(app, Adm, "POST", `/api/bulletins/forms/${id}/copy`, { file: TEMPLATE_350, name: "x.docx", fields: { payload: { name: "350 для сайта" } } })).status, 400, "имя занято");
 });
 
 test("участник по группе домена: форма видна тому, кто вошёл с этой группой", async (t) => {
@@ -346,7 +346,7 @@ test("участник по группе домена: форма видна т�
   ldap.addUser("petrov", { password: "п2", displayName: "Петров Тест", memberOf: [ldap.group("Otdel-Statistiki-Praktikanty")] });
 
   const { db, app, Adm } = await стенд(t);
-  await Adm.post("/api/bulletins/groups", { name: "Статистика", ad_groups: "Prochaya-Gruppa\n  otdel-statistiki predpriyatiy  ", logins: "", can_manage: false, forms: [form350(db)] });
+  await Adm.post("/api/bulletins/groups", { name: "Статистика", ad_groups: "Prochaya-Gruppa\n  otdel-statistiki predpriyatiy  ", logins: "", forms: [form350(db)] });
 
   const I = client(app.url), P = client(app.url);
   assert.strictEqual((await I.post("/api/auth/login", { mode: "A", login: "ivanova", password: "п1" })).status, 200);

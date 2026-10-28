@@ -6,7 +6,7 @@
 //
 // Здесь же — форма заявки на доступ сотрудника: она живёт на экране «Новая
 // заявка» плиткой «Заявка на доступ», а её настройки (отделы и начальники,
-// отдел ИТ, программы) — в Администрировании заявок. Файлы раздела: этот —
+// отдел ИТ, программы) — в Настройках → Заявка на доступ. Файлы раздела: этот —
 // оболочка, заявка на доступ, настройки; app-acts.js — акты; app-mailings.js —
 // рассылки.
 //
@@ -15,7 +15,6 @@
 const ASSISTANT_VIEWS = [
   { id: "asst:acts", label: "Акты", icon: "receipt" },
   { id: "asst:mail", label: "Рассылки", icon: "mail" },
-  { id: "asst:settings", label: "Настройки", icon: "sliders" },
 ];
 
 let asstRefsCache = null;
@@ -28,7 +27,6 @@ function renderAssistant(main, sub) {
   clearViewPoll();
   if (sub === "acts") return renderAsstActs(main);
   if (sub === "mail") return state.mailOpenId ? renderMailing(main, state.mailOpenId) : renderMailings(main);
-  if (sub === "settings") return renderAsstSettings(main);
 }
 
 // ---- Общие мелочи -----------------------------------------------------------
@@ -224,10 +222,10 @@ function ticketFormCard(ticket) {
     </div>`;
 }
 
-// ---- Заявка на доступ: настройки в Администрировании ------------------------
+// ---- Заявка на доступ: Настройки → Заявка на доступ --------------------------
 
 /**
- * Блок «Заявка на доступ» в Администрировании заявок: отделы и начальники,
+ * Блок «Заявка на доступ» (Настройки → Заявка на доступ): отделы и начальники,
  * какой отдел — ИТ (его начальнику адресована служебная записка), в какую
  * очередь идут заявки, списки программ и должностей.
  */
@@ -257,7 +255,7 @@ async function renderAccessAdmin(box) {
     <div class="field-label" style="margin-top:4px">Кто выполняет доступ к программе</div>
     <div class="as-note" style="margin-bottom:8px;max-width:820px">Программы, отданные группе, уходят ей <b>отдельной заявкой</b> — со своим номером, уведомлениями и закрытием.
       Остальные — одной заявкой в очередь выше. Служебная записка остаётся одна, со всеми программами.
-      Группу из нескольких учёток (например, «АДМ») заводят в Администрирование → Группы исполнителей; её можно скрыть из «Новой заявки» — здесь она всё равно есть.</div>
+      Группу из нескольких учёток (например, «АДМ») заводят в Настройках → Люди и группы → Группы исполнителей; её можно скрыть из «Новой заявки» — здесь она всё равно есть.</div>
     <div class="ax-map" id="axMap"></div>
     <div style="display:flex;justify-content:flex-end;margin-bottom:22px"><button class="btn btn-wire" id="axSave">Сохранить</button></div>
     <div id="axDepts"></div>`;
@@ -297,13 +295,12 @@ async function renderAccessAdmin(box) {
   await asstDictEditor(box.querySelector("#axDepts"), "depts", g, () => renderAccessAdmin(box));
 }
 
-// ---- Настройки (администратор) ----------------------------------------------
+// ---- Настройки → Ассистент (администратор) -----------------------------------
 
 const ASST_SETTINGS_TABS = [
   ["general", "Общие"], ["people", "Подписанты актов"], ["rules", "Неисправности"],
   ["templates", "Шаблоны"], ["mail", "Почта рассылок"],
 ];
-let asstSettingsTab = "general";
 
 // Справочники — одна форма на все: поле, подпись, подсказка.
 const ASST_DICTS = {
@@ -321,7 +318,7 @@ const ASST_DICTS = {
   },
   people: {
     title: "Подписанты актов", add: "Добавить",
-    sub: "Руководитель — в «УТВЕРЖДАЮ» актов; составители выбираются при составлении акта; комиссия — в акте на списание. Начальник отдела ИТ берётся из справочника отделов (Администрирование заявок)",
+    sub: "Руководитель — в «УТВЕРЖДАЮ» актов; составители выбираются при составлении акта; комиссия — в акте на списание. Начальник отдела ИТ берётся из справочника отделов (Настройки → Заявка на доступ)",
     cols: [["role", "Роль"], ["name", "Фамилия И.О."], ["post", "Должность"]],
     fields: [
       ["role", "Роль *", "", "role"], ["name", "Фамилия И.О. *", "Иванов И.И."], ["name_dat", "Фамилия И.О. — кому?", "Иванову И.И."],
@@ -346,30 +343,20 @@ const ASST_DICTS = {
   },
 };
 
-async function renderAsstSettings(main) {
-  main.innerHTML = `
-    ${asstTopbar("Настройки Ассистента")}
-    <div class="page">
-      <div class="toggle-group as-tabs" id="asTabs">
-        ${ASST_SETTINGS_TABS.map(([id, l]) => `<button class="toggle-btn${asstSettingsTab === id ? " active" : ""}" data-tab="${id}">${l}</button>`).join("")}
-      </div>
-      <div id="asTab"><div class="spinner">Загрузка…</div></div>
-    </div>`;
-  main.querySelectorAll("#asTabs .toggle-btn").forEach((b) => {
-    b.onclick = () => { asstSettingsTab = b.dataset.tab; renderAsstSettings(main); };
-  });
-  const box = main.querySelector("#asTab");
+/** Вкладка tab настроек Ассистента — в контейнер box. */
+async function renderAsstSettings(box, tab) {
+  box.innerHTML = `<div class="spinner">Загрузка…</div>`;
   try {
-    const general = ["general", "people"].includes(asstSettingsTab) ? await api("/assistant/settings/general") : null;
-    if (asstSettingsTab === "general") return asstSettingsGeneral(box, general);
-    if (asstSettingsTab === "people") return asstDictEditor(box, "people", general);
-    if (asstSettingsTab === "rules") {
+    const general = ["general", "people"].includes(tab) ? await api("/assistant/settings/general") : null;
+    if (tab === "general") return asstSettingsGeneral(box, general);
+    if (tab === "people") return asstDictEditor(box, "people", general);
+    if (tab === "rules") {
       box.innerHTML = `<div id="asD1"></div><div id="asD2" style="margin-top:28px"></div>`;
       await asstDictEditor(box.querySelector("#asD1"), "rules", general);
       return asstDictEditor(box.querySelector("#asD2"), "reasons", general);
     }
-    if (asstSettingsTab === "templates") return asstSettingsTemplates(box);
-    if (asstSettingsTab === "mail") return mailSettingsTab(box);
+    if (tab === "templates") return asstSettingsTemplates(box);
+    if (tab === "mail") return mailSettingsTab(box);
   } catch (e) {
     box.innerHTML = `<div class="empty-state">${esc(e.message)}</div>`;
   }
@@ -386,7 +373,7 @@ function asstSettingsGeneral(box, g) {
             <div class="as-note">Если в этом году акты уже составлялись вне Ассистента, нумерация продолжится с этого номера</div></div>
         </div>
       </div>
-      <div class="as-note" style="margin:-4px 0 14px">Заявка на доступ, отделы и начальники — в Администрировании заявок.</div>
+      <div class="as-note" style="margin:-4px 0 14px">Заявка на доступ, отделы и начальники — в Настройках → Заявка на доступ.</div>
       <div class="form-foot"><div class="actions"><button class="btn btn-wire" id="gSave">Сохранить</button></div></div>
     </div>`;
   box.querySelector("#gSave").onclick = async () => {

@@ -1,11 +1,10 @@
 // ====== Бюллетени ======
 //
 // Таблица из ЦСОД + бюллетень (шаблон Word и разбор таблицы) → готовый документ.
-// «Сформировать» — всем участникам групп бюллетеней. «Шаблоны» — группам с правом
-// управления: скачать, заменить, сделать новый по образцу. Разбор таблицы (листы,
-// столбцы, строки) и новые бюллетени с нуля — администраторам, как и группы во
-// вкладке Администрирования. Права проверяет сервер (routes/bulletins.js), меню
-// лишь не показывает лишнего.
+// «Бюллетени» в меню — всем участникам групп бюллетеней: собрать документ.
+// Шаблоны (скачать, заменить, новый по образцу), разбор таблицы и группы — только
+// администраторам, в Настройках → Бюллетени. Права проверяет сервер
+// (routes/bulletins.js), меню лишь не показывает лишнего.
 //
 // Всё, что пришло из базы, — в разметку только через esc().
 
@@ -24,18 +23,15 @@ async function refreshBulletinAccess() {
   return state.bulletins;
 }
 
+/** Пункт меню — тем, кому доступен хоть один бюллетень. */
 function bulletinNavItems() {
   const b = state.bulletins;
-  if (!b || (!b.forms.length && !b.canManage)) return [];
-  const items = [{ id: "bull:make", label: "Сформировать", icon: "doc" }];
-  if (b.canManage) items.push({ id: "bull:forms", label: "Шаблоны", icon: "sliders" });
-  return items;
+  return b && b.forms.length ? [{ id: "bull:make", label: "Бюллетени", icon: "doc" }] : [];
 }
 
 function renderBulletins(main, sub) {
   clearViewPoll();
   if (sub === "make") return renderBulletinMake(main);
-  if (sub === "forms") return renderBulletinForms(main);
 }
 
 /** Имя файла из Content-Disposition (filename* — в UTF-8). */
@@ -68,7 +64,7 @@ async function renderBulletinMake(main) {
   const page = main.querySelector(".page");
   if (!b || !b.forms.length) {
     page.innerHTML = `<div class="form-narrow"><div class="empty-state">Вам пока не доступен ни один бюллетень.
-      Доступ даёт администратор платформы: Администрирование → Бюллетени.</div></div>`;
+      Доступ даёт администратор платформы: Настройки → Бюллетени.</div></div>`;
     return;
   }
   // Выбранный в прошлый раз бюллетень — снова выбран: чаще всего нужен тот же.
@@ -169,17 +165,15 @@ async function renderBulletinMake(main) {
   };
 }
 
-// ---- Шаблоны ---------------------------------------------------------------
+// ---- Настройки → Бюллетени → Шаблоны (администраторам) ----------------------
 
-async function renderBulletinForms(main) {
-  main.innerHTML = `<div class="topbar"><div class="topbar-title">Шаблоны бюллетеней</div></div>
-    <div class="page"><div class="spinner">Загрузка…</div></div>`;
+async function renderBulletinForms(page) {
+  page.innerHTML = `<div class="spinner">Загрузка…</div>`;
   const b = await refreshBulletinAccess();
-  const page = main.querySelector(".page");
-  if (!b || !b.canManage) { page.innerHTML = `<div class="form-narrow"><div class="empty-state">Нет прав на шаблоны бюллетеней.</div></div>`; return; }
-  const mine = b.forms.filter((f) => f.canEdit);
+  if (!b || !b.admin) { page.innerHTML = `<div class="empty-state">Шаблоны бюллетеней правят администраторы платформы.</div>`; return; }
+  const mine = b.forms;
   page.innerHTML = `
-    <div class="form-narrow">
+    <div>
       <div class="as-note" style="margin-bottom:16px">Чтобы поменять оформление или текст бюллетеня: скачайте шаблон, поправьте его в Word
         и загрузите обратно. Слова в фигурных скобках — <code>{год}</code>, <code>{периоду}</code>, <code>{#строки}</code> — не трогайте:
         на их место встанут данные из таблицы. Новый бюллетень по той же таблице — кнопка «По образцу».</div>
@@ -193,12 +187,12 @@ async function renderBulletinForms(main) {
             <button class="btn btn-ghost as-btn-sm" data-get="${f.id}">${icon("download", 14)} Скачать</button>
             <button class="btn btn-ghost as-btn-sm" data-up="${f.id}">${icon("upload", 14)} Заменить</button>
             <button class="btn btn-ghost as-btn-sm" data-copy="${f.id}">${icon("plus", 14)} По образцу</button>
-            ${b.admin ? `<button class="btn btn-ghost as-btn-sm" data-edit="${f.id}">${icon("sliders", 14)} Разбор таблицы</button>
-              <button class="btn btn-text as-btn-sm" data-del="${f.id}">Удалить</button>` : ""}
+            <button class="btn btn-ghost as-btn-sm" data-edit="${f.id}">${icon("sliders", 14)} Разбор таблицы</button>
+            <button class="btn btn-text as-btn-sm" data-del="${f.id}">Удалить</button>
           </div>
         </div>`).join("") : `<div class="empty-state">Бюллетеней пока нет.</div>`}
-      ${b.admin ? `<div style="margin-top:14px;display:flex;justify-content:flex-end;">
-        <button class="btn btn-wire" id="bfNew">${icon("plus", 14)} Новый бюллетень с нуля</button></div>` : ""}
+      <div style="margin-top:14px;display:flex;justify-content:flex-end;">
+        <button class="btn btn-wire" id="bfNew">${icon("plus", 14)} Новый бюллетень с нуля</button></div>
       <input type="file" id="bfUp" accept=".docx" hidden>
     </div>`;
   const byId = (id) => mine.find((f) => f.id === Number(id));
@@ -214,7 +208,7 @@ async function renderBulletinForms(main) {
     fd.append("file", up.files[0]);
     try {
       warn(await api(`/bulletins/forms/${target}/template`, { method: "PUT", body: fd }), "Шаблон заменён");
-      renderBulletinForms(main);
+      renderBulletinForms(page);
     } catch (e) { toast(e.message, true); }
   };
 
@@ -243,28 +237,27 @@ async function renderBulletinForms(main) {
           warn(await api(`/bulletins/forms/${f.id}/copy`, { method: "POST", body: fd }), "Бюллетень создан");
           m.close();
           await refreshBulletinAccess(); refreshNav();
-          renderBulletinForms(main);
+          renderBulletinForms(page);
         } catch (e) { m.el.querySelector("#cpMsg").textContent = e.message; }
       };
     };
   });
 
-  if (!b.admin) return;
-  page.querySelector("#bfNew").onclick = () => bulletinFormEditor(main, null);
-  page.querySelectorAll("[data-edit]").forEach((x) => { x.onclick = () => bulletinFormEditor(main, Number(x.dataset.edit)); });
+  page.querySelector("#bfNew").onclick = () => bulletinFormEditor(page, null);
+  page.querySelectorAll("[data-edit]").forEach((x) => { x.onclick = () => bulletinFormEditor(page, Number(x.dataset.edit)); });
   page.querySelectorAll("[data-del]").forEach((x) => {
     x.onclick = async () => {
       const f = byId(x.dataset.del);
       if (!(await uiConfirm(`Удалить бюллетень «${f.name}»? Документы по нему больше не собрать.`, { ok: "Удалить", danger: true }))) return;
-      try { await api(`/bulletins/forms/${f.id}`, { method: "DELETE" }); toast("Бюллетень удалён"); await refreshBulletinAccess(); refreshNav(); renderBulletinForms(main); }
+      try { await api(`/bulletins/forms/${f.id}`, { method: "DELETE" }); toast("Бюллетень удалён"); await refreshBulletinAccess(); refreshNav(); renderBulletinForms(page); }
       catch (e) { toast(e.message, true); }
     };
   });
 }
 
-// ---- Разбор таблицы — администраторам ----------------------------------------
+// ---- Разбор таблицы ----------------------------------------------------------
 // Разовая настройка под выгрузку: с каких листов и столбцов брать значения,
-// какие строки выводить. Отделы её не видят — им хватает шаблонов.
+// какие строки выводить.
 
 const BULL_RULE_HINT = "Коды: # — цифра, @ — латинская буква, * — что угодно; несколько — через запятую (10, 11, 12). "
   + "Если столбца кода нет, маска сверяется с наименованием: «Российская Федерация, *федеральный округ». "
@@ -280,8 +273,7 @@ function bulletinRuleRow(r) {
   </tr>`;
 }
 
-async function bulletinFormEditor(main, id) {
-  const page = main.querySelector(".page");
+async function bulletinFormEditor(page, id) {
   page.innerHTML = `<div class="spinner">Загрузка…</div>`;
   let f;
   try {
@@ -294,7 +286,7 @@ async function bulletinFormEditor(main, id) {
   } catch (e) { page.innerHTML = `<div class="empty-state">${esc(e.message)}</div>`; return; }
   const s = f.settings;
   page.innerHTML = `
-    <div class="form-narrow">
+    <div>
       <div class="form-card">
         <div class="form-card-title" style="margin-bottom:16px;">${id ? "Разбор таблицы" : "Новый бюллетень"}</div>
         <div class="form-row" style="margin-bottom:12px">
@@ -331,7 +323,7 @@ async function bulletinFormEditor(main, id) {
         <div class="as-note" style="margin-top:8px">${esc(BULL_RULE_HINT)}</div>
       </div>
       <div class="as-note" style="margin:-4px 0 14px">Метки шаблона: ${BULLETIN_TAGS_HELP}</div>
-      ${!id ? `<div class="as-note" style="margin:-4px 0 14px">Кому виден новый бюллетень — отметьте у групп в Администрировании → Бюллетени.</div>` : ""}
+      ${!id ? `<div class="as-note" style="margin:-4px 0 14px">Кому виден новый бюллетень — отметьте у групп на вкладке «Группы».</div>` : ""}
       ${f.warnings && f.warnings.length ? `<div class="as-note" style="color:var(--red);margin-bottom:12px">${f.warnings.map(esc).join("<br>")}</div>` : ""}
       <div class="form-foot"><div class="hint" id="bfMsg"></div><div class="actions">
         <button class="btn-text" id="bfBack" type="button">К шаблонам</button>
@@ -341,7 +333,7 @@ async function bulletinFormEditor(main, id) {
   const wireRules = () => page.querySelectorAll(".bf-rule-del").forEach((x) => { x.onclick = () => x.closest("tr").remove(); });
   wireRules();
   $("#bfAddRule").onclick = () => { $("#bfRules").insertAdjacentHTML("beforeend", bulletinRuleRow({})); wireRules(); };
-  $("#bfBack").onclick = () => renderBulletinForms(main);
+  $("#bfBack").onclick = () => renderBulletinForms(page);
   const msg = $("#bfMsg");
   $("#bfSave").onclick = async () => {
     const settings = {
@@ -365,15 +357,15 @@ async function bulletinFormEditor(main, id) {
       await refreshBulletinAccess(); refreshNav();
       if (r.warnings && r.warnings.length) {
         toast(`Сохранено, но: ${r.warnings.join("; ")}`, true);
-        return bulletinFormEditor(main, id || r.id);
+        return bulletinFormEditor(page, id || r.id);
       }
       toast("Сохранено");
-      renderBulletinForms(main);
+      renderBulletinForms(page);
     } catch (e) { msg.classList.add("invalid"); msg.textContent = e.message; }
   };
 }
 
-// ---- Администрирование → Бюллетени: группы ----------------------------------
+// ---- Настройки → Бюллетени → Группы ------------------------------------------
 
 async function renderBulletinGroupsAdmin(box) {
   box.innerHTML = `<div class="spinner">Загрузка…</div>`;
@@ -382,7 +374,7 @@ async function renderBulletinGroupsAdmin(box) {
   const { groups, forms } = data;
   const formChecks = (sel) => forms.length
     ? forms.map((f) => `<label class="grp-check" style="margin:2px 14px 2px 0;display:inline-flex"><input type="checkbox" class="bg-form" value="${f.id}" ${sel.includes(f.id) ? "checked" : ""}> ${esc(f.name)}</label>`).join("")
-    : `<div class="as-note">Бюллетеней пока нет — их добавляют в разделе «Бюллетени → Шаблоны».</div>`;
+    : `<div class="as-note">Бюллетеней пока нет — их добавляют на вкладке «Шаблоны».</div>`;
   const card = (g) => `
     <div class="card grp-card" data-id="${g ? g.id : ""}" style="margin-bottom:14px">
       ${g ? "" : `<div class="section-label">Новая группа</div>`}
@@ -397,7 +389,6 @@ async function renderBulletinGroupsAdmin(box) {
       ${g && g.logins.length ? `<div class="grp-who">${g.logins.map((l) => `<span><span class="mono">${esc(l.login)}</span> — ${l.name ? esc(l.name) : `<i>ещё не входил</i>`}</span>`).join("")}</div>` : ""}
       <div class="field-label" style="margin-top:10px">Бюллетени группы</div>
       <div>${formChecks(g ? g.forms : [])}</div>
-      <label class="grp-check"><input type="checkbox" class="bg-manage" ${g && g.can_manage ? "checked" : ""}> Может менять шаблоны бюллетеней группы и делать новые по образцу (раздел «Бюллетени → Шаблоны»)</label>
       <div class="grp-actions">
         ${g ? `<button class="btn btn-ghost bg-del">Удалить группу</button>` : ""}
         <span class="grp-msg"></span>
@@ -407,7 +398,7 @@ async function renderBulletinGroupsAdmin(box) {
   box.innerHTML = `
     <div class="as-note" style="margin-bottom:14px;max-width:820px">Сотрудник видит раздел «Бюллетени», если состоит в группе: по группе домена
       (как она была при его последнем входе) или по логину в списке. У каждой группы свой набор бюллетеней.
-      Администраторы платформы видят и правят все.</div>
+      Шаблоны и разбор таблицы правят только администраторы платформы — они же видят все бюллетени.</div>
     ${groups.map(card).join("")}
     ${card(null)}`;
   box.querySelectorAll(".grp-card").forEach((c) => {
@@ -417,7 +408,7 @@ async function renderBulletinGroupsAdmin(box) {
     c.querySelector(".bg-save").onclick = async () => {
       const body = {
         name: c.querySelector(".bg-name").value, ad_groups: c.querySelector(".bg-ad").value,
-        logins: c.querySelector(".bg-logins").value, can_manage: c.querySelector(".bg-manage").checked,
+        logins: c.querySelector(".bg-logins").value,
         forms: [...c.querySelectorAll(".bg-form:checked")].map((x) => Number(x.value)),
       };
       try {
