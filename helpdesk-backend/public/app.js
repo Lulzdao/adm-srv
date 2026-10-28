@@ -975,15 +975,32 @@ function buildNavHtml() {
   return navHtml;
 }
 
-function renderShell() {
-  const u = state.user;
-  const totalUnread = state.notifications.filter(n => !n.is_read).length;
+/** Подпись роли: «Сотрудник», «Администратор» или отделы исполнителя — под ФИО в меню и в настройках. */
+function userRoleLabel(u) {
   const isAdmin = Boolean(u.is_admin);
   const depts = myDepts(u);
-  const isExecutor = depts.length > 0;
-  const roleLabel = !isExecutor
+  return !depts.length
     ? (isAdmin ? "Администратор" : "Сотрудник")
     : `${depts.join(", ")}${isAdmin ? " · администратор" : ""}`;
+}
+
+/** Выход — кнопка в «Настройках» (app-settings.js). */
+async function logout() {
+  clearViewPoll();
+  if (notifPollHandle) { clearInterval(notifPollHandle); notifPollHandle = null; }
+  await api("/auth/logout", { method: "POST" });
+  // Вход в панель «Искры» живёт в этом же браузере (её токен — в localStorage того же
+  // адреса). Вышли из платформы — выходим и из неё: следующему за этим компьютером
+  // панель не должна открыться сразу вошедшей.
+  try { localStorage.removeItem("admin_token"); localStorage.removeItem("admin_me"); } catch { /* недоступно */ }
+  for (const m of state.modules) setModuleAuthed(m.id, false);
+  state.user = null;
+  renderLogin();
+}
+
+function renderShell() {
+  const u = state.user;
+  const isAdmin = Boolean(u.is_admin);
   const navHtml = buildNavHtml();
 
   root.innerHTML = `
@@ -1003,10 +1020,9 @@ function renderShell() {
             <div style="min-width:0;">
               <div class="user-name">${esc(u.full_name)}</div>
               <div class="user-dept">${esc(u.department || u.ad_login)}</div>
-              <div class="user-role-badge">${esc(roleLabel)}</div>
+              <div class="user-role-badge">${esc(userRoleLabel(u))}</div>
             </div>
           </div>
-          <button class="logout-btn" id="logoutBtn">${icon("logout")} Выйти</button>
         </div>
       </div>
       <div class="main" id="mainArea"></div>
@@ -1019,19 +1035,6 @@ function renderShell() {
   if (isAdmin) paintCertBadge();
 
   wireNav(root);
-
-  document.getElementById("logoutBtn").onclick = async () => {
-    clearViewPoll();
-    if (notifPollHandle) { clearInterval(notifPollHandle); notifPollHandle = null; }
-    await api("/auth/logout", { method: "POST" });
-    // Вход в панель «Искры» живёт в этом же браузере (её токен — в localStorage того же
-    // адреса). Вышли из платформы — выходим и из неё: следующему за этим компьютером
-    // панель не должна открыться сразу вошедшей.
-    try { localStorage.removeItem("admin_token"); localStorage.removeItem("admin_me"); } catch { /* недоступно */ }
-    for (const m of state.modules) setModuleAuthed(m.id, false);
-    state.user = null;
-    renderLogin();
-  };
 
   const main = document.getElementById("mainArea");
   if (state.view === "inbox") renderList(main, { scope: "inbox" });

@@ -3,6 +3,7 @@
 // Всё, что на платформе настраивают, — одним разделом, как настройки телефона: слева
 // категории с цветными значками, справа открытая категория. Вход — шестерёнка в шапке
 // меню, у всех; сотруднику в ней только «Оформление», администратору — всё остальное.
+// Наверху списка — кто вошёл, внизу — «Выйти» (раньше кнопка была под меню).
 // Раньше это было разбросано: щит «Сертификаты» в шапке, «Администрирование» в заявках,
 // группа «Оповещения» внизу меню, «Настройки» в Ассистенте, «Шаблоны» в Бюллетенях,
 // «Оформление» под меню.
@@ -96,6 +97,21 @@ function settingsHint(c) {
   return [mode && mode.name, accent && accent.name].filter(Boolean).join(" · ");
 }
 
+/** Кто вошёл — карточкой наверху списка, как учётная запись в настройках телефона. */
+function settingsMeHtml() {
+  const u = state.user;
+  const initials = String(u.full_name || u.ad_login || "?").trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
+  return `
+    <div class="st-card st-me">
+      <span class="st-avatar" aria-hidden="true">${esc(initials)}</span>
+      <span class="st-item-text">
+        <span class="st-item-label">${esc(u.full_name)}</span>
+        <span class="st-item-hint">${esc([u.department, u.ad_login].filter(Boolean).join(" · "))}</span>
+        <span class="st-item-hint">${esc(userRoleLabel(u))}</span>
+      </span>
+    </div>`;
+}
+
 function settingsItemHtml(c) {
   const keys = [c.label, c.sub, c.keys, ...(c.tabs || []).map((t) => t.label)].join(" ").toLowerCase();
   return `
@@ -124,18 +140,28 @@ function renderSettings(main, rest) {
     </div>
     <div class="page st-page${cat ? " st-open" : ""}">
       <nav class="st-list" aria-label="Разделы настроек">
+        ${settingsMeHtml()}
         ${groups.map((g) => `
           <div class="st-group">
             <div class="st-group-label">${esc(g)}</div>
             <div class="st-card">${cats.filter((c) => c.group === g).map(settingsItemHtml).join("")}</div>
           </div>`).join("")}
         <div class="st-none" hidden>Ничего не нашлось. Попробуйте другое слово: «сертификат», «шаблон», «почта».</div>
+        <div class="st-card st-exit">
+          <button type="button" class="st-row st-logout" id="stLogout">
+            <span class="st-row-text">
+              <span class="st-row-label">${icon("logout", 16)} Выйти</span>
+              <span class="st-row-hint">Из «Центра» и из панели «Искры» в этом браузере</span>
+            </span>
+          </button>
+        </div>
       </nav>
       <section class="st-pane" id="stPane"></section>
     </div>`;
 
   const page = main.querySelector(".st-page");
   const search = main.querySelector("#stSearch");
+  main.querySelector("#stLogout").onclick = () => logout();
   main.querySelectorAll(".st-item").forEach((b) => {
     b.onclick = () => openSettingsCat(main, cats.find((c) => c.id === b.dataset.cat));
   });
