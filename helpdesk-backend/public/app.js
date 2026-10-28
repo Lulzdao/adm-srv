@@ -11,7 +11,8 @@ const ICON_PATHS = {
   search: '<circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>',
   paperclip: '<path d="M21 12.5l-8.5 8.5a4 4 0 1 1-5.66-5.66l9-9a2.5 2.5 0 1 1 3.54 3.54l-9 9a1 1 0 1 1-1.42-1.42l8-8"/>',
   x: '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
-  // Палитра — «Оформление» в настройках.
+  // Палитра — «Оформление» в настройках; панель с колонкой — «Боковое меню».
+  sidebar: '<rect x="3" y="4" width="18" height="16" rx="2"/><line x1="9" y1="4" x2="9" y2="20"/><line x1="5.5" y1="8" x2="6.5" y2="8"/><line x1="5.5" y1="11" x2="6.5" y2="11"/>',
   moon: '<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/>',
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
   palette: '<path d="M12 3a9 9 0 1 0 0 18c1.1 0 1.8-.8 1.8-1.8 0-.5-.2-.9-.5-1.2-.3-.3-.5-.7-.5-1.2 0-1 .8-1.8 1.8-1.8H17a4 4 0 0 0 4-4c0-4.4-4-8-9-8z"/><circle cx="7.5" cy="11.5" r="1"/><circle cx="10" cy="7.5" r="1"/><circle cx="15" cy="7.5" r="1"/>',
@@ -751,10 +752,15 @@ function navBtnHtml(it, active, indented) {
 // потому что внутри всего два вида одного раздела, и прятать их за лишний
 // щелчок незачем.
 const NAV_GROUPS_OPEN_BY_DEFAULT = new Set(["tasks", "assistant"]);
+let navSingleOpen = null; // «по одному разделу»: какой раскрыт (см. buildNavHtml)
+
+function navGroupWouldOpen(groupId) {
+  const saved = state.navGroupOpen[groupId];
+  return saved === true || (saved === undefined && NAV_GROUPS_OPEN_BY_DEFAULT.has(groupId)); // остальные по умолчанию свёрнуты
+}
 
 function navGroupHtml(groupId, label, iconName, badge, items) {
-  const saved = state.navGroupOpen[groupId];
-  const open = saved === true || (saved === undefined && NAV_GROUPS_OPEN_BY_DEFAULT.has(groupId)); // остальные по умолчанию свёрнуты
+  const open = navPrefs().single ? navSingleOpen === groupId : navGroupWouldOpen(groupId);
   return `
     <div class="nav-group${open ? " open" : ""}" data-group="${groupId}">
       <button class="nav-group-header">
@@ -774,6 +780,11 @@ function toggleNavGroup(group) {
   const sub = group.querySelector(".nav-subgroup");
   const open = !group.classList.contains("open");
   state.navGroupOpen[group.dataset.group] = open;
+  // «По одному разделу» (Настройки → Боковое меню): раскрыли этот — остальные сворачиваем.
+  if (open && navPrefs().single) {
+    group.parentElement.querySelectorAll(".nav-group.open").forEach((g) => { if (g !== group) toggleNavGroup(g); });
+    navSingleOpen = group.dataset.group;
+  }
   saveNavGroups();
   group.classList.toggle("open", open);
 
@@ -903,76 +914,117 @@ async function paintCertBadge() {
   paintCertMarks();
 }
 
-// Меню целиком. Отдельно от renderShell: при входе в «Искру» и выходе из неё меню
-// перестраивается само, а основная часть экрана с её панелью остаётся как есть.
-function buildNavHtml() {
+// ====== Боковое меню: свой порядок и «по одному разделу» ======
+//
+// Настраивается в «Настройки → Боковое меню», хранится как тема (theme.js): в этом
+// браузере и отдельно для каждого логина — за одним компьютером работают сменами.
+// order — ключи пунктов верхнего уровня; пункты, которых в нём нет (новый модуль,
+// другая роль), встают рядом со своим соседом по умолчанию. single — раскрыт
+// только один раздел: открыли другой — прежний сворачивается.
+const NAV_PREFS_KEY = () => `adm.navPrefs:${String((state.user && state.user.ad_login) || "").toLowerCase()}`;
+function navPrefs() {
+  try {
+    const p = JSON.parse(localStorage.getItem(NAV_PREFS_KEY())) || {};
+    return { order: Array.isArray(p.order) ? p.order.filter((k) => typeof k === "string") : [], single: p.single === true };
+  } catch { return { order: [], single: false }; }
+}
+function saveNavPrefs(p) {
+  try { localStorage.setItem(NAV_PREFS_KEY(), JSON.stringify({ order: p.order, single: p.single })); } catch { /* хранилище недоступно — до перезагрузки */ }
+}
+
+/** Пункты по сохранённому порядку; незнакомые — сразу за своим соседом по умолчанию. */
+function orderNav(entries, order) {
+  if (!order.length) return entries;
+  const rank = new Map(order.map((k, i) => [k, i]));
+  const out = entries.filter((e) => rank.has(e.key)).sort((a, b) => rank.get(a.key) - rank.get(b.key));
+  entries.forEach((e, i) => {
+    if (rank.has(e.key)) return;
+    const prev = entries.slice(0, i).reverse().find((p) => out.includes(p));
+    out.splice(prev ? out.indexOf(prev) + 1 : 0, 0, e);
+  });
+  return out;
+}
+
+/**
+ * Пункты верхнего уровня меню этого человека, в порядке по умолчанию:
+ * { key, label, icon, items? } — items у раскрывающихся разделов.
+ */
+function navEntries() {
   const u = state.user;
   const totalUnread = state.notifications.filter(n => !n.is_read).length;
   const isAdmin = Boolean(u.is_admin);
   // Исполнитель — тот, у кого есть хотя бы один отдел. Отдел ИТ тоже сюда
   // попадает: администратор и исполнитель ИТ — разные вещи, и человек вполне
   // может быть и тем и другим одновременно.
-  const depts = myDepts(u);
-  const isExecutor = depts.length > 0;
+  const isExecutor = myDepts(u).length > 0;
+  const btn = (it) => ({ key: it.id, label: it.label, icon: it.icon, it });
+  const group = (key, label, iconName, badge, items) => ({ key, label, icon: iconName, badge, items });
 
   // В меню — только ежедневная работа; всё, что настраивают, — в «Настройках» (шестерёнка в шапке).
-  let navHtml;
+  const entries = [];
   if (isAdmin) {
-    const subItems = [
+    entries.push(group("tickets", "Заявки", "folder", totalUnread, [
       { id: "inbox", label: "Входящие заявки", icon: "inbox", badge: totalUnread },
       { id: "mine", label: "Мои заявки", icon: "folder" },
       { id: "create", label: "Новая заявка", icon: "plus" },
       { id: "dashboard", label: "Статистика", icon: "chart" },
-    ];
-    navHtml = navGroupHtml("tickets", "Заявки", "folder", totalUnread, subItems);
+    ]));
     // Задачи — сразу под заявками: это тоже ежедневная работа, а не настройка.
     // Счётчик — мои открытые задачи, которые просрочены или где есть новое.
-    navHtml += navGroupHtml("tasks", "Задачи", "task", state.taskAttention, [
+    entries.push(group("tasks", "Задачи", "task", state.taskAttention, [
       { id: "tasks", label: "Список", icon: "list" },
       { id: "taskcal", label: "Календарь", icon: "calendar" },
       { id: "tasknotes", label: "Заметки", icon: "pen" },
-    ]);
+    ]));
   } else if (isExecutor) {
-    const items = [
-      { id: "inbox", label: "Входящие заявки", icon: "inbox", badge: totalUnread },
-      { id: "mine", label: "Мои заявки", icon: "folder" },
-      { id: "create", label: "Новая заявка", icon: "plus" },
-    ];
+    entries.push(btn({ id: "inbox", label: "Входящие заявки", icon: "inbox", badge: totalUnread }));
+    entries.push(btn({ id: "mine", label: "Мои заявки", icon: "folder" }));
+    entries.push(btn({ id: "create", label: "Новая заявка", icon: "plus" }));
     // Исполнителям ХОЗ и ЕГРПО акты не нужны — рассылки отдельным пунктом.
-    if (!canActs(u)) items.push({ id: "asst:mail", label: "Рассылки", icon: "mail" });
-    navHtml = items.map(it => navBtnHtml(it, navView() === it.id, false)).join("");
+    if (!canActs(u)) entries.push(btn({ id: "asst:mail", label: "Рассылки", icon: "mail" }));
   } else {
     // Обычному сотруднику — только его заявки, новая заявка и рассылки:
     // акты ему не нужны, и группа «Ассистент» ради одного пункта лишняя.
-    const items = [
-      { id: "inbox", label: "Мои заявки", icon: "folder", badge: totalUnread },
-      { id: "create", label: "Новая заявка", icon: "plus" },
-      { id: "asst:mail", label: "Рассылки", icon: "mail" },
-    ];
-    navHtml = items.map(it => navBtnHtml(it, navView() === it.id, false)).join("");
+    entries.push(btn({ id: "inbox", label: "Мои заявки", icon: "folder", badge: totalUnread }));
+    entries.push(btn({ id: "create", label: "Новая заявка", icon: "plus" }));
+    entries.push(btn({ id: "asst:mail", label: "Рассылки", icon: "mail" }));
   }
 
   // Ассистент — администраторам и отделу ИТ, после заявок и задач: это тоже
-  // ежедневная работа.
-  if (canActs(u)) navHtml += navGroupHtml("assistant", "Ассистент", "briefcase", 0, ASSISTANT_VIEWS);
+  // ежедневная работа. Бюллетени у них — внутри Ассистента; у остальных группы
+  // «Ассистент» нет, и бюллетени — своей кнопкой.
+  if (canActs(u)) entries.push(group("assistant", "Ассистент", "briefcase", 0, [...ASSISTANT_VIEWS, ...bulletinNavItems()]));
+  else entries.push(...bulletinNavItems().map(btn));
 
-  // Бюллетени — одна кнопка: собрать документ. Шаблоны и группы — в «Настройках».
-  navHtml += bulletinNavItems().map((it) => navBtnHtml(it, navView() === it.id, false)).join("");
-
-  if (state.modules.length) {
-    navHtml += state.modules.map(m => {
-      const views = (m.views && m.views.length) ? m.views : [{ id: "root", label: m.label, sub: "" }];
-      // Модуль со своим входом («Искра»): до входа в него — одна кнопка, разделы — после.
-      if (views.length === 1 || (m.authGated && !moduleAuthed(m.id))) {
-        const it = { id: `module:${m.id}:${views[0].id}`, label: m.label, icon: moduleIcon(m.id) };
-        return navBtnHtml(it, navView() === it.id, false);
-      }
-      const items = views.map(v => ({ id: `module:${m.id}:${v.id}`, label: v.label, icon: MODULE_VIEW_ICONS[v.id] }));
-      return navGroupHtml(`mod-${m.id}`, m.label, moduleIcon(m.id), 0, items);
-    }).join("");
+  for (const m of state.modules) {
+    const views = (m.views && m.views.length) ? m.views : [{ id: "root", label: m.label, sub: "" }];
+    // Модуль со своим входом («Искра»): до входа в него — одна кнопка, разделы — после.
+    // Ключ один и тот же, чтобы место в меню не менялось от входа и выхода.
+    if (views.length === 1 || (m.authGated && !moduleAuthed(m.id))) {
+      entries.push({ ...btn({ id: `module:${m.id}:${views[0].id}`, label: m.label, icon: moduleIcon(m.id) }), key: `mod-${m.id}` });
+    } else {
+      entries.push(group(`mod-${m.id}`, m.label, moduleIcon(m.id), 0,
+        views.map(v => ({ id: `module:${m.id}:${v.id}`, label: v.label, icon: MODULE_VIEW_ICONS[v.id] }))));
+    }
   }
+  return entries;
+}
 
-  return navHtml;
+// Меню целиком. Отдельно от renderShell: при входе в «Искру» и выходе из неё меню
+// перестраивается само, а основная часть экрана с её панелью остаётся как есть.
+function buildNavHtml() {
+  const prefs = navPrefs();
+  const entries = orderNav(navEntries(), prefs.order);
+  // «По одному разделу»: из раскрытых остаётся тот, где открытый сейчас экран, иначе — верхний.
+  navSingleOpen = null;
+  if (prefs.single) {
+    const open = entries.filter((e) => e.items && navGroupWouldOpen(e.key));
+    const here = open.find((e) => e.items.some((it) => it.id === navView()));
+    navSingleOpen = (here || open[0] || {}).key || null;
+  }
+  return entries.map((e) => (e.items
+    ? navGroupHtml(e.key, e.label, e.icon, e.badge, e.items)
+    : navBtnHtml(e.it, navView() === e.it.id, false))).join("");
 }
 
 /** Подпись роли: «Сотрудник», «Администратор» или отделы исполнителя — под ФИО в меню и в настройках. */

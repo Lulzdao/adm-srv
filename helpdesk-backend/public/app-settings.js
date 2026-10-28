@@ -2,7 +2,8 @@
 //
 // Всё, что на платформе настраивают, — одним разделом, как настройки телефона: слева
 // категории с цветными значками, справа открытая категория. Вход — шестерёнка в шапке
-// меню, у всех; сотруднику в ней только «Оформление», администратору — всё остальное.
+// меню, у всех; сотруднику в ней только личное (оформление, боковое меню),
+// администратору — всё остальное.
 // Наверху списка — кто вошёл, внизу — «Выйти» (раньше кнопка была под меню).
 // Раньше это было разбросано: щит «Сертификаты» в шапке, «Администрирование» в заявках,
 // группа «Оповещения» внизу меню, «Настройки» в Ассистенте, «Шаблоны» в Бюллетенях,
@@ -17,6 +18,9 @@ const SETTINGS_CATS = [
   { id: "look", group: "Личное", label: "Оформление", icon: "palette", tone: "accent", all: true,
     sub: "Тема и цвет — только для вас, в этом браузере", keys: "тема цвет акцент тёмная светлая цветная",
     render: (box) => renderLookSettings(box) },
+  { id: "nav", group: "Личное", label: "Боковое меню", icon: "sidebar", tone: "accent", all: true,
+    sub: "Порядок разделов и как они раскрываются — только для вас, в этом браузере", keys: "меню сайдбар порядок разделы раскрытие",
+    render: (box) => renderNavSettings(box) },
 
   { id: "health", group: "Платформа", label: "Состояние", icon: "pulse", tone: "teal",
     sub: "Службы, модули, почтовая очередь и место на диске", keys: "службы модули диск очередь мониторинг",
@@ -48,10 +52,14 @@ const SETTINGS_CATS = [
     sub: "Кто и когда менял настройки. Только чтение", keys: "журнал история изменения",
     render: (box) => renderAudit(box) },
 
-  { id: "assistant", group: "Разделы", label: "Ассистент", icon: "briefcase", tone: "jade",
-    sub: "Акты, подписанты, неисправности, шаблоны документов, почта рассылок", keys: "акты подписанты неисправности причины списания рассылки ящики",
-    tabs: ASST_SETTINGS_TABS.map(([id, label]) => ({ id, label, render: (box) => renderAsstSettings(box, id) })) },
-  { id: "bulletins", group: "Разделы", label: "Бюллетени", icon: "doc", tone: "gold",
+  { id: "acts", group: "Ассистент", label: "Акты", icon: "receipt", tone: "jade",
+    sub: "Организация и нумерация, подписанты, неисправности, шаблоны документов", keys: "подписанты неисправности причины списания бланки организация нумерация",
+    tabs: [["general", "Общие"], ["people", "Подписанты"], ["rules", "Неисправности"], ["templates", "Шаблоны документов"]]
+      .map(([id, label]) => ({ id, label, render: (box) => renderAsstSettings(box, id) })) },
+  { id: "mailings", group: "Ассистент", label: "Рассылки", icon: "mail", tone: "blue",
+    sub: "Почтовый сервер рассылок, общие ящики отделов, пауза и подпись", keys: "почта ящики подпись пауза",
+    render: (box) => renderAsstSettings(box, "mail") },
+  { id: "bulletins", group: "Ассистент", label: "Бюллетени", icon: "doc", tone: "gold",
     sub: "Кто собирает бюллетени и по каким шаблонам", keys: "группы шаблоны формы word разбор таблицы цсод",
     tabs: [
       { id: "groups", label: "Группы", render: (box) => renderBulletinGroupsAdmin(box) },
@@ -63,7 +71,10 @@ const SETTINGS_CATS = [
 const SETTINGS_MOVED = {
   admin: "settings:health", certs: "settings:certs",
   "notif:feed": "settings:notif:feed", "notif:templates": "settings:notif:templates", "notif:smtp": "settings:notif:smtp",
-  "asst:settings": "settings:assistant", "bull:forms": "settings:bulletins:forms",
+  "asst:settings": "settings:acts", "bull:forms": "settings:bulletins:forms",
+  // Одной категорией «Ассистент» настройки были недолго — до деления на акты и рассылки.
+  "settings:assistant": "settings:acts", "settings:assistant:mail": "settings:mailings",
+  ...Object.fromEntries(["general", "people", "rules", "templates"].map((t) => [`settings:assistant:${t}`, `settings:acts:${t}`])),
 };
 
 let settingsQuery = ""; // поиск переживает переход между категориями
@@ -291,4 +302,94 @@ function renderLookSettings(box) {
     const hint = document.querySelector('.st-item[data-cat="look"] .st-item-hint');
     if (hint) { hint.dataset.hint = settingsHint(SETTINGS_CATS[0]); hint.textContent = hint.dataset.hint; }
   };
+}
+
+// ---- Личное → Боковое меню ---------------------------------------------------
+// Порядок разделов верхнего уровня (перетащить или стрелками) и «по одному разделу».
+// Подпункты внутри разделов остаются в своём порядке. Хранится как тема — navPrefs()
+// в app.js. Меню слева меняется сразу.
+
+function renderNavSettings(box) {
+  const prefs = navPrefs();
+  const defaults = navEntries();
+  const entries = orderNav(defaults, prefs.order);
+  const custom = entries.some((e, i) => e !== defaults[i]);
+  box.innerHTML = `
+    <div class="st-section-label">Порядок разделов</div>
+    <div class="st-card st-order" id="stOrder">${entries.map((e, i) => `
+      <div class="st-row st-order-row" draggable="true" data-key="${esc(e.key)}">
+        <span class="st-grip" aria-hidden="true">${icon("grip", 16)}</span>
+        <span class="st-order-icon">${icon(e.icon, 16)}</span>
+        <span class="st-row-text"><span class="st-row-label">${esc(e.label)}</span>
+          ${e.items ? `<span class="st-row-hint">${esc(e.items.map((it) => it.label).join(", "))}</span>` : ""}</span>
+        <button type="button" class="icon-btn st-move" data-move="-1" aria-label="Выше: ${esc(e.label)}" ${i === 0 ? "disabled" : ""}>${icon("chevron", 15)}</button>
+        <button type="button" class="icon-btn st-move down" data-move="1" aria-label="Ниже: ${esc(e.label)}" ${i === entries.length - 1 ? "disabled" : ""}>${icon("chevron", 15)}</button>
+      </div>`).join("")}</div>
+    <div class="st-foot">Перетащите раздел за значок слева или двигайте стрелками. Подпункты внутри разделов остаются на своих местах.</div>
+    ${custom ? `<button type="button" class="btn-text st-reset" id="stOrderReset">Вернуть порядок по умолчанию</button>` : ""}
+
+    <div class="st-section-label">Раскрытие разделов</div>
+    <div class="st-card">
+      <button type="button" class="st-row" id="stSingle" role="switch" aria-checked="${prefs.single}">
+        <span class="st-row-text">
+          <span class="st-row-label">Открывать по одному разделу</span>
+          <span class="st-row-hint">Раскрыли раздел — остальные сворачиваются</span>
+        </span>
+        <span class="st-switch${prefs.single ? " on" : ""}" aria-hidden="true"></span>
+      </button>
+    </div>
+    <div class="st-foot">Настройки меню хранятся в этом браузере и действуют только для вас.</div>`;
+
+  const save = (patch) => {
+    saveNavPrefs({ ...navPrefs(), ...patch });
+    refreshNav();
+    renderNavSettings(box);
+  };
+  const keys = () => [...box.querySelectorAll(".st-order-row")].map((r) => r.dataset.key);
+
+  box.querySelectorAll(".st-move").forEach((b) => {
+    b.onclick = () => {
+      const k = keys();
+      const i = k.indexOf(b.closest(".st-order-row").dataset.key);
+      const j = i + Number(b.dataset.move);
+      if (j < 0 || j >= k.length) return;
+      [k[i], k[j]] = [k[j], k[i]];
+      save({ order: k });
+      // Фокус — на ту же стрелку того же раздела: так его можно двигать дальше с клавиатуры.
+      const again = box.querySelector(`.st-order-row[data-key="${CSS.escape(k[j])}"] .st-move[data-move="${b.dataset.move}"]`);
+      if (again && !again.disabled) again.focus();
+    };
+  });
+
+  // Перетаскивание: строка встаёт перед той, над верхней половиной которой её отпустили, или после неё.
+  const list = box.querySelector("#stOrder");
+  let dragged = null;
+  list.addEventListener("dragstart", (e) => {
+    dragged = e.target.closest(".st-order-row");
+    if (!dragged) return;
+    dragged.classList.add("dragging");
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", dragged.dataset.key);
+  });
+  list.addEventListener("dragover", (e) => {
+    if (!dragged) return;
+    e.preventDefault();
+    const over = e.target.closest(".st-order-row");
+    if (!over || over === dragged) return;
+    const r = over.getBoundingClientRect();
+    over.parentElement.insertBefore(dragged, e.clientY < r.top + r.height / 2 ? over : over.nextSibling);
+  });
+  list.addEventListener("drop", (e) => e.preventDefault());
+  list.addEventListener("dragend", () => {
+    if (!dragged) return;
+    dragged.classList.remove("dragging");
+    dragged = null;
+    const k = keys();
+    if (k.join() !== orderNav(navEntries(), navPrefs().order).map((e) => e.key).join()) save({ order: k });
+    else renderNavSettings(box);
+  });
+
+  const reset = box.querySelector("#stOrderReset");
+  if (reset) reset.onclick = () => save({ order: [] });
+  box.querySelector("#stSingle").onclick = () => save({ single: !navPrefs().single });
 }
