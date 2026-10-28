@@ -145,7 +145,6 @@ function bulletinGroupDetails(body) {
   return {
     "группы домена": String(body.ad_groups || "").split(/\r?\n/).map((x) => x.trim()).filter(Boolean).join(", ") || "(нет)",
     логины: String(body.logins || "").split(/[\s,;]+/).filter(Boolean).join(", ") || "(нет)",
-    "правит формы": Boolean(body.can_manage),
     форм: Array.isArray(body.forms) ? body.forms.length : 0,
   };
 }

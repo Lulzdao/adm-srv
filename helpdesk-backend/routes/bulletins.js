@@ -10,9 +10,8 @@ const B = require("../services/bulletins");
 //  Бюллетени
 //
 //  Сотрудник группы выбирает бюллетень, загружает таблицу из ЦСОД и получает
-//  готовый документ Word. Шаблоны Word меняют группы с правом управления —
-//  только у бюллетеней своей группы; разбор таблицы, группы и их наборы
-//  бюллетеней ведёт администратор платформы.
+//  готовый документ Word. Шаблоны Word, разбор таблицы, группы и их наборы
+//  бюллетеней ведёт администратор платформы (Настройки → Бюллетени).
 //
 //  Права — на каждом маршруте по базе, а не по пункту меню: скрытая кнопка
 //  защитой не считается.
@@ -80,14 +79,6 @@ module.exports = function bulletinRoutes(db) {
   };
   const formGroups = db.prepare("SELECT group_id FROM bulletin_group_forms WHERE form_id = ?");
 
-  /** Форма, которой человек может управлять, — иначе 404 (не выдаём, что она есть). */
-  function managedForm(req) {
-    const id = parseId(req.params.id);
-    const a = B.access(db, req.session.user);
-    const form = id && a.manageIds.includes(id) ? loadForm(id) : null;
-    return { form, a };
-  }
-
   // -------------------------------------------------------------------------
   //  Для сотрудников групп
   // -------------------------------------------------------------------------
@@ -98,12 +89,8 @@ module.exports = function bulletinRoutes(db) {
       ? db.prepare(`SELECT id, name, filename, updated_by, updated_at FROM bulletin_forms WHERE id IN (${a.formIds.map(() => "?").join(",")}) ORDER BY name`).all(...a.formIds)
       : [];
     res.json({
-      forms: rows.map((f) => ({
-        id: f.id, name: f.name, filename: f.filename,
-        canEdit: a.manageIds.includes(f.id), updated_by: f.updated_by, updated_at: f.updated_at,
-      })),
+      forms: rows.map((f) => ({ id: f.id, name: f.name, filename: f.filename, updated_by: f.updated_by, updated_at: f.updated_at })),
       groups: a.groups,
-      canManage: B.canManageAny(a),
       admin: a.admin,
     });
   });
@@ -123,22 +110,22 @@ module.exports = function bulletinRoutes(db) {
   }));
 
   // -------------------------------------------------------------------------
-  //  Шаблоны — группам с правом управления (формы своей группы) и администраторам
+  //  Шаблоны и разбор таблицы — только администраторы платформы
   //
-  //  Отдел меняет оформление и формулировки: скачал шаблон, поправил в Word,
-  //  загрузил. Новый бюллетень по той же выгрузке — «по образцу» существующего,
-  //  с тем же разбором таблицы. Сам разбор (листы, столбцы, строки) — разовая
-  //  настройка под выгрузку, его ведёт администратор платформы.
+  //  Оформление и формулировки: скачал шаблон, поправил в Word, загрузил.
+  //  Новый бюллетень по той же выгрузке — «по образцу» существующего, с тем же
+  //  разбором таблицы. Сам разбор (листы, столбцы, строки) — разовая настройка
+  //  под выгрузку.
   // -------------------------------------------------------------------------
 
-  router.get("/forms/:id/template", handle((req, res) => {
-    const { form } = managedForm(req);
+  router.get("/forms/:id/template", requireAdmin, handle((req, res) => {
+    const form = loadForm(parseId(req.params.id));
     if (!form) return res.status(404).json({ error: "Нет такой формы" });
     sendFile(res, form.template, form.filename, DOCX_TYPE);
   }));
 
-  router.put("/forms/:id/template", withUpload, handle((req, res) => {
-    const { form } = managedForm(req);
+  router.put("/forms/:id/template", requireAdmin, withUpload, handle((req, res) => {
+    const form = loadForm(parseId(req.params.id));
     if (!form) return res.status(404).json({ error: "Нет такой формы" });
     if (!isDocx(req.file)) fail("Выберите шаблон Word (.docx)");
     const warnings = B.checkFormTemplate(req.file.buffer, form.settings);
@@ -148,10 +135,9 @@ module.exports = function bulletinRoutes(db) {
   }));
 
   // По образцу: новое название и свой шаблон, разбор таблицы — как у образца.
-  // Новый бюллетень видят те же группы, что и образец: сотрудники отдела получают
-  // его сразу, без похода к администратору.
-  router.post("/forms/:id/copy", withUpload, handle((req, res) => {
-    const { form } = managedForm(req);
+  // Новый бюллетень видят те же группы, что и образец: отмечать его у групп отдельно не нужно.
+  router.post("/forms/:id/copy", requireAdmin, withUpload, handle((req, res) => {
+    const form = loadForm(parseId(req.params.id));
     if (!form) return res.status(404).json({ error: "Нет такой формы" });
     const name = checkName(payloadOf(req).name, "Название бюллетеня");
     if (!isDocx(req.file)) fail("Выберите шаблон Word (.docx)");
@@ -170,10 +156,6 @@ module.exports = function bulletinRoutes(db) {
     } catch (err) { db.exec("ROLLBACK"); throw err; }
   }));
 
-  // -------------------------------------------------------------------------
-  //  Разбор таблицы — только администраторы платформы
-  // -------------------------------------------------------------------------
-
   router.get("/forms/:id", requireAdmin, handle((req, res) => {
     const form = loadForm(parseId(req.params.id));
     if (!form) return res.status(404).json({ error: "Нет такой формы" });
@@ -185,7 +167,7 @@ module.exports = function bulletinRoutes(db) {
     });
   }));
 
-  // Новая форма с нуля: шаблон и разбор. Группы ей назначаются в Администрировании.
+  // Новая форма с нуля: шаблон и разбор. Группы ей назначаются в Настройках → Бюллетени → Группы.
   router.post("/forms", requireAdmin, withUpload, handle((req, res) => {
     const p = payloadOf(req);
     const name = checkName(p.name, "Название бюллетеня");
@@ -233,7 +215,7 @@ module.exports = function bulletinRoutes(db) {
     const links = db.prepare("SELECT group_id, form_id FROM bulletin_group_forms").all();
     res.json({
       groups: db.prepare("SELECT * FROM bulletin_groups ORDER BY name").all().map((g) => ({
-        id: g.id, name: g.name, ad_groups: B.lines(g.ad_groups), can_manage: Boolean(g.can_manage),
+        id: g.id, name: g.name, ad_groups: B.lines(g.ad_groups),
         // Логин и ФИО, если человек уже входил: так видно опечатку в логине.
         logins: parseLogins(g.logins).map((login) => ({ login, name: (known.get(login) || {}).full_name || null })),
         forms: links.filter((l) => l.group_id === g.id).map((l) => l.form_id),
@@ -253,7 +235,7 @@ module.exports = function bulletinRoutes(db) {
     }
     const forms = Array.isArray(body.forms) ? body.forms.map(parseId) : fail("Формы группы — списком");
     if (forms.some((id) => !id || !formRow.get(id))) fail("В списке форм есть несуществующая");
-    return { name, adGroups, logins, canManage: Boolean(body.can_manage), forms: [...new Set(forms)] };
+    return { name, adGroups, logins, forms: [...new Set(forms)] };
   }
 
   function saveForms(groupId, forms) {
@@ -267,8 +249,8 @@ module.exports = function bulletinRoutes(db) {
     if (db.prepare("SELECT 1 FROM bulletin_groups WHERE name = ? COLLATE NOCASE").get(g.name)) fail(`Группа «${g.name}» уже есть`);
     db.exec("BEGIN");
     try {
-      const info = db.prepare("INSERT INTO bulletin_groups (name, ad_groups, logins, can_manage) VALUES (?, ?, ?, ?)")
-        .run(g.name, g.adGroups.join("\n"), g.logins.join("\n"), g.canManage ? 1 : 0);
+      const info = db.prepare("INSERT INTO bulletin_groups (name, ad_groups, logins) VALUES (?, ?, ?)")
+        .run(g.name, g.adGroups.join("\n"), g.logins.join("\n"));
       saveForms(Number(info.lastInsertRowid), g.forms);
       db.exec("COMMIT");
       res.status(201).json({ id: Number(info.lastInsertRowid) });
@@ -282,8 +264,8 @@ module.exports = function bulletinRoutes(db) {
     if (db.prepare("SELECT 1 FROM bulletin_groups WHERE name = ? COLLATE NOCASE AND id != ?").get(g.name, id)) fail(`Группа «${g.name}» уже есть`);
     db.exec("BEGIN");
     try {
-      db.prepare("UPDATE bulletin_groups SET name = ?, ad_groups = ?, logins = ?, can_manage = ? WHERE id = ?")
-        .run(g.name, g.adGroups.join("\n"), g.logins.join("\n"), g.canManage ? 1 : 0, id);
+      db.prepare("UPDATE bulletin_groups SET name = ?, ad_groups = ?, logins = ? WHERE id = ?")
+        .run(g.name, g.adGroups.join("\n"), g.logins.join("\n"), id);
       saveForms(id, g.forms);
       db.exec("COMMIT");
     } catch (err) { db.exec("ROLLBACK"); throw err; }

@@ -1,4 +1,5 @@
-// Фронтенд платформы: дашборд, администрирование, сертификаты.
+// Фронтенд платформы: дашборд и разделы настроек администратора — состояние, люди и группы,
+// резервные копии, журнал действий, сертификаты (сам раздел «Настройки» — app-settings.js).
 // Обычный скрипт без сборщика — функции общие для всех файлов страницы (см. index.html: app.js
 // подключается первым, запуск — в нём по DOMContentLoaded, когда загружены все).
 // ====== Дашборд ======
@@ -61,15 +62,9 @@ async function renderDashboard(main) {
   }
 }
 
-// ====== Администрирование ======
-// Разделы — вкладками сверху, как в настройках Ассистента: страница выросла, и
-// листать её целиком ради одной настройки стало неудобно.
-const ADMIN_TABS = [
-  ["health", "Состояние"],
-  ["people", "Администраторы и исполнители"], ["groups", "Группы исполнителей"],
-  ["access", "Заявка на доступ"], ["bulletins", "Бюллетени"], ["backup", "Резервные копии"], ["audit", "Журнал действий"],
-];
-let adminTab = "health";
+// ====== Настройки администратора ======
+// Каждая часть рисуется в свой контейнер категории «Настроек» (app-settings.js)
+// и после сохранения перерисовывает только его.
 
 // ---- Журнал действий администраторов (GET /admin/audit, services/audit.js) ----
 // Кто и когда менял настройки. Только чтение: записи не правятся и не удаляются.
@@ -160,15 +155,59 @@ async function renderHealth(box) {
   box.querySelector("#healthRefresh").onclick = () => renderHealth(box);
 }
 
-async function renderAdmin(main) {
-  main.innerHTML = `<div class="topbar"><div class="topbar-title">Администрирование</div></div><div class="page"><div class="spinner">Загрузка…</div></div>`;
+// ---- Люди и группы → Администраторы и исполнители ----
+async function renderPeopleSettings(box) {
+  box.innerHTML = `<div class="spinner">Загрузка…</div>`;
   try {
-    const [{ adminGroups, domainLabels }, { admins, executors }, backupInfo, { groups: deptSettings }] = await Promise.all([
-      api("/admin/settings"), api("/admin/admins"), api("/admin/backup"), api("/admin/groups"),
+    const [{ adminGroups, domainLabels }, { admins, executors }, { groups: deptSettings }] = await Promise.all([
+      api("/admin/settings"), api("/admin/admins"), api("/admin/groups"),
     ]);
     const ИМЯ_ДОМЕНА = domainLabels || { A: "rosstat.local", B: "in.local" };
-
     const ROLE_LABEL = Object.fromEntries(deptSettings.map(d => [d.role, d.name]));
+
+    const человек = (a, показатьРоль) => `
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-top:1px solid var(--line-soft);">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="font-size:13px;font-weight:600;">${esc(a.full_name)}</span>
+          <span class="mono" style="font-size:12px;color:var(--ink-soft);">${esc(a.ad_login)}</span>
+          ${показатьРоль ? (a.roles || [a.role]).map(r => `<span class="badge" style="color:var(--wire);background:var(--wire-soft);">${esc(ROLE_LABEL[r] || r)}</span>`).join("") : ""}
+          <span class="badge" style="color:var(--ink-soft);background:var(--line-soft);">${a.last_domain === "local" ? "Локальный" : esc(ИМЯ_ДОМЕНА[a.last_domain] || a.last_domain)}</span>
+        </div>
+        <span style="font-size:11px;color:var(--ink-soft);">вход ${fmtDate(a.last_login_at)}</span>
+      </div>`;
+
+    const пусто = (текст) => `<div style="font-size:12.5px;color:var(--ink-soft);">${текст}</div>`;
+
+    box.innerHTML = `
+      <div class="card" style="margin-bottom:14px;">
+        <div class="section-label">Администраторы платформы</div>
+        <div style="font-size:11.5px;color:var(--ink-soft);margin-bottom:6px;">
+          Права даёт членство в группе, указанной в <code class="mono">.env</code> на сервере:
+          ${adminGroups.A ? `<span class="mono">${esc(adminGroups.A)}</span>` : "<i>не задана</i>"} (${esc(ИМЯ_ДОМЕНА.A)}),
+          ${adminGroups.B ? `<span class="mono">${esc(adminGroups.B)}</span>` : "<i>не задана</i>"} (${esc(ИМЯ_ДОМЕНА.B)}).
+          Отсюда список не редактируется и группами отделов ниже не расширяется.
+        </div>
+        ${admins.length ? admins.map(a => человек(a, false)).join("") : пусто("Ни один администратор ещё не входил.")}
+      </div>
+
+      <div class="card" style="margin-bottom:20px;">
+        <div class="section-label">Исполнители по отделам</div>
+        <div style="font-size:11.5px;color:var(--ink-soft);margin-bottom:6px;">
+          Из групп домена (на момент последнего входа) и списков логинов во вкладке «Группы исполнителей». Прав администратора не даёт.
+        </div>
+        ${executors.length ? executors.map(a => человек(a, true)).join("") : пусто("Пока никто не входил под ролью исполнителя.")}
+      </div>`;
+  } catch (e) {
+    box.innerHTML = `<div class="empty-state">Не удалось загрузить: ${esc(e.message)}</div>`;
+  }
+}
+
+// ---- Люди и группы → Группы исполнителей ----
+async function renderGroupsSettings(box) {
+  box.innerHTML = `<div class="spinner">Загрузка…</div>`;
+  try {
+    const [{ domainLabels }, { groups: deptSettings }] = await Promise.all([api("/admin/settings"), api("/admin/groups")]);
+    const ИМЯ_ДОМЕНА = domainLabels || { A: "rosstat.local", B: "in.local" };
 
     const groupRow = (id, label, value, placeholder) => `
       <div class="grp-row">
@@ -204,54 +243,95 @@ async function renderAdmin(main) {
         </div>
       </div>`;
 
-    const человек = (a, показатьРоль) => `
-      <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-top:1px solid var(--line-soft);">
-        <div style="display:flex;align-items:center;gap:10px;">
-          <span style="font-size:13px;font-weight:600;">${esc(a.full_name)}</span>
-          <span class="mono" style="font-size:12px;color:var(--ink-soft);">${esc(a.ad_login)}</span>
-          ${показатьРоль ? (a.roles || [a.role]).map(r => `<span class="badge" style="color:var(--wire);background:var(--wire-soft);">${esc(ROLE_LABEL[r] || r)}</span>`).join("") : ""}
-          <span class="badge" style="color:var(--ink-soft);background:var(--line-soft);">${a.last_domain === "local" ? "Локальный" : esc(ИМЯ_ДОМЕНА[a.last_domain] || a.last_domain)}</span>
+    box.innerHTML = `
+      <div class="grp-layout">
+        <div class="grp-list">
+          ${deptSettings.map(groupCard).join("")}
         </div>
-        <span style="font-size:11px;color:var(--ink-soft);">вход ${fmtDate(a.last_login_at)}</span>
+        <div class="grp-side">
+          <div class="card" id="grpNew">
+            <div class="section-label">Добавить группу исполнителей</div>
+            <div class="as-note" style="margin-bottom:12px;">Группа сразу появится в заявках, правах и оповещениях — перезапуск не нужен.
+              Вписанные логинами получают её заявки в колокольчик и на почту.</div>
+            <div class="form-row" style="grid-template-columns:1fr 120px;">
+              <div><div class="field-label">Название</div><input class="input" id="gnName" maxlength="30" placeholder="АДМ" style="width:100%;"></div>
+              <div><div class="field-label">Префикс номера</div><input class="input mono" id="gnPrefix" maxlength="10" placeholder="АДМ" style="width:100%;"></div>
+            </div>
+            <div class="field-label">Подпись плитки</div>
+            <input class="input" id="gnHint" maxlength="120" placeholder="например: СЭД, почта, учётные записи" style="width:100%;margin-bottom:10px;">
+            <div class="field-label">Логины домена — по одному на строку</div>
+            <textarea class="field-input mono" id="gnLogins" rows="3" style="resize:vertical;width:100%;" placeholder="ivanov"></textarea>
+            <label class="grp-check"><input type="checkbox" id="gnHidden"> Скрыть из «Новой заявки»</label>
+            <div class="grp-actions"><span class="grp-msg" id="gnMsg"></span><button class="btn btn-wire" id="gnCreate">Добавить</button></div>
+          </div>
+          <div class="as-note" style="margin-top:12px;">Встроенные отделы (ИТ, ХОЗ…) задаются в <span class="mono">config/departments.local.js</span> на сервере;
+            здесь у них правятся группы домена, логины и видимость. Номера заявок группы: <span class="mono">ПРЕФИКС-0001</span>.</div>
+        </div>
       </div>`;
 
-    const пусто = (текст) => `<div style="font-size:12.5px;color:var(--ink-soft);">${текст}</div>`;
+    // ---- Группы исполнителей ----
+    // Созданная или удалённая группа меняет плитки «Новой заявки» — справочник
+    // в браузере перечитываем, чтобы не ждать перезагрузки страницы.
+    const refreshGroups = async () => {
+      try { state.departments = (await api("/departments")).departments; } catch { /* останется прежний до перезагрузки */ }
+      renderGroupsSettings(box);
+    };
+    box.querySelectorAll(".grp-card").forEach((card) => {
+      const role = card.dataset.role;
+      const msg = card.querySelector(".grp-msg");
+      const say = (ok, text) => { msg.style.color = ok ? "var(--green)" : "var(--red)"; msg.textContent = text; };
+      card.querySelector(".grp-save").onclick = async () => {
+        const body = {
+          groupA: card.querySelector(`#group_${role}_A`).value.trim(),
+          groupB: card.querySelector(`#group_${role}_B`).value.trim(),
+          logins: card.querySelector(".grp-logins").value,
+          hidden: card.querySelector(".grp-hidden").checked,
+        };
+        const hint = card.querySelector(".grp-hint");
+        if (hint) body.hint = hint.value;
+        try {
+          await api(`/admin/groups/${encodeURIComponent(role)}`, { method: "PUT", body });
+          say(true, "Сохранено");
+          setTimeout(refreshGroups, 900);
+        } catch (e) { say(false, e.message); }
+      };
+      const del = card.querySelector(".grp-del");
+      if (del) del.onclick = async () => {
+        const name = card.querySelector(".grp-name").textContent;
+        if (!(await uiConfirm(`Удалить группу «${name}»? Программы, отданные ей в Заявке на доступ, вернутся в общую очередь.`, { ok: "Удалить", danger: true }))) return;
+        try { await api(`/admin/groups/${encodeURIComponent(role)}`, { method: "DELETE" }); toast(`Группа «${name}» удалена`); refreshGroups(); }
+        catch (e) { say(false, e.message); }
+      };
+    });
+    // Префикс по умолчанию — из названия, пока его не правили руками.
+    const gnPrefix = box.querySelector("#gnPrefix");
+    box.querySelector("#gnName").addEventListener("input", (e) => {
+      if (!gnPrefix.dataset.touched) gnPrefix.value = e.target.value.replace(/[^A-Za-zА-Яа-яЁё0-9]/g, "").toUpperCase().slice(0, 10);
+    });
+    gnPrefix.addEventListener("input", () => { gnPrefix.dataset.touched = "1"; });
+    box.querySelector("#gnCreate").onclick = async () => {
+      const v = (id) => box.querySelector(id).value;
+      const gnMsg = box.querySelector("#gnMsg");
+      try {
+        await api("/admin/groups", { method: "POST", body: {
+          name: v("#gnName"), prefix: v("#gnPrefix"), hint: v("#gnHint"), logins: v("#gnLogins"),
+          hidden: box.querySelector("#gnHidden").checked,
+        } });
+        toast(`Группа «${v("#gnName").trim()}» добавлена`);
+        refreshGroups();
+      } catch (e) { gnMsg.style.color = "var(--red)"; gnMsg.textContent = e.message; }
+    };
+  } catch (e) {
+    box.innerHTML = `<div class="empty-state">Не удалось загрузить: ${esc(e.message)}</div>`;
+  }
+}
 
-    main.querySelector(".page").innerHTML = `
-      <div class="toggle-group as-tabs" id="admTabs">
-        ${ADMIN_TABS.map(([id, l]) => `<button class="toggle-btn${adminTab === id ? " active" : ""}" data-tab="${id}">${l}</button>`).join("")}
-      </div>
-
-      <div data-pane="health" id="healthPane"></div>
-      <div data-pane="audit" id="auditPane"></div>
-      <div data-pane="bulletins" id="bulletinGroupsPane"></div>
-
-      <div data-pane="people">
-      <div class="card" style="margin-bottom:14px;">
-        <div class="section-label">Администраторы платформы</div>
-        <div style="font-size:11.5px;color:var(--ink-soft);margin-bottom:6px;">
-          Права даёт членство в группе, указанной в <code class="mono">.env</code> на сервере:
-          ${adminGroups.A ? `<span class="mono">${esc(adminGroups.A)}</span>` : "<i>не задана</i>"} (${esc(ИМЯ_ДОМЕНА.A)}),
-          ${adminGroups.B ? `<span class="mono">${esc(adminGroups.B)}</span>` : "<i>не задана</i>"} (${esc(ИМЯ_ДОМЕНА.B)}).
-          Отсюда список не редактируется и группами отделов ниже не расширяется.
-        </div>
-        ${admins.length ? admins.map(a => человек(a, false)).join("") : пусто("Ни один администратор ещё не входил.")}
-      </div>
-
-      <div class="card" style="margin-bottom:20px;">
-        <div class="section-label">Исполнители по отделам</div>
-        <div style="font-size:11.5px;color:var(--ink-soft);margin-bottom:6px;">
-          Из групп домена (на момент последнего входа) и списков логинов во вкладке «Группы исполнителей». Прав администратора не даёт.
-        </div>
-        ${executors.length ? executors.map(a => человек(a, true)).join("") : пусто("Пока никто не входил под ролью исполнителя.")}
-      </div>
-      </div>
-
-      <div data-pane="access">
-      <div class="card" style="margin-bottom:20px;" id="accessAdmin"><div class="spinner">Загрузка…</div></div>
-      </div>
-
-      <div data-pane="backup">
+// ---- Резервные копии ----
+async function renderBackupSettings(box) {
+  box.innerHTML = `<div class="spinner">Загрузка…</div>`;
+  try {
+    const backupInfo = await api("/admin/backup");
+    box.innerHTML = `
       <div class="card" style="margin-bottom:20px;">
         <div class="section-label">Резервные копии баз</div>
         <div style="font-size:12px;color:var(--ink-soft);margin-bottom:14px;">
@@ -283,65 +363,15 @@ async function renderAdmin(main) {
                 <span style="color:var(--ink-soft);">${fmtDate(c.modified)}</span>`).join("")}
             </div>`
           : `<div style="font-size:12px;color:var(--ink-soft);">${esc((backupInfo.copies && backupInfo.copies.error) || "Копий пока нет — первая появится при ближайшем ежемесячном обходе или по кнопке «Сделать копию сейчас».")}</div>`}
-      </div>
-      </div>
-
-      <div data-pane="groups">
-      <div class="grp-layout">
-        <div class="grp-list">
-          ${deptSettings.map(groupCard).join("")}
-        </div>
-        <div class="grp-side">
-          <div class="card" id="grpNew">
-            <div class="section-label">Добавить группу исполнителей</div>
-            <div class="as-note" style="margin-bottom:12px;">Группа сразу появится в заявках, правах и оповещениях — перезапуск не нужен.
-              Вписанные логинами получают её заявки в колокольчик и на почту.</div>
-            <div class="form-row" style="grid-template-columns:1fr 120px;">
-              <div><div class="field-label">Название</div><input class="input" id="gnName" maxlength="30" placeholder="АДМ" style="width:100%;"></div>
-              <div><div class="field-label">Префикс номера</div><input class="input mono" id="gnPrefix" maxlength="10" placeholder="АДМ" style="width:100%;"></div>
-            </div>
-            <div class="field-label">Подпись плитки</div>
-            <input class="input" id="gnHint" maxlength="120" placeholder="например: СЭД, почта, учётные записи" style="width:100%;margin-bottom:10px;">
-            <div class="field-label">Логины домена — по одному на строку</div>
-            <textarea class="field-input mono" id="gnLogins" rows="3" style="resize:vertical;width:100%;" placeholder="ivanov"></textarea>
-            <label class="grp-check"><input type="checkbox" id="gnHidden"> Скрыть из «Новой заявки»</label>
-            <div class="grp-actions"><span class="grp-msg" id="gnMsg"></span><button class="btn btn-wire" id="gnCreate">Добавить</button></div>
-          </div>
-          <div class="as-note" style="margin-top:12px;">Встроенные отделы (ИТ, ХОЗ…) задаются в <span class="mono">config/departments.local.js</span> на сервере;
-            здесь у них правятся группы домена, логины и видимость. Номера заявок группы: <span class="mono">ПРЕФИКС-0001</span>.</div>
-        </div>
-      </div>
       </div>`;
 
-    // Вкладки только прячут разделы: всё загружено разом, и введённое, но
-    // не сохранённое при переключении не теряется.
-    const showTab = () => {
-      main.querySelectorAll("#admTabs .toggle-btn").forEach((b) => b.classList.toggle("active", b.dataset.tab === adminTab));
-      main.querySelectorAll("[data-pane]").forEach((p) => { p.hidden = p.dataset.pane !== adminTab; });
-    };
-    main.querySelectorAll("#admTabs .toggle-btn").forEach((b) => { b.onclick = () => { adminTab = b.dataset.tab; showTab(); }; });
-    showTab();
-
-    // ---- Состояние: опрос модулей идёт отдельно и страницу не задерживает ----
-    renderHealth(main.querySelector("#healthPane"));
-    // Журнал — при первом открытии вкладки и заново при каждом следующем: за это время могли появиться записи.
-    main.querySelector('#admTabs [data-tab="audit"]').addEventListener("click", () => renderAudit(main.querySelector("#auditPane")));
-    if (adminTab === "audit") renderAudit(main.querySelector("#auditPane"));
-
-    // ---- Бюллетени: группы и их формы (app-bulletins.js) ----
-    renderBulletinGroupsAdmin(main.querySelector("#bulletinGroupsPane"));
-
-    // ---- Заявка на доступ: отделы, начальники, отдел ИТ (app-assistant.js) ----
-    renderAccessAdmin(main.querySelector("#accessAdmin"));
-
-    // ---- Резервные копии баз (раньше — «Оповещения → Отправка») ----
-    const bkMsg = main.querySelector("#bkMsg");
+    const bkMsg = box.querySelector("#bkMsg");
     const bkShow = (ok, text, hint) => {
       bkMsg.style.color = ok ? "var(--green)" : "var(--red)";
       bkMsg.innerHTML = esc(text) + (hint ? `<div style="color:var(--ink-soft);margin-top:4px;">${esc(hint)}</div>` : "");
     };
-    main.querySelector("#bkCheck").onclick = async () => {
-      const dir = main.querySelector("#bkDir").value.trim() || backupInfo.envDir || backupInfo.defaultDir;
+    box.querySelector("#bkCheck").onclick = async () => {
+      const dir = box.querySelector("#bkDir").value.trim() || backupInfo.envDir || backupInfo.defaultDir;
       bkMsg.style.color = "var(--ink-soft)"; bkMsg.textContent = "Проверяю запись…";
       try {
         const r = await api("/admin/backup/check", { method: "POST", body: { dir } });
@@ -349,78 +379,26 @@ async function renderAdmin(main) {
         else bkShow(false, `Не получилось: ${r.error}`, r.hint);
       } catch (e) { bkShow(false, e.message); }
     };
-    main.querySelector("#bkSave").onclick = async () => {
+    box.querySelector("#bkSave").onclick = async () => {
       bkMsg.style.color = "var(--ink-soft)"; bkMsg.textContent = "Проверяю и сохраняю…";
       try {
-        const r = await api("/admin/backup", { method: "PUT", body: { dir: main.querySelector("#bkDir").value } });
+        const r = await api("/admin/backup", { method: "PUT", body: { dir: box.querySelector("#bkDir").value } });
         bkShow(true, `Сохранено: копии будут класться в ${r.dir}`);
-        setTimeout(() => renderAdmin(main), 1800);
+        setTimeout(() => renderBackupSettings(box), 1800);
       } catch (e) { bkShow(false, e.message, e.hint); }
     };
     // То же задание планировщика, что и ежемесячный обход: результат виден и в «Оповещения → Отправка».
-    main.querySelector("#bkRun").onclick = async () => {
+    box.querySelector("#bkRun").onclick = async () => {
       bkMsg.style.color = "var(--ink-soft)"; bkMsg.textContent = "Копирую базы…";
       try {
         const r = await api("/notifications/schedule/backup/run", { method: "POST", body: {} });
-        if (r.ok) { bkShow(true, jobDetailText(r.detail)); setTimeout(() => renderAdmin(main), 2600); }
+        if (r.ok) { bkShow(true, jobDetailText(r.detail)); setTimeout(() => renderBackupSettings(box), 2600); }
         else bkShow(false, r.error || r.skipped || "не выполнено");
       } catch (e) { bkShow(false, e.message, e.hint); }
     };
 
-    // ---- Группы исполнителей ----
-    // Созданная или удалённая группа меняет плитки «Новой заявки» — справочник
-    // в браузере перечитываем, чтобы не ждать перезагрузки страницы.
-    const refreshGroups = async () => {
-      try { state.departments = (await api("/departments")).departments; } catch { /* останется прежний до перезагрузки */ }
-      renderAdmin(main);
-    };
-    main.querySelectorAll(".grp-card").forEach((card) => {
-      const role = card.dataset.role;
-      const msg = card.querySelector(".grp-msg");
-      const say = (ok, text) => { msg.style.color = ok ? "var(--green)" : "var(--red)"; msg.textContent = text; };
-      card.querySelector(".grp-save").onclick = async () => {
-        const body = {
-          groupA: card.querySelector(`#group_${role}_A`).value.trim(),
-          groupB: card.querySelector(`#group_${role}_B`).value.trim(),
-          logins: card.querySelector(".grp-logins").value,
-          hidden: card.querySelector(".grp-hidden").checked,
-        };
-        const hint = card.querySelector(".grp-hint");
-        if (hint) body.hint = hint.value;
-        try {
-          await api(`/admin/groups/${encodeURIComponent(role)}`, { method: "PUT", body });
-          say(true, "Сохранено");
-          setTimeout(refreshGroups, 900);
-        } catch (e) { say(false, e.message); }
-      };
-      const del = card.querySelector(".grp-del");
-      if (del) del.onclick = async () => {
-        const name = card.querySelector(".grp-name").textContent;
-        if (!(await uiConfirm(`Удалить группу «${name}»? Программы, отданные ей в Заявке на доступ, вернутся в общую очередь.`, { ok: "Удалить", danger: true }))) return;
-        try { await api(`/admin/groups/${encodeURIComponent(role)}`, { method: "DELETE" }); toast(`Группа «${name}» удалена`); refreshGroups(); }
-        catch (e) { say(false, e.message); }
-      };
-    });
-    // Префикс по умолчанию — из названия, пока его не правили руками.
-    const gnPrefix = main.querySelector("#gnPrefix");
-    main.querySelector("#gnName").addEventListener("input", (e) => {
-      if (!gnPrefix.dataset.touched) gnPrefix.value = e.target.value.replace(/[^A-Za-zА-Яа-яЁё0-9]/g, "").toUpperCase().slice(0, 10);
-    });
-    gnPrefix.addEventListener("input", () => { gnPrefix.dataset.touched = "1"; });
-    main.querySelector("#gnCreate").onclick = async () => {
-      const v = (id) => main.querySelector(id).value;
-      const gnMsg = main.querySelector("#gnMsg");
-      try {
-        await api("/admin/groups", { method: "POST", body: {
-          name: v("#gnName"), prefix: v("#gnPrefix"), hint: v("#gnHint"), logins: v("#gnLogins"),
-          hidden: main.querySelector("#gnHidden").checked,
-        } });
-        toast(`Группа «${v("#gnName").trim()}» добавлена`);
-        refreshGroups();
-      } catch (e) { gnMsg.style.color = "var(--red)"; gnMsg.textContent = e.message; }
-    };
   } catch (e) {
-    main.querySelector(".page").innerHTML = `<div class="empty-state">Не удалось загрузить: ${esc(e.message)}</div>`;
+    box.innerHTML = `<div class="empty-state">Не удалось загрузить: ${esc(e.message)}</div>`;
   }
 }
 
@@ -444,7 +422,7 @@ async function renderAdmin(main) {
 // его снова (routes/certificates.js, POST /restart); ждём, пока платформа ответит по https, и
 // открываем её уже по https. Если платформа запущена не службой, кнопки «сейчас» нет — объясняем.
 function askRestart(canRestart) {
-  const httpsUrl = `https://${location.host}/#certs`;
+  const httpsUrl = `https://${location.host}/#settings:certs`;
   const m = asstModal("Сертификат сохранён", `
     <div style="font-size:13px;line-height:1.55;margin-bottom:14px;">
       Сейчас платформа работает по <b>http</b>. На https она перейдёт после перезапуска — на ходу
@@ -500,8 +478,8 @@ function askRestart(canRestart) {
   };
 }
 
-async function renderCertificates(main) {
-  main.innerHTML = `<div class="topbar"><div class="topbar-title">Сертификаты</div></div><div class="page"><div class="spinner">Загрузка…</div></div>`;
+async function renderCertificates(box) {
+  box.innerHTML = `<div class="spinner">Загрузка…</div>`;
 
   const days = (n) => {
     if (n === null || n === undefined) return "";
@@ -518,12 +496,12 @@ async function renderCertificates(main) {
       api("/certificates/server"), api("/certificates/trusted"), api("/certificates/modules"),
     ]);
 
-    // Щит в шапке — по тем же свежим данным: раздел открывают и сразу после загрузки нового
-    // сертификата (renderCertificates ниже), и ждать до получаса, пока щит спросит сервер сам, незачем.
-    // Сертификат ещё разбирается (только что применён) — щит спросит сам при следующем переходе.
+    // Шестерёнка в шапке и значок в списке настроек — по тем же свежим данным: раздел открывают
+    // и сразу после загрузки нового сертификата (renderCertificates ниже), и ждать до получаса,
+    // пока шестерёнка спросит сервер сама, незачем. Сертификат ещё разбирается (только что
+    // применён) — спросит сама при следующем переходе.
     certBadge = { at: server.secure && !server.certificate ? 0 : Date.now(), cert: server.certificate, secure: server.secure };
-    const badgeBtn = document.getElementById("certsBtn");
-    if (badgeBtn) applyCertBadge(badgeBtn);
+    paintCertMarks();
 
     const c = server.certificate;
     const serverCard = !server.secure
@@ -575,7 +553,7 @@ async function renderCertificates(main) {
         </div>`;
     };
 
-    main.querySelector(".page").innerHTML = `
+    box.innerHTML = `
       <div style="max-width:900px;">
         <div>
           <div class="card" style="margin-bottom:20px;">
@@ -714,7 +692,7 @@ async function renderCertificates(main) {
           method: "POST",
           body: { pfx: b64, password: document.getElementById("certPass").value },
         });
-        renderCertificates(main);
+        renderCertificates(box);
         if (res.restartRequired) askRestart(res.canRestart);
         else toast("Сертификат применён — перезапуск не нужен ни платформе, ни «Искре»: обе перечитывают общее хранилище сами.");
       } catch (e) { msg.style.color = "var(--red)"; msg.textContent = e.message; }
@@ -731,21 +709,21 @@ async function renderCertificates(main) {
             pem: document.getElementById("rootPem").value,
           },
         });
-        renderCertificates(main);
+        renderCertificates(box);
         toast("Корень добавлен. Перезапустите платформу, чтобы он начал действовать.");
       } catch (e) { msg.style.color = "var(--red)"; msg.textContent = e.message; }
     };
 
-    main.querySelectorAll(".del-root").forEach(btn => {
+    box.querySelectorAll(".del-root").forEach(btn => {
       btn.onclick = async () => {
         if (!(await uiConfirm(`Удалить ${btn.dataset.file} из доверенных?`, { ok: "Удалить", danger: true }))) return;
         try {
           await api(`/certificates/trusted/${encodeURIComponent(btn.dataset.file)}`, { method: "DELETE" });
-          renderCertificates(main);
+          renderCertificates(box);
         } catch (e) { toast(e.message, true); }
       };
     });
   } catch (e) {
-    main.querySelector(".page").innerHTML = `<div class="empty-state">Не удалось загрузить: ${esc(e.message)}</div>`;
+    box.innerHTML = `<div class="empty-state">Не удалось загрузить: ${esc(e.message)}</div>`;
   }
 }

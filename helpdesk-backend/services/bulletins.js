@@ -31,8 +31,8 @@ const { parseLogins } = require("./executorGroups");
 //                                                {наименование} {код} {1} {2} …
 //                                                и признак своего вида: {#раздел}…{/}
 //
-//  Доступ — по группам бюллетеней (Администрирование → Бюллетени): у группы
-//  свой набор форм; группе можно дать право править формы.
+//  Доступ — по группам бюллетеней (Настройки → Бюллетени): у группы свой
+//  набор форм. Правят формы только администраторы платформы.
 // ============================================================================
 
 class BulletinError extends Error {}
@@ -461,31 +461,17 @@ function userGroups(db, userId) {
 }
 
 /**
- * Что можно человеку: какие формы видеть и какими управлять.
- * Администратор платформы может всё; остальные — по своим группам.
+ * Какие формы человек видит. Администратор платформы — все (и только он их
+ * правит); остальные — формы своих групп.
  */
 function access(db, user) {
-  const all = db.prepare("SELECT id FROM bulletin_forms").all().map((r) => r.id);
-  if (user.is_admin) return { admin: true, groups: [], formIds: all, manageIds: all, manageGroups: db.prepare("SELECT id, name FROM bulletin_groups ORDER BY name").all() };
+  if (user.is_admin) return { admin: true, groups: [], formIds: db.prepare("SELECT id FROM bulletin_forms").all().map((r) => r.id) };
   const groups = userGroups(db, user.id);
   const linked = db.prepare("SELECT form_id FROM bulletin_group_forms WHERE group_id = ?");
-  const formIds = new Set(), manageIds = new Set();
-  for (const g of groups) {
-    for (const { form_id } of linked.all(g.id)) {
-      formIds.add(form_id);
-      if (g.can_manage) manageIds.add(form_id);
-    }
-  }
-  return {
-    admin: false,
-    groups: groups.map((g) => ({ id: g.id, name: g.name })),
-    formIds: [...formIds],
-    manageIds: [...manageIds],
-    manageGroups: groups.filter((g) => g.can_manage).map((g) => ({ id: g.id, name: g.name })),
-  };
+  const formIds = new Set();
+  for (const g of groups) for (const { form_id } of linked.all(g.id)) formIds.add(form_id);
+  return { admin: false, groups: groups.map((g) => ({ id: g.id, name: g.name })), formIds: [...formIds] };
 }
-
-const canManageAny = (a) => a.admin || a.manageGroups.length > 0;
 
 // ---------------------------------------------------------------------------
 //  Встроенные формы
@@ -549,5 +535,5 @@ module.exports = {
   BulletinError, MONTHS, LIST, PERIOD_TAGS, DEFAULT_SETTINGS,
   readBook, readTable, parsePeriod, periodFromColumn, maskToRegExp, selectRows, fmtValue, periodData, buildData,
   makeDocument, outputName, checkFormTemplate, unknownTags,
-  normalizeSettings, parseSettings, userGroups, access, canManageAny, lines, seedBuiltinForms,
+  normalizeSettings, parseSettings, userGroups, access, lines, seedBuiltinForms,
 };

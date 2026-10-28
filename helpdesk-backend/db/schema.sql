@@ -478,7 +478,8 @@ CREATE TABLE IF NOT EXISTS bulletin_forms (
 
 -- Группы бюллетеней: кто какие формы видит. Участник — по группе домена
 -- (ad_groups — имена по строке, сверяются с users.ad_groups) или по логину в
--- списке. can_manage — группа сама правит свои формы и заводит новые.
+-- списке. can_manage не используется: с 2026-10 формы правят только
+-- администраторы платформы; столбец оставлен, чтобы не пересобирать таблицу.
 CREATE TABLE IF NOT EXISTS bulletin_groups (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE,
