@@ -295,12 +295,7 @@ async function renderAccessAdmin(box) {
   await asstDictEditor(box.querySelector("#axDepts"), "depts", g, () => renderAccessAdmin(box));
 }
 
-// ---- Настройки → Ассистент (администратор) -----------------------------------
-
-const ASST_SETTINGS_TABS = [
-  ["general", "Общие"], ["people", "Подписанты актов"], ["rules", "Неисправности"],
-  ["templates", "Шаблоны"], ["mail", "Почта рассылок"],
-];
+// ---- Настройки → Ассистент: Акты и Рассылки (администратор) -------------------
 
 // Справочники — одна форма на все: поле, подпись, подсказка.
 const ASST_DICTS = {
