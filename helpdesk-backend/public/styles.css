@@ -412,7 +412,12 @@ a { color: var(--md-primary); }
 }
 .st-search:focus-within { box-shadow: 0 0 0 3px var(--md-primary-ring); }
 .st-search input { flex: 1; min-width: 0; border: none; outline: none; background: transparent; color: var(--md-on-surface); font-size: 13.5px; }
-.st-page { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 28px; align-items: start; }
+.st-page { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 28px; }
+/* Список и открытая категория листаются каждый сам по себе: длинная категория не уводит список
+   из виду. Прокручивает не страница, а колонки — отступ снизу поэтому у них. */
+.page.st-page { overflow: hidden; padding-bottom: 0; }
+.st-list, .st-pane { min-height: 0; overflow-y: auto; padding-bottom: 28px; }
+.st-list { padding-right: 6px; margin-right: -6px; }
 .st-group { margin-bottom: 18px; }
 .st-group-label, .st-section-label {
   font-size: 11px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase;
@@ -516,8 +521,9 @@ a { color: var(--md-primary); }
 .st-switch.on::after { left: 19px; }
 
 @media (max-width: 1180px) {
-  .st-page { display: block; }
-  .st-list { max-width: 640px; }
+  .page.st-page { display: block; overflow-y: auto; padding-bottom: 28px; }
+  .st-list, .st-pane { overflow: visible; padding-bottom: 0; }
+  .st-list { max-width: 640px; margin-right: 0; padding-right: 0; }
   .st-page.st-open .st-list { display: none; }
   .st-page:not(.st-open) .st-pane { display: none; }
   .st-head .st-back { display: inline-flex; margin-left: -8px; }

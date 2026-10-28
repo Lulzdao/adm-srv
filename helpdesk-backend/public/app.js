@@ -920,12 +920,12 @@ async function paintCertBadge() {
 // браузере и отдельно для каждого логина — за одним компьютером работают сменами.
 // order — ключи пунктов верхнего уровня; пункты, которых в нём нет (новый модуль,
 // другая роль), встают рядом со своим соседом по умолчанию. single — раскрыт
-// только один раздел: открыли другой — прежний сворачивается.
+// только один раздел: открыли другой — прежний сворачивается (по умолчанию включено).
 const NAV_PREFS_KEY = () => `adm.navPrefs:${String((state.user && state.user.ad_login) || "").toLowerCase()}`;
 function navPrefs() {
   try {
     const p = JSON.parse(localStorage.getItem(NAV_PREFS_KEY())) || {};
-    return { order: Array.isArray(p.order) ? p.order.filter((k) => typeof k === "string") : [], single: p.single === true };
+    return { order: Array.isArray(p.order) ? p.order.filter((k) => typeof k === "string") : [], single: p.single !== false }; // «по одному разделу» — по умолчанию включено
   } catch { return { order: [], single: false }; }
 }
 function saveNavPrefs(p) {

@@ -206,6 +206,7 @@ function showSettingsCat(main, cat, tabId) {
   });
   const tab = cat.tabs ? cat.tabs.find((t) => t.id === tabId) || cat.tabs[0] : null;
   const pane = main.querySelector("#stPane");
+  pane.scrollTop = 0; // колонка листается сама по себе — новая категория открывается с начала
   pane.innerHTML = `
     <div class="st-head">
       <button type="button" class="icon-btn st-back" aria-label="Все настройки" title="Все настройки">${icon("chevron", 18)}</button>
