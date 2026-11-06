@@ -12,6 +12,7 @@
 #   * задаёт случайный пароль VNC (без него сервер не отвечает), только если его ещё нет;
 #   * включает SoftwareSASGeneration — Ctrl+Alt+Del без лишнего вопроса сотруднику;
 #   * группа доступа (MS-Logon) — по умолчанию p48_g_support, машинная политика может подменить;
+#     плюс локальные администраторы ПК — резервный вход, когда домен недоступен;
 #   * правило брандмауэра на порт 5995 — без ограничений по адресам (политика vncAllowFrom сужает);
 #   * после проверки, что новая служба слушает 5995, удаляет прежнюю папку uvnc_s (из Program Files
 #     и из Program Files (x86)). Папку администратора uvnc_support не трогает: службы в ней нет.
@@ -20,7 +21,8 @@
 # администраторы). Ключи: vncAccessGroup (строка «ДОМЕН\группа» — подменяет группу доступа,
 # по умолчанию p48_g_support), vncAllowFrom (адреса/подсети через запятую — с них разрешить
 # подключение, по умолчанию без ограничений), vncQueryAccept (true — спрашивать сотрудника без
-# автосогласия). Настройку пользователя (Ctrl+S в клиенте) НЕ читаем.
+# автосогласия), vncLocalAdmins (false — без резервного входа локальными администраторами ПК, см.
+# шаг 5). Настройку пользователя (Ctrl+S в клиенте) НЕ читаем.
 #
 # PowerShell 2.0 (Windows 7). Файл — UTF-8 с BOM.
 
@@ -245,33 +247,53 @@ if (-not $hasPwd) {
 # 4. Ctrl+Alt+Del без лишнего окна: разрешить программный ввод SAS.
 Run $reg 'add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v SoftwareSASGeneration /t REG_DWORD /d 1 /f' | Out-Null
 
-# 5. Группа доступа (MS-Logon): по умолчанию p48_g_support (решение пользователя 2026-10-22),
-#    машинная политика vncAccessGroup подменяет («ДОМЕН\группа»). Имя группы домена, поэтому
-#    вне домена оно не разрешится — MSLogonACL молча пропустит строку, ACL останется пустым
-#    (никто не подключится) — проверка ниже честно пишет об этом в журнал.
+# 5. Кто может подключиться (MS-Logon): группа доступа и локальные администраторы ПК.
+#    Группа — по умолчанию p48_g_support (решение пользователя 2026-10-22), машинная политика
+#    vncAccessGroup подменяет («ДОМЕН\группа»). Это группа домена: вне домена она не разрешится —
+#    MSLogonACL молча пропустит строку; проверка ниже честно пишет об этом в журнал.
+#    Локальные администраторы (BUILTIN\Администраторы, SID S-1-5-32-544) — резервный вход, когда
+#    домен недоступен (решение пользователя 2026-11-07): пароль локальной учётки проверяется на самом
+#    ПК, без контроллера домена. Входить — «ИМЯ-ПК\учётка» локального администратора. Пока домен
+#    работает, в эту группу входят и доменные администраторы — они тоже смогут подключиться.
+#    Политика vncLocalAdmins=false — без резервного входа.
 $group = Policy 'vncAccessGroup'
 if ($group -eq '') { $group = 'p48_g_support' }
+$entries = @($group)
+if ((Policy 'vncLocalAdmins') -ne 'false') {
+	# Имя группы в русской Windows переведено («Администраторы»), и MSLogonACL ищет по имени —
+	# поэтому имя берём у самой Windows по SID, без префикса BUILTIN\.
+	try {
+		$admins = (New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-544')).Translate([System.Security.Principal.NTAccount]).Value
+		$entries += $admins.Substring($admins.IndexOf('\') + 1)
+	} catch { Log ('не удалось узнать имя группы локальных администраторов: ' + $_.Exception.Message) }
+}
 $aclFile = Join-Path $Root 'access.acl'
-# Кодировка системная (ANSI): имя группы может быть с кириллицей, ASCII бы его потерял.
+# Кодировка системная (ANSI): имена групп с кириллицей, ASCII бы их потерял.
 # Маска 3 = ViewOnly(1) + Interact(2) — всё управление, без передачи файлов.
-# Имя группы — В КАВЫЧКАХ: токенизатор MSLogonACL режет строку по пробелам, и имя с пробелом
+# Имена — В КАВЫЧКАХ: токенизатор MSLogonACL режет строку по пробелам, и имя с пробелом
 # («NT AUTHORITY\SYSTEM») без кавычек разваливается на три части и молча пропускается.
-[System.IO.File]::WriteAllText($aclFile, "allow`t0x00000003`t`"" + $group + "`"`r`n", [System.Text.Encoding]::Default)
+$aclText = ''
+foreach ($e in $entries) { $aclText += "allow`t0x00000003`t`"" + $e + "`"`r`n" }
+[System.IO.File]::WriteAllText($aclFile, $aclText, [System.Text.Encoding]::Default)
 $mslogon = Join-Path $Root 'MSLogonACL.exe'
 if (Test-Path $mslogon) {
 	Run $mslogon ('/i /o "' + $aclFile + '"') | Out-Null
 	# MSLogonACL возвращает 0 даже когда имя не разрешается (строку пропускает, код не портит),
 	# поэтому «группа задана» по коду выхода не проверить. Единственная честная проверка:
-	# экспортировать ACL обратно (SID разрешается в имя) и найти в нём имя группы.
+	# экспортировать ACL обратно (SID разрешается в имя) и найти в нём каждое имя.
 	$expFile = [System.IO.Path]::GetTempFileName()
 	Run $mslogon ('/e "' + $expFile + '"') | Out-Null
 	$exp = ''
 	if (Test-Path $expFile) { $exp = [System.IO.File]::ReadAllText($expFile, [System.Text.Encoding]::Default) }
-	$grpName = $group
-	$slash = $group.LastIndexOf('\')
-	if ($slash -ge 0) { $grpName = $group.Substring($slash + 1) }
-	if ($exp -ne '' -and $exp.Contains($grpName)) { Log ('группа доступа: ' + $group) }
-	else { Log ('группа доступа НЕ применена: ' + $group + ' не разрешается на этой машине (вне домена?)') }
+	foreach ($e in $entries) {
+		$name = $e
+		$slash = $e.LastIndexOf('\')
+		if ($slash -ge 0) { $name = $e.Substring($slash + 1) }
+		$what = 'группа доступа'
+		if ($e -ne $group) { $what = 'резервный вход (локальные администраторы)' }
+		if ($exp -ne '' -and $exp.Contains($name)) { Log ($what + ': ' + $e) }
+		else { Log ($what + ' НЕ применена: ' + $e + ' не разрешается на этой машине (вне домена?)') }
+	}
 	Remove-Item -LiteralPath $expFile -Force -ErrorAction SilentlyContinue
 }
 

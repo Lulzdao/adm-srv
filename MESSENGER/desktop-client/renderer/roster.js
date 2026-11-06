@@ -762,8 +762,9 @@ function askVncLogin(host, user) {
       <input id="vncUser" style="${field}" spellcheck="false" autocomplete="off">
       <label style="font-size:12px; color:var(--muted)">Пароль</label>
       <input id="vncPass" type="password" style="${field}" autocomplete="off">
-      <label style="display:flex; align-items:center; gap:7px; font-size:12.5px; margin:2px 0 14px; cursor:pointer">
+      <label style="display:flex; align-items:center; gap:7px; font-size:12.5px; margin:2px 0 10px; cursor:pointer">
         <input id="vncRemember" type="checkbox"> Помнить пароль до выхода из «Искры»</label>
+      <div style="font-size:11.5px; color:var(--muted); margin:0 0 14px">Домен недоступен — войдите локальным администратором этого ПК: ${escapeHtml(host)}\\имя</div>
       <div class="ui-modal-actions">
         <button class="ui-btn-ghost" id="vncCancel">Отмена</button>
         <button class="ui-btn-primary" id="vncOk">Подключиться</button>
