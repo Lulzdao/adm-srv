@@ -59,3 +59,37 @@ test('без таблицы calls страницы и выгрузки отве�
   await new Promise((r) => setTimeout(r, 300));
   assert.equal(proc.exitCode, null, `процесс завершился:\n${out}`);
 });
+
+// Справочник добавочных для «Искры»: JSON, только записи с ФИО; работает и без таблицы звонков.
+test('/api/directory отдаёт добавочные с ФИО', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'smdr-web-'));
+  fs.cpSync(WEB, path.join(root, 'web-node'), {
+    recursive: true,
+    filter: (s) => !/[\/](node_modules|test)([\/]|$)/.test(path.relative(WEB, s) ? s : ''),
+  });
+  const port = await freePort();
+  const proc = spawn(process.execPath, ['server.js'], {
+    cwd: path.join(root, 'web-node'),
+    env: { ...process.env, PORT: String(port), NODE_PATH: path.join(WEB, 'node_modules') },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  t.after(async () => {
+    if (proc.exitCode === null) { proc.kill(); await new Promise((r) => proc.once('exit', r)); }
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  });
+  let out = '';
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`не запустился:\n${out}`)), 10000);
+    const onData = (d) => { out += d; if (/Веб запущен/.test(out)) { clearTimeout(timer); resolve(); } };
+    proc.stdout.on('data', onData);
+    proc.stderr.on('data', onData);
+  });
+  const base = `http://127.0.0.1:${port}`;
+  for (const [ext, fio] of [['215', 'Петров Игорь Николаевич'], ['216', '  '], ['101', 'Голубева Ж.А.']]) {
+    const r = await fetch(`${base}/directory`, { method: 'POST', body: new URLSearchParams({ ext, fio }), redirect: 'manual' });
+    assert.equal(r.status, 302, `${ext}: ${r.status}`);
+  }
+  const r = await fetch(`${base}/api/directory`);
+  assert.equal(r.status, 200);
+  assert.deepEqual(await r.json(), [{ ext: '101', fio: 'Голубева Ж.А.' }, { ext: '215', fio: 'Петров Игорь Николаевич' }]);
+});

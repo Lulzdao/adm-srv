@@ -24,6 +24,7 @@ const { createReleases } = require('./lib/releases');
 const { createLogger, dayStamp, parseLogLine, LOG_VIEW_LIMIT } = require('./lib/log');
 const { sanitizeHtml, htmlToText, hasFormatting } = require('./lib/richtext');
 const { createMetrics, hourSummary } = require('./lib/metrics');
+const { startPhonebook } = require('./lib/phonebook');
 // Нагрузка: что и сколько проходит через сервер (раздел «Нагрузка» панели, сводка в журнал раз в час).
 const metrics = createMetrics();
 
@@ -1011,11 +1012,20 @@ app.patch('/api/me', auth, (req, res) => {
   res.json({ ok: true });
 });
 
+// Рабочий номер из справочника журнала звонков (lib/phonebook.js) — поле phone у сотрудника, для
+// подсказки в клиенте. Справочник поменялся — меняется и ETag, ростер подхватит при следующем опросе.
+const phonebook = startPhonebook({
+  url: process.env.SMDR_DIRECTORY_URL !== undefined ? process.env.SMDR_DIRECTORY_URL : 'http://127.0.0.1:3102/api/directory',
+  log: logServer,
+});
 app.get('/api/users', auth, (req, res) => {
-  const etag = `"users-v${usersVersion}"`;
+  const etag = `"users-v${usersVersion}-p${phonebook.version()}"`;
   if (req.headers['if-none-match'] === etag) return res.status(304).end();
   res.set('ETag', etag);
-  res.json(listUsersBasic.all());
+  res.json(listUsersBasic.all().map((u) => {
+    const phone = phonebook.phoneOf(u.display_name);
+    return phone ? { ...u, phone } : u;
+  }));
 });
 app.get('/api/departments', auth, (req, res) => {
   const etag = `"users-v${usersVersion}"`;

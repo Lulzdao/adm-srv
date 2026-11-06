@@ -662,7 +662,9 @@ function applyReachability(row, u, p) {
   // Не в сети — сервер присылает ПК, с которого человек был в «Искре» в последний раз (lastHosts,
   // сервер 1.1.32+): «Искра» могла не запуститься, а компьютер включён — к нему можно подключиться.
   const lastHosts = p.state === 'offline' ? remoteHostsOf(p.lastHosts) : [];
+  // Рабочий номер — из справочника журнала звонков (сервер 1.1.33+, поле phone; см. lib/phonebook.js).
   row.title = buildTooltip(p.state, p.idleSince, p.hosts, p.since)
+    + (u.phone ? `\nТелефон: ${u.phone}` : '')
     + lastHosts.map((h) => `\nПоследний ПК: ${h}`).join('')
     + (reachable ? '' : '\nСейчас недоступен для сообщений и файлов — подключён только через веб-панель администратора');
   makeSelectable(row, `u:${u.id}`, reachable ? () => desktop.openChat(chatPayload) : null);
