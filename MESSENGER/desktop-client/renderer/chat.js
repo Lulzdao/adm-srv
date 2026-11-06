@@ -14,6 +14,9 @@ const me = JSON.parse(localStorage.getItem('me') || 'null');
 installErrorReporting(serverUrl, token, 'chat'); // см. ui-kit.js
 
 document.getElementById('label').textContent = label;
+// Заголовок окна — с кем чат: его Windows показывает в подсказке и миниатюре на панели задач. Раньше у
+// всех окон чата там было одно «Чат», и несколько открытых не отличить (просьба пользователя 2026-11-07).
+document.title = label || 'Чат';
 if (type !== 'dm') document.getElementById('statusDot').style.display = 'none';
 // В шапке окна группы — та же иконка, что у группы в ростере (просьба пользователя 2026-10-22).
 if (groupId) document.getElementById('statusDot').insertAdjacentHTML('afterend', `<div class="badge-icon group-badge">${uiIcon('group')}</div>`);
@@ -116,6 +119,7 @@ function paintGroupHeader() {
   const total = groupMembers.length;
   const online = groupMembers.filter((m) => memberState(m.id) !== 'offline').length;
   const name = groupInfo ? groupInfo.name : label;
+  document.title = name || 'Чат'; // группу могли переименовать, пока окно открыто
   // Слова «Группа» перед названием больше нет: то же говорит иконка группы слева (2026-10-22), а в
   // узком окне каждое место на счету — название и так обрезалось до первых букв.
   document.getElementById('label').innerHTML = `<span class="hg-name" title="Группа «${escapeAttr(name)}»">${escapeHtml(name)}</span>`
