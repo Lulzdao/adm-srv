@@ -36,3 +36,19 @@ test('пустой журнал или только служебные стро�
   assert.equal(parseUpdaterLog(''), null);
   assert.equal(parseUpdaterLog('2026-10-15T05:00:00.000Z windows root store: 0 certificates\nмусор'), null);
 });
+
+test('починка, когда программы нет: скачано и поставлено — или понятная причина неудачи', () => {
+  const ok = parseUpdaterLog([
+    '2026-10-26T18:53:31.212Z no program exe in C:\\Program Files\\iskra-desktop - repairing',
+    '2026-10-26T18:53:40.000Z download ok: missing -> 1.1.34, iskra-setup-win7-1.1.34.exe (repair: program files were missing)',
+    '2026-10-26T18:54:10.000Z install 1.1.34: exit code 0',
+  ].join('\n'));
+  assert.deepEqual([ok.state, ok.version], ['installed', '1.1.34']);
+  const fail = parseUpdaterLog('2026-10-26T18:53:31.212Z no program exe in C:\\x - repairing\n2026-10-26T18:53:32.000Z repair: latest.yml not downloaded from https://srv/updates/win7: timeout');
+  assert.deepEqual([fail.state, fail.detail], ['error', 'починка не удалась: latest.yml not downloaded from https://srv/updates/win7: timeout']);
+});
+
+test('политика, положенная не администратором, — ошибка с владельцем', () => {
+  const r = parseUpdaterLog('2026-10-26T20:30:00.000Z policy ignored: C:/ProgramData/Iskra/config.json is owned by S-1-5-21-1-2-3-1001, not SYSTEM or Administrators; moved to x');
+  assert.deepEqual([r.state, r.detail], ['error', 'политика C:/ProgramData/Iskra/config.json не принята: владелец S-1-5-21-1-2-3-1001']);
+});

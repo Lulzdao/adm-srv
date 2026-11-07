@@ -111,6 +111,14 @@ app.get('/directory', (req, res) => {
   res.render('directory', { exts, map });
 });
 
+// Справочник добавочных для «Искры» (с 1.1.33): она показывает номер сотрудника при наведении.
+// Только чтение и только с этого же сервера (localOnly выше) — «Искра» работает на той же машине и
+// ходит сюда напрямую, без платформы. Пустые ФИО не отдаём: сопоставлять их не с чем.
+app.get('/api/directory', (req, res) => {
+  const rows = db.prepare("SELECT ext, fio FROM employees WHERE fio IS NOT NULL AND trim(fio) <> '' ORDER BY ext").all();
+  res.json(rows);
+});
+
 app.post('/directory', (req, res) => {
   const { ext, fio } = req.body;
   // Раньше значения уходили в базу как есть: непустой проверки не было

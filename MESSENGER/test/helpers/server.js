@@ -73,7 +73,8 @@ async function startServer({ files = {}, env: extraEnv = {} } = {}) {
   }
 
   const port = await freePort();
-  const env = { ...process.env, PORT: String(port), NODE_PATH: path.join(SERVER_DIR, 'node_modules'), ...extraEnv };
+  // SMDR_DIRECTORY_URL пустой — тесты не ходят в настоящий журнал звонков на машине разработчика.
+  const env = { ...process.env, PORT: String(port), NODE_PATH: path.join(SERVER_DIR, 'node_modules'), SMDR_DIRECTORY_URL: '', ...extraEnv };
   // Ключ подписи — свой у каждого запуска: сервер сгенерирует его сам и сохранит в свою базу.
   delete env.JWT_SECRET;
   for (const k of ['TLS_PFX', 'TLS_PFX_PASSWORD', 'TLS_CERT', 'TLS_KEY']) delete env[k];

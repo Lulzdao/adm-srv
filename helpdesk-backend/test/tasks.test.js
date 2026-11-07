@@ -144,15 +144,17 @@ test("чек-лист: пункты, отметки и счётчик в спи�
   assert.ok(hist.includes("убрал пункт: «Замена после 18:00»"));
 });
 
-test("календарь: выборка по диапазону дат — с выполненными, без задач без срока", async (t) => {
+test("календарь: выборка по диапазону дат — без выполненных и без задач без срока", async (t) => {
   const { ids, A } = await стенд(t);
   const внутри = await создать(A, ids, { title: "Внутри", due_date: "2026-10-02" });
   const готова = await создать(A, ids, { title: "Готова", due_date: "2026-10-05" });
   await A.patch(`/api/tasks/${готова}`, { status: "done" });
   await создать(A, ids, { title: "После", due_date: "2026-11-02" });
   await создать(A, ids, { title: "Без срока", due_date: null });
-  const r = await A.get("/api/tasks?status=all&from=2026-09-28&to=2026-11-01");
-  assert.deepStrictEqual(r.json.tasks.map((x) => x.id), [внутри, готова]);
+  const r = await A.get("/api/tasks?status=open&from=2026-09-28&to=2026-11-01");
+  assert.deepStrictEqual(r.json.tasks.map((x) => x.id), [внутри], "закрытая задача из календаря пропадает");
+  const все = await A.get("/api/tasks?status=all&from=2026-09-28&to=2026-11-01");
+  assert.deepStrictEqual(все.json.tasks.map((x) => x.id), [внутри, готова]);
   assert.strictEqual((await A.get("/api/tasks?status=all&from=2026-13-01&to=2026-11-01")).status, 400);
 });
 

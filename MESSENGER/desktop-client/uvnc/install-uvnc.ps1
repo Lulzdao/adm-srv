@@ -7,10 +7,12 @@
 # Что делает (идемпотентно — повторный запуск при обновлении ничего лишнего не меняет):
 #   * заводит службу uvnc_service из папки «Искры» (…\resources\uvnc), заменяя прежнюю из uvnc_s;
 #   * пишет ultravnc.ini из шаблона: порт 5995, SecureVNC, вход по учётной записи Windows, запрос
-#     сотруднику с автосогласием, значок в трее виден;
+#     сотруднику с автосогласием, значок в трее виден; метка ultravnc.portable — чтобы служба читала
+#     именно его, а не копию в C:\ProgramData\UltraVNC;
 #   * задаёт случайный пароль VNC (без него сервер не отвечает), только если его ещё нет;
 #   * включает SoftwareSASGeneration — Ctrl+Alt+Del без лишнего вопроса сотруднику;
 #   * группа доступа (MS-Logon) — по умолчанию p48_g_support, машинная политика может подменить;
+#     плюс локальные администраторы ПК — резервный вход, когда домен недоступен;
 #   * правило брандмауэра на порт 5995 — без ограничений по адресам (политика vncAllowFrom сужает);
 #   * после проверки, что новая служба слушает 5995, удаляет прежнюю папку uvnc_s (из Program Files
 #     и из Program Files (x86)). Папку администратора uvnc_support не трогает: службы в ней нет.
@@ -19,7 +21,8 @@
 # администраторы). Ключи: vncAccessGroup (строка «ДОМЕН\группа» — подменяет группу доступа,
 # по умолчанию p48_g_support), vncAllowFrom (адреса/подсети через запятую — с них разрешить
 # подключение, по умолчанию без ограничений), vncQueryAccept (true — спрашивать сотрудника без
-# автосогласия). Настройку пользователя (Ctrl+S в клиенте) НЕ читаем.
+# автосогласия), vncLocalAdmins (false — без резервного входа локальными администраторами ПК, см.
+# шаг 5). Настройку пользователя (Ctrl+S в клиенте) НЕ читаем.
 #
 # PowerShell 2.0 (Windows 7). Файл — UTF-8 с BOM.
 
@@ -103,7 +106,29 @@ function Stop-Service-If-Any {
 	Start-Sleep -Milliseconds 500
 }
 
+# Политике верим, только если её владелец — система или администраторы (так у файла, положенного
+# администратором с повышенными правами или групповой политикой). До 1.1.33 обычный пользователь мог
+# создать в C:\ProgramData\Iskra свой config.json и, например, выдать доступ к ПК своей группе —
+# этот сценарий работает с правами администратора (найдено 2026-10-26). Чужой файл откладываем в
+# сторону: его не прочтут ни задание обновления, ни сама программа. Та же проверка — в iskra-update.ps1.
+function Test-TrustedPolicy([string]$path) {
+	if (-not (Test-Path -LiteralPath $path)) { return $true }
+	$owner = ''
+	# Через .NET, а не Get-Acl: у Get-Acl в PowerShell 2.0 нет -LiteralPath — вызов падал, владелец
+	# выходил пустым, и откладывалась даже политика администратора (поймано на Win7-ВМ).
+	try { $owner = [System.IO.File]::GetAccessControl($path).GetOwner([System.Security.Principal.SecurityIdentifier]).Value } catch { }
+	if ($owner -eq 'S-1-5-18' -or $owner -eq 'S-1-5-32-544') { return $true }
+	# Владельца узнать не удалось — в этот раз не верим, но и не трогаем: вдруг это сбой, а файл верный.
+	if ($owner -eq '') { Log ('политика не принята: не удалось узнать владельца ' + $path); return $false }
+	$aside = $path + '.untrusted-' + (Get-Date).ToString('yyyyMMdd-HHmmss')
+	try { Move-Item -LiteralPath $path -Destination $aside -Force -ErrorAction Stop } catch { $aside = '(не перенесён: ' + $_.Exception.Message + ')' }
+	Log ('политика не принята: владелец ' + $path + ' — ' + $owner + ', не система и не администраторы; файл: ' + $aside)
+	return $false
+}
+$policyTrusted = Test-TrustedPolicy (Join-Path $programData 'config.json')
+
 function Policy([string]$key) {
+	if (-not $policyTrusted) { return '' }
 	# Грубый разбор плоского config.json (в PS 2.0 нет ConvertFrom-Json). Клиент (policy.js)
 	# разбирает этот файл настоящим JSON.parse, значит файл — валидный JSON, и обратная косая
 	# черта в значении экранирована: «ДОМЕН\\группа» в файле есть «ДОМЕН\группа» в значении.
@@ -147,7 +172,13 @@ $tpl = Join-Path $Root 'ultravnc.ini.template'
 if (Test-Path $tpl) {
 	$ini = [System.IO.File]::ReadAllText($tpl)
 	$ini = $ini.Replace('__PATH__', $Root)
-	if ((Policy 'vncQueryAccept') -eq 'true') { $ini = $ini -replace '(?m)^QueryAccept=[^\r\n]*', 'QueryAccept=1' }
+	# Окно запроса сотруднику. В UltraVNC 1.8 (vncserver.cpp, vncclient.cpp): QuerySetting=4 — окно
+	# показывается, 2 — нет; QueryAccept — что сделать, когда за QueryTimeout секунд сотрудник ничего не
+	# нажал: 1 — принять, 0 — отказать. Шаблон: окно с автосогласием через 10 с. До 2026-10-26 там стояли
+	# значения из рабочего комплекта 1.4.3.1 (QuerySetting=1, QueryAccept=0) — для 1.8 это «без окна»:
+	# подключались молча (найдено на Win7-ВМ). Политика vncQueryAccept=true — без автосогласия: не нажал
+	# «Принять» — отказ (раньше здесь ставилось QueryAccept=1, то есть ровно обратное).
+	if ((Policy 'vncQueryAccept') -eq 'true') { $ini = $ini -replace '(?m)^QueryAccept=[^\r\n]*', 'QueryAccept=0' }
 	# Сохранить уже заданный пароль из существующего ini (его нет в шаблоне). Строки passwd/
 	# passwd2 живут в секции [ultravnc] — туда их пишет сам UltraVNC, и winvnc ищет их именно
 	# там, а не в конце файла (конец — это уже секция [poll]).
@@ -164,6 +195,30 @@ if (Test-Path $tpl) {
 	$old = ''
 	if (Test-Path $iniPath) { $old = [System.IO.File]::ReadAllText($iniPath, [System.Text.Encoding]::Default) }
 	if ($old -ne $ini) { [System.IO.File]::WriteAllText($iniPath, $ini, $enc); Log 'ini записан' } else { Log 'ini без изменений' }
+}
+
+# 2а. Чтобы служба читала именно этот ultravnc.ini. UltraVNC 1.8 без метки ultravnc.portable рядом
+#     с winvnc.exe берёт настройки из C:\ProgramData\UltraVNC\ultravnc.ini, а наш файл копирует
+#     туда ОДИН раз — если там пусто (UltraVNCService.cpp, MigrateServiceIniToProgramData). Дальше
+#     правки шаблона в новых версиях и политика vncQueryAccept до службы не доходили (найдено
+#     2026-10-26: на ВМ служба читала копию от 22.10), а на ПК, где от другой UltraVNC в ProgramData
+#     уже лежит свой ini, наши порт, шифрование и вход по Windows не применились бы вовсе. С меткой
+#     служба и значок в трее читают ini из папки «Искры». Меню «Свойства» сотруднику по-прежнему
+#     недоступно: AllowProperties=0 в шаблоне.
+$marker = Join-Path $Root 'ultravnc.portable'
+if (-not (Test-Path $marker)) {
+	[System.IO.File]::WriteAllText($marker, "Метка для UltraVNC: настройки — ultravnc.ini в этой папке (см. install-uvnc.ps1).`r`n", [System.Text.Encoding]::Default)
+	Log 'метка ultravnc.portable создана'
+}
+# Копию наших настроек, сделанную UltraVNC в ProgramData до метки, убираем — в ней устаревший
+# пароль, и по ней легко ошибиться, какой файл действует. Только нашу: в ней путь к папке «Искры».
+$pdIni = Join-Path $env:ProgramData 'UltraVNC\ultravnc.ini'
+if (Test-Path $pdIni) {
+	$pdText = [System.IO.File]::ReadAllText($pdIni, [System.Text.Encoding]::Default)
+	if ($pdText.Contains('path=' + $Root)) {
+		Remove-Item -LiteralPath $pdIni -Force -ErrorAction SilentlyContinue
+		Log 'устаревшая копия ultravnc.ini в ProgramData удалена'
+	}
 }
 
 # 3. Пароль VNC — случайный, только если его ещё нет (без пароля сервер не отвечает). Для входа он
@@ -192,34 +247,74 @@ if (-not $hasPwd) {
 # 4. Ctrl+Alt+Del без лишнего окна: разрешить программный ввод SAS.
 Run $reg 'add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v SoftwareSASGeneration /t REG_DWORD /d 1 /f' | Out-Null
 
-# 5. Группа доступа (MS-Logon): по умолчанию p48_g_support (решение пользователя 2026-10-22),
-#    машинная политика vncAccessGroup подменяет («ДОМЕН\группа»). Имя группы домена, поэтому
-#    вне домена оно не разрешится — MSLogonACL молча пропустит строку, ACL останется пустым
-#    (никто не подключится) — проверка ниже честно пишет об этом в журнал.
+# 5. Кто может подключиться (MS-Logon): группа доступа и локальные администраторы ПК.
+#    Группа — по умолчанию p48_g_support (решение пользователя 2026-10-22), машинная политика
+#    vncAccessGroup подменяет («ДОМЕН\группа»). Это группа домена: вне домена она не разрешится —
+#    MSLogonACL молча пропустит строку; проверка ниже честно пишет об этом в журнал.
+#    Локальные администраторы (BUILTIN\Администраторы, SID S-1-5-32-544) — резервный вход, когда
+#    домен недоступен (решение пользователя 2026-11-07): пароль локальной учётки проверяется на самом
+#    ПК, без контроллера домена. Входить — «ИМЯ-ПК\учётка» локального администратора. Пока домен
+#    работает, в эту группу входят и доменные администраторы — они тоже смогут подключиться.
+#    Политика vncLocalAdmins=false — без резервного входа.
 $group = Policy 'vncAccessGroup'
 if ($group -eq '') { $group = 'p48_g_support' }
+$entries = @($group)
+if ((Policy 'vncLocalAdmins') -ne 'false') {
+	# Имя группы в русской Windows переведено («Администраторы»), и MSLogonACL ищет по имени —
+	# поэтому имя берём у самой Windows по SID, без префикса BUILTIN\.
+	try {
+		$admins = (New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-544')).Translate([System.Security.Principal.NTAccount]).Value
+		$entries += $admins.Substring($admins.IndexOf('\') + 1)
+	} catch { Log ('не удалось узнать имя группы локальных администраторов: ' + $_.Exception.Message) }
+}
 $aclFile = Join-Path $Root 'access.acl'
-# Кодировка системная (ANSI): имя группы может быть с кириллицей, ASCII бы его потерял.
+# Кодировка системная (ANSI): имена групп с кириллицей, ASCII бы их потерял.
 # Маска 3 = ViewOnly(1) + Interact(2) — всё управление, без передачи файлов.
-# Имя группы — В КАВЫЧКАХ: токенизатор MSLogonACL режет строку по пробелам, и имя с пробелом
+# Имена — В КАВЫЧКАХ: токенизатор MSLogonACL режет строку по пробелам, и имя с пробелом
 # («NT AUTHORITY\SYSTEM») без кавычек разваливается на три части и молча пропускается.
-[System.IO.File]::WriteAllText($aclFile, "allow`t0x00000003`t`"" + $group + "`"`r`n", [System.Text.Encoding]::Default)
+function Export-Acl {
+	$f = [System.IO.Path]::GetTempFileName()
+	Run $mslogon ('/e "' + $f + '"') | Out-Null
+	$t = ''
+	if (Test-Path $f) { $t = [System.IO.File]::ReadAllText($f, [System.Text.Encoding]::Default) }
+	Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue
+	return $t
+}
+function Short-Name([string]$n) { $i = $n.LastIndexOf('\'); if ($i -ge 0) { return $n.Substring($i + 1) }; return $n }
+# Находится ли группа доступа прямо сейчас. Не находится — домен недоступен (или машина вне домена).
+# Тогда список НЕ перезаписываем: в нём может быть прежняя запись этой группы (хранится по SID и
+# заработает, когда домен вернётся), а перезапись её бы стёрла — и после возвращения домена у группы
+# поддержки не было бы доступа до следующего обновления (найдено 2026-11-07: домен лежал как раз во
+# время выпуска резервного входа). В таком случае только дописываем недостающее (MSLogonACL /a).
+$groupFound = $false
+try { [void](New-Object System.Security.Principal.NTAccount($group)).Translate([System.Security.Principal.SecurityIdentifier]); $groupFound = $true } catch { }
 $mslogon = Join-Path $Root 'MSLogonACL.exe'
 if (Test-Path $mslogon) {
-	Run $mslogon ('/i /o "' + $aclFile + '"') | Out-Null
+	$mode = '/o'
+	$toWrite = $entries
+	if (-not $groupFound) {
+		$mode = '/a'
+		$before = Export-Acl
+		$toWrite = @($entries | Where-Object { $_ -ne $group -and -not $before.Contains((Short-Name $_)) })
+		Log ('группа доступа ' + $group + ' сейчас не находится — список доступа не перезаписываем, только дописываем недостающее')
+	}
+	$aclText = ''
+	foreach ($e in $toWrite) { $aclText += "allow`t0x00000003`t`"" + $e + "`"`r`n" }
+	[System.IO.File]::WriteAllText($aclFile, $aclText, [System.Text.Encoding]::Default)
+	if ($aclText -ne '') { Run $mslogon ('/i ' + $mode + ' "' + $aclFile + '"') | Out-Null }
 	# MSLogonACL возвращает 0 даже когда имя не разрешается (строку пропускает, код не портит),
 	# поэтому «группа задана» по коду выхода не проверить. Единственная честная проверка:
-	# экспортировать ACL обратно (SID разрешается в имя) и найти в нём имя группы.
-	$expFile = [System.IO.Path]::GetTempFileName()
-	Run $mslogon ('/e "' + $expFile + '"') | Out-Null
-	$exp = ''
-	if (Test-Path $expFile) { $exp = [System.IO.File]::ReadAllText($expFile, [System.Text.Encoding]::Default) }
-	$grpName = $group
-	$slash = $group.LastIndexOf('\')
-	if ($slash -ge 0) { $grpName = $group.Substring($slash + 1) }
-	if ($exp -ne '' -and $exp.Contains($grpName)) { Log ('группа доступа: ' + $group) }
-	else { Log ('группа доступа НЕ применена: ' + $group + ' не разрешается на этой машине (вне домена?)') }
-	Remove-Item -LiteralPath $expFile -Force -ErrorAction SilentlyContinue
+	# экспортировать ACL обратно (SID разрешается в имя) и найти в нём каждое имя.
+	$exp = Export-Acl
+	foreach ($e in $entries) {
+		$name = $e
+		$slash = $e.LastIndexOf('\')
+		if ($slash -ge 0) { $name = $e.Substring($slash + 1) }
+		$what = 'группа доступа'
+		if ($e -ne $group) { $what = 'резервный вход (локальные администраторы)' }
+		if ($exp -ne '' -and $exp.Contains($name)) { Log ($what + ': ' + $e) }
+		else { Log ($what + ' НЕ применена: ' + $e + ' не разрешается на этой машине (вне домена?)') }
+	}
 }
 
 # 6. Служба uvnc_service должна указывать на winvnc.exe из папки «Искры».

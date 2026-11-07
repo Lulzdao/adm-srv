@@ -24,6 +24,7 @@ const { createReleases } = require('./lib/releases');
 const { createLogger, dayStamp, parseLogLine, LOG_VIEW_LIMIT } = require('./lib/log');
 const { sanitizeHtml, htmlToText, hasFormatting } = require('./lib/richtext');
 const { createMetrics, hourSummary } = require('./lib/metrics');
+const { startPhonebook } = require('./lib/phonebook');
 // Нагрузка: что и сколько проходит через сервер (раздел «Нагрузка» панели, сводка в журнал раз в час).
 const metrics = createMetrics();
 
@@ -1011,11 +1012,20 @@ app.patch('/api/me', auth, (req, res) => {
   res.json({ ok: true });
 });
 
+// Рабочий номер из справочника журнала звонков (lib/phonebook.js) — поле phone у сотрудника, для
+// подсказки в клиенте. Справочник поменялся — меняется и ETag, ростер подхватит при следующем опросе.
+const phonebook = startPhonebook({
+  url: process.env.SMDR_DIRECTORY_URL !== undefined ? process.env.SMDR_DIRECTORY_URL : 'http://127.0.0.1:3102/api/directory',
+  log: logServer,
+});
 app.get('/api/users', auth, (req, res) => {
-  const etag = `"users-v${usersVersion}"`;
+  const etag = `"users-v${usersVersion}-p${phonebook.version()}"`;
   if (req.headers['if-none-match'] === etag) return res.status(304).end();
   res.set('ETag', etag);
-  res.json(listUsersBasic.all());
+  res.json(listUsersBasic.all().map((u) => {
+    const phone = phonebook.phoneOf(u.display_name);
+    return phone ? { ...u, phone } : u;
+  }));
 });
 app.get('/api/departments', auth, (req, res) => {
   const etag = `"users-v${usersVersion}"`;
@@ -1869,6 +1879,11 @@ setInterval(sweepWebPresence, PRESENCE_SWEEP_MS).unref();
 const graceEnv = process.env.PRESENCE_GRACE_MS;
 const OFFLINE_GRACE_MS = graceEnv !== undefined && graceEnv !== '' && Number(graceEnv) >= 0 ? Number(graceEnv) : 20000;
 const recentlyGone = new Map(); // userId -> { until, state, idleSince, hosts: [...] }
+// Недавние отправки по номеру от клиента ("userId:cid" -> { out, at }) — чтобы повтор не записался
+// дважды (см. обработку 'send'). Живёт в памяти: последних RECENT_SENDS_MAX хватает с запасом —
+// клиент повторяет в пределах часов, а не недель.
+const recentSends = new Map();
+const RECENT_SENDS_MAX = 5000;
 
 // Обрыв связи — закрытие без прощания (1006) или с ошибкой. Обычные закрытия (окно чата закрыли,
 // клиент вышел) не пишем: их тысячи, и они ничего не говорят. Адрес — чтобы было видно, общая ли
@@ -2134,7 +2149,9 @@ wss.on('connection', (ws, req) => {
   // «отошёл» с тем же моментом, пока клиент не прислал свой статус. Иначе после переподключения он
   // на долю секунды становился «в сети», и отсчёт «отошёл с» начинался заново.
   const idleSince = lastIdleSince.get(user.id) || null;
-  connMeta.set(ws, { userId: user.id, name: user.display_name, hostname, appVersion, buildTrack, canElevate, presenceMode, state: idleSince ? 'idle' : 'active', lastSeen: Date.now(), idleSince });
+  connMeta.set(ws, { userId: user.id, name: user.display_name, hostname, appVersion, buildTrack, canElevate, presenceMode, state: idleSince ? 'idle' : 'active', lastSeen: Date.now(), lastPong: Date.now(), idleSince });
+  // Ответ на служебный ping (см. «Не дать промежуточному оборудованию…» ниже) — признак, что клиент жив.
+  ws.on('pong', () => { const m = connMeta.get(ws); if (m) m.lastPong = Date.now(); });
   metrics.wsConnect();
   // Продление входа (2026-10-08): токен выдаётся на 30 дней, и клиент, который месяц не перезаходил, вылетал
   // на экран входа. Окно подключается — если его токену больше суток, сервер выдаёт свежий, окно его
@@ -2400,6 +2417,21 @@ function handleClientMessage(ws, user, msg) {
     if (!text && !files.length) return;
     const filesJson = files.length ? JSON.stringify(files) : null;
 
+    // Номер отправки от клиента (1.1.33+): клиент держит сообщение «отправляется», пока не увидит его
+    // эхо с этим номером, а не дождался — шлёт ещё раз. Повтор того, что уже записано (эхо потерялось
+    // на мёртвом соединении), не пишем второй раз — только снова отдаём эхо отправителю. Раньше
+    // сообщение, отправленное в тихий обрыв сети, пропадало молча (найдено 2026-10-26 на Win7-ВМ).
+    const cid = typeof msg.cid === 'string' && /^[A-Za-z0-9_-]{8,64}$/.test(msg.cid) ? msg.cid : null;
+    if (cid) {
+      const seen = recentSends.get(`${user.id}:${cid}`);
+      if (seen) { for (const c of online.get(user.id) || []) sendTo(c, seen.out); return; }
+    }
+    const remember = (out) => {
+      if (!cid) return;
+      recentSends.set(`${user.id}:${cid}`, { out, at: now });
+      if (recentSends.size > RECENT_SENDS_MAX) recentSends.delete(recentSends.keys().next().value);
+    };
+
     // Ответ на сообщение (reply) — снимок автора/текста делаем ЗДЕСЬ, на сервере (источник истины),
     // а не доверяем тому, что прислал клиент: то, на что отвечают, могло не быть у него в DOM
     // (старая страница пагинации), а после отправки должно остаться верным, даже если оригинал
@@ -2420,7 +2452,8 @@ function handleClientMessage(ws, user, msg) {
 
     if (room) {
       const info = insertMessage.run(user.id, room, null, text, filesJson, now, replyToId, replySnapshot);
-      const out = JSON.stringify({ type: 'message', id: info.lastInsertRowid, room, from_id: user.id, from_user: user.display_name, text, files, created_at: now, reply: replyOut });
+      const out = JSON.stringify({ type: 'message', id: info.lastInsertRowid, room, from_id: user.id, from_user: user.display_name, text, files, created_at: now, reply: replyOut, ...(cid ? { cid } : {}) });
+      remember(out);
       if (isGroupRoom(room)) {
         for (const uid of groupMemberIds(groupIdFromRoom(room))) sendToUser(uid, out);
       } else {
@@ -2428,7 +2461,8 @@ function handleClientMessage(ws, user, msg) {
       }
     } else {
       const info = insertMessage.run(user.id, null, to, text, filesJson, now, replyToId, replySnapshot);
-      const out = JSON.stringify({ type: 'message', id: info.lastInsertRowid, to_id: to, from_id: user.id, from_user: user.display_name, text, files, created_at: now, reply: replyOut });
+      const out = JSON.stringify({ type: 'message', id: info.lastInsertRowid, to_id: to, from_id: user.id, from_user: user.display_name, text, files, created_at: now, reply: replyOut, ...(cid ? { cid } : {}) });
+      remember(out);
       const targets = new Set([...(online.get(to) || []), ...(online.get(user.id) || [])]);
       targets.forEach((c) => sendTo(c, out));
     }
@@ -2526,10 +2560,24 @@ app.get('/api/admin/load', auth, requireCapability('can_admin'), (req, res) => {
 // клиентами. Переопределяется WS_PING_MS (мс), 0 — выключить.
 const pingEnv = process.env.WS_PING_MS;
 const WS_PING_MS = pingEnv !== undefined && pingEnv !== '' && Number(pingEnv) >= 0 ? Number(pingEnv) : 5000;
+// Тот же ping — и проверка, что клиент жив: на ping клиент (Chromium) отвечает pong сам, любой версии.
+// Нет ответа дольше WS_DEAD_MS — соединение мёртвое (выключили питание, выдернули кабель, пропала
+// сеть): рвём его, и человек через OFFLINE_GRACE_MS уходит «не в сети». Раньше ответ не проверялся, и
+// такое соединение снимала только подстраховка ниже — через 90 минут: всё это время человек числился
+// «в сети» (найдено 2026-10-26 на Win7-ВМ: сеть оборвана на 3 минуты — сервер всё время показывал
+// «в сети»). Переопределяется WS_DEAD_MS (мс); по умолчанию — 6 пропущенных ping, но не меньше 30 с.
+const deadEnv = process.env.WS_DEAD_MS;
+const WS_DEAD_MS = deadEnv !== undefined && deadEnv !== '' && Number(deadEnv) > 0 ? Number(deadEnv) : Math.max(30000, WS_PING_MS * 6);
 if (WS_PING_MS > 0) {
   setInterval(() => {
-    for (const ws of connMeta.keys()) {
+    const now = Date.now();
+    for (const [ws, meta] of connMeta) {
       if (ws.readyState !== ws.OPEN) continue;
+      if (now - meta.lastPong > WS_DEAD_MS) {
+        logServer('WARN', 'ws_no_pong', { userId: meta.userId, hostname: meta.hostname, silentSec: Math.round((now - meta.lastPong) / 1000) });
+        ws.terminate(); // дальше — обычное закрытие: 'close', отсрочка OFFLINE_GRACE_MS, «не в сети»
+        continue;
+      }
       try { ws.ping(); } catch { /* сокет закрылся между проверкой и отправкой */ }
     }
   }, WS_PING_MS).unref();

@@ -381,6 +381,10 @@ body.is-offline #list .dot { background: var(--offline) !important; box-shadow: 
 .msg.pending .pending-retry { border: none; background: none; padding: 0; font: inherit; font-weight: 600; color: var(--accent);
   cursor: pointer; text-decoration: underline; }
 .msg.pending.sending .pending-bar { color: var(--muted); }
+/* Только что отправленное и ждущее эха (chat.js, transmitPending): первые полторы секунды — как
+   обычное своё сообщение, без строки состояния: при живой связи эхо приходит раньше. */
+.msg.pending.fresh { opacity: 1; }
+.msg.pending.fresh .pending-bar { display: none; }
 @media (prefers-reduced-motion: reduce) { .offline-bar, .offline-bar .offline-dot { animation: none; } }
 
 /* ===================== Редактор объявлений (2026-10-12) =====================
