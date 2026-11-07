@@ -85,8 +85,8 @@ function upsertFromLdap(db, ldapUser) {
   const isAdmin = ldapUser.isAdmin ? 1 : 0;
   // Отделов может быть несколько; role хранит первый по порядку — для подписи
   // и для тех мест, где нужен «основной» отдел.
-  // К отделам из групп домена — те, куда логин вписан списком (Администрирование
-  // → Группы исполнителей); require здесь, а не наверху: тот модуль сам берёт
+  // К отделам из групп домена — те, куда логин вписан списком (Настройки
+  // → Люди и группы → Группы исполнителей); require здесь, а не наверху: тот модуль сам берёт
   // отсюда packRoles.
   const { roles, login_roles: loginRoles, role } = require("./executorGroups").combine(db, login, (ldapUser.roles || []).filter(Boolean));
   const groups = packGroups(ldapUser.groups);

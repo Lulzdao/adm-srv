@@ -27,12 +27,10 @@ function deliveryBadge(e) {
 // Подписи каналов доставки — в ленте, журнале отправок и настройке задач.
 const NOTIF_CHANNEL_LABEL = { email: "почта", inapp: "лента", iskra: "Искра" };
 
-async function renderNotifications(main, tab) {
-  clearViewPoll();
+/** Настройки → Оповещения: вкладка tab в контейнер page. */
+async function renderNotifications(page, tab) {
   if (!NOTIF_TABS[tab]) tab = "feed";
-  main.innerHTML = `<div class="topbar"><div class="topbar-title">Оповещения — ${esc(NOTIF_TABS[tab])}</div></div>
-    <div class="page"><div class="spinner">Загрузка…</div></div>`;
-  const page = main.querySelector(".page");
+  page.innerHTML = `<div class="spinner">Загрузка…</div>`;
 
   try {
     if (tab === "feed") await renderNotifFeed(page);
@@ -518,7 +516,7 @@ async function renderNotifSmtp(page, kinds, iskra = { available: false, why: "" 
         if (r.ok) {
           note.style.color = "var(--green)";
           note.textContent = jobDetailText(r.detail);
-          setTimeout(() => renderNotifications(page.closest("main") || page.parentElement, "smtp"), 2600);
+          setTimeout(() => renderNotifications(page, "smtp"), 2600);
         } else {
           note.style.color = "var(--red)"; note.textContent = r.error || r.skipped || "не выполнено";
         }
@@ -532,7 +530,7 @@ async function renderNotifSmtp(page, kinds, iskra = { available: false, why: "" 
     try {
       const r = await api("/notifications/deliveries/retry", { method: "POST", body: {} });
       retryMsg.textContent = r.retried ? `Повторено: ${r.retried}` : "Нечего повторять";
-      if (r.retried) setTimeout(() => renderNotifications(page.closest("main") || page.parentElement, "smtp"), 900);
+      if (r.retried) setTimeout(() => renderNotifications(page, "smtp"), 900);
     } catch (e) { retryMsg.style.color = "var(--red)"; retryMsg.textContent = e.message; }
   };
 

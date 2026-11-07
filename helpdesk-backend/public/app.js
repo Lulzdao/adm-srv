@@ -11,7 +11,8 @@ const ICON_PATHS = {
   search: '<circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>',
   paperclip: '<path d="M21 12.5l-8.5 8.5a4 4 0 1 1-5.66-5.66l9-9a2.5 2.5 0 1 1 3.54 3.54l-9 9a1 1 0 1 1-1.42-1.42l8-8"/>',
   x: '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
-  // Палитра — выбор цветовой темы (низ боковой панели).
+  // Палитра — «Оформление» в настройках; панель с колонкой — «Боковое меню».
+  sidebar: '<rect x="3" y="4" width="18" height="16" rx="2"/><line x1="9" y1="4" x2="9" y2="20"/><line x1="5.5" y1="8" x2="6.5" y2="8"/><line x1="5.5" y1="11" x2="6.5" y2="11"/>',
   moon: '<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/>',
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
   palette: '<path d="M12 3a9 9 0 1 0 0 18c1.1 0 1.8-.8 1.8-1.8 0-.5-.2-.9-.5-1.2-.3-.3-.5-.7-.5-1.2 0-1 .8-1.8 1.8-1.8H17a4 4 0 0 0 4-4c0-4.4-4-8-9-8z"/><circle cx="7.5" cy="11.5" r="1"/><circle cx="10" cy="7.5" r="1"/><circle cx="15" cy="7.5" r="1"/>',
@@ -60,6 +61,10 @@ const ICON_PATHS = {
   receipt: '<rect x="4" y="3" width="16" height="18" rx="2"/><line x1="8" y1="8" x2="16" y2="8"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="8" y1="16" x2="13" y2="16"/>',
   users: '<circle cx="9" cy="8" r="3.2"/><path d="M3.5 20a5.5 5.5 0 0 1 11 0"/><path d="M16 5.5a3.2 3.2 0 0 1 0 6"/><path d="M17.5 14.4A5.5 5.5 0 0 1 20.5 20"/>',
   key: '<circle cx="8" cy="14" r="4"/><path d="M11 11l8-8"/><path d="M17 5l2 2"/><path d="M14.5 7.5l2 2"/>',
+  // Раздел «Настройки»: шестерёнка — вход в шапке, пульс — «Состояние», цилиндр — «Резервные копии».
+  gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
+  pulse: '<polyline points="3 12 7 12 10 4 14 20 17 12 21 12"/>',
+  database: '<ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/><path d="M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/>',
 };
 
 // Оформление плитки отдела, когда в config/departments.js для него ничего не
@@ -77,34 +82,6 @@ function icon(name, size) {
 // Как в настройках клиента «Искры»: «Тема» — цветная, светлая (белая панель) или тёмная, «Акцент» —
 // один из семи цветов. Подписи над элементами — чтобы окошко помещалось в ширину боковой панели.
 // Выбор личный: хранится в браузере для вошедшего сотрудника, на сервер не уходит.
-function themeOptionsHtml() {
-  const now = CenterTheme.get();
-  return `
-    <div class="look-row"><span class="look-label">Тема</span>
-      <div class="look-seg">${CenterTheme.modes.map((m) =>
-        `<button type="button" class="look-seg-btn${now.mode === m.id ? " on" : ""}" data-mode="${m.id}">${esc(m.name)}</button>`).join("")}</div></div>
-    <div class="look-row"><span class="look-label">Акцент</span>
-      <div class="look-dots">${CenterTheme.accents.map((a) => `
-        <button type="button" class="look-dot${now.accent === a.id ? " on" : ""}" data-accent="${a.id}" title="${esc(a.name)}"
-          aria-label="Акцент: ${esc(a.name)}" style="--c: ${a.color};"></button>`).join("")}</div></div>`;
-}
-
-function wireThemePicker() {
-  const btn = document.getElementById("themeBtn");
-  const pop = document.getElementById("themePop");
-  if (!btn || !pop) return;
-  btn.onclick = () => { pop.hidden = !pop.hidden; };
-  pop.onclick = (e) => {
-    const m = e.target.closest("[data-mode]");
-    const a = e.target.closest(".look-dot");
-    if (m) CenterTheme.setMode(m.dataset.mode);
-    else if (a) CenterTheme.setAccent(a.dataset.accent);
-    else return;
-    pop.innerHTML = themeOptionsHtml(); // отметить выбранное
-  };
-  // Клик мимо закрывает — общим перехватчиком рядом с выпадающими списками (enhanceSelect).
-}
-
 // Государственный герб — фирменный знак системы вместо прежней плитки с
 // буквой.
 //
@@ -243,8 +220,6 @@ function enhanceSelect(sel) {
 // в том числе по другому списку или кнопке, которая сама гасит событие.
 document.addEventListener("pointerdown", (e) => {
   document.querySelectorAll(".select-wrap.open").forEach((w) => { if (!w.contains(e.target) && w._close) w._close(); });
-  const pop = document.getElementById("themePop");
-  if (pop && !pop.hidden && !e.target.closest("#themePop, #themeBtn")) pop.hidden = true;
 }, true);
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") document.querySelectorAll(".select-wrap.open").forEach((w) => w._close && w._close());
@@ -325,7 +300,7 @@ function loadNavGroups() {
 function saveNavGroups() {
   try { sessionStorage.setItem(NAV_GROUPS_KEY, JSON.stringify(state.navGroupOpen)); } catch { /* приватный режим */ }
 }
-const state = { user: null, view: "inbox", currentTicket: null, notifications: [], departments: [], modules: [], navGroupOpen: loadNavGroups(),
+const state = { user: null, view: "inbox", currentTicket: null, notifications: [], departments: [], modules: [], bulletins: null, navGroupOpen: loadNavGroups(),
   // Задачи администраторов: какая открыта в карточке справа и сколько «моих»
   // требуют внимания (просрочены или там новое от других) — для счётчика в меню.
   taskOpenId: null, taskAttention: 0,
@@ -540,6 +515,8 @@ async function enterApp() {
     const { modules } = await api("/modules");
     state.modules = modules;
   } catch (e) { state.modules = []; }
+  // Бюллетени — по группам (Настройки → Бюллетени): от них зависит, есть ли раздел в меню.
+  try { state.bulletins = await api("/bulletins"); } catch (e) { state.bulletins = null; }
   await refreshNotifications();
   // Обновление страницы не должно выбрасывать на «Входящие»: человек нажал F5
   // на журнале звонков и ждёт увидеть журнал звонков. Адрес вкладки держим в
@@ -634,17 +611,19 @@ function viewExists(view) {
   if (!view) return false;
   const u = state.user;
   if (["inbox", "mine", "create"].includes(view)) return true;
-  // Рассылки — всем; акты — администраторам и исполнителям; настройки
-  // Ассистента — только администраторам.
+  // Настройки — всем, но категории у каждого свои (app-settings.js).
+  if (view === "settings" || view.startsWith("settings:")) return settingsViewExists(view);
+  // Рассылки — всем; акты — администраторам и исполнителям.
   if (view.startsWith("asst:")) {
     if (!ASSISTANT_VIEWS.some((v) => v.id === view)) return false;
-    if (view === "asst:settings") return Boolean(u.is_admin);
     if (view === "asst:acts") return canActs(u);
     return true;
   }
+  // Бюллетени — участникам групп бюллетеней.
+  if (view.startsWith("bull:")) return bulletinNavItems().some((it) => it.id === view);
   // Разделы администратора — по признаку is_admin, а не по роли: роль "it"
   // теперь значит «исполнитель отдела ИТ», и прав администратора не даёт.
-  if (["dashboard", "admin", "certs", "tasks", "taskcal", "tasknotes"].includes(view) || view.startsWith("notif:")) return Boolean(u.is_admin);
+  if (["dashboard", "tasks", "taskcal", "tasknotes"].includes(view)) return Boolean(u.is_admin);
   if (view.startsWith("module:")) {
     const [, modId, viewId] = view.split(":");
     const mod = state.modules.find((m) => m.id === modId);
@@ -688,6 +667,13 @@ async function restoreViewFromHash() {
   const mail = raw.match(/^asst:mail\/(\d+)$/);
   if (mail) {
     setView("asst:mail", Number(mail[1]), { replace: true });
+    return;
+  }
+
+  // Старые адреса разделов, переехавших в «Настройки», — из закладок и прежних ссылок.
+  const moved = SETTINGS_MOVED[raw];
+  if (moved && viewExists(moved)) {
+    setView(moved, undefined, { replace: true });
     return;
   }
 
@@ -766,10 +752,15 @@ function navBtnHtml(it, active, indented) {
 // потому что внутри всего два вида одного раздела, и прятать их за лишний
 // щелчок незачем.
 const NAV_GROUPS_OPEN_BY_DEFAULT = new Set(["tasks", "assistant"]);
+let navSingleOpen = null; // «по одному разделу»: какой раскрыт (см. buildNavHtml)
+
+function navGroupWouldOpen(groupId) {
+  const saved = state.navGroupOpen[groupId];
+  return saved === true || (saved === undefined && NAV_GROUPS_OPEN_BY_DEFAULT.has(groupId)); // остальные по умолчанию свёрнуты
+}
 
 function navGroupHtml(groupId, label, iconName, badge, items) {
-  const saved = state.navGroupOpen[groupId];
-  const open = saved === true || (saved === undefined && NAV_GROUPS_OPEN_BY_DEFAULT.has(groupId)); // остальные по умолчанию свёрнуты
+  const open = navPrefs().single ? navSingleOpen === groupId : navGroupWouldOpen(groupId);
   return `
     <div class="nav-group${open ? " open" : ""}" data-group="${groupId}">
       <button class="nav-group-header">
@@ -789,6 +780,11 @@ function toggleNavGroup(group) {
   const sub = group.querySelector(".nav-subgroup");
   const open = !group.classList.contains("open");
   state.navGroupOpen[group.dataset.group] = open;
+  // «По одному разделу» (Настройки → Боковое меню): раскрыли этот — остальные сворачиваем.
+  if (open && navPrefs().single) {
+    group.parentElement.querySelectorAll(".nav-group.open").forEach((g) => { if (g !== group) toggleNavGroup(g); });
+    navSingleOpen = group.dataset.group;
+  }
   saveNavGroups();
   group.classList.toggle("open", open);
 
@@ -869,9 +865,10 @@ function restoreNavScroll() {
 // ====== Напоминание о сроке сертификата сервера ======
 //
 // Сертификат домена живёт два года, автопродления нет — единственный способ не
-// проспать замену — напоминать. Щит в шапке (вход в «Сертификаты») краснеет за
-// CERT_WARN_DAYS дней до конца срока и остаётся красным, если срок вышел;
-// подсказка говорит, сколько осталось. Порог — тот же, что у «Искры»
+// проспать замену — напоминать. Шестерёнка «Настройки» в шапке краснеет у
+// администраторов за CERT_WARN_DAYS дней до конца срока и остаётся красной, если
+// срок вышел; подсказка говорит, сколько осталось, а в списке настроек у
+// «Сертификатов» — значок с днями. Порог — тот же, что у «Искры»
 // (tls_certificate_expiring в её журнале).
 const CERT_WARN_DAYS = 30;
 const CERT_CHECK_MS = 30 * 60 * 1000; // сертификат меняется редко — чаще спрашивать незачем
@@ -888,17 +885,24 @@ function applyCertBadge(btn) {
   const left = certDaysLeft(certBadge.cert);
   const alert = left !== null && left <= CERT_WARN_DAYS;
   btn.classList.toggle("alert", alert);
-  btn.title = !certBadge.secure ? "Сертификаты — платформа работает без сертификата (http)"
-    : left === null ? "Сертификаты"
-    : left < 0 ? `Сертификат сервера ИСТЁК ${-left} дн. назад — замените его`
-    : alert ? `Сертификат сервера истекает через ${left} дн. — пора заменить`
-    : `Сертификаты — сертификат сервера действует ещё ${left} дн.`;
+  btn.title = !certBadge.secure ? "Настройки — платформа работает без сертификата (http)"
+    : left === null ? "Настройки"
+    : left < 0 ? `Настройки — сертификат сервера ИСТЁК ${-left} дн. назад, замените его`
+    : alert ? `Настройки — сертификат сервера истекает через ${left} дн., пора заменить`
+    : "Настройки";
+}
+
+/** Шестерёнка в шапке и значок «Сертификатов» в списке настроек — по запомненному сроку. */
+function paintCertMarks() {
+  const btn = document.getElementById("settingsBtn");
+  if (btn && state.user && state.user.is_admin) applyCertBadge(btn);
+  paintSettingsCertBadge();
 }
 
 // Оболочка перерисовывается при каждом переходе — поэтому красим сразу по
 // запомненному, а спрашиваем сервер не чаще раза в CERT_CHECK_MS.
-async function paintCertBadge(btn) {
-  applyCertBadge(btn);
+async function paintCertBadge() {
+  paintCertMarks();
   if (Date.now() - certBadge.at < CERT_CHECK_MS) return;
   certBadge.at = Date.now();
   try {
@@ -907,102 +911,148 @@ async function paintCertBadge(btn) {
     // Сертификат ещё разбирается (сразу после запуска службы) — спросим снова при следующем переходе.
     if (s.secure && !s.certificate) certBadge.at = 0;
   } catch { return; }
-  const current = document.getElementById("certsBtn");
-  if (current) applyCertBadge(current);
+  paintCertMarks();
 }
 
-// Меню целиком. Отдельно от renderShell: при входе в «Искру» и выходе из неё меню
-// перестраивается само, а основная часть экрана с её панелью остаётся как есть.
-function buildNavHtml() {
+// ====== Боковое меню: свой порядок и «по одному разделу» ======
+//
+// Настраивается в «Настройки → Боковое меню», хранится как тема (theme.js): в этом
+// браузере и отдельно для каждого логина — за одним компьютером работают сменами.
+// order — ключи пунктов верхнего уровня; пункты, которых в нём нет (новый модуль,
+// другая роль), встают рядом со своим соседом по умолчанию. single — раскрыт
+// только один раздел: открыли другой — прежний сворачивается (по умолчанию включено).
+const NAV_PREFS_KEY = () => `adm.navPrefs:${String((state.user && state.user.ad_login) || "").toLowerCase()}`;
+function navPrefs() {
+  try {
+    const p = JSON.parse(localStorage.getItem(NAV_PREFS_KEY())) || {};
+    return { order: Array.isArray(p.order) ? p.order.filter((k) => typeof k === "string") : [], single: p.single !== false }; // «по одному разделу» — по умолчанию включено
+  } catch { return { order: [], single: false }; }
+}
+function saveNavPrefs(p) {
+  try { localStorage.setItem(NAV_PREFS_KEY(), JSON.stringify({ order: p.order, single: p.single })); } catch { /* хранилище недоступно — до перезагрузки */ }
+}
+
+/** Пункты по сохранённому порядку; незнакомые — сразу за своим соседом по умолчанию. */
+function orderNav(entries, order) {
+  if (!order.length) return entries;
+  const rank = new Map(order.map((k, i) => [k, i]));
+  const out = entries.filter((e) => rank.has(e.key)).sort((a, b) => rank.get(a.key) - rank.get(b.key));
+  entries.forEach((e, i) => {
+    if (rank.has(e.key)) return;
+    const prev = entries.slice(0, i).reverse().find((p) => out.includes(p));
+    out.splice(prev ? out.indexOf(prev) + 1 : 0, 0, e);
+  });
+  return out;
+}
+
+/**
+ * Пункты верхнего уровня меню этого человека, в порядке по умолчанию:
+ * { key, label, icon, items? } — items у раскрывающихся разделов.
+ */
+function navEntries() {
   const u = state.user;
   const totalUnread = state.notifications.filter(n => !n.is_read).length;
   const isAdmin = Boolean(u.is_admin);
   // Исполнитель — тот, у кого есть хотя бы один отдел. Отдел ИТ тоже сюда
   // попадает: администратор и исполнитель ИТ — разные вещи, и человек вполне
   // может быть и тем и другим одновременно.
-  const depts = myDepts(u);
-  const isExecutor = depts.length > 0;
+  const isExecutor = myDepts(u).length > 0;
+  const btn = (it) => ({ key: it.id, label: it.label, icon: it.icon, it });
+  const group = (key, label, iconName, badge, items) => ({ key, label, icon: iconName, badge, items });
 
-  let navHtml;
-  // Раздел оповещений собирается здесь, а приписывается в самый конец меню —
-  // после модулей: это настройка, а не ежедневная работа, и место ей внизу.
-  let notifHtml = "";
+  // В меню — только ежедневная работа; всё, что настраивают, — в «Настройках» (шестерёнка в шапке).
+  const entries = [];
   if (isAdmin) {
-    const subItems = [
+    entries.push(group("tickets", "Заявки", "folder", totalUnread, [
       { id: "inbox", label: "Входящие заявки", icon: "inbox", badge: totalUnread },
       { id: "mine", label: "Мои заявки", icon: "folder" },
       { id: "create", label: "Новая заявка", icon: "plus" },
       { id: "dashboard", label: "Статистика", icon: "chart" },
-      { id: "admin", label: "Администрирование", icon: "sliders" },
-    ];
-    navHtml = navGroupHtml("tickets", "Заявки", "folder", totalUnread, subItems);
+    ]));
     // Задачи — сразу под заявками: это тоже ежедневная работа, а не настройка.
     // Счётчик — мои открытые задачи, которые просрочены или где есть новое.
-    navHtml += navGroupHtml("tasks", "Задачи", "task", state.taskAttention, [
+    entries.push(group("tasks", "Задачи", "task", state.taskAttention, [
       { id: "tasks", label: "Список", icon: "list" },
       { id: "taskcal", label: "Календарь", icon: "calendar" },
       { id: "tasknotes", label: "Заметки", icon: "pen" },
-    ]);
-    // Раздел оповещений — только у ИТ. Исполнителям ХОЗ и ЕГРПО он не нужен:
-    // им хватает «Входящих заявок» с бейджем, который работает как работал.
-    notifHtml = navGroupHtml("notif", "Оповещения", "bell", 0, [
-      { id: "notif:feed", label: "Лента", icon: "bell" },
-      { id: "notif:templates", label: "Шаблоны", icon: "pen" },
-      { id: "notif:smtp", label: "Отправка", icon: "mail" },
-    ]);
+    ]));
   } else if (isExecutor) {
-    const items = [
-      { id: "inbox", label: "Входящие заявки", icon: "inbox", badge: totalUnread },
-      { id: "mine", label: "Мои заявки", icon: "folder" },
-      { id: "create", label: "Новая заявка", icon: "plus" },
-    ];
+    entries.push(btn({ id: "inbox", label: "Входящие заявки", icon: "inbox", badge: totalUnread }));
+    entries.push(btn({ id: "mine", label: "Мои заявки", icon: "folder" }));
+    entries.push(btn({ id: "create", label: "Новая заявка", icon: "plus" }));
     // Исполнителям ХОЗ и ЕГРПО акты не нужны — рассылки отдельным пунктом.
-    if (!canActs(u)) items.push({ id: "asst:mail", label: "Рассылки", icon: "mail" });
-    navHtml = items.map(it => navBtnHtml(it, navView() === it.id, false)).join("");
+    if (!canActs(u)) entries.push(btn({ id: "asst:mail", label: "Рассылки", icon: "mail" }));
   } else {
     // Обычному сотруднику — только его заявки, новая заявка и рассылки:
     // акты ему не нужны, и группа «Ассистент» ради одного пункта лишняя.
-    const items = [
-      { id: "inbox", label: "Мои заявки", icon: "folder", badge: totalUnread },
-      { id: "create", label: "Новая заявка", icon: "plus" },
-      { id: "asst:mail", label: "Рассылки", icon: "mail" },
-    ];
-    navHtml = items.map(it => navBtnHtml(it, navView() === it.id, false)).join("");
+    entries.push(btn({ id: "inbox", label: "Мои заявки", icon: "folder", badge: totalUnread }));
+    entries.push(btn({ id: "create", label: "Новая заявка", icon: "plus" }));
+    entries.push(btn({ id: "asst:mail", label: "Рассылки", icon: "mail" }));
   }
 
   // Ассистент — администраторам и отделу ИТ, после заявок и задач: это тоже
-  // ежедневная работа. Настройки в нём — только администраторам.
-  if (canActs(u)) {
-    navHtml += navGroupHtml("assistant", "Ассистент", "briefcase", 0,
-      ASSISTANT_VIEWS.filter((v) => v.id !== "asst:settings" || isAdmin));
-  }
+  // ежедневная работа. Бюллетени у них — внутри Ассистента; у остальных группы
+  // «Ассистент» нет, и бюллетени — своей кнопкой.
+  if (canActs(u)) entries.push(group("assistant", "Ассистент", "briefcase", 0, [...ASSISTANT_VIEWS, ...bulletinNavItems()]));
+  else entries.push(...bulletinNavItems().map(btn));
 
-  if (state.modules.length) {
-    navHtml += state.modules.map(m => {
-      const views = (m.views && m.views.length) ? m.views : [{ id: "root", label: m.label, sub: "" }];
-      // Модуль со своим входом («Искра»): до входа в него — одна кнопка, разделы — после.
-      if (views.length === 1 || (m.authGated && !moduleAuthed(m.id))) {
-        const it = { id: `module:${m.id}:${views[0].id}`, label: m.label, icon: moduleIcon(m.id) };
-        return navBtnHtml(it, navView() === it.id, false);
-      }
-      const items = views.map(v => ({ id: `module:${m.id}:${v.id}`, label: v.label, icon: MODULE_VIEW_ICONS[v.id] }));
-      return navGroupHtml(`mod-${m.id}`, m.label, moduleIcon(m.id), 0, items);
-    }).join("");
+  for (const m of state.modules) {
+    const views = (m.views && m.views.length) ? m.views : [{ id: "root", label: m.label, sub: "" }];
+    // Модуль со своим входом («Искра»): до входа в него — одна кнопка, разделы — после.
+    // Ключ один и тот же, чтобы место в меню не менялось от входа и выхода.
+    if (views.length === 1 || (m.authGated && !moduleAuthed(m.id))) {
+      entries.push({ ...btn({ id: `module:${m.id}:${views[0].id}`, label: m.label, icon: moduleIcon(m.id) }), key: `mod-${m.id}` });
+    } else {
+      entries.push(group(`mod-${m.id}`, m.label, moduleIcon(m.id), 0,
+        views.map(v => ({ id: `module:${m.id}:${v.id}`, label: v.label, icon: MODULE_VIEW_ICONS[v.id] }))));
+    }
   }
+  return entries;
+}
 
-  navHtml += notifHtml;
-  return navHtml;
+// Меню целиком. Отдельно от renderShell: при входе в «Искру» и выходе из неё меню
+// перестраивается само, а основная часть экрана с её панелью остаётся как есть.
+function buildNavHtml() {
+  const prefs = navPrefs();
+  const entries = orderNav(navEntries(), prefs.order);
+  // «По одному разделу»: из раскрытых остаётся тот, где открытый сейчас экран, иначе — верхний.
+  navSingleOpen = null;
+  if (prefs.single) {
+    const open = entries.filter((e) => e.items && navGroupWouldOpen(e.key));
+    const here = open.find((e) => e.items.some((it) => it.id === navView()));
+    navSingleOpen = (here || open[0] || {}).key || null;
+  }
+  return entries.map((e) => (e.items
+    ? navGroupHtml(e.key, e.label, e.icon, e.badge, e.items)
+    : navBtnHtml(e.it, navView() === e.it.id, false))).join("");
+}
+
+/** Подпись роли: «Сотрудник», «Администратор» или отделы исполнителя — под ФИО в меню и в настройках. */
+function userRoleLabel(u) {
+  const isAdmin = Boolean(u.is_admin);
+  const depts = myDepts(u);
+  return !depts.length
+    ? (isAdmin ? "Администратор" : "Сотрудник")
+    : `${depts.join(", ")}${isAdmin ? " · администратор" : ""}`;
+}
+
+/** Выход — кнопка в «Настройках» (app-settings.js). */
+async function logout() {
+  clearViewPoll();
+  if (notifPollHandle) { clearInterval(notifPollHandle); notifPollHandle = null; }
+  await api("/auth/logout", { method: "POST" });
+  // Вход в панель «Искры» живёт в этом же браузере (её токен — в localStorage того же
+  // адреса). Вышли из платформы — выходим и из неё: следующему за этим компьютером
+  // панель не должна открыться сразу вошедшей.
+  try { localStorage.removeItem("admin_token"); localStorage.removeItem("admin_me"); } catch { /* недоступно */ }
+  for (const m of state.modules) setModuleAuthed(m.id, false);
+  state.user = null;
+  renderLogin();
 }
 
 function renderShell() {
   const u = state.user;
-  const totalUnread = state.notifications.filter(n => !n.is_read).length;
   const isAdmin = Boolean(u.is_admin);
-  const depts = myDepts(u);
-  const isExecutor = depts.length > 0;
-  const roleLabel = !isExecutor
-    ? (isAdmin ? "Администратор" : "Сотрудник")
-    : `${depts.join(", ")}${isAdmin ? " · администратор" : ""}`;
   const navHtml = buildNavHtml();
 
   root.innerHTML = `
@@ -1013,8 +1063,8 @@ function renderShell() {
             <div class="brand-name">${APP_NAME}</div>
             <div class="brand-org">${APP_ORG}</div>
           </div>
-          ${isAdmin ? `<button class="head-action${state.view === "certs" ? " active" : ""}" id="certsBtn"
-            title="Сертификаты">${icon("shield", 18)}</button>` : ""}
+          <button class="head-action${state.view.startsWith("settings") ? " active" : ""}" id="settingsBtn"
+            title="Настройки" aria-label="Настройки">${icon("gear", 18)}</button>
         </div>
         <div class="sidebar-nav">${navHtml}</div>
         <div class="sidebar-foot">
@@ -1022,12 +1072,9 @@ function renderShell() {
             <div style="min-width:0;">
               <div class="user-name">${esc(u.full_name)}</div>
               <div class="user-dept">${esc(u.department || u.ad_login)}</div>
-              <div class="user-role-badge">${esc(roleLabel)}</div>
+              <div class="user-role-badge">${esc(userRoleLabel(u))}</div>
             </div>
           </div>
-          <div class="theme-pop" id="themePop" hidden>${themeOptionsHtml()}</div>
-          <button class="logout-btn" id="themeBtn" title="Цветовая тема — только для вас, в этом браузере">${icon("palette")} Оформление</button>
-          <button class="logout-btn" id="logoutBtn">${icon("logout")} Выйти</button>
         </div>
       </div>
       <div class="main" id="mainArea"></div>
@@ -1035,25 +1082,11 @@ function renderShell() {
 
   restoreNavScroll();
 
-  const certsBtn = document.getElementById("certsBtn");
-  if (certsBtn) { certsBtn.onclick = () => setView("certs"); paintCertBadge(certsBtn); }
+  document.getElementById("settingsBtn").onclick = () => setView("settings");
+  // Срок сертификата сервера — забота администраторов: только у них шестерёнка краснеет.
+  if (isAdmin) paintCertBadge();
 
   wireNav(root);
-
-  wireThemePicker();
-
-  document.getElementById("logoutBtn").onclick = async () => {
-    clearViewPoll();
-    if (notifPollHandle) { clearInterval(notifPollHandle); notifPollHandle = null; }
-    await api("/auth/logout", { method: "POST" });
-    // Вход в панель «Искры» живёт в этом же браузере (её токен — в localStorage того же
-    // адреса). Вышли из платформы — выходим и из неё: следующему за этим компьютером
-    // панель не должна открыться сразу вошедшей.
-    try { localStorage.removeItem("admin_token"); localStorage.removeItem("admin_me"); } catch { /* недоступно */ }
-    for (const m of state.modules) setModuleAuthed(m.id, false);
-    state.user = null;
-    renderLogin();
-  };
 
   const main = document.getElementById("mainArea");
   if (state.view === "inbox") renderList(main, { scope: "inbox" });
@@ -1061,13 +1094,12 @@ function renderShell() {
   else if (state.view === "create") renderCreate(main);
   else if (state.view === "detail") renderDetail(main, state.currentTicket);
   else if (state.view === "dashboard") renderDashboard(main);
-  else if (state.view === "admin") renderAdmin(main);
-  else if (state.view === "certs") renderCertificates(main);
+  else if (state.view === "settings" || state.view.startsWith("settings:")) renderSettings(main, state.view.slice(9));
   else if (state.view === "tasks") renderTasks(main);
   else if (state.view === "taskcal") renderTaskCalendar(main);
   else if (state.view === "tasknotes") renderTaskNotes(main);
-  else if (state.view.startsWith("notif:")) renderNotifications(main, state.view.slice(6));
   else if (state.view.startsWith("asst:")) renderAssistant(main, state.view.slice(5));
+  else if (state.view.startsWith("bull:")) renderBulletins(main, state.view.slice(5));
   else if (state.view.startsWith("module:")) {
     const [, modId, viewId] = state.view.split(":");
     const mod = state.modules.find(m => m.id === modId);
