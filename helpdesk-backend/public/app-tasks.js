@@ -725,8 +725,9 @@ async function loadCalendar(main) {
   const scope = calUi.scope;
   let ranged, open;
   try {
+    // Выполненные в календаре не нужны — закрытая задача пропадает с дня, а не зачёркивается.
     [ranged, open] = await Promise.all([
-      api(`/tasks?${new URLSearchParams({ scope, status: "all", from: calIso(start), to: calIso(end) })}`),
+      api(`/tasks?${new URLSearchParams({ scope, status: "open", from: calIso(start), to: calIso(end) })}`),
       api(`/tasks?${new URLSearchParams({ scope, status: "open" })}`),
     ]);
   } catch (e) {
