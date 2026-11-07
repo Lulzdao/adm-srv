@@ -272,19 +272,40 @@ $aclFile = Join-Path $Root 'access.acl'
 # Маска 3 = ViewOnly(1) + Interact(2) — всё управление, без передачи файлов.
 # Имена — В КАВЫЧКАХ: токенизатор MSLogonACL режет строку по пробелам, и имя с пробелом
 # («NT AUTHORITY\SYSTEM») без кавычек разваливается на три части и молча пропускается.
-$aclText = ''
-foreach ($e in $entries) { $aclText += "allow`t0x00000003`t`"" + $e + "`"`r`n" }
-[System.IO.File]::WriteAllText($aclFile, $aclText, [System.Text.Encoding]::Default)
+function Export-Acl {
+	$f = [System.IO.Path]::GetTempFileName()
+	Run $mslogon ('/e "' + $f + '"') | Out-Null
+	$t = ''
+	if (Test-Path $f) { $t = [System.IO.File]::ReadAllText($f, [System.Text.Encoding]::Default) }
+	Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue
+	return $t
+}
+function Short-Name([string]$n) { $i = $n.LastIndexOf('\'); if ($i -ge 0) { return $n.Substring($i + 1) }; return $n }
+# Находится ли группа доступа прямо сейчас. Не находится — домен недоступен (или машина вне домена).
+# Тогда список НЕ перезаписываем: в нём может быть прежняя запись этой группы (хранится по SID и
+# заработает, когда домен вернётся), а перезапись её бы стёрла — и после возвращения домена у группы
+# поддержки не было бы доступа до следующего обновления (найдено 2026-11-07: домен лежал как раз во
+# время выпуска резервного входа). В таком случае только дописываем недостающее (MSLogonACL /a).
+$groupFound = $false
+try { [void](New-Object System.Security.Principal.NTAccount($group)).Translate([System.Security.Principal.SecurityIdentifier]); $groupFound = $true } catch { }
 $mslogon = Join-Path $Root 'MSLogonACL.exe'
 if (Test-Path $mslogon) {
-	Run $mslogon ('/i /o "' + $aclFile + '"') | Out-Null
+	$mode = '/o'
+	$toWrite = $entries
+	if (-not $groupFound) {
+		$mode = '/a'
+		$before = Export-Acl
+		$toWrite = @($entries | Where-Object { $_ -ne $group -and -not $before.Contains((Short-Name $_)) })
+		Log ('группа доступа ' + $group + ' сейчас не находится — список доступа не перезаписываем, только дописываем недостающее')
+	}
+	$aclText = ''
+	foreach ($e in $toWrite) { $aclText += "allow`t0x00000003`t`"" + $e + "`"`r`n" }
+	[System.IO.File]::WriteAllText($aclFile, $aclText, [System.Text.Encoding]::Default)
+	if ($aclText -ne '') { Run $mslogon ('/i ' + $mode + ' "' + $aclFile + '"') | Out-Null }
 	# MSLogonACL возвращает 0 даже когда имя не разрешается (строку пропускает, код не портит),
 	# поэтому «группа задана» по коду выхода не проверить. Единственная честная проверка:
 	# экспортировать ACL обратно (SID разрешается в имя) и найти в нём каждое имя.
-	$expFile = [System.IO.Path]::GetTempFileName()
-	Run $mslogon ('/e "' + $expFile + '"') | Out-Null
-	$exp = ''
-	if (Test-Path $expFile) { $exp = [System.IO.File]::ReadAllText($expFile, [System.Text.Encoding]::Default) }
+	$exp = Export-Acl
 	foreach ($e in $entries) {
 		$name = $e
 		$slash = $e.LastIndexOf('\')
@@ -294,7 +315,6 @@ if (Test-Path $mslogon) {
 		if ($exp -ne '' -and $exp.Contains($name)) { Log ($what + ': ' + $e) }
 		else { Log ($what + ' НЕ применена: ' + $e + ' не разрешается на этой машине (вне домена?)') }
 	}
-	Remove-Item -LiteralPath $expFile -Force -ErrorAction SilentlyContinue
 }
 
 # 6. Служба uvnc_service должна указывать на winvnc.exe из папки «Искры».
