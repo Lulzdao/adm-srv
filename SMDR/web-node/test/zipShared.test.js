@@ -5,7 +5,8 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 
-// zip.js — один файл на две службы: он же лежит в helpdesk-backend/services/zip.js (платформа).
+// zip.js — один файл на три службы: он же лежит в helpdesk-backend/services/zip.js (платформа)
+// и CERTVIEWER/zip.js.
 // Общей папки у служб нет, поэтому это копия; тест не даёт копиям разойтись. Править —
 // в платформе, сюда копировать. Тот же тест лежит у платформы.
 test('zip.js журнала звонков и платформы совпадают байт в байт', (t) => {
