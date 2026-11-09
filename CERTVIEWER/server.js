@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const { Certificate } = require('@fidm/x509');
 const { DatabaseSync } = require('node:sqlite');
 const { parseArchive } = require('./mchd');
+const xlsxExport = require('./export');
 
 // ---------- Загрузка .env (без пакета dotenv, простым парсером) ----------
 function loadEnv() {
@@ -507,6 +508,13 @@ app.get('/api/mchd', requireAuthApi, (req, res) => {
   res.json(listAttorneysStmt.all());
 });
 
+// Выгрузка в Excel — то, что видно в таблице: поиск (q) и сортировка (sort, dir) страницы.
+app.get('/api/mchd/export.xlsx', requireAuthApi, (req, res) => {
+  const now = new Date();
+  const { columns, rows } = xlsxExport.attorneySheet(listAttorneysStmt.all(), req.query, now);
+  xlsxExport.sendXlsx(res, xlsxExport.buildXlsx('Доверенности', columns, rows, now), 'mchd.xlsx', xlsxExport.fileName('доверенности', now));
+});
+
 app.delete('/api/mchd/:id', requireAuthApi, (req, res) => {
   if (!/^[1-9]\d{0,17}$/.test(String(req.params.id))) {
     return res.status(400).json({ error: 'Некорректный идентификатор доверенности' });
@@ -517,6 +525,12 @@ app.delete('/api/mchd/:id', requireAuthApi, (req, res) => {
 
 app.get('/api/certificates', requireAuthApi, (req, res) => {
   res.json(listCertificates());
+});
+
+app.get('/api/certificates/export.xlsx', requireAuthApi, (req, res) => {
+  const now = new Date();
+  const { columns, rows } = xlsxExport.certificateSheet(listCertificates(), req.query, now);
+  xlsxExport.sendXlsx(res, xlsxExport.buildXlsx('Сертификаты', columns, rows, now), 'certificates.xlsx', xlsxExport.fileName('сертификаты', now));
 });
 
 app.delete('/api/certificates/:id', requireAuthApi, (req, res) => {

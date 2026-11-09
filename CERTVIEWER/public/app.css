@@ -168,6 +168,14 @@ html { font-kerning: none; }
     transition: box-shadow 0.15s, filter 0.15s;
   }
   .add-cert-btn:hover { box-shadow: var(--md-elev-1); filter: brightness(1.06); }
+  /* Выгрузка — тональная кнопка рядом с поиском: действие вторичное, рядом с «Добавить» спорила бы с ней. */
+  .export-btn {
+    padding: 11px 18px; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; border: none;
+    background: var(--md-primary-container); color: var(--md-on-primary-container); border-radius: var(--md-shape-full);
+    transition: filter 0.15s;
+  }
+  .export-btn:hover { filter: brightness(0.96); }
+  .export-btn:disabled { opacity: .45; cursor: default; filter: none; }
 
   /* Snackbar */
   #status {

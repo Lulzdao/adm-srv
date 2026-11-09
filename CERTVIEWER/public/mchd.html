@@ -15,6 +15,7 @@
     <div class="search-wrap-cv">
       <input id="searchInput" type="search" placeholder="Поиск по ФИО или номеру доверенности..." autocomplete="off" />
       <span id="resultCount"></span>
+      <button type="button" class="export-btn" id="exportBtn" title="В файл попадут строки, которые видны сейчас: с учётом поиска и сортировки">Выгрузить в Excel</button>
     </div>
     <div class="add-cert-wrap">
       <span class="dnd-hint">или перетащите архив на страницу</span>
@@ -119,6 +120,7 @@ function render() {
     return sortAsc ? c : -c;
   });
 
+  el('exportBtn').disabled = !list.length;
   el('resultCount').textContent = q ? `Найдено: ${list.length} из ${rows.length}` : `Всего: ${rows.length}`;
 
   el('tableBody').innerHTML = list.map((r) => {
@@ -187,6 +189,14 @@ async function upload(files) {
 }
 
 el('addBtn').onclick = () => el('fileInput').click();
+// Выгрузка в Excel: файл собирает сервер (export.js) — по тому же поиску и сортировке, что на экране.
+el('exportBtn').onclick = () => {
+  const p = new URLSearchParams({ q: el('searchInput').value.trim(), sort: sortKey, dir: sortAsc ? 'asc' : 'desc' });
+  const a = document.createElement('a');
+  a.href = 'api/mchd/export.xlsx?' + p.toString();
+  a.download = '';
+  document.body.appendChild(a); a.click(); a.remove();
+};
 el('fileInput').onchange = (e) => { upload(e.target.files); e.target.value = ''; };
 el('searchInput').oninput = render;
 

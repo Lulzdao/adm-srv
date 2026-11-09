@@ -15,6 +15,7 @@
     <div class="search-wrap-cv">
       <input type="text" id="searchInput" placeholder="Поиск по ФИО или идентификатору..." />
       <span id="resultCount"></span>
+      <button class="export-btn" id="exportBtn" type="button" title="В файл попадут строки, которые видны сейчас: с учётом поиска и сортировки">Выгрузить в Excel</button>
     </div>
     <div class="add-cert-wrap">
       <span class="dnd-hint">или перетащите файл на страницу</span>
@@ -221,6 +222,7 @@ function renderTable() {
     tableBody.appendChild(tr);
   }
 
+  document.getElementById('exportBtn').disabled = !sorted.length;
   resultCount.textContent = sorted.length === certificates.length
     ? `Всего: ${certificates.length}`
     : `Найдено: ${sorted.length} из ${certificates.length}`;
@@ -245,6 +247,16 @@ async function loadCertificates() {
   updateSortArrows();
   renderTable();
 }
+
+// ---------- Выгрузка в Excel ----------
+// Файл собирает сервер (export.js) — по тому же поиску и сортировке, что сейчас на экране.
+document.getElementById('exportBtn').addEventListener('click', () => {
+  const p = new URLSearchParams({ q: searchInput.value.trim(), sort: sortKey, dir: sortDir });
+  const a = document.createElement('a');
+  a.href = 'api/certificates/export.xlsx?' + p.toString();
+  a.download = '';
+  document.body.appendChild(a); a.click(); a.remove();
+});
 
 function escapeHtml(str) {
   if (str === null || str === undefined) return '';
