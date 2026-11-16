@@ -65,6 +65,13 @@ const ICON_PATHS = {
   gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
   pulse: '<polyline points="3 12 7 12 10 4 14 20 17 12 21 12"/>',
   database: '<ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/><path d="M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/>',
+  // Раздел «Игры» (app-games.js): пульт — сам раздел; змейка, две карточки и поле с пустой
+  // клеткой — плитки игр; флажок — пометка битого сектора.
+  gamepad: '<rect x="2.5" y="7" width="19" height="11" rx="5.5"/><line x1="7" y1="12.5" x2="11" y2="12.5"/><line x1="9" y1="10.5" x2="9" y2="14.5"/><circle cx="15.5" cy="11.3" r="0.7"/><circle cx="17.8" cy="13.7" r="0.7"/>',
+  snake: '<path d="M4 18h9a3 3 0 0 0 0-6H9a3 3 0 0 1 0-6h7"/><circle cx="19.2" cy="6" r="1.3"/>',
+  cards: '<rect x="3" y="7" width="11" height="14" rx="2"/><path d="M8 3h11a2 2 0 0 1 2 2v12"/>',
+  grid: '<rect x="3" y="3" width="7.5" height="7.5" rx="1.5"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.5"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.5"/>',
+  flag: '<path d="M6 21V4"/><path d="M6 4h12l-2.5 4 2.5 4H6"/>',
 };
 
 // Оформление плитки отдела, когда в config/departments.js для него ничего не
@@ -545,6 +552,8 @@ function clearViewPoll() {
 // создаётся заново, и без этого «Мои заявки» сменялись бы на «Входящие».
 const NAV_FROM_KEY = "navFrom";
 function navView() {
+  // У игр в меню один пункт на все экраны (#games:snake и т. д.).
+  if (state.view.startsWith("games:")) return "games";
   if (state.view !== "detail") return state.view;
   let from = state.previousView;
   if (!from) { try { from = sessionStorage.getItem(NAV_FROM_KEY); } catch { /* хранилище недоступно */ } }
@@ -611,6 +620,8 @@ function viewExists(view) {
   if (!view) return false;
   const u = state.user;
   if (["inbox", "mine", "create"].includes(view)) return true;
+  // Игры — всем: они целиком в браузере, прав и данных сервера не касаются (app-games.js).
+  if (view === "games" || view.startsWith("games:")) return gamesViewExists(view);
   // Настройки — всем, но категории у каждого свои (app-settings.js).
   if (view === "settings" || view.startsWith("settings:")) return settingsViewExists(view);
   // Рассылки — всем; акты — администраторам и исполнителям.
@@ -1007,6 +1018,9 @@ function navEntries() {
         views.map(v => ({ id: `module:${m.id}:${v.id}`, label: v.label, icon: MODULE_VIEW_ICONS[v.id] }))));
     }
   }
+  // Игры — последним пунктом: это не работа, и стоять выше рабочих разделов им незачем
+  // (кому нужно ближе — поднимет в «Настройки → Боковое меню»).
+  entries.push(btn({ id: "games", label: "Игры", icon: "gamepad" }));
   return entries;
 }
 
@@ -1100,6 +1114,7 @@ function renderShell() {
   else if (state.view === "tasknotes") renderTaskNotes(main);
   else if (state.view.startsWith("asst:")) renderAssistant(main, state.view.slice(5));
   else if (state.view.startsWith("bull:")) renderBulletins(main, state.view.slice(5));
+  else if (state.view === "games" || state.view.startsWith("games:")) renderGames(main, state.view.slice(6));
   else if (state.view.startsWith("module:")) {
     const [, modId, viewId] = state.view.split(":");
     const mod = state.modules.find(m => m.id === modId);
