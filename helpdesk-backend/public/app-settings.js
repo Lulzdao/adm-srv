@@ -81,7 +81,8 @@ let settingsQuery = ""; // поиск переживает переход меж
 
 function settingsCats() {
   const admin = Boolean(state.user && state.user.is_admin);
-  return SETTINGS_CATS.filter((c) => c.all || admin);
+  // Общей аварийной учётке меню настраивать незачем: в нём один пункт.
+  return SETTINGS_CATS.filter((c) => (c.all || admin) && !(c.id === "nav" && isSharedUser()));
 }
 
 /** «look» / «notif:smtp» → категория и вкладка (если они есть у этого человека). */

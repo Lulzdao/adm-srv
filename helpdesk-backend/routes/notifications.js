@@ -1,5 +1,6 @@
 const express = require("express");
 const { requireAuth, requireAdmin } = require("../middleware/auth");
+const { isSharedAccount } = require("../services/userStore");
 const { KINDS, LEGACY_LABELS, byKind, RECIPIENTS, TASK_CHANNELS } = require("../config/notifications");
 const { settingsFor, resolveEmails, render, renderBody, retryPending, backfillDeliveries } = require("../services/notifications");
 const { setSetting } = require("../services/settings");
@@ -19,6 +20,8 @@ module.exports = function notificationRoutes(db) {
   // ==========================================================================
 
   router.get("/", requireAuth, (req, res) => {
+    // Общая аварийная учётка: о чужих заявках её «колокольчик» молчит (см. isSharedAccount).
+    if (isSharedAccount(req.session.user)) return res.json({ notifications: [] });
     const rows = db.prepare(`
       SELECT d.id, e.ticket_id, e.kind AS type, d.is_read, e.created_at,
              t.display_id, t.title, t.status
