@@ -3,7 +3,7 @@ const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
 const config = require("../config/config");
-const { roleLike } = require("../services/userStore");
+const { roleLike, isSharedAccount } = require("../services/userStore");
 const { requireAuth } = require("../middleware/auth");
 const { emit } = require("../services/notifications");
 const { ticketNewKind } = require("../config/notifications");
@@ -45,6 +45,11 @@ function parseTicketId(raw) {
 // Короткие необязательные поля (кабинет, добавочный): null — не заполнено,
 // false — слишком длинное/не текст, иначе — обрезанная по краям строка.
 const SHORT_FIELD_MAX = 50;
+// ФИО заявителя под общей аварийной учёткой.
+const REQUESTER_MAX = 120;
+// Автор заявки для показа: под общей учёткой — вписанное ФИО с пометкой, иначе — ФИО учётки.
+const AUTHOR_NAME_SQL = "CASE WHEN t.requester_name IS NOT NULL AND t.requester_name != '' THEN t.requester_name || ' (общая учётка)' ELSE creator.full_name END";
+
 function optionalShortText(value) {
   if (value === undefined || value === null || value === "") return null;
   if (typeof value !== "string" || value.length > SHORT_FIELD_MAX) return false;
@@ -83,7 +88,7 @@ const DONE_STATUSES = new Set(["closed"]);
 function ticketPayload(db, ticketId) {
   const t = db.prepare(`
     SELECT t.display_id, t.title, t.description, t.room, t.priority, t.status,
-           c.name AS category, creator.full_name AS created_by_name,
+           c.name AS category, ${AUTHOR_NAME_SQL} AS created_by_name,
            assignee.full_name AS assigned_to_name
     FROM tickets t
     LEFT JOIN categories c ON c.id = t.category_id
@@ -133,8 +138,19 @@ function userDepts(user) {
 // — все остальные — только то, что сами создали или на что назначены.
 function canAccessTicket(user, ticket) {
   if (user.is_admin) return true;
+  // Общая аварийная учётка: под ней подают заявки разные люди — чужие (да и свои
+  // прошлые) им не видны. Только создать заявку и приложить к ней файлы.
+  if (isSharedAccount(user)) return false;
   if (userDepts(user).includes(ticket.category)) return true;
   return ticket.created_by === user.id || ticket.assigned_to === user.id;
+}
+
+// Общая аварийная учётка и заявка, которую под ней только что подали: к ней ещё можно
+// приложить файлы и скачать служебную записку (форма делает это сразу после отправки).
+const SHARED_FRESH_MS = 30 * 60 * 1000;
+function sharedJustCreated(user, ticket) {
+  return isSharedAccount(user) && ticket.created_by === user.id
+    && Date.now() - Date.parse(`${String(ticket.created_at).replace(" ", "T")}Z`) < SHARED_FRESH_MS;
 }
 
 // Право МЕНЯТЬ заявку (статус, исполнитель, приоритет) — уже, чем право её
@@ -216,8 +232,12 @@ module.exports = function ticketRoutes(db) {
 
   // Проверка прав ДО multer: иначе файл успевал записаться на диск ещё до
   // того, как выяснится, что заявки нет или доступа к ней нет.
+  // Общая аварийная учётка заявку не видит (canAccessTicket), но файлы к только что
+  // поданной приложить должна: форма отправляет их сразу после создания.
+  const canAttach = (user, ticket) => canAccessTicket(user, ticket) || sharedJustCreated(user, ticket);
+
   function authorizeAttachment(req, res, next) {
-    const ticket = ticketFromParams(req, res, { denied: "Недостаточно прав на прикрепление файлов к этой заявке" });
+    const ticket = ticketFromParams(req, res, { can: canAttach, denied: "Недостаточно прав на прикрепление файлов к этой заявке" });
     if (!ticket) return;
     req.ticket = ticket;
     next();
@@ -242,6 +262,8 @@ module.exports = function ticketRoutes(db) {
     const mine = asText(req.query.mine);
     const page = asText(req.query.page);
     const user = req.session.user;
+    // Общая аварийная учётка списков не видит: под ней подают заявки разные люди.
+    if (isSharedAccount(user)) return res.json({ tickets: [], total: 0, limit: 50, page: 1, pages: 1 });
 
     if ([status, category, q, page].some((v) => v !== undefined && typeof v !== "string")) {
       return res.status(400).json({ error: "Некорректные параметры фильтра" });
@@ -323,7 +345,7 @@ module.exports = function ticketRoutes(db) {
       SELECT t.id, t.display_id, t.title, t.priority, t.status, t.room, t.extension,
              t.created_at, t.updated_at,
              c.name AS category,
-             creator.full_name AS created_by, creator.ad_login AS created_by_login,
+             ${AUTHOR_NAME_SQL} AS created_by, creator.ad_login AS created_by_login,
              assignee.full_name AS assigned_to
       FROM tickets t
       LEFT JOIN categories c ON c.id = t.category_id
@@ -344,7 +366,7 @@ module.exports = function ticketRoutes(db) {
 
   // POST /api/tickets
   router.post("/", (req, res) => {
-    const { title, description, category, priority, room, extension } = req.body || {};
+    const { title, description, category, priority, room, extension, requester_name } = req.body || {};
     // Тип проверяем явно: без этого объект/массив в поле title доходил до
     // .trim() и валил запрос пятисоткой вместо понятного 400.
     if (typeof title !== "string" || !title.trim()) {
@@ -368,6 +390,13 @@ module.exports = function ticketRoutes(db) {
       return res.status(400).json({ error: `Кабинет и добавочный не могут быть длиннее ${SHORT_FIELD_MAX} символов` });
     }
     const user = req.session.user;
+    // Под общей аварийной учёткой заявку подаёт кто угодно — ФИО заявителя обязательно.
+    let requester = null;
+    if (isSharedAccount(user)) {
+      requester = typeof requester_name === "string" ? requester_name.trim().replace(/\s+/g, " ") : "";
+      if (!requester) return res.status(400).json({ error: "Укажите ФИО — заявка подаётся под общей учёткой" });
+      if (requester.length > REQUESTER_MAX) return res.status(400).json({ error: `ФИО не может быть длиннее ${REQUESTER_MAX} символов` });
+    }
     // Скрытая из «Новой заявки» группа принимает заявки только по своим путям
     // (например, Заявка на доступ). Свои исполнители и администратор — могут.
     const target = typeof category === "string" ? departments.byName(category) : null;
@@ -376,7 +405,7 @@ module.exports = function ticketRoutes(db) {
     }
     const ticketId = createTicket(db, user, {
       title: title.trim(), description: description || null, category, priority,
-      room: roomValue, extension: extensionValue,
+      room: roomValue, extension: extensionValue, requesterName: requester,
     });
     res.status(201).json(getTicketDetail(db, ticketId, user));
   });
@@ -636,7 +665,7 @@ module.exports = function ticketRoutes(db) {
  * «Новая заявка», но и Ассистент (заявка на доступ сотрудника), — нумерация и
  * оповещение отдела у них должны быть ровно те же.
  */
-function createTicket(db, user, { title, description = null, category, priority, room = null, extension = null }) {
+function createTicket(db, user, { title, description = null, category, priority, room = null, extension = null, requesterName = null }) {
   // Отдел обязателен для маршрутизации и нумерации — если не пришёл
   // или не найден в справочнике, безопасный дефолт — первый отдел в конфиге.
   let cat = typeof category === "string" && category
@@ -646,9 +675,9 @@ function createTicket(db, user, { title, description = null, category, priority,
 
   const displayId = nextDisplayId(db, cat.name);
   const info = db.prepare(`
-    INSERT INTO tickets (display_id, title, description, category_id, priority, room, extension, created_by)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(displayId, title, description, cat.id, priority || "medium", room, extension, user.id);
+    INSERT INTO tickets (display_id, title, description, category_id, priority, room, extension, created_by, requester_name)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(displayId, title, description, cat.id, priority || "medium", room, extension, user.id, requesterName);
   const ticketId = Number(info.lastInsertRowid);
 
   const deptRole = roleOfDept(cat.name) || "it";
@@ -674,7 +703,7 @@ function createTicket(db, user, { title, description = null, category, priority,
 // решить, что показывать, а звать её без зрителя больше негде.
 function getTicketDetail(db, id, viewer) {
   const ticket = db.prepare(`
-    SELECT t.*, c.name AS category, creator.full_name AS created_by_name, assignee.full_name AS assigned_to_name
+    SELECT t.*, c.name AS category, ${AUTHOR_NAME_SQL} AS created_by_name, assignee.full_name AS assigned_to_name
     FROM tickets t
     LEFT JOIN categories c ON c.id = t.category_id
     LEFT JOIN users creator ON creator.id = t.created_by
@@ -736,5 +765,7 @@ function nextDisplayId(db, deptName) {
 // права на её анкету — те же, что на саму заявку.
 module.exports.createTicket = createTicket;
 module.exports.canAccessTicket = canAccessTicket;
+module.exports.sharedJustCreated = sharedJustCreated;
+module.exports.REQUESTER_MAX = REQUESTER_MAX;
 module.exports.TITLE_MAX = TITLE_MAX;
 module.exports.DESCRIPTION_MAX = DESCRIPTION_MAX;

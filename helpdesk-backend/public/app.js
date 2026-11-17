@@ -548,8 +548,14 @@ function navView() {
   if (state.view !== "detail") return state.view;
   let from = state.previousView;
   if (!from) { try { from = sessionStorage.getItem(NAV_FROM_KEY); } catch { /* хранилище недоступно */ } }
-  return from && from !== "detail" ? from : "inbox";
+  return from && from !== "detail" ? from : homeView();
 }
+
+// Общая аварийная учётка (!user, сервер: isSharedAccount): под ней во время аварии домена
+// подают заявки разные сотрудники — ей доступна только «Новая заявка» (и личные настройки).
+const isSharedUser = () => Boolean(state.user && state.user.shared);
+/** Экран по умолчанию: «Входящие», у общей учётки — «Новая заявка». */
+const homeView = () => (isSharedUser() ? "create" : "inbox");
 
 function setView(view, arg, { replace = false } = {}) {
   clearViewPoll();
@@ -610,6 +616,7 @@ function canActs(u) {
 function viewExists(view) {
   if (!view) return false;
   const u = state.user;
+  if (isSharedUser()) return view === "create" || ((view === "settings" || view.startsWith("settings:")) && settingsViewExists(view));
   if (["inbox", "mine", "create"].includes(view)) return true;
   // Настройки — всем, но категории у каждого свои (app-settings.js).
   if (view === "settings" || view.startsWith("settings:")) return settingsViewExists(view);
@@ -677,7 +684,7 @@ async function restoreViewFromHash() {
     return;
   }
 
-  setView(viewExists(raw) ? raw : "inbox", undefined, { replace: true });
+  setView(viewExists(raw) ? raw : homeView(), undefined, { replace: true });
 }
 
 // Кнопки «назад» и «вперёд» браузера.
@@ -959,6 +966,9 @@ function navEntries() {
   const isExecutor = myDepts(u).length > 0;
   const btn = (it) => ({ key: it.id, label: it.label, icon: it.icon, it });
   const group = (key, label, iconName, badge, items) => ({ key, label, icon: iconName, badge, items });
+
+  // Общая аварийная учётка — одна «Новая заявка»: ни списков, ни разделов.
+  if (isSharedUser()) return [btn({ id: "create", label: "Новая заявка", icon: "plus" })];
 
   // В меню — только ежедневная работа; всё, что настраивают, — в «Настройках» (шестерёнка в шапке).
   const entries = [];

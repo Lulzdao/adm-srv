@@ -76,7 +76,8 @@ CREATE TABLE IF NOT EXISTS tickets (
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   closed_at TEXT,
-  due_at TEXT
+  due_at TEXT,
+  requester_name TEXT                   -- ФИО заявителя под общей аварийной учёткой (!user)
 );
 
 CREATE TABLE IF NOT EXISTS comments (

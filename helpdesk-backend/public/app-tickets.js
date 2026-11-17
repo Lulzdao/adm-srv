@@ -412,6 +412,13 @@ function renderCreate(main) {
     <div class="page">
       <div class="form-narrow">
 
+        ${isSharedUser() ? `
+        <div class="form-card">
+          <div class="form-card-title">Кто подаёт заявку</div>
+          <div class="form-card-sub">Вы вошли под общей аварийной учёткой — укажите своё ФИО, чтобы исполнитель знал, к кому обращаться</div>
+          <input class="field-input" id="cRequester" maxlength="120" placeholder="Фамилия Имя Отчество" autocomplete="off" style="margin-bottom:0;">
+        </div>` : ""}
+
         <div class="form-card">
           <div class="form-card-title">Куда направить</div>
           <div class="form-card-sub">Выберите отдел, который решает такие вопросы</div>
@@ -489,7 +496,7 @@ function renderCreate(main) {
       ticketPart.hidden = доступ;
       accessPart.hidden = !доступ;
       // Анкету рисуем один раз: вернулись с другой плитки — введённое на месте.
-      if (доступ && !accessPart.childElementCount) renderAccessForm(accessPart, { onCancel: () => setView("inbox") });
+      if (доступ && !accessPart.childElementCount) renderAccessForm(accessPart, { onCancel: () => setView(homeView()) });
       if (доступ) return;
       отдел = tile.dataset.dept;
       showRouteHint();
@@ -521,7 +528,9 @@ function renderCreate(main) {
   // Вложения не обязательны: заявка про «не открывается диск» прикладывать
   // нечего, и требовать файл значило бы заставлять людей прикладывать что
   // попало.
+  const requesterEl = document.getElementById("cRequester"); // только у общей аварийной учётки
   const ОБЯЗАТЕЛЬНЫЕ = [
+    ...(requesterEl ? [{ el: requesterEl, имя: "ваше ФИО" }] : []),
     { el: titleEl, имя: "тема" },
     { el: descEl, имя: "описание" },
     { el: roomEl, имя: "кабинет" },
@@ -551,7 +560,7 @@ function renderCreate(main) {
     return список;
   }
 
-  document.getElementById("cancelBtn").onclick = () => setView("inbox");
+  document.getElementById("cancelBtn").onclick = () => setView(homeView());
 
   // --- Вложения -----------------------------------------------------------
   const dropzone = document.getElementById("dropzone");
@@ -592,6 +601,7 @@ function renderCreate(main) {
         room: roomEl.value.trim(),
         extension: extEl.value.trim(),
         description: descEl.value.trim(),
+        ...(requesterEl ? { requester_name: requesterEl.value.trim() } : {}),
       }});
     } catch (e) {
       // Заявки нет — повторить целиком безопасно.
@@ -617,6 +627,13 @@ function renderCreate(main) {
         + "Добавьте их в карточке заявки.", true);
     } else {
       toast(`Заявка ${ticket.display_id} создана`);
+    }
+    // Общая аварийная учётка заявку не откроет (её не видно никому под этой учёткой) —
+    // номер в сообщении, форма чистая для следующего.
+    if (isSharedUser()) {
+      toast(`Заявка ${ticket.display_id} создана — запишите номер`);
+      setView("create", undefined, { replace: true });
+      return;
     }
     // Открываем саму заявку, а не список: человек видит, что она есть, и может
     // тут же дослать то, что не прикрепилось. Форма при этом «втягивается» в пункт

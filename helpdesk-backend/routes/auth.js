@@ -1,7 +1,7 @@
 const express = require("express");
 const bcrypt = require("bcrypt");
 const { authenticate, LdapAuthError } = require("../services/ldapAuth");
-const { upsertFromLdap, unpackRoles } = require("../services/userStore");
+const { upsertFromLdap, unpackRoles, isSharedAccount } = require("../services/userStore");
 const { detectDomain, normalizeIp } = require("../services/network");
 const { resolveTlsOptions } = require("../services/tls");
 const config = require("../config/config");
@@ -190,5 +190,7 @@ function publicUser(user) {
     // запросе — см. app.js.
     is_admin: Boolean(user.is_admin),
     auth_type: user.auth_type,
+    // Общая аварийная учётка: в интерфейсе — только «Новая заявка» (см. isSharedAccount).
+    shared: isSharedAccount(user),
   };
 }

@@ -118,4 +118,18 @@ function upsertFromLdap(db, ldapUser) {
   return db.prepare("SELECT * FROM users WHERE id = ?").get(info.lastInsertRowid);
 }
 
-module.exports = { upsertFromLdap, packRoles, unpackRoles, roleLike, packGroups, userInGroup, refreshAdGroups };
+/**
+ * Общая аварийная учётка (LOCAL_USER_LOGIN, по умолчанию !user) — локальная и без прав
+ * администратора. Под ней во время аварии домена входят разные сотрудники, поэтому ей
+ * доступна только «Новая заявка»: ФИО заявителя вписывается в саму заявку, а видеть
+ * заявки, поданные под ней другими, нельзя.
+ */
+function isSharedAccount(user) {
+  if (!user || user.auth_type !== "local" || user.is_admin) return false;
+  // По логину из .env: прочие локальные учётки (в тестах ими входят и рядовые сотрудники) — обычные.
+  const config = require("../config/config");
+  const login = String(user.ad_login || "").toLowerCase();
+  return config.localAccounts.some((a) => !a.isAdmin && String(a.login).toLowerCase() === login);
+}
+
+module.exports = { upsertFromLdap, packRoles, unpackRoles, roleLike, packGroups, userInGroup, refreshAdGroups, isSharedAccount };

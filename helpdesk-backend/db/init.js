@@ -115,6 +115,7 @@ function initDb() {
     mergeLoginCaseDuplicates(db);
     migrateTaskPeriod(db);
     migrateNotesBoard(db);
+    migrateTicketRequester(db);
     // Категории «Срок действия истёк» больше нет (о просрочке напоминает
     // задача на перевыпуск) — её настройки не нужны. События в ленте остаются.
     db.prepare("DELETE FROM notification_settings WHERE kind = 'expired'").run();
@@ -345,6 +346,12 @@ function migrateMailBoxes(db) {
  * уникальный индекс без учёта регистра, чтобы двойники больше не появлялись.
  */
 /** Срок задачи периодом: «с … по …». Последний день остаётся в due_date. */
+// ФИО заявителя у заявки, поданной под общей аварийной учёткой (!user): сама учётка одна на всех.
+function migrateTicketRequester(db) {
+  const cols = db.prepare("PRAGMA table_info(tickets)").all().map((c) => c.name);
+  if (cols.length && !cols.includes("requester_name")) db.exec("ALTER TABLE tickets ADD COLUMN requester_name TEXT");
+}
+
 function migrateTaskPeriod(db) {
   const cols = db.prepare("PRAGMA table_info(tasks)").all().map((c) => c.name);
   if (cols.length && !cols.includes("due_from")) db.exec("ALTER TABLE tasks ADD COLUMN due_from TEXT");

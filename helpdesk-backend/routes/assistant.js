@@ -7,6 +7,7 @@ const { defaultTemplate } = require("../services/docxDefaults");
 const departments = require("../config/departments");
 const tickets = require("./tickets");
 const A = require("../services/assistant");
+const { isSharedAccount } = require("../services/userStore");
 
 // ============================================================================
 //  Ассистент: заявка на доступ сотрудника, справочники и настройки
@@ -200,6 +201,10 @@ module.exports = function assistantRoutes(db) {
     if (type === "register" && !programs.length && !csod) fail("Отметьте программы, к которым нужен доступ");
 
     const fio = [last, first, middle].filter(Boolean).join(" ");
+    // Под общей аварийной учёткой — кто подаёт (как в обычной «Новой заявке»).
+    const requester = isSharedAccount(req.session.user)
+      ? str(b.requester_name, { field: "ФИО заявителя", max: tickets.REQUESTER_MAX, required: true }).replace(/\s+/g, " ")
+      : null;
     const kind = A.ACCESS_TYPES[type];
     const data = {
       type, typeLabel: kind.label, fio, last_name: last, first_name: first, middle_name: middle,
@@ -235,7 +240,7 @@ module.exports = function assistantRoutes(db) {
         const own = parts.get(name);
         let description = [department, own.length ? `доступ: ${own.join(", ")}` : null, name === queue.name && csod ? "формы ЦСОД" : null].filter(Boolean).join("; ");
         if (description.length > tickets.DESCRIPTION_MAX) description = description.slice(0, tickets.DESCRIPTION_MAX - 1) + "…";
-        const id = tickets.createTicket(db, req.session.user, { title, description, category: name, priority, room, extension: phoneInt });
+        const id = tickets.createTicket(db, req.session.user, { title, description, category: name, priority, room, extension: phoneInt, requesterName: requester });
         const { display_id: displayId } = db.prepare("SELECT display_id FROM tickets WHERE id = ?").get(id);
         made.push({ id, display_id: displayId, department: name, programs: own });
       }
@@ -263,7 +268,9 @@ module.exports = function assistantRoutes(db) {
     const ticket = db.prepare(`SELECT t.*, c.name AS category FROM tickets t LEFT JOIN categories c ON c.id = t.category_id WHERE t.id = ?`).get(id);
     const form = ticket && db.prepare("SELECT data FROM ticket_forms WHERE ticket_id = ? AND kind = 'access'").get(id);
     if (!ticket || !form) return res.status(404).json({ error: "Анкета не найдена" });
-    if (!tickets.canAccessTicket(req.session.user, ticket)) return res.status(403).json({ error: "Недостаточно прав" });
+    if (!tickets.canAccessTicket(req.session.user, ticket) && !tickets.sharedJustCreated(req.session.user, ticket)) {
+      return res.status(403).json({ error: "Недостаточно прав" });
+    }
 
     const d = JSON.parse(form.data);
     const dep = A.dept(db, d.department) || {};

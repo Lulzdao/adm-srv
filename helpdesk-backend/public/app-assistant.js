@@ -164,12 +164,16 @@ async function renderAccessForm(box, { onCancel } = {}) {
       programs: needsAccess() ? [...box.querySelectorAll("#acProgs input:checked")].map((c) => c.value) : [],
       csod_forms: needsAccess() ? $("acCsod").value : "", comment: $("acComment").value,
     };
+    // Общая аварийная учётка: кто подаёт — из поля над выбором отдела (renderCreate).
+    const requesterEl = document.getElementById("cRequester");
+    if (requesterEl) body.requester_name = requesterEl.value.trim();
     const required = [["acLast", body.last_name], ["acFirst", body.first_name], ["acDept", body.department]];
     if (type === "register") required.push(["acPost", body.post]);
     let bad = false;
     for (const [id, v] of required) { const miss = !String(v).trim(); $(id).classList.toggle("invalid", miss); bad = bad || miss; }
+    if (requesterEl) { const miss = !body.requester_name; requesterEl.classList.toggle("invalid", miss); bad = bad || miss; }
     $("acHint").classList.toggle("invalid", bad);
-    if (bad) { $("acHint").textContent = "Заполните отмеченные поля"; return; }
+    if (bad) { $("acHint").textContent = requesterEl && !body.requester_name ? "Укажите своё ФИО вверху и заполните отмеченные поля" : "Заполните отмеченные поля"; return; }
     $("acHint").textContent = "После отправки скачайте служебную записку: её подписывает начальник отдела сотрудника";
     $("acSend").disabled = true;
     try {
@@ -185,10 +189,10 @@ async function renderAccessForm(box, { onCancel } = {}) {
             ${many ? `<ul class="as-done-list">${list.map((t) => `<li><b>${esc(t.display_id)}</b> — ${esc(t.department)}${t.programs.length ? `: ${esc(t.programs.join(", "))}` : ""}</li>`).join("")}</ul>` : ""}
             <small>Распечатайте служебную записку${many ? " — она одна на все заявки —" : ""} и подпишите у начальника своего отдела</small></div>
           <button class="btn btn-ghost" id="acDoc">${icon("download", 15)} Служебная записка</button>
-          <button class="btn btn-ghost" id="acOpen">${many ? "Открыть первую" : "Открыть заявку"}</button>
+          ${isSharedUser() ? "" : `<button class="btn btn-ghost" id="acOpen">${many ? "Открыть первую" : "Открыть заявку"}</button>`}
         </div>`;
       $("acDoc").onclick = () => asstDownload(`/assistant/access/${ticket.id}/doc`);
-      $("acOpen").onclick = async () => {
+      if ($("acOpen")) $("acOpen").onclick = async () => {
         try { setView("detail", (await api(`/tickets/${ticket.id}`)).ticket); } catch (e) { toast(e.message, true); }
       };
       $("acDone").scrollIntoView({ behavior: "smooth", block: "nearest" });
