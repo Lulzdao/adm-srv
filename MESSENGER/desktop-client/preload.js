@@ -26,11 +26,16 @@ contextBridge.exposeInMainWorld('desktop', {
   openLink: (url) => ipcRenderer.send('open-link', url),
   saveFileAs: (payload) => ipcRenderer.send('save-file-as', payload),
   windowAction: (action) => ipcRenderer.send('window-action', action),
+  // Окно чата: переписка отрисована — можно показывать (см. createWindow в main.js).
+  contentReady: () => ipcRenderer.send('content-ready'),
   notify: (payload) => ipcRenderer.send('notify', payload),
   messageDeleted: (info) => ipcRenderer.send('message-deleted', info),
   logout: () => ipcRenderer.send('logout'),
   onIdleState: (cb) => ipcRenderer.on('idle-state', (event, payload) => cb(payload)),
   onFilesToSend: (cb) => ipcRenderer.on('files-to-send', (event, files) => cb(files)),
+  // Ход загрузки файла, который отправляет главный процесс (ПКМ по сотруднику → «Отправить файл…»).
+  onUploadProgress: (cb) => ipcRenderer.on('upload-progress', (event, state) => cb(state)),
+  cancelUpload: (n) => ipcRenderer.send('cancel-upload', n),
   onShowAlert: (cb) => ipcRenderer.on('show-alert', (event, payload) => cb(payload)),
   onSettingsChanged: (cb) => ipcRenderer.on('settings-changed', (event, settings) => cb(settings)),
   onWindowState: (cb) => ipcRenderer.on('window-state', (event, state) => cb(state)),

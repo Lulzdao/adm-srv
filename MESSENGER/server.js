@@ -454,7 +454,7 @@ const adminDmHistory = db.prepare(`
   ORDER BY m.id DESC LIMIT ${HISTORY_PAGE_SIZE}
 `);
 
-const insertBroadcast = db.prepare('INSERT INTO broadcasts (from_id, text, html, files_json, department_id, created_at) VALUES (?, ?, ?, ?, ?, ?)');
+const insertBroadcast = db.prepare('INSERT INTO broadcasts (from_id, text, html, files_json, department_id, as_department_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
 // Какие объявления попадают в выборку. @department = NULL — обычная лента: объявления всей
 // организации плюс сообщения отделов, в которых человек состоит. @department = число — лента
 // одного отдела (окно "Сообщение отделу"); право её видеть проверяется в маршруте.
@@ -471,8 +471,18 @@ const BROADCAST_SCOPE = `(
   ))
   OR (@department IS NOT NULL AND b.department_id = @department)
 )`;
-const BROADCAST_COLUMNS = `b.id, b.from_id, b.text, b.html, b.created_at, b.edited_at, b.files_json, b.department_id, d.name AS department, u.display_name AS from_user`;
-const BROADCAST_FROM = `FROM broadcasts b JOIN users u ON u.id = b.from_id LEFT JOIN departments d ON d.id = b.department_id`;
+const BROADCAST_COLUMNS = `b.id, b.from_id, b.text, b.html, b.created_at, b.edited_at, b.files_json, b.department_id, d.name AS department, u.display_name AS from_user, b.as_department_id, sd.name AS as_department`;
+const BROADCAST_FROM = `FROM broadcasts b JOIN users u ON u.id = b.from_id LEFT JOIN departments d ON d.id = b.department_id LEFT JOIN departments sd ON sd.id = b.as_department_id`;
+
+// Объявление «от имени отдела» (as_department_id): подписью — отдел, автор не виден. from_user
+// подменяем названием отдела — так подпись верна и у клиентов, которые про это поле не знают. from_id
+// оставляем только самому автору (по нему его окно даёт исправить объявление): по номеру любой клиент
+// нашёл бы имя в списке сотрудников. Панель администратора (all) видит настоящего автора.
+function presentBroadcast(row, viewerId, all) {
+  if (!row || !row.as_department_id) return row;
+  if (all) return row;
+  return { ...row, from_user: row.as_department || 'Отдел', from_id: row.from_id === viewerId ? row.from_id : null };
+}
 
 const recentBroadcasts = db.prepare(`
   SELECT ${BROADCAST_COLUMNS} ${BROADCAST_FROM}
@@ -1197,9 +1207,10 @@ app.get('/api/broadcasts', auth, (req, res) => {
   if (!scope) return;
   const base = { viewer: req.user.id, department: scope.department, all: scope.all };
   const { since, until, q } = req.query;
-  if (q) return res.json(broadcastsSearch.all({ ...base, q: String(q) }).reverse().map(normalizeRow));
-  if (since && until) return res.json(broadcastsRange.all({ ...base, since: Number(since), until: Number(until) }).map(normalizeRow)); // уже ASC из SQL
-  res.json(recentBroadcasts.all(base).reverse().map(normalizeRow));
+  const out = (row) => presentBroadcast(normalizeRow(row), req.user.id, scope.all);
+  if (q) return res.json(broadcastsSearch.all({ ...base, q: String(q) }).reverse().map(out));
+  if (since && until) return res.json(broadcastsRange.all({ ...base, since: Number(since), until: Number(until) }).map(out)); // уже ASC из SQL
+  res.json(recentBroadcasts.all(base).reverse().map(out));
 });
 app.get('/api/broadcasts/days', auth, (req, res) => {
   const scope = departmentScope(req, res);
@@ -1223,6 +1234,20 @@ app.post('/api/broadcast', auth, (req, res) => {
   const rawDepartment = (req.body || {}).departmentId;
   if (!text && !files.length) return res.status(400).json({ error: 'Пустая рассылка' });
 
+  // «От имени отдела»: только своего — в котором автор состоит (решение пользователя 2026-11-19),
+  // иначе подписаться можно было бы чужим отделом. Право писать (ниже) от этого не меняется.
+  const rawAs = (req.body || {}).asDepartmentId;
+  let asDepartment = null;
+  if (rawAs !== undefined && rawAs !== null && rawAs !== '') {
+    asDepartment = Number(rawAs);
+    if (!Number.isInteger(asDepartment) || asDepartment <= 0 || !getDepartment.get(asDepartment)) {
+      return res.status(400).json({ error: 'Такого отдела нет' });
+    }
+    if (!isDepartmentMember.get(req.user.id, asDepartment)) {
+      return res.status(403).json({ error: 'Подписать объявление можно только своим отделом' });
+    }
+  }
+
   let department = null;
   if (rawDepartment !== undefined && rawDepartment !== null && rawDepartment !== '') {
     department = Number(rawDepartment);
@@ -1240,8 +1265,8 @@ app.post('/api/broadcast', auth, (req, res) => {
 
   const now = Date.now();
   const filesJson = files.length ? JSON.stringify(files) : null;
-  const { lastInsertRowid } = insertBroadcast.run(req.user.id, text, html, filesJson, department, now);
-  const payload = JSON.stringify({
+  const { lastInsertRowid } = insertBroadcast.run(req.user.id, text, html, filesJson, department, asDepartment, now);
+  const row = {
     type: 'broadcast',
     // Номер — чтобы окно могло убрать это объявление, если администратор его удалит (broadcast_deleted).
     id: Number(lastInsertRowid),
@@ -1250,14 +1275,23 @@ app.post('/api/broadcast', auth, (req, res) => {
     text, html, files, created_at: now,
     department_id: department,
     department: department ? getDepartment.get(department).name : null,
-  });
+    as_department_id: asDepartment,
+    as_department: asDepartment ? getDepartment.get(asDepartment).name : null,
+  };
+  // Автору — со своим номером (может исправить), остальным — как покажет лента (presentBroadcast).
+  const payload = JSON.stringify(presentBroadcast(row, null, false));
+  const ownPayload = JSON.stringify(presentBroadcast(row, req.user.id, false));
+  const deliver = (userId) => sendToUser(userId, userId === req.user.id ? ownPayload : payload);
   if (department) {
     // Отправителю — тоже: он мог написать в отдел, в котором сам не состоит, и без этого его
     // собственное сообщение не появилось бы у него в ленте до перезагрузки окна.
     const recipients = new Set(listUserIdsInDepartment.all(department).map((r) => r.user_id));
     recipients.add(req.user.id);
-    for (const userId of recipients) sendToUser(userId, payload);
-    logServer('INFO', 'department_broadcast', { fromId: req.user.id, departmentId: department, recipients: recipients.size });
+    for (const userId of recipients) deliver(userId);
+    logServer('INFO', 'department_broadcast', { fromId: req.user.id, departmentId: department, asDepartmentId: asDepartment, recipients: recipients.size });
+  } else if (asDepartment) {
+    for (const [ws, meta] of connMeta) sendTo(ws, meta && meta.userId === req.user.id ? ownPayload : payload);
+    logServer('INFO', 'broadcast_as_department', { fromId: req.user.id, asDepartmentId: asDepartment });
   } else {
     sendToAll(payload);
   }

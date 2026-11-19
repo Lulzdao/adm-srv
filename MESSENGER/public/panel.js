@@ -1582,7 +1582,9 @@ async function loadBroadcastFeed() {
     // С оформлением — очищенный HTML (richtext.js; сервер уже очистил, здесь — ещё раз), иначе текст.
     const body = b.html ? `<div class="txt rich">${IskraRich.clean(b.html)}</div>` : `<div class="txt">${escapeHtml(b.text)}</div>`;
     const files = (b.files || []).length ? `<span class="time">📎 ${(b.files || []).length}</span>` : '';
-    return `<div class="bc-item"><div class="bc-head"><span class="who">${escapeHtml(b.from_user)}</span><span class="time">${time}</span>${dept}${files}`
+    // «От имени отдела» — сотрудники видят подписью отдел; панель показывает и настоящего автора.
+    const asDept = b.as_department ? `<span class="time">от имени отдела «${escapeHtml(b.as_department)}»</span>` : '';
+    return `<div class="bc-item"><div class="bc-head"><span class="who">${escapeHtml(b.from_user)}</span><span class="time">${time}</span>${asDept}${dept}${files}`
       + `<button class="action danger bc-del" data-id="${Number(b.id)}" title="Удалить объявление у всех">Удалить</button></div>${body}</div>`;
   }).join('') || '<div style="color:var(--muted)">Рассылок пока не было</div>';
   // Панель живёт в iframe «Центра»: ссылка из объявления открывается в новой вкладке, а не вместо панели.

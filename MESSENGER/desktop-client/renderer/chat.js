@@ -317,7 +317,9 @@ function bubbleHtml(m, { withDate, query, card } = {}) {
       // Без токена в href — короткоживущий токен на скачивание запрашивается прямо перед кликом
       // (см. wireFileClicks/wireMessageContextMenu), а не подставляется здесь заранее: ссылка может
       // провисеть в DOM часами, и токен на момент клика уже истёк бы.
-      return `<a class="file" href="#" data-url="${escapeAttr(f.url)}" data-name="${escapeAttr(f.name || 'файл')}"><span class="fi"><span class="fi-file">${uiIcon('file')}</span><span class="fi-download">${uiIcon('download')}</span><span class="fi-progress"><svg viewBox="0 0 24 24"><circle class="ring-bg" cx="12" cy="12" r="10"></circle><circle class="ring-bar" cx="12" cy="12" r="10"></circle></svg><span class="fi-pct"></span></span><span class="fi-check">${uiIcon('check')}</span></span><span class="fmeta"><span class="fn">${escapeHtml(f.name || 'файл')}</span><span class="fs">${[fmtSize(f.size), fileKind(f.name)].filter(Boolean).join(' · ')}</span></span></a>`;
+      // Картинка — сразу видна над своей карточкой (см. «Картинки прямо в ленте»); карточка остаётся:
+      // по ней картинку, как любой файл, можно скачать.
+      return (isPreviewableImage(f) ? imagePreviewHtml(f) : '') + `<a class="file" href="#" data-url="${escapeAttr(f.url)}" data-name="${escapeAttr(f.name || 'файл')}"><span class="fi"><span class="fi-file">${uiIcon('file')}</span><span class="fi-download">${uiIcon('download')}</span><span class="fi-progress"><svg viewBox="0 0 24 24"><circle class="ring-bg" cx="12" cy="12" r="10"></circle><circle class="ring-bar" cx="12" cy="12" r="10"></circle></svg><span class="fi-pct"></span></span><span class="fi-check">${uiIcon('check')}</span></span><span class="fmeta"><span class="fn">${escapeHtml(f.name || 'файл')}</span><span class="fs">${[fmtSize(f.size), fileKind(f.name)].filter(Boolean).join(' · ')}</span></span></a>`;
     }).join('');
     body += `<div class="files-block">${cards}</div><div class="files-time">${inlineTime}</div>`;
   }
@@ -529,7 +531,7 @@ function addMessage(m) {
   // Пузырь "печатает" должен оставаться в самом низу. Обычно его к этому моменту уже сняли (см.
   // ws.onmessage), но в комнате может печатать один, а сообщение прийти от другого.
   // Неотправленное (см. addPendingSend) — всегда ниже пришедшего: оно ещё не в переписке.
-  box.querySelectorAll('.msg.pending').forEach((p) => box.appendChild(p));
+  box.querySelectorAll('.msg.pending, .msg.uploading').forEach((p) => box.appendChild(p));
   const typing = document.getElementById('typingBubble');
   if (typing) box.appendChild(typing);
   if (incoming && m.created_at > maxKnownTs) maxKnownTs = m.created_at;
@@ -620,6 +622,19 @@ async function loadHistory() {
   reportReadIfSeen();
 }
 
+// Окно показывается, когда в нём уже всё на месте: переписка (или загрузить её не вышло) и, в личном
+// чате, статус собеседника — первым приходит сервер со списком статусов. Раньше окно, открывшееся само
+// по сообщению, на миг стояло пустым и «Не в сети», а сообщение и статус догоняли его (найдено на
+// Win7-ВМ 2026-11-19). Ждёт главный процесс, и не дольше своего предела — см. createWindow в main.js.
+let historyShown = false;
+let presenceShown = type !== 'dm';
+let contentReported = false;
+function reportContentReady() {
+  if (contentReported || !historyShown || !presenceShown) return;
+  contentReported = true;
+  desktop.contentReady();
+}
+
 let ws, wsReadyQueue = [];
 let wsLostTimer = null; // см. showOfflineBar в ui-kit.js
 let wsReconnectDelay = 2000; // экспоненциальный бэкофф между попытками (см. onclose ниже)
@@ -669,6 +684,8 @@ function connectWs() {
     const data = JSON.parse(e.data);
     if (data.type === 'token' && data.token) { token = data.token; return; } // сервер продлил вход
     if (isPresenceMessage(data)) presenceAll = mergePresence(presenceAll, data);
+    // queueMicrotask, а не setTimeout: в ещё не показанном окне Chromium придерживает таймеры.
+    if (isPresenceMessage(data) && !presenceShown) queueMicrotask(() => { presenceShown = true; reportContentReady(); }); // после отрисовки статуса ниже
     if (isPresenceMessage(data) && groupId) paintGroupHeader();
     if (data.type === 'groups-changed' && groupId) loadGroup();
     // Частичная рассылка без собеседника — у него ничего не поменялось.
@@ -1146,34 +1163,107 @@ document.addEventListener('click', (e) => {
   if (emojiPanel.classList.contains('open') && !e.target.closest('#emojiBtn') && !e.target.closest('#emojiPanel')) closeEmojiPanel();
 });
 
-async function uploadFile(file) {
-  const formHeaders = { Authorization: 'Bearer ' + token, 'Content-Type': 'application/octet-stream' };
-  let res;
-  try {
-    res = await fetch(`${serverUrl}/api/upload?name=${encodeURIComponent(file.name)}`, { method: 'POST', headers: formHeaders, body: file });
-  } catch {
-    throw new Error('Сервер недоступен — проверьте подключение и повторите попытку.');
-  }
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({}));
-    throw new Error(data.error || `Сервер ответил ошибкой (${res.status})`);
-  }
-  return res.json(); // { url, name, size }
+// ---------- Загрузка файлов: видно, что идёт и сколько осталось ----------
+// Раньше файл грузился молча: пока он шёл на сервер (большой — минуту и дольше), в ленте не было
+// ничего, и сообщение появлялось, только когда загрузка кончится (жалоба пользователя 2026-11-19).
+// Теперь в конце ленты — своя карточка «Загружается…» с полосой, процентом и кнопкой «Отменить»;
+// загрузилось — карточка уступает место обычному сообщению. Короткую загрузку (меньше
+// UPLOAD_BUBBLE_DELAY_MS) не показываем вовсе: карточка только мелькнула бы.
+// Ход загрузки умеет показать только XMLHttpRequest (upload.onprogress), у fetch его нет.
+const UPLOAD_BUBBLE_DELAY_MS = 300;
+const uploadBubbles = new Map(); // номер → { el | null, timer, last: [loaded, total] }
+let uploadSeq = 0;
+
+// files — [{ name, size }]; cancel — что сделать по «Отменить». Возвращает номер карточки.
+function showUploadBubble(files, cancel) {
+  const n = `up${++uploadSeq}`;
+  const entry = { el: null, timer: null, last: null };
+  entry.timer = setTimeout(() => {
+    const el = document.createElement('div');
+    el.className = 'msg own uploading';
+    el.innerHTML = `<div class="up-files">${files.map((f) => `<div class="up-file"><span class="up-fi">${uiIcon('file')}</span><span class="up-fn">${escapeHtml(f.name || 'файл')}</span><span class="up-fs">${fmtSize(f.size)}</span></div>`).join('')}</div>`
+      + '<div class="up-bar"><span class="up-fill"></span></div>'
+      + '<div class="up-row"><span class="up-state">Загружается…</span><button type="button" class="up-cancel">Отменить</button></div>';
+    el.querySelector('.up-cancel').onclick = () => cancel();
+    const box = document.getElementById('messages');
+    box.appendChild(el);
+    programmaticScroll = true;
+    box.scrollTop = box.scrollHeight;
+    entry.el = el;
+    if (entry.last) paintUploadBubble(entry);
+  }, UPLOAD_BUBBLE_DELAY_MS);
+  uploadBubbles.set(n, entry);
+  return n;
+}
+function paintUploadBubble(entry) {
+  if (!entry.el || !entry.last) return;
+  const [loaded, total] = entry.last;
+  const pct = total ? Math.min(100, Math.floor((loaded / total) * 100)) : 0;
+  entry.el.querySelector('.up-fill').style.width = `${pct}%`;
+  // Всё ушло, а ответа ещё нет — сервер записывает файл на диск; у большого это заметные секунды.
+  entry.el.querySelector('.up-state').textContent = total && loaded >= total
+    ? 'Сохраняется на сервере…'
+    : `Загружается… ${pct}% · ${fmtSize(loaded) || '0 КБ'} из ${fmtSize(total)}`;
+}
+function updateUploadBubble(n, loaded, total) {
+  const entry = uploadBubbles.get(n);
+  if (!entry) return;
+  entry.last = [loaded, total];
+  paintUploadBubble(entry);
+}
+function removeUploadBubble(n) {
+  const entry = uploadBubbles.get(n);
+  if (!entry) return;
+  clearTimeout(entry.timer);
+  if (entry.el) entry.el.remove();
+  uploadBubbles.delete(n);
+}
+
+// Один файл на сервер. onProgress(отправлено байт); возвращает { promise, abort }.
+function uploadFile(file, onProgress) {
+  const xhr = new XMLHttpRequest();
+  const promise = new Promise((resolve, reject) => {
+    xhr.open('POST', `${serverUrl}/api/upload?name=${encodeURIComponent(file.name)}`);
+    xhr.setRequestHeader('Authorization', 'Bearer ' + token);
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    xhr.upload.onprogress = (e) => onProgress(e.loaded);
+    xhr.onload = () => {
+      let data = {};
+      try { data = JSON.parse(xhr.responseText); } catch { /* не JSON — ниже ошибка с кодом */ }
+      if (xhr.status >= 200 && xhr.status < 300 && data.url) { onProgress(file.size); resolve(data); } // { url, name, size }
+      else reject(new Error(data.error || `Сервер ответил ошибкой (${xhr.status})`));
+    };
+    xhr.onerror = () => reject(new Error('Сервер недоступен — проверьте подключение и повторите попытку.'));
+    xhr.onabort = () => reject(Object.assign(new Error('отменено'), { cancelled: true }));
+    xhr.send(file);
+  });
+  return { promise, abort: () => xhr.abort() };
 }
 
 // Несколько файлов + подпись (если есть) уходят ОДНИМ сообщением — сервер хранит произвольное
 // число файлов в одной записи, поэтому в ленте это тоже один пузырь, а не россыпь отдельных.
 async function sendFilesWithCaption(files, caption) {
+  const total = files.reduce((s, f) => s + (f.size || 0), 0);
+  const sent = files.map(() => 0);
+  let jobs = [];
+  const bubble = showUploadBubble(files, () => jobs.forEach((j) => j.abort()));
+  jobs = files.map((f, i) => uploadFile(f, (loaded) => {
+    sent[i] = loaded;
+    updateUploadBubble(bubble, sent.reduce((s, x) => s + x, 0), total);
+  }));
   let uploaded;
   try {
-    uploaded = await Promise.all(files.map(uploadFile));
+    uploaded = await Promise.all(jobs.map((j) => j.promise));
   } catch (e) {
+    jobs.forEach((j) => j.abort()); // один не прошёл — остальные грузить незачем: сообщение уходит целиком
+    removeUploadBubble(bubble);
+    if (e.cancelled) return; // человек сам нажал «Отменить»
     uiAlert(e.message, files.length > 1 ? 'Не удалось отправить файлы' : 'Не удалось отправить файл');
     return;
   }
+  removeUploadBubble(bubble);
   const base = type === 'room' ? { type: 'send', room: id, text: caption } : { type: 'send', to: id, text: caption };
   sendPayload({ ...base, files: uploaded });
-  chatToast(files.length > 1 ? 'Файлы успешно отправлены' : 'Файл успешно отправлен');
 }
 
 // ---------- Модалка выбора способа отправки: быстро или с подписью ----------
@@ -1181,6 +1271,8 @@ function openSendFilesModal(files) {
   const count = files.length;
   const title = count === 1 ? 'Отправить файл' : `Отправить файлы (${count})`;
   const noun = count === 1 ? 'файл' : 'файлы';
+  // У картинок — превью (blob: из самого файла, на сервер ещё ничего не ушло); убирается вместе с окном.
+  const thumbs = files.map((f) => (isImageName(f.name) && f.size <= IMAGE_PREVIEW_MAX_BYTES ? URL.createObjectURL(f) : null));
 
   const overlay = document.createElement('div');
   overlay.className = 'ui-modal-overlay';
@@ -1188,7 +1280,7 @@ function openSendFilesModal(files) {
   box.className = 'ui-modal-box sfp-box';
   box.innerHTML = `
     <div class="ui-modal-title">${uiIcon('file')} ${title}</div>
-    <div class="sfp-list">${files.map(f => `<div class="sfp-item"><span class="sfp-fn">${escapeHtml(f.name)}</span><span class="sfp-fs">${fmtSize(f.size)}</span></div>`).join('')}</div>
+    <div class="sfp-list">${files.map((f, i) => `<div class="sfp-item${thumbs[i] ? ' has-thumb' : ''}">${thumbs[i] ? `<img class="sfp-thumb" alt="" src="${thumbs[i]}">` : ''}<span class="sfp-fn">${escapeHtml(f.name)}</span><span class="sfp-fs">${fmtSize(f.size)}</span></div>`).join('')}</div>
     <div class="sfp-split">
       <button class="sfp-half sfp-quick" id="sfpQuick">
         <div class="sfp-half-t">${uiIcon('send')} Быстро</div>
@@ -1205,7 +1297,7 @@ function openSendFilesModal(files) {
   overlay.appendChild(box);
   document.body.appendChild(overlay);
 
-  const close = () => overlay.remove();
+  const close = () => { overlay.remove(); thumbs.forEach((u) => u && URL.revokeObjectURL(u)); };
   overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
   document.getElementById('sfpCancel').onclick = close;
   document.getElementById('sfpQuick').onclick = () => { close(); sendFilesWithCaption(files, ''); };
@@ -1253,6 +1345,15 @@ desktop.onFilesToSend((files) => {
   if (!chatReachable) return;
   const base = type === 'room' ? { type: 'send', room: id, text: '' } : { type: 'send', to: id, text: '' };
   sendPayload({ ...base, files });
+});
+// Ход этой загрузки — от главного процесса, карточка та же, что у загрузки из самого окна.
+const mainUploadBubbles = new Map(); // номер главного процесса → номер карточки
+desktop.onUploadProgress(({ n, state, loaded, total, files }) => {
+  if (state === 'start') mainUploadBubbles.set(n, showUploadBubble(files, () => desktop.cancelUpload(n)));
+  const bubble = mainUploadBubbles.get(n);
+  if (!bubble) return;
+  if (state === 'end') { removeUploadBubble(bubble); mainUploadBubbles.delete(n); return; }
+  updateUploadBubble(bubble, loaded, total);
 });
 desktop.onShowAlert(({ message, title }) => uiAlert(message, title));
 
@@ -1542,6 +1643,144 @@ function wireFileClicks(container) {
 wireFileClicks(document.getElementById('messages'));
 wireFileClicks(document.getElementById('hpMessages'));
 
+// ---------- Картинки прямо в ленте ----------
+// Просьба пользователя 2026-11-19: картинку видно сразу, а не файлом, который надо скачать и открыть.
+// Сервер о картинках ничего нового не знает: это обычный файл сообщения (старые клиенты так его и
+// показывают — карточкой). Окно само скачивает картинку по короткому токену, как при щелчке по
+// файлу, и держит её в памяти (blob:): CSP окна берёт картинки только свои, data: и blob:, но не с
+// адреса сервера. Качаем, только когда картинка показалась на экране (IntersectionObserver), —
+// в ленте за три дня их может быть много. Очень большие (IMAGE_PREVIEW_MAX_BYTES) не тянем: они
+// остаются обычной карточкой.
+const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp'];
+const IMAGE_PREVIEW_MAX_BYTES = 15 * 1024 * 1024;
+function isImageName(name) { return IMAGE_EXTS.includes(String(name || '').split('.').pop().toLowerCase()); }
+function isPreviewableImage(f) {
+  return f.exists !== false && isImageName(f.name) && (!f.size || f.size <= IMAGE_PREVIEW_MAX_BYTES);
+}
+function imagePreviewHtml(f) {
+  return `<button type="button" class="img-prev" data-url="${escapeAttr(f.url)}" data-name="${escapeAttr(f.name || 'картинка')}" title="${escapeAttr(f.name || '')}"><span class="img-ph">${uiIcon('file')}</span></button>`;
+}
+
+const imageBlobs = new Map(); // url → Promise<blob: url> — одна и та же картинка качается один раз
+function imageBlobUrl(url, name) {
+  if (!imageBlobs.has(url)) {
+    const p = (async () => {
+      const res = await fetch(await getDownloadUrl(url, name));
+      if (!res.ok) throw new Error(`сервер ответил ${res.status}`);
+      return URL.createObjectURL(await res.blob());
+    })();
+    p.catch(() => imageBlobs.delete(url)); // не вышло — при следующем показе попробуем снова
+    imageBlobs.set(url, p);
+  }
+  return imageBlobs.get(url);
+}
+
+// Лента была прокручена до конца — после подгрузки картинки (она выше заглушки) остаётся в конце.
+function atBottom(box) { return box.scrollHeight - box.scrollTop - box.clientHeight < 40; }
+async function loadImagePreview(el) {
+  if (el.dataset.state === 'loading' || el.dataset.state === 'done') return;
+  el.dataset.state = 'loading';
+  el.classList.remove('img-failed');
+  let src;
+  try {
+    src = await imageBlobUrl(el.dataset.url, el.dataset.name);
+  } catch {
+    el.dataset.state = 'error';
+    el.classList.add('img-failed');
+    el.title = 'Картинку не удалось загрузить — щёлкните, чтобы попробовать ещё раз';
+    return;
+  }
+  const img = new Image();
+  img.alt = el.dataset.name;
+  img.onload = () => {
+    const box = el.closest('#messages, #hpMessages');
+    const stick = box && atBottom(box);
+    el.textContent = '';
+    el.appendChild(img);
+    el.dataset.state = 'done';
+    el.title = `${el.dataset.name} — щёлкните, чтобы открыть`;
+    if (stick) { if (box.id === 'messages') programmaticScroll = true; box.scrollTop = box.scrollHeight; }
+  };
+  // Расширение картинки, а внутри не картинка (или формат, которого Chromium не знает) — убираем
+  // заглушку: остаётся обычная карточка файла под ней.
+  img.onerror = () => el.remove();
+  img.src = src;
+}
+
+const imageObserver = new IntersectionObserver((entries) => {
+  for (const e of entries) {
+    if (!e.isIntersecting) continue;
+    imageObserver.unobserve(e.target);
+    loadImagePreview(e.target);
+  }
+}, { rootMargin: '200px' });
+// Новые заглушки появляются из многих мест (лента, подгрузка истории, поиск) — следим за самими
+// контейнерами, а не за каждым местом, где рисуется сообщение.
+function watchImagePreviews(container) {
+  const scan = () => container.querySelectorAll('.img-prev:not([data-state])').forEach((el) => {
+    el.dataset.state = 'waiting';
+    imageObserver.observe(el);
+  });
+  new MutationObserver(scan).observe(container, { childList: true, subtree: true });
+  scan();
+  container.addEventListener('click', (e) => {
+    const el = e.target.closest('.img-prev');
+    if (!el) return;
+    e.preventDefault();
+    if (el.dataset.state === 'error') { loadImagePreview(el); return; }
+    if (el.dataset.state === 'done') openImageViewer(el.dataset.url, el.dataset.name);
+  });
+}
+watchImagePreviews(document.getElementById('messages'));
+watchImagePreviews(document.getElementById('hpMessages'));
+
+// Просмотр во всё окно: картинка вписана в окно, щелчок по ней — в натуральную величину (с прокруткой)
+// и обратно. «Сохранить как…» — тем же путём, что ПКМ по файлу. Закрыть — крестик, Esc, щелчок мимо.
+async function openImageViewer(url, name) {
+  let src;
+  try { src = await imageBlobUrl(url, name); } catch { return; }
+  const overlay = document.createElement('div');
+  overlay.className = 'img-viewer';
+  overlay.innerHTML = `<div class="iv-bar"><span class="iv-name">${escapeHtml(name)}</span>`
+    + `<button type="button" class="iv-btn iv-save" title="Сохранить как…">${uiIcon('download')}</button>`
+    + `<button type="button" class="iv-btn iv-close" title="Закрыть (Esc)">${uiIcon('close')}</button></div>`
+    + `<div class="iv-stage"><img alt="${escapeAttr(name)}" src="${escapeAttr(src)}"></div>`;
+  const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+  const close = () => { overlay.remove(); document.removeEventListener('keydown', onKey, true); };
+  document.addEventListener('keydown', onKey, true);
+  overlay.querySelector('.iv-close').onclick = close;
+  overlay.querySelector('.iv-save').onclick = async () => {
+    try { desktop.saveFileAs({ url: await getDownloadUrl(url, name), name }); }
+    catch { chatToast('Не удалось подготовить файл — проверьте подключение.', { error: true }); }
+  };
+  const stage = overlay.querySelector('.iv-stage');
+  stage.addEventListener('click', (e) => {
+    if (e.target.tagName === 'IMG') stage.classList.toggle('actual');
+    else close();
+  });
+  document.body.appendChild(overlay);
+}
+
+// Картинка из буфера обмена — Ctrl+V после «Print Screen» или «Ножниц» (и скопированные в Проводнике
+// файлы): то же окно «Отправить файл», что при перетаскивании. Есть в буфере текст — это обычная
+// вставка текста (из Word вместе с текстом копируется и картинка его фрагмента — её не берём).
+// У картинки из буфера имени нет (Chromium называет её image.png) — даём понятное, с датой и временем.
+function pastedFileName(file) {
+  if (file.name && file.name !== 'image.png') return file;
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  const ext = (file.type.split('/')[1] || 'png').replace('jpeg', 'jpg');
+  const name = `Снимок ${p(d.getDate())}.${p(d.getMonth() + 1)}.${d.getFullYear()} ${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}.${ext}`;
+  return new File([file], name, { type: file.type, lastModified: file.lastModified });
+}
+document.addEventListener('paste', (e) => {
+  const cd = e.clipboardData;
+  if (!cd || !cd.files || !cd.files.length || cd.getData('text/plain')) return;
+  e.preventDefault();
+  if (!chatReachable) return;
+  openSendFilesModal(Array.from(cd.files).map(pastedFileName));
+});
+
 // ПКМ по сообщению: на файле — "Сохранить как...", на тексте — "Копировать текст". Меню —
 // в оформлении клиента (uiContextMenu); буфер обмена и диалог "Сохранить как" — в главном процессе.
 function wireMessageContextMenu(container) {
@@ -1579,7 +1818,7 @@ wireMessageToolbar(document.getElementById('hpMessages'));
 // вовсе, а человек открыл чат как раз посмотреть, что с его сообщением. В конце ленты оно остаётся
 // благодаря addMessage — тот держит неотправленное последним.
 restoreOutbox();
-loadHistory().catch(() => {});
+loadHistory().catch(() => {}).finally(() => { historyShown = true; reportContentReady(); });
 connectWs();
 
 // Обработчики, которые раньше стояли прямо в разметке (onclick=/onsubmit=): CSP окна запрещает

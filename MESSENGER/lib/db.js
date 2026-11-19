@@ -186,6 +186,10 @@ function openDatabase(DB_FILE, { logServer }) {
       if (!cols.includes('html')) db.exec('ALTER TABLE broadcasts ADD COLUMN html TEXT');
       // То же для объявлений: когда автор его исправил (см. edited_at у messages).
       if (!cols.includes('edited_at')) db.exec('ALTER TABLE broadcasts ADD COLUMN edited_at INTEGER');
+      // «От имени отдела» (решение пользователя 2026-11-19): получатели видят подписью этот отдел, а
+      // не автора. NULL — подписано автором, как всегда. Автор (from_id) хранится как обычно — его
+      // видит администратор в панели, и по нему же право исправить объявление.
+      if (!cols.includes('as_department_id')) db.exec('ALTER TABLE broadcasts ADD COLUMN as_department_id INTEGER');
     }
     // Кто загрузил файл. Нужен для права на скачивание (см. canAccessFile): раньше токен на скачивание
     // выдавался на любой файл любому вошедшему, и знания имени файла на диске хватало, чтобы открыть
