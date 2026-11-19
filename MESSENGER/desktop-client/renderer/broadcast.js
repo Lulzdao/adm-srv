@@ -15,12 +15,44 @@ const deptQuery = departmentId ? `&departmentId=${departmentId}` : '';
 // Право на рассылки может быть выдано лично человеку ИЛИ всему его отделу — сервер уже считает
 // итоговое (эффективное) значение и отдаёт его прямо в /api/me, отдельно спрашивать не нужно.
 let canCompose = false;
-async function checkComposeAccess() {
+let freshMe = null; // свежий /api/me: права и отделы (в параметрах окна — снимок со входа)
+async function loadFreshMe() {
   try {
     const res = await fetch(serverUrl + '/api/me', { headers: { Authorization: 'Bearer ' + token } });
-    const fresh = await res.json();
-    return !!fresh.can_broadcast;
-  } catch { return false; }
+    freshMe = await res.json();
+  } catch { freshMe = null; }
+  return freshMe;
+}
+async function checkComposeAccess() {
+  const fresh = await loadFreshMe();
+  return !!(fresh && fresh.can_broadcast);
+}
+
+// «От имени отдела» (просьба пользователя 2026-11-19): получатели видят подписью отдел, а не автора.
+// Отдел — только свой (сервер проверяет то же самое); состоит в нескольких — выбирает из списка.
+// Настоящего автора видит администратор в панели «Искры». Нет отделов — флажка нет.
+function setupAsDepartment() {
+  const depts = (freshMe && Array.isArray(freshMe.departments)) ? freshMe.departments : [];
+  const row = document.getElementById('asDeptRow');
+  if (!depts.length) { row.hidden = true; return; }
+  row.hidden = false;
+  const check = document.getElementById('asDeptCheck');
+  const select = document.getElementById('asDeptSelect');
+  const single = document.getElementById('asDeptName');
+  select.innerHTML = depts.map((d) => `<option value="${Number(d.id)}">${escapeHtml(d.name)}</option>`).join('');
+  // В окне отдела — по умолчанию этот же отдел, если человек в нём состоит.
+  if (departmentId && depts.some((d) => Number(d.id) === departmentId)) select.value = String(departmentId);
+  const paint = () => {
+    select.hidden = !check.checked || depts.length < 2;
+    single.textContent = check.checked && depts.length === 1 ? `«${depts[0].name}»` : '';
+  };
+  check.onchange = paint;
+  paint();
+}
+function asDepartmentId() {
+  const row = document.getElementById('asDeptRow');
+  if (row.hidden || !document.getElementById('asDeptCheck').checked) return null;
+  return Number(document.getElementById('asDeptSelect').value) || null;
 }
 
 document.getElementById('ttl').innerHTML = departmentId
@@ -73,6 +105,8 @@ function setComposerOpen(open) {
 (async () => {
   canCompose = departmentId ? true : await checkComposeAccess();
   if (!canCompose) return;
+  if (departmentId) await loadFreshMe();
+  setupAsDepartment();
   const btn = document.getElementById('composeBtn');
   btn.style.display = 'flex';
   btn.querySelector('span').innerHTML = uiIcon('plus');
@@ -302,7 +336,12 @@ function itemHtml(b, query) {
   // Своё объявление можно исправить (карандаш при наведении и пункт меню), у исправленного — «изменено».
   const own = me && b.from_id === me.id && b.id;
   const editBtn = own ? `<button type="button" class="item-edit" title="Изменить">${uiIcon('pencil')}</button>` : '';
-  const head = `<div class="ihead"><div class="ini">${escapeHtml(initialsOf(b.from_user))}</div><div class="iwho"><div class="who">${escapeHtml(b.from_user)}</div><div class="to">${to}</div></div>${editBtn}<span class="time" title="${time}">${editedMarkHtml(b.edited_at)}${itemWhen(b.created_at)}</span></div>`;
+  // От имени отдела: подпись — отдел (сервер уже подставил его в from_user), вместо инициалов — значок
+  // отдела. Автору напоминаем, что подписано не им.
+  const asDept = !!b.as_department_id;
+  const ini = asDept ? `<div class="ini ini-dept">${uiIcon('group')}</div>` : `<div class="ini">${escapeHtml(initialsOf(b.from_user))}</div>`;
+  const whoTitle = asDept ? (own ? 'Вы отправили от имени отдела' : 'От имени отдела') : '';
+  const head = `<div class="ihead">${ini}<div class="iwho"><div class="who"${whoTitle ? ` title="${whoTitle}"` : ''}>${escapeHtml(b.from_user)}${asDept && own ? ' <span class="as-dept-me">· от вас</span>' : ''}</div><div class="to">${to}</div></div>${editBtn}<span class="time" title="${time}">${editedMarkHtml(b.edited_at)}${itemWhen(b.created_at)}</span></div>`;
   return `<div class="item${own ? ' own' : ''}"${b.id ? ` data-bid="${Number(b.id)}"` : ''}${own && b.html ? ` data-html="${escapeAttr(b.html)}"` : ''}>${head}${txtHtml}${filesHtml ? `<div class="ifiles">${filesHtml}</div>` : ''}</div>`;
 }
 
@@ -431,8 +470,10 @@ async function send() {
     // Файлы уже загружены на сервер (см. addPendingFiles/startUpload) — здесь просто собираем
     // сообщение из готовых { url, name, size }, повторно ничего не грузим.
     const files = pendingFiles.map((e) => e.uploaded);
-    await api('/api/broadcast', { method: 'POST', body: JSON.stringify({ text, html, files, departmentId }) });
+    await api('/api/broadcast', { method: 'POST', body: JSON.stringify({ text, html, files, departmentId, asDepartmentId: asDepartmentId() }) });
     rte.clear();
+    document.getElementById('asDeptCheck').checked = false; // следующее — снова от себя, пока не отметят
+    document.getElementById('asDeptCheck').onchange?.();
     pendingFiles = [];
     renderComposerFiles();
     document.getElementById('composer').classList.remove('open');

@@ -36,7 +36,7 @@ else {
 // Внутри клиента два независимых сетевых стека, и это ключевой момент. Окна (чат, ростер,
 // объявления) ходят через Chromium — он читает хранилище сертификатов Windows, куда корневой
 // сертификат домена уже попал через групповые политики, там делать нечего. А ГЛАВНЫЙ процесс
-// (автообновление через electron-updater и отправка файлов правым кликом через httpPostBuffer)
+// (автообновление через electron-updater и отправка файлов правым кликом через httpPostFile)
 // работает через Node, и вот он хранилище Windows НЕ читает — групповые политики на него не
 // действуют вовсе. Без этой правки после перехода сервера на https получилась бы крайне
 // запутанная картина: переписка работает, а обновления и отправка файлов молча отваливаются
@@ -659,6 +659,17 @@ function activateWindow(win) {
   win.webContents.focus();
 }
 
+// Сколько окно чата ждёт свою переписку, прежде чем показаться пустым (см. createWindow ниже).
+const CHAT_CONTENT_WAIT_MS = { auto: 3000, clicked: 700 };
+// webContents.id → «переписка на месте»: окно сообщает это само (content-ready).
+const windowContentReady = new Map();
+ipcMain.on('content-ready', (event) => {
+  const done = windowContentReady.get(event.sender.id);
+  if (!done) return;
+  windowContentReady.delete(event.sender.id);
+  done();
+});
+
 function createWindow(key, file, payload, size, { activate = false } = {}) {
   const existing = namedWins.get(key);
   if (existing && !existing.isDestroyed()) {
@@ -705,7 +716,31 @@ function createWindow(key, file, payload, size, { activate = false } = {}) {
   win.webContents.on('did-finish-load', () => win.webContents.setZoomFactor(settings.uiScale || 1));
   const qs = new URLSearchParams(payload).toString();
   win.loadFile(path.join(__dirname, 'renderer', file), { search: qs });
-  win.once('ready-to-show', () => { if (activate) activateWindow(win); else win.show(); });
+  // Окно чата показываем, когда в нём уже есть переписка, а не на первом кадре (ready-to-show):
+  // историю окно запрашивает у сервера только после загрузки страницы, и окно, открывшееся само по
+  // новому сообщению, с секунду стояло пустым — сообщение «догоняло» его (жалоба пользователя
+  // 2026-11-19). Ждём сигнала окна (content-ready, см. loadHistory в chat.js), но не дольше
+  // CHAT_CONTENT_WAIT_MS: нет связи или сервер долго думает — окно всё равно появится. Открытое
+  // щелчком ждёт меньше: человек нажал и смотрит, пустое окно ему лучше, чем «ничего не происходит».
+  let painted = false;
+  let contentReady = file !== 'chat.html';
+  let shown = false;
+  const reveal = () => {
+    if (shown || win.isDestroyed()) return;
+    shown = true;
+    if (activate) activateWindow(win); else win.show();
+  };
+  const revealIfReady = () => { if (painted && contentReady) reveal(); };
+  const wcId = win.webContents.id;
+  if (!contentReady) {
+    windowContentReady.set(wcId, () => { contentReady = true; revealIfReady(); });
+    win.once('closed', () => windowContentReady.delete(wcId));
+  }
+  win.once('ready-to-show', () => {
+    painted = true;
+    revealIfReady();
+    if (!contentReady) setTimeout(reveal, activate ? CHAT_CONTENT_WAIT_MS.clicked : CHAT_CONTENT_WAIT_MS.auto);
+  });
   // Имя для журнала берём из файла страницы: переменной с типом окна здесь нет,
   // а администратору по логу нужно понимать, что именно зависло.
   watchWindowHangs(win, file.includes('chat') ? 'чат' : file.includes('broadcast') ? 'рассылка' : file);
@@ -876,10 +911,14 @@ function startIdleWatch() {
   }, 15000);
 }
 
-// Небольшой POST без внешних зависимостей — нужен, чтобы отправить файл из главного процесса
-// (Electron 22 использует Node 16, где ещё нет глобального fetch)
-function httpPostBuffer(urlStr, buffer, headers) {
+// Отправка файла на сервер из главного процесса, без внешних зависимостей (Electron 22 — это Node 16,
+// глобального fetch там ещё нет). Файл идёт потоком с диска: раньше он целиком читался в память
+// (readFileSync), а файл бывает до гигабайта. onProgress(отправлено байт) — для карточки «Загружается…»
+// в окне чата; onRequest(req) — чтобы её кнопка «Отменить» могла оборвать запрос (req.destroy()).
+function httpPostFile(urlStr, filePath, headers, { onProgress, onRequest } = {}) {
   return new Promise((resolve, reject) => {
+    let size;
+    try { size = fs.statSync(filePath).size; } catch (e) { reject(e); return; }
     const u = new URL(urlStr);
     const lib = u.protocol === 'https:' ? https : http;
     const req = lib.request({
@@ -887,7 +926,7 @@ function httpPostBuffer(urlStr, buffer, headers) {
       port: u.port,
       path: u.pathname + u.search,
       method: 'POST',
-      headers: { ...headers, 'Content-Length': buffer.length },
+      headers: { ...headers, 'Content-Length': size },
     }, (res) => {
       let data = '';
       res.on('data', (c) => { data += c; });
@@ -902,10 +941,24 @@ function httpPostBuffer(urlStr, buffer, headers) {
       });
     });
     req.on('error', reject);
-    req.write(buffer);
-    req.end();
+    if (onRequest) onRequest(req);
+    const stream = fs.createReadStream(filePath);
+    let sent = 0;
+    stream.on('data', (chunk) => { sent += chunk.length; if (onProgress) onProgress(sent); });
+    stream.on('error', (e) => { req.destroy(e); });
+    stream.pipe(req);
   });
 }
+
+// Загрузки, идущие из главного процесса (номер → запрос): «Отменить» в окне чата обрывает свою.
+const mainUploads = new Map();
+let mainUploadSeq = 0;
+ipcMain.on('cancel-upload', (event, n) => {
+  const job = mainUploads.get(n);
+  if (!job) return;
+  job.cancelled = true;
+  if (job.req) job.req.destroy(new Error('отменено'));
+});
 
 async function handleSendFile(payload) {
   const result = await dialog.showOpenDialog(rosterWin, { properties: ['openFile', 'multiSelections'] });
@@ -916,26 +969,49 @@ async function handleSendFile(payload) {
     else resolve();
   });
   await whenReady();
+  // Ход загрузки — в окно чата, той же карточкой «Загружается…», что и у файлов, выбранных в самом
+  // окне (см. showUploadBubble в chat.js): раньше файл грузился молча и появлялся спустя минуту.
+  const files = result.filePaths.map((p) => {
+    let size = 0;
+    try { size = fs.statSync(p).size; } catch { /* файла уже нет — ошибка будет при отправке */ }
+    return { path: p, name: path.basename(p), size };
+  });
+  const n = `main${++mainUploadSeq}`;
+  const job = { req: null, cancelled: false };
+  mainUploads.set(n, job);
+  const total = files.reduce((s, f) => s + f.size, 0);
+  let done = 0;
+  const report = (state, loaded) => sendToWindow(win, 'upload-progress', { n, state, loaded, total, files: files.map((f) => ({ name: f.name, size: f.size })) });
+  report('start', 0);
+  // Кусок с диска — 64 КБ, и сообщать о каждом незачем: окну хватает пяти раз в секунду.
+  let lastReport = 0;
+  const progress = (loaded) => { const now = Date.now(); if (now - lastReport >= 200) { lastReport = now; report('progress', loaded); } };
   const uploadedFiles = [];
-  for (const filePath of result.filePaths) {
-    try {
-      const buffer = fs.readFileSync(filePath);
-      const name = path.basename(filePath);
-      const uploaded = await httpPostBuffer(
-        `${payload.serverUrl}/api/upload?name=${encodeURIComponent(name)}`,
-        buffer,
-        { Authorization: `Bearer ${payload.token}`, 'Content-Type': 'application/octet-stream' },
-      );
-      uploadedFiles.push(uploaded);
-    } catch (e) {
-      // Диалог именно в окне ростера (renderer), а не системный showErrorBox — чтобы выглядел
-      // как часть клиента, а не как отдельное окно Windows не в теме приложения.
-      sendToWindow(rosterWin, 'show-alert', { message: String(e.message || e), title: 'Не удалось отправить файл' });
+  try {
+    for (const f of files) {
+      if (job.cancelled) break;
+      try {
+        const uploaded = await httpPostFile(
+          `${payload.serverUrl}/api/upload?name=${encodeURIComponent(f.name)}`,
+          f.path,
+          { Authorization: `Bearer ${payload.token}`, 'Content-Type': 'application/octet-stream' },
+          { onProgress: (sent) => progress(done + sent), onRequest: (req) => { job.req = req; } },
+        );
+        uploadedFiles.push(uploaded);
+      } catch (e) {
+        if (job.cancelled) break;
+        // Диалог — в окне чата, где человек и смотрит на загрузку, в оформлении клиента.
+        sendToWindow(win, 'show-alert', { message: String(e.message || e), title: 'Не удалось отправить файл' });
+      }
+      done += f.size;
     }
+  } finally {
+    mainUploads.delete(n);
+    report('end', total);
   }
   // Все успешно загруженные файлы уходят одним сообщением, а не россыпью — так же, как при
-  // выборе через кнопку-скрепку или drag-and-drop прямо в окне чата.
-  if (uploadedFiles.length) sendToWindow(win, 'files-to-send', uploadedFiles);
+  // выборе через кнопку-скрепку или drag-and-drop прямо в окне чата. Отменили — не уходит ничего.
+  if (uploadedFiles.length && !job.cancelled) sendToWindow(win, 'files-to-send', uploadedFiles);
 }
 
 // ---------- Обновление приложения ----------

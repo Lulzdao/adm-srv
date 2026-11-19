@@ -385,6 +385,20 @@ body.is-offline #list .dot { background: var(--offline) !important; box-shadow: 
    обычное своё сообщение, без строки состояния: при живой связи эхо приходит раньше. */
 .msg.pending.fresh { opacity: 1; }
 .msg.pending.fresh .pending-bar { display: none; }
+/* Файл ещё грузится на сервер (chat.js, showUploadBubble): имена, полоса хода, «Отменить». */
+.msg.uploading { min-width: 220px; }
+.msg.uploading .up-file { display: flex; align-items: center; gap: 6px; font-size: 12px; min-width: 0; }
+.msg.uploading .up-file + .up-file { margin-top: 3px; }
+.msg.uploading .up-fi { display: inline-flex; width: 14px; height: 14px; color: var(--accent); flex-shrink: 0; }
+.msg.uploading .up-fi svg { width: 14px; height: 14px; }
+.msg.uploading .up-fn { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.msg.uploading .up-fs { flex-shrink: 0; color: var(--muted); font-size: 11px; }
+.msg.uploading .up-bar { height: 4px; border-radius: 2px; background: var(--bg-a40); margin-top: 8px; overflow: hidden; }
+.msg.uploading .up-fill { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s linear; }
+.msg.uploading .up-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 5px;
+  font-size: 11px; color: var(--muted); }
+.msg.uploading .up-cancel { border: none; background: none; padding: 0; font: inherit; font-weight: 600; color: var(--accent);
+  cursor: pointer; text-decoration: underline; }
 @media (prefers-reduced-motion: reduce) { .offline-bar, .offline-bar .offline-dot { animation: none; } }
 
 /* ===================== Редактор объявлений (2026-10-12) =====================
@@ -423,3 +437,42 @@ body.is-offline #list .dot { background: var(--offline) !important; box-shadow: 
 .item .txt.rich p { margin: 0 0 6px; }
 .item .txt.rich h1, .item .txt.rich h2, .item .txt.rich h3 { margin: 4px 0; line-height: 1.25; }
 .item .txt.rich blockquote { margin: 4px 0; padding-left: 10px; border-left: 3px solid var(--border); color: var(--muted); }
+
+/* ===================== Картинки в ленте чата (2026-11-19) =====================
+   chat.js, «Картинки прямо в ленте»: превью над карточкой файла, просмотр во всё окно. Размер превью
+   ограничен — длинный скриншот не растягивает пузырь на весь экран; целиком — по щелчку. */
+.msg .img-prev { display: block; padding: 0; border: none; background: var(--bg-a40); border-radius: var(--radius-m);
+  overflow: hidden; cursor: zoom-in; max-width: 100%; min-width: 120px; min-height: 90px; color: var(--muted); }
+.msg .img-prev .img-ph { display: flex; align-items: center; justify-content: center; width: 200px; max-width: 100%; height: 120px; opacity: .5; }
+.msg .img-prev .img-ph svg { width: 22px; height: 22px; }
+.msg .img-prev[data-state="done"] { min-width: 0; min-height: 0; background: none; }
+.msg .img-prev img { display: block; max-width: 100%; max-height: 240px; border-radius: var(--radius-m); }
+.msg .img-prev.img-failed { cursor: pointer; }
+.msg .img-prev.img-failed .img-ph { opacity: 1; color: var(--danger); }
+.img-viewer { position: fixed; inset: 0; z-index: 1000; display: flex; flex-direction: column; background: rgba(0, 0, 0, .93);
+  -webkit-app-region: no-drag; animation: ui-fade .12s ease-out; }
+.img-viewer .iv-bar { display: flex; align-items: center; gap: 6px; padding: 8px 10px; color: #f4f1ec; font-size: 12px; }
+.img-viewer .iv-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.img-viewer .iv-btn { display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; border: none;
+  border-radius: 8px; background: rgba(255, 255, 255, .12); color: #f4f1ec; cursor: pointer; }
+.img-viewer .iv-btn:hover { background: rgba(255, 255, 255, .22); }
+.img-viewer .iv-btn svg { width: 16px; height: 16px; }
+.img-viewer .iv-stage { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 0 10px 10px; overflow: hidden; }
+.img-viewer .iv-stage img { max-width: 100%; max-height: 100%; object-fit: contain; cursor: zoom-in; }
+/* Натуральная величина: картинка как есть, окно прокручивается. */
+.img-viewer .iv-stage.actual { display: block; overflow: auto; }
+.img-viewer .iv-stage.actual img { max-width: none; max-height: none; cursor: zoom-out; }
+/* Окно «Отправить файл»: у картинки — маленькое превью, видно, что именно вставилось из буфера. */
+.sfp-item .sfp-thumb { width: 36px; height: 36px; object-fit: cover; border-radius: 6px; flex-shrink: 0; }
+.sfp-item.has-thumb { align-items: center; }
+.sfp-item.has-thumb .sfp-fn { flex: 1; }
+
+/* «От имени отдела» в форме объявления и в карточке (broadcast.js, setupAsDepartment / itemHtml). */
+#asDeptRow { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
+#asDeptRow[hidden] { display: none; }
+#asDeptRow .as-dept-check { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; color: var(--text); }
+#asDeptRow select { font: inherit; padding: 3px 6px; border-radius: 6px; border: 1px solid var(--border); background: var(--panel); color: var(--text); max-width: 100%; }
+#asDeptRow select[hidden] { display: none; }
+.item .ini.ini-dept { display: flex; align-items: center; justify-content: center; }
+.item .ini.ini-dept svg { width: 16px; height: 16px; }
+.item .as-dept-me { font-weight: 400; color: var(--muted); font-size: 11px; }
